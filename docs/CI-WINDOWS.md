@@ -1,5 +1,13 @@
 # Windows-Runner für Gitea Actions (architects-overlay)
 
+> **STATUS: AUFGESCHOBEN (2026-10-21)** — kein permanent laufender Windows-PC
+> verfügbar. Der Windows-Job ist in `build.yml` mit `if: false` geparkt;
+> Linux-Builds (deb/AppImage) laufen normal weiter.
+> **Geplanter Weg später: GitHub-Actions-Mirror** (private Repo; GitHub stellt
+> Windows-Runner, kein eigener PC nötig — Details am Ende dieses Dokuments,
+> Abschnitt 8). Die Selbsthosted-Anleitung unten bleibt als Alternative
+> gültig, falls doch ein Windows-PC dauerhaft läuft.
+
 Der Windows-Job in `.gitea/workflows/build.yml` trägt das Label
 `windows-selfhosted`. Solange kein Runner mit genau diesem Label registriert
 ist, wartet der Job einfach in der Queue — es wird **nichts rot**. Erst wenn
@@ -172,3 +180,25 @@ Ablauf ab jetzt vollautomatisch:
 Damit ist der Kreislauf geschlossen:
 
 **Runner online → Windows-Exe entsteht automatisch bei Tags.**
+
+---
+
+## 8. Alternative: Windows-Builds via GitHub-Actions-Mirror (geplanter Weg)
+
+Kein eigener Windows-PC nötig — GitHub stellt Managed Windows-Runner
+(`windows-latest`, auch für private Repos; Windows-Minuten zählen 2×, im
+Free-Tier 2000 Minuten/Monat, ein Tauri-Build braucht ~10 Min ≈ 20 Windows-Minuten).
+
+1. GitHub-Repo anlegen (private) und Gitea→GitHub spiegeln (Gitea:
+   Repo-Settings → Mirror → Push-Mirror auf GitHub; oder Ad-hoc-Remote).
+2. Eine GitHub-Variante des Workflows anlegen (`.github/workflows/build.yml`
+   im selben Repo — Gitea ignoriert `.github/`): identisch zum Linux-Job,
+   der Windows-Job dort mit `runs-on: windows-latest` und **ohne** `if: false`.
+3. Windows-Secrets: `GITEA_TOKEN` (Repo-Write) als GitHub-Secret anlegen,
+   damit die Release-Assets zurück auf git.sebo-home.de hochgeladen werden
+   (gleiche API-Logik wie im Linux-Job).
+4. Tags an GitHub spiegeln (Push-Mirror mirrored Tags), GitHub baut NSIS/MSI,
+   lädt die Windows-Assets an die Gitea-Release.
+
+Aktivierung erst, wenn Windows-Builds gebraucht werden — bis dahin bleibt
+alles auf Gitea/Linux.

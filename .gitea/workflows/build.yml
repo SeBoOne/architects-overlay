@@ -125,8 +125,12 @@ jobs:
 
   windows:
     name: Windows (windows-selfhosted) — NSIS/MSI
-    # Wartet in der Queue, bis der Windows-Runner mit genau diesem Label
-    # registriert ist (docs/CI-WINDOWS.md). Ohne Runner -> kein Rot.
+    # Windows-Build AUFgeschoben (2026-10-21, Sebo): kein permanent laufender
+    # Windows-PC verfügbar. Später via GitHub-Actions-Mirror bauen (kein
+    # eigener Runner nötig — GH stellt windows Runner für private Repos).
+    # Aktivierung: wenn GitHub-Mirror existiert ODER ein selfhosted Runner
+    # mit diesem Label registriert ist. Ohne Aktivierung: Job läuft nie an.
+    if: false
     runs-on: windows-selfhosted
 
     steps:
