@@ -41,19 +41,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # pnpm MUSS vor setup-node installiert sein: setup-node v4 liefert den
+      # Cache-Pfad ueber `pnpm store path` und wirft ohne pnpm im PATH
+      # ("Could not get pnpm cache folder path"); windows-latest bringt kein
+      # pnpm mit. Erst installieren, dann setup-node mit cache: pnpm.
+      - name: pnpm bereitstellen (gepinnt)
+        run: npm install -g pnpm@12.14.0
+
       - name: Node 22 (gepinnt)
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
 
-      - name: pnpm bereitstellen (gepinnt)
-        run: npm install -g pnpm@12.14.0
-
       - name: Rust-Toolchain (gepinnt, MSRV ist 1.90)
-        uses: dtolnay/rust-toolchain@1
+        uses: dtolnay/rust-toolchain@1.99.1
         with:
-          toolchain: 1.99.1
           targets: x86_64-pc-windows-msvc
 
       - name: Toolchain-Versionen anzeigen
@@ -94,6 +97,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $TAG = $env:GITHUB_REF_NAME
           $instance = 'https://git.sebo-home.de'
+          # Gitea-Ziel-Repo explizit pinnen: GITHUB_REPOSITORY waere auf GitHub
+          # owner/name des Mirror-Repos (das nicht zwingend sebo/architects-overlay
+          # sein muss) und liesse die Release-API ins Leere laufen.
+          $repo = 'sebo/architects-overlay'
           $api = "$instance/api/v1"
           $headers = @{ Authorization = "token $env:GITEA_TOKEN" }
 
@@ -101,21 +108,23 @@ jobs:
           # der Linux-Job auf Gitea), selbst anlegen — sonst fehlen hier Assets.
           $release = $null
           try {
-            $release = Invoke-RestMethod -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases/tags/$TAG" -Headers $headers
+            $release = Invoke-RestMethod -Uri "$api/repos/$repo/releases/tags/$TAG" -Headers $headers
           } catch { $release = $null }
           if (-not $release -or -not $release.id) {
             try {
               $body = @{ tag_name = $TAG; name = "Architects Overlay $TAG"; body = 'Automatischer CI-Build.' } | ConvertTo-Json
-              $release = Invoke-RestMethod -Method Post -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases" -Headers $headers -ContentType 'application/json' -Body $body
+              $release = Invoke-RestMethod -Method Post -Uri "$api/repos/$repo/releases" -Headers $headers -ContentType 'application/json' -Body $body
             } catch {
               # Race: der Linux-Job kann das Release dazwischen angelegt haben.
-              $release = Invoke-RestMethod -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases/tags/$TAG" -Headers $headers
+              $release = Invoke-RestMethod -Uri "$api/repos/$repo/releases/tags/$TAG" -Headers $headers
             }
           }
 
           $files = Get-ChildItem -Path 'target\release\bundle\nsis\*-setup.exe', 'target\release\bundle\msi\*.msi' -ErrorAction SilentlyContinue
           foreach ($f in $files) {
-            curl.exe -sS -X POST -H "Authorization: token $env:GITEA_TOKEN" -F "attachment=@$($f.FullName)" "$api/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)/assets" | Out-Null
+            # -f: HTTP-Fehler (401/404/422) zum Exit != 0 machen — sonst meldet
+            #    der Schritt trotz fehlgeschlagenem Upload "Release-Asset: ...".
+            curl.exe -fsS -X POST -H "Authorization: token $env:GITEA_TOKEN" -F "attachment=@$($f.FullName)" "$api/repos/$repo/releases/$($release.id)/assets" | Out-Null
             if ($LASTEXITCODE -ne 0) {
               Write-Warning "Asset-Upload fehlgeschlagen (uebersprungen): $($f.FullName)"
             } else {
