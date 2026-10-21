@@ -51,10 +51,15 @@ das Terminal neu öffnen.
 
 ## 2. act_runner.exe herunterladen
 
-Von den offiziellen Release-Seiten (jeweils `act_runner-x.y.z-windows-amd64.exe`):
+Von den offiziellen Release-Seiten (das Projekt heißt seit dem Rename offiziell
+`gitea/runner`, die Datei **`gitea-runner-x.y.z-windows-amd64.exe`** — die
+Umbenennung per Hand macht jede Version kompatibel):
 
-- https://gitea.com/gitea/act_runner/releases  (offiziell)
-- oder GitHub-Spiegel: https://github.com/Gitea/act_runner/releases
+- https://gitea.com/gitea/runner/releases  (offiziell)
+- oder GitHub-Spiegel: https://github.com/Gitea/runner/releases
+
+**Mindestversion: v3.0.0** — erst ab dort unterstützt Gitea-Actions
+`actions/upload-artifact@v4`, das der Workflow nutzt (go-gitea/gitea#35706).
 
 In einen eigenen Ordner legen und die Datei zu `act_runner.exe` umbenennen:
 
@@ -158,7 +163,7 @@ Ablauf ab jetzt vollautomatisch:
 2. Gitea Actions baut den Linux-Job (deb/AppImage) und legt die Gitea-Release
    an.
 3. Der Windows-Job läuft jetzt auf deinem PC und erzeugt
-   `src-tauri/target/release/bundle/nsis/architects-overlay_<version>_x64-setup.exe`
+   `target/release/bundle/nsis/architects-overlay_<version>_x64-setup.exe`
    (+ MSI). NSIS wird von Tauri v2 automatisch mitgeladen.
 4. Installer und MSI landen als Release-Assets auf
    https://git.sebo-home.de/sebo/architects-overlay/releases und zusätzlich

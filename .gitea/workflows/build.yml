@@ -56,7 +56,7 @@ jobs:
           tar -xJf node-v22.23.4-linux-x64.tar.xz -C /opt
           rm node-v22.23.4-linux-x64.tar.xz
           echo "/opt/node-v22.23.4-linux-x64/bin" >> "$GITHUB_PATH"
-          /opt/node-v22.23.4-linux-x64/bin/npm install -g pnpm@9.15.9
+          /opt/node-v22.23.4-linux-x64/bin/npm install -g pnpm@12.14.0
 
       - name: Rust-Toolchain (gepinnt, MSRV ist 1.90)
         run: |
@@ -85,8 +85,8 @@ jobs:
         with:
           name: linux-bundle
           path: |
-            src-tauri/target/release/bundle/deb/*.deb
-            src-tauri/target/release/bundle/appimage/*.AppImage
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
           if-no-files-found: error
 
       - name: Gitea-Release an Tag (v*) befüllen
@@ -110,8 +110,8 @@ jobs:
 
           # Assets anhängen (existierende Dateien; Duplikat-Upload = warnen,
           # z. B. bei Re-Tag gleicher Version — Artefakte liegen eh im Run).
-          for f in src-tauri/target/release/bundle/deb/*.deb \
-                   src-tauri/target/release/bundle/appimage/*.AppImage; do
+          for f in target/release/bundle/deb/*.deb \
+                   target/release/bundle/appimage/*.AppImage; do
             [ -f "$f" ] || continue
             if ! curl -fsS -X POST -H "$AUTH" -F "attachment=@${f}" \
               "$API/repos/${GITHUB_REPOSITORY}/releases/${ID}/assets" >/dev/null; then
@@ -143,7 +143,7 @@ jobs:
           cargo -V
 
       - name: pnpm installieren (gepinnt)
-        run: npm install -g pnpm@9.15.9
+        run: npm install -g pnpm@12.14.0
 
       - name: Dependencies installieren
         run: pnpm install --frozen-lockfile
@@ -159,8 +159,8 @@ jobs:
         with:
           name: windows-bundle
           path: |
-            src-tauri/target/release/bundle/nsis/*-setup.exe
-            src-tauri/target/release/bundle/msi/*.msi
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/msi/*.msi
           if-no-files-found: warn
 
       - name: Gitea-Release an Tag (v*) befüllen (Windows-Assets)
@@ -175,17 +175,23 @@ jobs:
           $api = "$instance/api/v1"
           $headers = @{ Authorization = "token $env:GITHUB_TOKEN" }
 
-          # Release vom Linux-Job suchen; gibt es noch keins, hier nichts tun.
+          # Release zum Tag suchen; fehlt es (z. B. Windows-Job schneller als der
+          # Linux-Job), selbst anlegen — sonst fehlen hier die Assets.
           $release = $null
           try {
             $release = Invoke-RestMethod -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases/tags/$TAG" -Headers $headers
           } catch { $release = $null }
           if (-not $release -or -not $release.id) {
-            Write-Host 'Release existiert nicht — wird vom Linux-Job angelegt; Assets folgen hier.'
-            exit 0
+            try {
+              $body = @{ tag_name = $TAG; name = "Architects Overlay $TAG"; body = 'Automatischer CI-Build.' } | ConvertTo-Json
+              $release = Invoke-RestMethod -Method Post -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases" -Headers $headers -ContentType 'application/json' -Body $body
+            } catch {
+              # Race: der Linux-Job kann das Release dazwischen angelegt haben.
+              $release = Invoke-RestMethod -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases/tags/$TAG" -Headers $headers
+            }
           }
 
-          $files = Get-ChildItem -Path 'src-tauri\target\release\bundle\nsis\*-setup.exe', 'src-tauri\target\release\bundle\msi\*.msi' -ErrorAction SilentlyContinue
+          $files = Get-ChildItem -Path 'target\release\bundle\nsis\*-setup.exe', 'target\release\bundle\msi\*.msi' -ErrorAction SilentlyContinue
           foreach ($f in $files) {
             curl.exe -sS -X POST -H "Authorization: token $env:GITHUB_TOKEN" -F "attachment=@$($f.FullName)" "$api/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)/assets" | Out-Null
             if ($LASTEXITCODE -ne 0) {
