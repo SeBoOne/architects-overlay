@@ -184,11 +184,12 @@ pub fn sync_status(state: State<'_, TradeState>) -> SyncStatus {
     build_status(&state.provider, &state.cache, &state.tracker)
 }
 
-/// Trigger the on-demand sync sweep (first sync, "Erneut versuchen").
-/// Returns the current status immediately; the sweep runs in the background
-/// and announces its outcome via the [`SYNC_EVENT`] event.
+/// Trigger the on-demand sync sweep (first sync, "Erneut versuchen"). Runs as an
+/// async command so the sweep's tokio-based provider futures execute on Tauri's
+/// async runtime; the [`SYNC_EVENT`] event announces completion so the UI can
+/// drop its spinner.
 #[tauri::command]
-pub fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> SyncStatus {
+pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<SyncStatus, String> {
     let provider = state.provider.clone();
     let cache = state.cache.clone();
     let tracker = state.tracker.clone();
@@ -196,29 +197,24 @@ pub fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> SyncStatus {
 
     // Only one sweep at a time; a concurrent call just re-reads the status.
     if !tracker.syncing.swap(true, Ordering::SeqCst) {
-        tauri::async_runtime::spawn(async move {
-            let outcome: Result<(), String> = sweep(provider.as_ref(), cache.as_ref()).await;
+        let outcome: Result<(), String> = sweep(provider.as_ref(), cache.as_ref()).await;
+        {
             let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
             *guard = outcome.err();
-            drop(guard);
-            tracker.syncing.store(false, Ordering::SeqCst);
-            // The background TTL loop runs on the same (tokio) runtime — safe
-            // to start now; the guard makes it a one-time rollout.
-            maybe_start_background(&provider, &cache, &tracker);
-            let _ = handle.emit(SYNC_EVENT, build_status(&provider, &cache, &tracker));
-        });
+        }
+        tracker.syncing.store(false, Ordering::SeqCst);
+        maybe_start_background(&provider, &cache, &tracker);
+        let _ = handle.emit(SYNC_EVENT, build_status(&provider, &cache, &tracker));
     }
-    build_status(&state.provider, &state.cache, &state.tracker)
+    Ok(build_status(&state.provider, &state.cache, &state.tracker))
 }
 
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
 
-/// Start the background TTL refresh loop, exactly once. Must only run from
-/// inside the Tokio runtime (async command / spawned task) — the async_trait /
-/// tokio code inside `cache::sync::spawn_sync` panics otherwise, so this must
-/// never be called from `setup`.
+/// Start the background TTL refresh loop, exactly once. Safe from any thread:
+/// it just spawns onto the app-owned Tokio global runtime.
 fn maybe_start_background(
     provider: &Arc<dyn DataProvider>,
     cache: &Arc<Cache>,

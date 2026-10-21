@@ -97,9 +97,9 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     });
 
     // The background freshness loop (commodities 1h / items 4h / terminals 12h)
-    // is started lazily by the first async command — see `trade::maybe_start_background`.
-    // It must NOT be spawned here in `setup`: that runs before the Tokio runtime
-    // is up, and the async_trait/tokio providers need it.
+    // is started lazily on the first on-demand sweep — see `trade::sync_now` /
+    // `trade::maybe_start_background`. It runs on Tauri's async (Tokio) runtime,
+    // which is exactly the context the tokio-based provider futures need.
 
     Ok(())
 }
