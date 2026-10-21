@@ -27,7 +27,18 @@ use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutEvent, Sho
 
 /// Window label of the spotlight overlay. Referenced from capabilities and the
 /// frontend (`getCurrentWebviewWindow().getLabel()`).
+///
+/// IMPORTANT: the label ("spotlight") is Tauri-internal. The WM class the
+/// compositor sees derives from the Tauri identifier
+/// (`com.sebo.architects-overlay` → window class `architects-overlay`) —
+/// compositor-side focus dispatches MUST use WINDOW_CLASS, not this label,
+/// or the dispatch fails with "window not found" (classic bug: focus stuck
+/// in the game while the overlay was open).
 pub const SPOTLIGHT_LABEL: &str = "spotlight";
+
+/// WM window class Hyprland et al. see for the spotlight window. Derived from
+/// `tauri.conf.json` → `identifier` (`com.sebo.architects-overlay`).
+pub const SPOTLIGHT_WM_CLASS: &str = "architects-overlay";
 
 /// Spotlight panel size in logical px. Asserted again after every map, because
 /// some compositors (Hyprland) may float the window at their own default size
@@ -241,7 +252,7 @@ pub fn set_click_through<R: Runtime>(app: &AppHandle<R>, ignore: bool) -> bool {
                 // the overlay — under Hyprland/Wayland the game would other-
                 // wise keep swallowing every keystroke (practical report).
                 if !ignore {
-                    compositor_focus(SPOTLIGHT_LABEL);
+                    compositor_focus(SPOTLIGHT_WM_CLASS);
                 } else {
                     compositor_focus("starcitizen.exe");
                 }
@@ -316,7 +327,17 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // Take keyboard focus so the search is immediately typable —
                 // compositors do not move keyboard focus to a newly shown
                 // window, and the game would keep swallowing keystrokes.
-                compositor_focus(SPOTLIGHT_LABEL);
+                // Retry in a thread: the Wayland map is ASYNC — right after
+                // show() the compositor does not know the window yet
+                // ("hl.focus: window not found"), so the immediate attempt
+                // always missed (verified via compositor_focus logging).
+                let label = SPOTLIGHT_WM_CLASS.to_string();
+                std::thread::spawn(move || {
+                    for wait in [300u64, 600, 1200] {
+                        std::thread::sleep(Duration::from_millis(wait));
+                        compositor_focus(&label);
+                    }
+                });
             } else {
                 let _ = win.hide();
                 // Hand keyboard focus back to the game.
@@ -425,11 +446,35 @@ fn compositor_focus(class: &str) {
         if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
             return;
         }
-        let _ = std::process::Command::new("hyprctl")
-            .args(["dispatch", "focuswindow", &format!("class:{class}")])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        // Omarchy's Hyprland wraps hyprctl in a Lua bridge: the raw two-arg
+        // form (`dispatch focuswindow class:X`) fails to parse there and
+        // silently does nothing. The bridge-native form
+        // `hl.dsp.focus({ window = "class:X" })` is the reliable one
+        // (verified live); the plain form stays as fallback for non-Omarchy
+        // Hyprland installs.
+        let lua = format!("hl.dsp.focus({{ window = \"class:{class}\" }})");
+        let out = std::process::Command::new("hyprctl")
+            .args(["dispatch", &lua])
+            .output();
+        let ok = match &out {
+            Ok(o) => {
+                log::info!(
+                    "compositor_focus({class}): status={:?} out={:?}",
+                    o.status.code(),
+                    String::from_utf8_lossy(&o.stdout).trim()
+                );
+                o.status.success()
+            }
+            Err(e) => {
+                log::info!("compositor_focus({class}): spawn failed: {e}");
+                false
+            }
+        };
+        if !ok {
+            let _ = std::process::Command::new("hyprctl")
+                .args(["dispatch", "focuswindow", &format!("class:{class}")])
+                .status();
+        }
     }
     #[cfg(not(target_os = "linux"))]
     let _ = class;
