@@ -10,7 +10,7 @@
 	// Suche: 120 ms Debounce gegen den lokalen SQLite-Cache (`search`-IPC),
 	// gruppiert Commodities → Items → Locations, Tastatur ↑↓ ↵ Esc (M = Market).
 	import { getCurrentWindow } from '@tauri-apps/api/window';
-	import { invoke } from '@tauri-apps/api/core';
+	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
@@ -59,7 +59,6 @@
 	let detailBusy = $state(false);
 	let status = $state<SyncStatus | null>(null);
 	let errorMsg = $state<string | null>(null);
-	let bootTrace = $state('start');
 
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
 	let flat: SearchHit[] = [];
@@ -71,41 +70,20 @@
 	}
 
 	// ---- Initialisierung -----------------------------------------------------
-	function setWinTitle(t: string) {
-		if (typeof document !== 'undefined') document.title = t;
-	}
-
 	async function boot() {
-		// A/B-Test GANZ VORN (diagnose 2026-10-21): reiner bool-ping vs.
-		// bool-command mit AppHandle vs. Objekt-command vs. sync-command.
-		try {
-			const p = await invoke<boolean>('ping');
-			bootTrace = 'ping-ok:' + p;
-			setWinTitle('boot:ping-ok:' + p);
-		} catch (e) {
-			bootTrace = 'ping-err:' + String(e);
-			setWinTitle('boot:ping-err');
+		// Nur in der Tauri-Webview booten: ohne Tauri (SSR, plain-vite-dev)
+		// rejected jedes invoke — früher abbrechen.
+		if (!isTauri()) {
+			return;
 		}
 		try {
-			const b = await invoke<boolean>('overlay_set_click_through', { ignore: false });
-			bootTrace += '|ct-ok:' + b;
-			setWinTitle('boot:ct-ok:' + b);
-		} catch (e) {
-			bootTrace += '|ct-err:' + String(e);
-			setWinTitle('boot:ct-err');
+			await invoke<boolean>('overlay_set_click_through', { ignore: false });
+		} catch {
+			// unkritisch — nur der Click-through-Default; ohne Tauri eh n/а.
 		}
-		try {
-			const o = await invoke<Record<string, unknown>>('overlay_get_state');
-			bootTrace += '|obj-ok';
-			setWinTitle('boot:obj-ok');
-		} catch (e) {
-			bootTrace += '|obj-err:' + String(e);
-			setWinTitle('boot:obj-err');
-		}
-
 		try {
 			const label = getCurrentWindow().label;
-			document.documentElement.dataset.window = label;
+			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
 			if (label === 'spotlight') {
 				isSpotlight = true;
 				overlay = await invoke<OverlayState>('overlay_get_state');
@@ -119,28 +97,22 @@
 
 		try {
 			status = await invoke<SyncStatus>('sync_status');
-			bootTrace += '|sync-ok';
-			setWinTitle('boot:sync-ok');
 		} catch (e) {
-			bootTrace += '|sync-err:' + String(e);
-			setWinTitle('boot:sync-err');
+			status = { provider: 'uex', syncing: false, online: false, last_error: String(e), datasets: [] };
 		}
 
 		try {
 			await listen<SyncStatus>(SYNC_EVENT, (e) => onSyncEvent(e.payload));
-			bootTrace += '/listen-ok';
 			if (!hasData()) {
 				// Erster Start: lokalen Cache füllen (einmaliger Sync-Spinner).
-				phase = status.online ? 'loading' : 'error';
+				phase = status && status.online ? 'loading' : 'error';
 				await invoke('sync_now');
-				bootTrace += '/invoke-ok';
 			} else {
-				phase = status.online ? 'idle' : 'offline';
+				phase = status && status.online ? 'idle' : 'offline';
 			}
 		} catch (e) {
 			status = { provider: 'uex', syncing: false, online: false, last_error: String(e), datasets: [] };
 			phase = 'error';
-			bootTrace += '/listen-err:' + String(e);
 		}
 	}
 	void boot();
@@ -374,6 +346,7 @@
 			<input
 				class="q"
 				type="text"
+				autofocus
 				bind:value={input}
 				oninput={onInput}
 				placeholder="Commodity, Item oder Terminal suchen …"
@@ -411,9 +384,6 @@
 					<span class="spin"></span>
 					<div class="big" style="margin-top: 12px">Erster Sync läuft</div>
 					<div class="sm">Commodities · Terminals · Preise — danach wird sofort lokal gesucht.</div>
-					<div class="sm" style="margin-top: 8px; font-size: 11px; opacity: 0.65">
-						boot: {bootTrace} · phase: {phase} · status: {status ? 'ok' : '—'}
-					</div>
 				</div>
 			</div>
 

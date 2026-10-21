@@ -233,6 +233,13 @@ pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
     if let Some(st) = app.try_state::<OverlayState>() {
         let was = st.game_running.swap(running, Ordering::Release);
         if was != running {
+            // Smoke mode (ARCH_OVERLAY_SMOKE=1, debug builds only) keeps the
+            // overlay visible for screenshotting even when the game flaps in
+            // and out of /proc — the test must not fight the poller.
+            #[cfg(debug_assertions)]
+            if !running && std::env::var_os("ARCH_OVERLAY_SMOKE").is_some() {
+                return;
+            }
             apply_visibility(app, st.user_visible.load(Ordering::SeqCst) && running);
             emit_state(app);
         }
@@ -390,14 +397,6 @@ pub fn overlay_get_state(app: tauri::AppHandle) -> OverlaySnapshot {
         game_running: false,
         click_through: true,
     })
-}
-
-/// Diagnostic ping (diagnose 2026-10-21): pure bool return, no state, no
-/// main-thread work — isolates whether IPC itself resolves in a window.
-#[tauri::command]
-pub fn ping() -> bool {
-    log::warn!("ping() invoked");
-    true
 }
 
 /// Set click-through (focus vs. input-transparent) from the frontend.

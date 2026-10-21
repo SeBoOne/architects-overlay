@@ -181,7 +181,6 @@ pub async fn get_prices(
 /// Snapshot of cache freshness / sync state for the footer status line.
 #[tauri::command]
 pub fn sync_status(state: State<'_, TradeState>) -> SyncStatus {
-    log::warn!("sync_status() invoked");
     build_status(&state.provider, &state.cache, &state.tracker)
 }
 
@@ -197,9 +196,7 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
     let handle = app.clone();
 
     // Only one sweep at a time; a concurrent call just re-reads the status.
-    log::warn!("sync_now() invoked, syncing={}", tracker.syncing.load(Ordering::SeqCst));
     if !tracker.syncing.swap(true, Ordering::SeqCst) {
-        log::warn!("sync_now: starting sweep");
         let outcome: Result<(), String> = sweep(provider.as_ref(), cache.as_ref()).await;
         {
             let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
@@ -226,7 +223,7 @@ fn maybe_start_background(
     if tracker.background.swap(true, Ordering::SeqCst) {
         return;
     }
-    let _ = cache::sync::spawn_sync(
+    _ = cache::sync::spawn_sync(
         provider.clone(),
         cache.clone(),
         cache::sync::DEFAULT_INTERVAL,
@@ -238,10 +235,8 @@ fn maybe_start_background(
 /// stays truthful about the "online" flag).
 async fn sweep(provider: &dyn DataProvider, cache: &Cache) -> Result<(), String> {
     for (_kind, label, entity_kind) in GROUPS {
-        log::warn!("sweep: {label} — checking freshness");
         let fresh = cache.is_fresh(*entity_kind).map_err(|e| format!("Cache-Fehler: {e}"))?;
         if fresh {
-            log::warn!("sweep: {label} fresh, skip");
             continue;
         }
         log::info!("sync: fetching {label} (stale)");
@@ -272,11 +267,22 @@ fn build_status(
             count,
         });
     }
+    // Live snapshot of the worker's last error. The GUI thread (commands run on
+    // the main thread under WebKitGTK) must NEVER block on the async worker's
+    // mutex — a stuck sync must not freeze the overlay, so read with try_lock:
+    // if the worker is mid-write, show no error and stay optimistic.
+    let last_error: Option<String> = tracker
+        .last_error
+        .try_lock()
+        .ok()
+        .map(move |guard| guard.clone())
+        .flatten();
+    let online = last_error.is_none();
     SyncStatus {
         provider: provider.name(),
         syncing: tracker.syncing.load(Ordering::SeqCst),
-        last_error: tracker.last_error.lock().expect("tracker mutex poisoned").clone(),
-        online: tracker.last_error.lock().expect("tracker mutex poisoned").is_none(),
+        last_error,
+        online,
         datasets,
     }
 }
