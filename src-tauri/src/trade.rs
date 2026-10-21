@@ -49,6 +49,8 @@ const PER_GROUP_LIMIT: u32 = 12;
 pub struct SyncTracker {
     pub syncing: AtomicBool,
     pub last_error: Mutex<Option<String>>,
+    /// Guards the one-time start of the background TTL refresh loop.
+    pub background: AtomicBool,
 }
 
 impl Default for SyncTracker {
@@ -56,6 +58,7 @@ impl Default for SyncTracker {
         Self {
             syncing: AtomicBool::new(false),
             last_error: Mutex::new(None),
+            background: AtomicBool::new(false),
         }
     }
 }
@@ -164,6 +167,7 @@ pub async fn get_prices(
     state: State<'_, TradeState>,
     commodity: String,
 ) -> Result<PriceDetail, String> {
+    maybe_start_background(&state.provider, &state.cache, &state.tracker);
     let prices = state.provider.prices(&commodity).await.map_err(friendly)?;
     let fetched_at = now_unix();
     Ok(PriceDetail {
@@ -198,6 +202,9 @@ pub fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> SyncStatus {
             *guard = outcome.err();
             drop(guard);
             tracker.syncing.store(false, Ordering::SeqCst);
+            // The background TTL loop runs on the same (tokio) runtime — safe
+            // to start now; the guard makes it a one-time rollout.
+            maybe_start_background(&provider, &cache, &tracker);
             let _ = handle.emit(SYNC_EVENT, build_status(&provider, &cache, &tracker));
         });
     }
@@ -207,6 +214,25 @@ pub fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> SyncStatus {
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/// Start the background TTL refresh loop, exactly once. Must only run from
+/// inside the Tokio runtime (async command / spawned task) — the async_trait /
+/// tokio code inside `cache::sync::spawn_sync` panics otherwise, so this must
+/// never be called from `setup`.
+fn maybe_start_background(
+    provider: &Arc<dyn DataProvider>,
+    cache: &Arc<Cache>,
+    tracker: &SyncTracker,
+) {
+    if tracker.background.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let _ = cache::sync::spawn_sync(
+        provider.clone(),
+        cache.clone(),
+        cache::sync::DEFAULT_INTERVAL,
+    );
+}
 
 /// Re-fetch every reference dataset that is older than its TTL. Stops at the
 /// first failure and reports it (the sweep is all-or-nothing so the tracker

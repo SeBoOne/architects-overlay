@@ -7,6 +7,10 @@ license = "MIT"
 repository = "https://git.sebo-home.de/sebo/architects-overlay"
 edition = "2024"
 rust-version = "1.90"
+# Ambiguity guard for `cargo run`/`pnpm tauri dev`: the crate ships a second
+# binary (src/bin/arch-overlay.rs, the Wayland socket CLI). Default the run
+# target to the app itself.
+default-run = "architects-overlay"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
