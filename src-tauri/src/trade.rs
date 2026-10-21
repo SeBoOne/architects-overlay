@@ -181,6 +181,7 @@ pub async fn get_prices(
 /// Snapshot of cache freshness / sync state for the footer status line.
 #[tauri::command]
 pub fn sync_status(state: State<'_, TradeState>) -> SyncStatus {
+    log::warn!("sync_status() invoked");
     build_status(&state.provider, &state.cache, &state.tracker)
 }
 
@@ -196,7 +197,9 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
     let handle = app.clone();
 
     // Only one sweep at a time; a concurrent call just re-reads the status.
+    log::warn!("sync_now() invoked, syncing={}", tracker.syncing.load(Ordering::SeqCst));
     if !tracker.syncing.swap(true, Ordering::SeqCst) {
+        log::warn!("sync_now: starting sweep");
         let outcome: Result<(), String> = sweep(provider.as_ref(), cache.as_ref()).await;
         {
             let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
@@ -235,8 +238,10 @@ fn maybe_start_background(
 /// stays truthful about the "online" flag).
 async fn sweep(provider: &dyn DataProvider, cache: &Cache) -> Result<(), String> {
     for (_kind, label, entity_kind) in GROUPS {
+        log::warn!("sweep: {label} — checking freshness");
         let fresh = cache.is_fresh(*entity_kind).map_err(|e| format!("Cache-Fehler: {e}"))?;
         if fresh {
+            log::warn!("sweep: {label} fresh, skip");
             continue;
         }
         log::info!("sync: fetching {label} (stale)");

@@ -392,6 +392,14 @@ pub fn overlay_get_state(app: tauri::AppHandle) -> OverlaySnapshot {
     })
 }
 
+/// Diagnostic ping (diagnose 2026-10-21): pure bool return, no state, no
+/// main-thread work — isolates whether IPC itself resolves in a window.
+#[tauri::command]
+pub fn ping() -> bool {
+    log::warn!("ping() invoked");
+    true
+}
+
 /// Set click-through (focus vs. input-transparent) from the frontend.
 #[tauri::command]
 pub fn overlay_set_click_through(app: tauri::AppHandle, ignore: bool) -> bool {
