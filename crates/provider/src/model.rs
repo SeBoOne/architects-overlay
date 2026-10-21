@@ -183,13 +183,15 @@ impl std::str::FromStr for ListingType {
 /// How marketplace offers are ordered (client-side — the UEX API exposes no
 /// sort parameter, only filter inputs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum OfferSort {
     /// `date_added` descending (API default order).
+    #[serde(rename = "newest")]
     Newest,
     /// Unit price ascending (cheapest first).
+    #[serde(rename = "price_asc")]
     PriceAsc,
     /// Unit price descending (most expensive first).
+    #[serde(rename = "price_desc")]
     PriceDesc,
 }
 

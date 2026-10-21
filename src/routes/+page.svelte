@@ -100,7 +100,7 @@
 	// Selected offer → deep-link detail view.
 	let offerDetail = $state<Offer | null>(null);
 	// Client-side filter/order controls (all applied server-side by the provider).
-	let mSort = $state<OfferSort>('price_asc');
+	let mSort = $state<OfferSort>('newest');
 	let mOp = $state<'all' | MarketOp>('all');
 	let mRegion = $state('all');
 	// Free-text filter (title/description/seller) — provider's `q`.
