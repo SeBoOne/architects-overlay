@@ -1,0 +1,9 @@
+[package]
+name = "settings"
+version = "0.1.0"
+description = "Config persistence in the App-Config-Dir (API key, hotkey, etc.)"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+dirs = "7"

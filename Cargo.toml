@@ -1,0 +1,17 @@
+# Cargo workspace — SC Architects Overlay
+#
+# Layered structure so the Tauri UI never touches provider-specific types:
+#
+#   src-tauri/          Tauri v2 app shell (window, lifecycle)
+#   crates/provider/    DataProvider trait + shared DTOs (the seam)
+#   crates/uex-client/  UEX API client; first DataProvider impl
+#   crates/cache/       SQLite cache (rusqlite) — entity/price/marketplace, TTL
+#   crates/game-detection/  Star Citizen process detection
+#   crates/settings/    Config persistence (App-Config-Dir, API key)
+#
+# Dependency direction: app -> provider/uex_client/cache/... ; provider has no
+# deps on the rest. UEX must never leak into the UI layer — swap via `provider`.
+
+[workspace]
+members = ["src-tauri", "crates/*"]
+resolver = "3"

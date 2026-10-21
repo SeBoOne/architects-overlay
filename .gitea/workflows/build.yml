@@ -1,0 +1,76 @@
+# Gitea Actions — build skeleton
+#
+# Baut bei Tag-Push (v*) Linux- und Windows-Release-Bundles via tauri-action.
+#
+# STATUS (Scaffold): Struktur-Skeleton — läuft NOCH NICHT grün. Gründe:
+#   - Windows-Runner: braucht einen eingerichteten Gitea-Actions-Runner
+#     (Admin; dieser Job ist bewusst noch nicht ausgestattet).
+#   - `actions/`-Org und `tauri-apps/*` müssen im Gitea-Runner als Mirror/
+#     Eingangs-Mapping eingerichtet sein (siehe Gitea Docs "Actions").
+# Sobald ein Runner registriert ist, kann der Job über Tags ausgelöst werden.
+#
+# Ablauf: Checkout → Node/pnpm → Rust-Toolchain → UI bauen → tauri-action
+# erzeugt .deb/.AppImage (Linux) bzw. .exe/.msi (Windows) und hängt sie an die
+# Tag-Release an.
+
+name: build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: natives Bundle (deb, AppImage). Der derzeitige dev-Host
+          # (Omarchy) kann diesen Pfad lokal gegenprüfen.
+          - platform: ubuntu-22.04
+            args: ''
+          # Windows: Release-Bundle signiert/nicht-signiert. Braucht einen
+          # konfigurierten windows Runner (Admin) — TODO.
+          - platform: windows-latest
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/target
+            ~/.cargo/registry
+          key: cargo-${{ matrix.platform }}
+
+      # tauri-action führt `pnpm build` (= vite build → ./build) selbst aus,
+      # dann `cargo build --release` in src-tauri und bündelt je Plattform.
+      - name: Build with Tauri
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: app-v__VERSION__
+          releaseName: 'Architects Overlay v__VERSION__'
+          releaseBody: 'see the assets to download this version'
+          args: ${{ matrix.args }}

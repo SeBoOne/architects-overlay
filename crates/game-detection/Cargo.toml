@@ -1,0 +1,6 @@
+[package]
+name = "game_detection"
+version = "0.1.0"
+description = "Star Citizen process detection (Linux /proc, Windows tasklist)"
+edition = "2024"
+rust-version = "1.90"

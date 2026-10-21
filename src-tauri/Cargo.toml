@@ -1,0 +1,33 @@
+[package]
+name = "architects-overlay"
+version = "0.1.0"
+description = "SC Architects Overlay — Tauri v2 + SvelteKit desktop overlay"
+authors = ["SeBo"]
+license = "MIT"
+repository = "https://git.sebo-home.de/sebo/architects-overlay"
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "architects_overlay_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.3" }
+
+[dependencies]
+# Workspace seam crates. The UI shell may use every module; `provider` is the
+# stable boundary the providers plug into.
+provider = { path = "../crates/provider" }
+uex_client = { path = "../crates/uex-client" }
+cache = { path = "../crates/cache" }
+game_detection = { path = "../crates/game-detection" }
+settings = { path = "../crates/settings" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+tauri = { version = "2.12.4" }
+tauri-plugin-log = "2"

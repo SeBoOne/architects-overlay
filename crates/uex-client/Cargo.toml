@@ -1,0 +1,10 @@
+[package]
+name = "uex_client"
+version = "0.1.0"
+description = "UEX trade-data client — first DataProvider implementation"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+provider = { path = "../provider" }
+serde = { version = "1.0", features = ["derive"] }

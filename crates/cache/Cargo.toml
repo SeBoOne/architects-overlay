@@ -1,0 +1,9 @@
+[package]
+name = "cache"
+version = "0.1.0"
+description = "SQLite cache for entities, prices and marketplace offers (rusqlite)"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+rusqlite = "0.40"

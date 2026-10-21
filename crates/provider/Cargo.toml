@@ -1,0 +1,9 @@
+[package]
+name = "provider"
+version = "0.1.0"
+description = "DataProvider abstraction — the seam between SC trade data sources and the overlay UI"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
