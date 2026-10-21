@@ -197,6 +197,25 @@ Free-Tier 2000 Minuten/Monat, ein Tauri-Build braucht ~10 Min ≈ 20 Windows-Min
 3. Windows-Secrets: `GITEA_TOKEN` (Repo-Write) als GitHub-Secret anlegen,
    damit die Release-Assets zurück auf git.sebo-home.de hochgeladen werden
    (gleiche API-Logik wie im Linux-Job).
+
+   **Konto-Token (Stand 2026-10-21, angelegt als `gh-ci-release`):**
+   Scope ist bewusst **minimal** auf `write:repository` beschränkt (reicht für
+   das Anlegen/Ergänzen von Releases samt Asset-Upload zurück zu
+   git.sebo-home.de/sebo/architects-overlay); kein `write:user`/Admin-Scope.
+   Das Secret trägt exakt den Namen `GITEA_TOKEN`.
+
+   **Ablauf & Rotation:** Gitea-Konto-Tokens haben **kein** festes Ablaufdatum —
+   sie laufen nicht von selbst ab. Einsatzdauer also bewusst begrenzen:
+   - **Jährlich** (oder sobald der Token einem Dritten auffällt / geleakt ist)
+     rotieren: in Gitea → Einstellungen → Anwendungen den alten Token löschen,
+     unter exakt dem Namen `gh-ci-release` einen neuen mit Scope
+     `write:repository` anlegen, dann
+     `gh secret set GITEA_TOKEN --repo SeBoOne/architects-overlay` mit den
+     neuen Token-Wert ausführen.
+   - Das Gitea-Web-UI zeigt für jede Anwendung den Zeitpunkt der **letzten
+     Nutzung** (`updated_at`) — dort erkennen, ob ein Token noch gebraucht wird.
+   - Niemals den Token in Versionskontrolle, Issues oder CI-Logs ablegen; nur
+     als GitHub-Secret hinterlegen.
 4. Tags an GitHub spiegeln (Push-Mirror mirrored Tags), GitHub baut NSIS/MSI,
    lädt die Windows-Assets an die Gitea-Release.
 
