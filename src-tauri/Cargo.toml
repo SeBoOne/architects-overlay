@@ -15,7 +15,7 @@ name = "architects_overlay_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.3" }
+tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
 # Workspace seam crates. The UI shell may use every module; `provider` is the
@@ -29,5 +29,22 @@ settings = { path = "../crates/settings" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
-tauri = { version = "2.12.4" }
+tauri = { version = "2.12.4", features = [] }
 tauri-plugin-log = "2"
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-global-shortcut = "2.4.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Cursor position for the "open on the monitor under the pointer" placement.
+# Already in the dependency tree (pulled by global-shortcut), so no extra
+# build cost on Linux.
+x11rb = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+# Cursor position (GetCursorPos) for pointer-monitor placement on Windows.
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+# Test-only: enables `tauri::test` (mock runtime) for the overlay unit tests.
+[dev-dependencies]
+tauri = { version = "2.12.4", features = ["test"] }
