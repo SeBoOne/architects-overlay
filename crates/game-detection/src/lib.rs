@@ -201,6 +201,15 @@ mod tests {
     fn proc_scan_detects_spawned_star_citizen() {
         use std::time::Duration;
 
+        // Environment guard: if the real game (or any StarCitizen-named
+        // process, e.g. launcher/game under Wine) is already running, the
+        // "flip off after the test child exits" assertion can never pass.
+        // Skip instead of failing — the scanner is behaving correctly.
+        if is_game_running() {
+            eprintln!("SKIP: a real StarCitizen process is running — e2e flip-off assertion not testable");
+            return;
+        }
+
         // `exec -a` sets argv[0], so the child's /proc/<pid>/cmdline reads
         // "StarCitizen.exe". Lifecycle is bounded (sleep 4) so a failure can
         // never leak a lingering process.
