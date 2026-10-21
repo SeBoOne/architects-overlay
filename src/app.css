@@ -1,123 +1,1021 @@
-/* ===========================================================
-   Architects Overlay — Global styles
-   Dark mode by default (CSS variables). No light theme needed:
-   this is a game overlay that lives over Star Citizen.
-   =========================================================== */
+/* ===========================================================================
+   Architects Overlay — Suchpalette (Design-Variante C „COCKPIT", HUD Amber)
+   ===========================================================================
+   Umsetzung des Farb-/Token-Vertrags aus dem Designer-Bundle (t_06285098):
+   - Nur die unten deklarierten CSS-Variablen; KEIN Literalfarbwert im Komponenten-CSS.
+   - Palettenwechsel ist eine Ein-Zeilen-Änderung `data-palette` auf <html>.
+   - Opak (kein backdrop-filter) ⇒ konstanter Kontrast über jedem Spielgrund.
+   - Layout-Metriken folgen der Layout-Spezifikation (660 px, Cut-Corners, …).
+   =========================================================================== */
 
+/* --------------------------- Paletten (Token-Vertrag) -------------------- */
+/* Variante C: COCKPIT. Drei Motive vorbereitet — amber ist die Default-Wahl. */
+html[data-palette="amber"] {
+	/* Flächen: Basis / Selektion+KPIs / Leisten */
+	--panel: #11100d;
+	--panel2: #1b1813;
+	--panel3: #0c0b09;
+	/* Linien: Hairline / sichtbare Kante */
+	--line: #332c1f;
+	--lineb: #4a3f2b;
+	/* Text: Haupt / Sekundär / Mikro-Label */
+	--fg: #fdf6e8;
+	--fgdim: #c3b49a;
+	--fgfaint: #a3927a;
+	/* Akzent / heller Akzent / gedämpfter Akzent */
+	--accent: #f2a33c;
+	--accent-h: #ffc46e;
+	--accent-d: #7d5220;
+	/* Datenfarben: Kauf / Verkauf / Status */
+	--buy: #6bd694;
+	--sell: #ffcb63;
+	--ok: #6bd694;
+	--warn: #ffcb63;
+	--alert: #ff7a5c;
+}
+
+html[data-palette="mfcd"] {
+	--panel: #0a120e;
+	--panel2: #122019;
+	--panel3: #070d0a;
+	--line: #1e3328;
+	--lineb: #2e4c3b;
+	--fg: #e9fbf2;
+	--fgdim: #9dc0ae;
+	--fgfaint: #84a795;
+	--accent: #4be08a;
+	--accent-h: #95f7bd;
+	--accent-d: #1f6a42;
+	--buy: #95f7bd;
+	--sell: #ffcb63;
+	--ok: #95f7bd;
+	--warn: #ffcb63;
+	--alert: #ff7a5c;
+}
+
+html[data-palette="bloom"] {
+	--panel: #0d0c16;
+	--panel2: #171528;
+	--panel3: #090811;
+	--line: #262139;
+	--lineb: #3a3355;
+	--fg: #f1eefc;
+	--fgdim: #b0a8cc;
+	--fgfaint: #9a92b8;
+	--accent: #a98bf5;
+	--accent-h: #cfbcff;
+	--accent-d: #4d3a86;
+	--buy: #6bd694;
+	--sell: #ffcb63;
+	--ok: #6bd694;
+	--warn: #ffcb63;
+	--alert: #ff7a5c;
+}
+
+/* --------------------------- Layout-Tokens ------------------------------- */
 :root {
-	/* base surfaces */
-	--bg: #0d0f12;            /* app background */
-	--surface: #151922;       /* card / panel */
-	--surface-hover: #1c2230;
-	--border: #2a303d;
-	--border-strong: #3a4352;
-
-	/* baseline light-grey text on dark */
-	--text: #e6e8ee;
-	--text-muted: #9aa3b2;
-	--text-faint: #5d6673;
-
-	/* single accent for focus / active */
-	--accent: #e8b34a;        /* warm SC-like gold */
-	--accent-contrast: #14161c;
-
-	/* status colors */
-	--ok: #4ec06a;
-	--warn: #e8b34a;
-	--danger: #e2505a;
-
-	/* chrome metrics */
-	--radius: 10px;
-	--radius-sm: 6px;
-	--font-ui: 'Inter', 'Segoe UI', system-ui, sans-serif;
-
+	--w: 660px;             /* Zielbreite: min(660px, 94vw) */
+	--row-h: 54px;         /* Variante C */
+	--radius: 0;           /* Variante C nutzt clip-path statt Radius */
+	--font-ui: 'Inter', 'Liberation Sans', system-ui, sans-serif;
+	--font-mono: 'JetBrainsMono NF', 'JetBrainsMono Nerd Font', 'Liberation Mono', monospace;
 	color-scheme: dark;
 }
 
+/* --------------------------- Basis --------------------------------------- */
 *,
 *::before,
 *::after {
 	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
 }
 
 html,
 body {
 	height: 100%;
-	margin: 0;
+	/* Spotlight-Fenster ist transparent — das Spiel scheint durch. Die
+	   Haupter-CSS setzt einen opaken Grund, sobald data-window="main" steht. */
+	background: transparent;
+	color: var(--fg);
+	font-family: var(--font-ui);
+	-webkit-font-smoothing: antialiased;
+	overflow: hidden;
 }
 
-body {
-	background: var(--bg);
-	color: var(--text);
-	font-family: var(--font-ui);
-	font-size: 14px;
-	line-height: 1.45;
-	-webkit-font-smoothing: antialiased;
-	overflow: hidden; /* overlay window: no scrollbars */
+html[data-window="main"] body {
+	background: #04060a;
 }
 
 ::selection {
 	background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-button {
-	font: inherit;
-	color: inherit;
+/* --------------------------- Palette-Rahmen ------------------------------ */
+.pal-root {
+	width: min(var(--w), 94vw);
+	margin: 0 auto;
+	position: relative;
+}
+
+/* Shell: opak, Cut-Corners 16px, Akzentkante links, Schlagschatten als
+   Abgrenzung zum Gameplay (Design: Kantentrennung leistet bewusst der Schatten). */
+.shell {
+	position: relative;
+	overflow: hidden;
+	background: var(--panel);
+	border: 1px solid var(--lineb);
+	border-left: 3px solid var(--accent);
+	border-radius: 0;
+	clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
+	box-shadow: 0 20px 52px rgba(0, 0, 0, 0.78);
+}
+
+.deco {
+	position: absolute;
+	pointer-events: none;
+}
+
+.deco.t1 {
+	display: none; /* Variante C nutzt die Akzentkante statt der oberen Linie */
+}
+
+.deco.t2 {
+	right: 0;
+	bottom: 0;
+	width: 56px;
+	height: 3px;
+	background: var(--accent-h);
+}
+
+/* --------------------------- Suchzeile ----------------------------------- */
+.srow {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 60px;
+	padding: 0 16px;
+	background: var(--panel2);
+	border-bottom: 2px solid var(--accent);
+}
+
+.srow .ico {
+	width: 17px;
+	height: 17px;
+	flex: 0 0 17px;
+	color: var(--accent);
+}
+
+.srow .ico svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+.q {
+	flex: 1;
 	background: none;
 	border: 0;
+	outline: 0;
+	color: var(--fg);
+	font: 500 20px/1 var(--font-ui);
+	letter-spacing: 0.005em;
+}
+
+.q::placeholder {
+	color: var(--fgfaint);
+}
+
+.q.ph {
+	color: var(--fgfaint);
+}
+
+.caret {
+	width: 2px;
+	height: 20px;
+	background: var(--accent);
+	display: inline-block;
+	animation: bl 1.05s steps(1, end) infinite;
+	vertical-align: -3px;
+}
+
+@keyframes bl {
+	0%,
+	49% {
+		opacity: 1;
+	}
+	50%,
+	100% {
+		opacity: 0;
+	}
+}
+
+.smode {
+	font: 700 10px/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--accent);
+	white-space: nowrap;
+}
+
+.esc {
+	font: 600 10px/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--fgfaint);
+	border: 1px solid var(--lineb);
+	padding: 3px 6px;
+	border-radius: 3px;
+}
+
+/* --------------------------- Filterleiste --------------------------------- */
+.fbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 12px;
+	border-top: 0;
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel3);
+}
+
+.fbar .spacer {
+	flex: 1;
+}
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 9px;
+	white-space: nowrap;
+	font: 700 10px/1.7 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--fgdim);
+	border: 1px solid var(--lineb);
+	border-radius: 0;
+	background: transparent;
 	cursor: pointer;
 }
 
-input,
-select {
-	font: inherit;
-	color: var(--text);
-	background: var(--surface);
-	border: 1px solid var(--border);
-	border-radius: var(--radius-sm);
-	padding: 8px 12px;
+.chip.is-on {
+	color: #0b0b0b;
+	background: var(--accent);
+	border-color: var(--accent);
 }
 
-/* Utility */
-.muted {
-	color: var(--text-muted);
-}
-.faint {
-	color: var(--text-faint);
+.chip.is-on .dot {
+	background: #0b0b0b;
 }
 
-/* ===========================================================
-   Overlay shell — a centered "palette" that the game client
-   overlays. Placeholder skeleton; real layout lands with the
-   Overlay-Fenster task.
-   =========================================================== */
-
-.app-root {
-	display: grid;
-	grid-template-rows: auto 1fr auto;
-	height: 100%;
-	background: var(--surface);
-	border: 1px solid var(--border-strong);
-	border-radius: var(--radius);
+.chip .dot {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: currentColor;
+	opacity: 0.8;
 }
 
-.app-header {
-	padding: 8px 16px;
-	font-size: 11px;
-	letter-spacing: 0.04em;
-	color: var(--text-faint);
-	user-select: none;
+.chip.warn {
+	color: var(--warn);
+	border-color: var(--warn);
 }
 
-.app-body {
+/* --------------------------- Ergebnisliste --------------------------------- */
+.list {
+	max-height: min(60vh, 452px);
 	overflow: auto;
-	padding: 16px;
+	scrollbar-width: thin;
 }
 
-.app-footer {
-	padding: 6px 16px;
+.list::-webkit-scrollbar {
+	width: 8px;
+}
+
+.list::-webkit-scrollbar-thumb {
+	background: var(--lineb);
+	border-radius: 4px;
+}
+
+.list::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* Gruppenband (Variante C): Vollflächen-Akzentband. Laut Design-Vertrag wird
+   es auf „Unterstreichung + Chip" zurückgenommen, sobald >3 Gruppen stehen —
+   die Palette zeigt maximal 3, also bleibt das Band. */
+.vgroup {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: var(--accent);
+	color: #0b0b0b;
+	padding: 6px 14px;
+	border-top: 0;
+	margin: 0;
+	font: 700 10px/1 var(--font-mono);
+	letter-spacing: 0.2em;
+	text-transform: uppercase;
+}
+
+.vgroup .n {
+	color: #0b0b0b;
+	opacity: 0.75;
+}
+
+.row {
+	display: grid;
+	grid-template-columns: 26px 1fr auto;
+	gap: 12px;
+	align-items: center;
+	padding: 7px 16px;
+	min-height: var(--row-h);
+	border-left: 0;
+	border-bottom: 1px solid var(--line);
+	cursor: default;
+}
+
+.row.is-sel {
+	background: var(--panel2);
+	box-shadow: inset 4px 0 0 var(--accent-h);
+}
+
+.row .ic {
+	width: 26px;
+	height: 26px;
+	border-radius: 0;
+	border: 1px solid var(--lineb);
+	background: var(--panel3);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font: 700 10px/1 var(--font-mono);
+	color: var(--fgdim);
+}
+
+.row.is-sel .ic {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.row .name {
+	font-size: 14.5px;
+	font-weight: 500;
+	color: var(--fg);
+}
+
+.row .sub {
+	font-size: 11.5px;
+	color: var(--fgdim);
+	margin-top: 2px;
+}
+
+.row .right {
+	text-align: right;
+	font: 600 12.5px/1.35 var(--font-mono);
+	color: var(--fgdim);
+	white-space: nowrap;
+}
+
+.row .right b {
+	color: var(--fg);
+	font-weight: 600;
+}
+
+.row .right .sub2 {
+	font-size: 10px;
+	color: var(--fgfaint);
+}
+
+.stale {
+	color: var(--warn);
+}
+
+.row-empty {
+	color: var(--fgfaint);
+	font: 500 12px/1.4 var(--font-ui);
+	text-align: center;
+	padding: 12px 16px;
+}
+
+/* --------------------------- Detail --------------------------------------- */
+.dhead {
+	padding: 14px 16px 12px;
+	border-top: 0;
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel2);
+}
+
+.dhead .t {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.dhead h2 {
+	font: 600 21px/1.1 var(--font-ui);
+	letter-spacing: -0.01em;
+}
+
+.dhead .tag {
+	font: 700 10px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgdim);
+	border: 1px solid var(--lineb);
+	padding: 3px 6px;
+	border-radius: 3px;
+}
+
+.kpis {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 1px;
+	background: var(--lineb);
+	border: 1px solid var(--lineb);
+	margin: 12px 0 10px;
+}
+
+.kpi {
+	background: var(--panel);
+	padding: 9px 11px;
+}
+
+.kpi .k {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.kpi .v {
+	font: 600 17px/1.4 var(--font-mono);
+	color: var(--fg);
+}
+
+.kpi .v.sell {
+	color: var(--sell);
+}
+
+.kpi .v.buy {
+	color: var(--buy);
+}
+
+.kpi .u {
+	font: 500 10.5px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+}
+
+.dtable {
+	width: 100%;
+	border-collapse: collapse;
+	font-family: var(--font-mono);
+	font-size: 12.5px;
+}
+
+.dtable th {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+	text-align: right;
+	padding: 6px 10px;
+	border-bottom: 1px solid var(--lineb);
+}
+
+.dtable th:first-child {
+	text-align: left;
+}
+
+.dtable td {
+	padding: 7px 10px;
+	border-bottom: 1px solid var(--line);
+	text-align: right;
+	color: var(--fgdim);
+}
+
+.dtable td:first-child {
+	text-align: left;
+	color: var(--fg);
+}
+
+.dtable tr.best td {
+	background: var(--panel2);
+	box-shadow: inset 3px 0 0 var(--accent-h);
+}
+
+.dtable tr.best td:nth-child(3) {
+	color: var(--sell);
+	font-weight: 600;
+}
+
+.bar {
+	display: block;
+	height: 2px;
+	background: var(--lineb);
+	margin-top: 5px;
+	position: relative;
+}
+
+.bar i {
+	position: absolute;
+	left: 0;
+	top: 0;
+	height: 2px;
+	background: var(--accent);
+	display: block;
+}
+
+.note {
+	padding: 9px 16px 12px;
+	font: 500 11px/1.5 var(--font-mono);
+	color: var(--fgfaint);
+}
+
+.note .src {
+	color: var(--accent);
+}
+
+/* --------------------------- Idle / zuletzt -------------------------------- */
+.sect {
+	padding: 12px 16px 4px;
+}
+
+.sect .h {
+	font: 700 10px/1 var(--font-mono);
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+	margin-bottom: 9px;
+}
+
+.recent {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding: 0 16px 12px;
+}
+
+.recent .r {
+	padding: 5px 9px;
+	border: 1px solid var(--lineb);
+	border-radius: 3px;
+	font: 500 12px/1.4 var(--font-ui);
+	color: var(--fgdim);
+}
+
+.recent .r b {
+	font-weight: 500;
+	color: var(--fg);
+}
+
+/* --------------------------- Marketplace (Phase 2) ------------------------ */
+.pane-market {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.mbar,
+.mbar2 {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel3);
+	flex-wrap: wrap;
+}
+
+.mbar2 {
+	border-bottom: 0;
+}
+
+.mbar .m-spacer,
+.mbar2 .m-spacer {
+	flex: 1;
+}
+
+.m-lbl {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.mq {
+	flex: 1;
+	min-width: 140px;
+	background: var(--panel);
+	border: 1px solid var(--lineb);
+	color: var(--fg);
+	font: 500 12px/1.4 var(--font-ui);
+	padding: 5px 9px;
+	outline: none;
+}
+
+.mq:focus {
+	border-color: var(--accent);
+}
+
+.mlist {
+	max-height: min(54vh, 400px);
+	overflow: auto;
+	scrollbar-width: thin;
+}
+
+.mrow {
+	display: grid;
+	grid-template-columns: 44px 1fr auto;
+	gap: 10px;
+	align-items: center;
+	padding: 7px 16px;
+	min-height: 46px;
+	border-bottom: 1px solid var(--line);
+	cursor: default;
+}
+
+.mrow.is-sel {
+	background: var(--panel2);
+	box-shadow: inset 4px 0 0 var(--accent-h);
+}
+
+.m-op {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.08em;
+	border: 1px solid var(--lineb);
+	padding: 4px 5px;
+	text-align: center;
+	color: var(--fgdim);
+}
+
+.m-op.sell {
+	color: var(--sell);
+	border-color: color-mix(in srgb, var(--sell) 45%, transparent);
+}
+
+.m-op.buy {
+	color: var(--buy);
+	border-color: color-mix(in srgb, var(--buy) 45%, transparent);
+}
+
+.m-title {
+	font-size: 13.5px;
+	font-weight: 500;
+	color: var(--fg);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.m-sub {
 	font-size: 11px;
-	color: var(--text-faint);
-	border-top: 1px solid var(--border);
-	user-select: none;
+	color: var(--fgdim);
+	margin-top: 2px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.m-right {
+	text-align: right;
+	white-space: nowrap;
+}
+
+.m-price {
+	font: 600 13px/1.35 var(--font-mono);
+	color: var(--sell);
+}
+
+.m-price.buy {
+	color: var(--buy);
+}
+
+.m-price.sell {
+	color: var(--sell);
+}
+
+.m-meta {
+	font: 500 10px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+	margin-top: 2px;
+}
+
+.m-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 8px 14px;
+	background: var(--panel3);
+	border-top: 1px solid var(--lineb);
+	font: 600 10px/1.4 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.src {
+	color: var(--fgdim);
+	font-weight: 600;
+}
+
+/* Detail-Ansicht eines Angebots (Deep-Link) */
+.mdetail {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.md-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 14px 16px 12px;
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel2);
+}
+
+.md-t h2 {
+	font: 600 17px/1.2 var(--font-ui);
+	letter-spacing: -0.01em;
+}
+
+.md-t .tag {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgdim);
+	border: 1px solid var(--lineb);
+	padding: 3px 6px;
+	border-radius: 3px;
+	display: inline-block;
+	margin-top: 6px;
+}
+
+.md-price {
+	text-align: right;
+	white-space: nowrap;
+}
+
+.md-price .v {
+	font: 600 19px/1.2 var(--font-mono);
+	color: var(--sell);
+}
+
+.md-price .v.buy {
+	color: var(--buy);
+}
+
+.md-price .u {
+	font: 500 10.5px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+	margin-top: 3px;
+}
+
+.md-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 14px;
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--line);
+	font: 500 11.5px/1.5 var(--font-ui);
+	color: var(--fgdim);
+}
+
+.md-meta b {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+	margin-right: 5px;
+}
+
+.md-desc {
+	padding: 12px 16px;
+	overflow: auto;
+	max-height: 200px;
+	font: 500 12px/1.6 var(--font-ui);
+	color: var(--fgdim);
+	white-space: pre-wrap;
+	word-break: break-word;
+	border-bottom: 1px solid var(--line);
+}
+
+.md-desc.empty {
+	font-style: italic;
+	color: var(--fgfaint);
+}
+
+.md-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 16px;
+	flex-wrap: wrap;
+}
+
+.md-actions .btn {
+	display: inline-block;
+	padding: 7px 13px;
+	border: 1px solid var(--accent);
+	background: var(--accent);
+	color: #0b0b0b;
+	border-radius: 3px;
+	font: 700 11px/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+
+.md-actions .btn:hover {
+	background: var(--accent-h);
+	border-color: var(--accent-h);
+}
+
+.btn-ghost {
+	display: inline-block;
+	padding: 7px 13px;
+	border: 1px solid var(--lineb);
+	color: var(--fgdim);
+	border-radius: 3px;
+	font: 700 11px/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+
+.btn-ghost:hover {
+	border-color: var(--fgdim);
+}
+
+.md-note {
+	padding: 0 16px 12px;
+	font: 500 10.5px/1.5 var(--font-mono);
+	color: var(--fgfaint);
+}
+
+.md-note .src {
+	word-break: break-all;
+}
+
+/* --------------------------- Status / Lade- / Fehler- / Offline ------------ */
+.center {
+	padding: 34px 20px;
+	text-align: center;
+}
+
+.center .big {
+	font: 600 15px/1.4 var(--font-ui);
+	color: var(--fg);
+	margin-bottom: 6px;
+}
+
+.center .sm {
+	font: 500 12px/1.6 var(--font-mono);
+	color: var(--fgdim);
+}
+
+.center .btn {
+	display: inline-block;
+	margin-top: 14px;
+	padding: 7px 13px;
+	border: 1px solid var(--accent);
+	color: var(--accent);
+	border-radius: 3px;
+	font: 700 11px/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+
+.spin {
+	width: 16px;
+	height: 16px;
+	border: 2px solid var(--lineb);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	animation: sp 0.8s linear infinite;
+	display: inline-block;
+}
+
+@keyframes sp {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.sk {
+	height: 11px;
+	background: var(--panel2);
+	border-radius: 2px;
+}
+
+.offlineband {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	padding: 8px 16px;
+	background: var(--panel2);
+	border-bottom: 1px solid var(--warn);
+	font: 700 10.5px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--warn);
+}
+
+.offlineband .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--warn);
+}
+
+/* --------------------------- Fußzeile -------------------------------------- */
+.foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 8px 14px;
+	background: var(--panel3);
+	border-top: 1px solid var(--lineb);
+	font: 600 10px/1.4 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.foot .hints {
+	display: flex;
+	gap: 10px;
+	flex-wrap: nowrap;
+	overflow: hidden;
+}
+
+.foot b {
+	color: var(--fgdim);
+	font-weight: 600;
+}
+
+.foot kbd {
+	color: var(--fgdim);
+}
+
+.sync {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+}
+
+.sync .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--ok);
+}
+
+.sync.load .dot {
+	background: var(--accent);
+}
+
+.sync.alert .dot {
+	background: var(--alert);
+}
+
+.sync.off .dot {
+	background: var(--warn);
+}
+
+/* Spotlight-Zusatz: Statuspunkt (Spiel läuft) + Click-through-Umschalter. */
+.spot-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.spot-status .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--alert);
+	box-shadow: 0 0 6px var(--alert);
+}
+
+.spot-status .dot.live {
+	background: var(--ok);
+	box-shadow: 0 0 6px var(--ok);
+}
+
+.foot button {
+	color: #0b0b0b;
+	background: var(--accent);
+	border-radius: 3px;
+	padding: 3px 9px;
+	font-size: 10px;
+	letter-spacing: 0.06em;
 }

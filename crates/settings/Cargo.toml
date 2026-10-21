@@ -7,3 +7,9 @@ rust-version = "1.90"
 
 [dependencies]
 dirs = "7"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.9"
+log = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

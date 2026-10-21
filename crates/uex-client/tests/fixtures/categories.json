@@ -1,0 +1,26 @@
+{
+ "status": "ok",
+ "http_code": 200,
+ "data": [
+  {
+   "id": 1,
+   "type": "item",
+   "section": "Armor",
+   "name": "Arms",
+   "is_game_related": 1,
+   "is_mining": 0,
+   "date_added": 1689783635,
+   "date_modified": 1749147187
+  },
+  {
+   "id": 2,
+   "type": "item",
+   "section": "Armor",
+   "name": "Backpacks",
+   "is_game_related": 1,
+   "is_mining": 0,
+   "date_added": 1689783635,
+   "date_modified": 1751279778
+  }
+ ]
+}

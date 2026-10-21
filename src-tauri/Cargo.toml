@@ -7,6 +7,10 @@ license = "MIT"
 repository = "https://git.sebo-home.de/sebo/architects-overlay"
 edition = "2024"
 rust-version = "1.90"
+# Ambiguity guard for `cargo run`/`pnpm tauri dev`: the crate ships a second
+# binary (src/bin/arch-overlay.rs, the Wayland socket CLI). Default the run
+# target to the app itself.
+default-run = "architects-overlay"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,7 +19,7 @@ name = "architects_overlay_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.7.3" }
+tauri-build = { version = "2.7.3", features = [] }
 
 [dependencies]
 # Workspace seam crates. The UI shell may use every module; `provider` is the
@@ -29,5 +33,30 @@ settings = { path = "../crates/settings" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
-tauri = { version = "2.12.4" }
+tauri = { version = "2.12.4", features = [] }
 tauri-plugin-log = "2"
+# Deep links: open uexcorp.space listing pages in the system default browser.
+tauri-plugin-opener = "2"
+# Background freshness/health loop (see trade::start_background_refresh): the
+# loop body uses `tokio::time::sleep` while running on Tauri's async runtime.
+tokio = { version = "1", features = ["rt", "time"] }
+
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
+tauri-plugin-global-shortcut = "2.4.1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Cursor position for the "open on the monitor under the pointer" placement.
+# Already in the dependency tree (pulled by global-shortcut), so no extra
+# build cost on Linux.
+x11rb = "0.13"
+
+[target.'cfg(windows)'.dependencies]
+# Cursor position (GetCursorPos) for pointer-monitor placement on Windows.
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+# Test-only: enables `tauri::test` (mock runtime) for the overlay unit tests.
+[dev-dependencies]
+tauri = { version = "2.12.4", features = ["test"] }
+# The trade-module tests implement the async DataProvider trait (async_trait
+# macro) with a stub provider.
+async-trait = "0.1"
