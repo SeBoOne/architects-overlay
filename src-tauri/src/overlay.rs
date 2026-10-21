@@ -79,6 +79,15 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     // window is realized (input-shape on a non-mapped window), so it must
     // never be called while the window is still hidden at startup.
 
+    // Smoke-test / CI hook: `ARCH_OVERLAY_SMOKE=1` (debug builds only) shows
+    // the spotlight window at startup without waiting for Star Citizen, so UI
+    // states can be screenshotted end-to-end. No effect in normal use.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("ARCH_OVERLAY_SMOKE").is_some() {
+        log::info!("smoke mode: showing spotlight window at startup");
+        apply_visibility(app.handle(), true);
+    }
+
     register_global_shortcuts(app);
 
     let handle = app.handle();
@@ -103,7 +112,7 @@ fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Web
     .always_on_top(true)
     .skip_taskbar(true)
     .resizable(false)
-    .inner_size(360., 240.)
+    .inner_size(660., 600.)
     .visible(false) // shown when Star Citizen is detected
     .build()?;
 
@@ -387,6 +396,21 @@ pub fn overlay_get_state(app: tauri::AppHandle) -> OverlaySnapshot {
 #[tauri::command]
 pub fn overlay_set_click_through(app: tauri::AppHandle, ignore: bool) -> bool {
     set_click_through(&app, ignore)
+}
+
+/// Set overlay visibility from the frontend (Esc closes the palette). The
+/// effective visibility stays gated on the game running, exactly like the
+/// hotkey toggle.
+#[tauri::command]
+pub fn overlay_set_visible(app: tauri::AppHandle, visible: bool) -> bool {
+    if let Some(st) = app.try_state::<OverlayState>() {
+        st.user_visible.store(visible, Ordering::Release);
+        let effective = visible && st.game_running.load(Ordering::SeqCst);
+        apply_visibility(&app, effective);
+        emit_state(&app);
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]

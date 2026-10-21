@@ -48,3 +48,6 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_Wind
 # Test-only: enables `tauri::test` (mock runtime) for the overlay unit tests.
 [dev-dependencies]
 tauri = { version = "2.12.4", features = ["test"] }
+# The trade-module tests implement the async DataProvider trait (async_trait
+# macro) with a stub provider.
+async-trait = "0.1"

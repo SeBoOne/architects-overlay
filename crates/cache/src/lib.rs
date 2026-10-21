@@ -272,6 +272,26 @@ impl Cache {
         })
     }
 
+    // ---------- bookkeeping ----------
+
+    /// Seconds since the reference dataset of `kind` was fetched
+    /// (`Ok(None)` = never fetched). Feeds the UI's freshness indicator.
+    pub fn dataset_age(&self, kind: EntityKind) -> Result<Option<u64>> {
+        Ok(self.meta_get(&meta_key(kind))?.map(|ts| now_unix().saturating_sub(ts)))
+    }
+
+    /// Number of cached reference entities of one kind (sync progress UI).
+    pub fn count_entities(&self, kind: EntityKind) -> Result<u64> {
+        self.with(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM entities WHERE kind = ?1",
+                [kind.as_str()],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n as u64)
+        })
+    }
+
     // ---------- prices ----------
 
     /// Whether cached prices for `commodity_id` are younger than `TTL_PRICES`.
