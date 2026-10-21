@@ -14,7 +14,7 @@
 #                                   docs/CI-WINDOWS.md)
 #
 # Gitea-act_runner-Kompatibilität (bewusst minimierter Action-Footprint):
-#   Verwendet werden NUR actions/checkout@v4 + actions/upload-artifact@v4
+#   Verwendet werden NUR actions/checkout@v4 + actions/upload-artifact@v3
 #   (Standard-Set, das act_runner über sein GitHub-Host-Mapping bezieht).
 #   Kein setup-node/setup-pnpm, kein dtolnay/rust-toolchain, kein
 #   tauri-apps/tauri-action: Toolchain kommt per Plain Shell (gepinnte
@@ -81,7 +81,7 @@ jobs:
         run: pnpm tauri build
 
       - name: Artefakte hochladen (CI-Artifact)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: linux-bundle
           path: |
@@ -155,7 +155,7 @@ jobs:
         run: pnpm tauri build
 
       - name: Artefakte hochladen (CI-Artifact)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: windows-bundle
           path: |
