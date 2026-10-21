@@ -219,5 +219,36 @@ Free-Tier 2000 Minuten/Monat, ein Tauri-Build braucht ~10 Min ≈ 20 Windows-Min
 4. Tags an GitHub spiegeln (Push-Mirror mirrored Tags), GitHub baut NSIS/MSI,
    lädt die Windows-Assets an die Gitea-Release.
 
-Aktivierung erst, wenn Windows-Builds gebraucht werden — bis dahin bleibt
-alles auf Gitea/Linux.
+### 8.1 Stand 2026-10-21: GitHub-Push-Mirror ist aktiv
+
+Die Spiegelschaltung wurde umgesetzt und getestet:
+
+- **GitHub-Repo (privat):** `SeBoOne/architects-overlay`
+  (https://github.com/SeBoOne/architects-overlay) — dient als reiner
+  Mirror des Gitea-Repos `sebo/architects-overlay` für die
+  GitHub-Actions-Windows-Builds.
+- **Push-Mirror in Gitea** (Repo-Settings → Mirror → Push-Mirror):
+  - Remote: `https://github.com/SeBoOne/architects-overlay.git`
+  - Authentifizierung: HTTPS über ein SeBoOne-GitHub-Token (mit `repo`-Scope),
+    das Gitea im Mirror-Eintrag speichert. **Wichtig:** `gh-auth`/Account-Token
+    wird nicht in Repo-Dateien oder das Repo `.git/config` gelegt.
+  - Interval: `1h`, `SyncOnCommit: true` → jeder Push/Tag löst einen sofortigen
+    Sync aus (zuverlässiger als nur das Stunden-Intervall).
+  - Es werden **alle Branches und Tags** gespiegelt (`--mirror=push`,
+    konfiguriert als `+refs/heads/*` und `+refs/tags/*`).
+- **Getestet (2026-10-21):** Ein Test-Tag (`test-mirror-…`) wurde zu Gitea
+  gepusht und erschien **sofort** im GitHub-Repo; seine Löschung wurde
+  ebenfalls bidirektional nachgezogen. `v0.1.0`-Tag und alle Branches sind
+  im GitHub-Repo vorhanden.
+- **Hinweis:** Gitea **1.27 akzeptiert keine SSH-URLs** als Push-Mirror
+  (nur `http/https/git`) — SSH-Deploy-Keys funktionieren dafür nicht, die
+  Authentifizierung läuft zwingend über den HTTPS-Token.
+
+**Token-Rotation beim GitHub-Spiegeltoken** (separat vom Gitea-Token):
+Bei Rotation auf dem GitHub-Konto einen neuen Token (minimal `repo`-Scope)
+erzeugen und im **Gitea**-Push-Mirror-Eintrag aktualisieren (Mirror löschen
+und mit neuem Token neu anlegen, oder via Gitea-Web-UI das Passwort-Feld
+erneuern). Wert nie in Versionskontrolle ablegen.
+
+Aktivierung der Windows-Builds selbst erst, wenn sie gebraucht werden (siehe
+Aufgabe „Windows-Build aktivieren"); bis dahin bleibt alles auf Gitea/Linux.
