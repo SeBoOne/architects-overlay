@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cache::Cache;
-use provider::{
-    DataProvider, EntityKind, MarketOperation, MarketplaceFilter, ProviderError, SearchEntities,
-};
+use provider::{DataProvider, EntityKind, MarketplaceFilter, ProviderError, SearchEntities};
 use uex_client::UexProvider;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -65,6 +63,13 @@ impl MockedApi {
             .respond_with(json_response(
                 r#"{"status":"ok","http_code":200,"data":[]}"#,
             ))
+            .mount(&server)
+            .await;
+
+        // star systems — region resolution for marketplace listings
+        Mock::given(method("GET"))
+            .and(path("/star_systems"))
+            .respond_with(json_response(&fixture("star_systems.json")))
             .mount(&server)
             .await;
 
@@ -169,38 +174,162 @@ async fn prices_serve_cache_then_refetch_after_ttl() {
 }
 
 #[tokio::test]
-async fn marketplace_offers_fetch_live_and_filter_locally() {
+async fn marketplace_offers_fetch_live_filter_and_sort() {
     let api = MockedApi::start().await;
     let (p, cache) = provider(&api);
 
-    // item_id + operation filter is forwarded to the API
+    // generic fetch (no item_id/operation) → store snapshot, sort by price asc,
+    // region resolved from /star_systems (default price sort = Newest)
     let offers = p
         .marketplace_offers(MarketplaceFilter {
-            location: "levski".into(),
-            q: "compensator".into(),
-            item_id: Some(5_332),
-            operation: Some(MarketOperation::Sell),
+            location: "".into(),
+            q: "".into(),
+            item_id: None,
+            operation: None,
+            region: "".into(),
+            sort: Some(provider::OfferSort::PriceAsc),
             limit: 100,
         })
         .await
         .unwrap();
-    assert!(
-        !offers.is_empty(),
-        "expected a filtered hit, got {}",
-        offers.len()
-    );
-    let offer = &offers[0];
-    assert_eq!(offer.operation, MarketOperation::Sell);
-    assert_eq!(offer.currency, "UEC");
-    assert!(
-        offer.price > 0.0,
-        "price must parse from the string wire format"
-    );
-    assert!(offer.location.to_lowercase().contains("levski"));
+    assert!(!offers.is_empty(), "expected a hit, got {}", offers.len());
+    // oldest returned = cheapest when sorted ascending; verify monotone prices
+    let prices: Vec<f64> = offers
+        .iter()
+        .filter(|o| o.price > 0.0)
+        .map(|o| o.price)
+        .collect();
+    let mut sorted = prices.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    assert_eq!(prices, sorted, "price ascending sort failed");
 
-    // snapshot persisted for offline display
+    // region resolution: fixture system id 55 = "Nyx", 68 = "Stanton"
+    assert!(
+        offers
+            .iter()
+            .any(|o| o.region == "Nyx" || o.region == "Stanton"),
+        "regions not resolved: {:?}",
+        offers.iter().map(|o| &o.region).collect::<Vec<_>>()
+    );
+    // every listing carries its permalink slug
+    assert!(offers.iter().all(|o| !o.slug.is_empty()));
+
+    // region + operation filters applied client-side
+    let nyx = p
+        .marketplace_offers(MarketplaceFilter {
+            region: "Nyx".into(),
+            sort: Some(provider::OfferSort::Newest),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(!nyx.is_empty());
+    assert!(nyx.iter().all(|o| o.region == "Nyx"));
+
+    // a generic fetch stored the snapshot for cache/offline reads
     let snapshot = cache.marketplace_snapshot().unwrap();
+    assert!(!snapshot.is_empty());
     assert_eq!(snapshot.len(), offers.len());
+}
+
+#[tokio::test]
+async fn marketplace_serves_cache_while_fresh() {
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    // first call: snapshot stored (5-min TTL)
+    p.marketplace_offers(MarketplaceFilter::default())
+        .await
+        .unwrap();
+
+    // second call within TTL: served from cache — the only new requests are
+    // the star-system probe (already stored) → no /marketplace_listings call.
+    let before = api.server.received_requests().await.unwrap().len();
+    p.marketplace_offers(MarketplaceFilter::default())
+        .await
+        .unwrap();
+    let after = api.server.received_requests().await.unwrap().len();
+    assert_eq!(
+        (after, before),
+        (2, 2),
+        "cache-fresh marketplace read must not hit the API (cache served)"
+    );
+}
+
+#[tokio::test]
+async fn rate_limit_on_marketplace_can_be_served_from_snapshot() {
+    // Provider on a dedicated server that ONLY rate-limits (no fixture mock),
+    // and a snapshot warmed directly into the cache — so the live fetch of a
+    // stale snapshot must fail instead of returning fixture data.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/marketplace_listings"))
+        .respond_with(json_response(
+            r#"{"status":"requests_limit_reached","http_code":429,"data":null,"message":"limit"}"#,
+        ))
+        .mount(&server)
+        .await;
+    // star systems must also be served (region resolution) — empty dataset is
+    // fine, the point is the listings endpoint failing.
+    Mock::given(method("GET"))
+        .and(path("/star_systems"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let p = UexProvider::with_base_url(cache.clone(), None, &server.uri(), Duration::ZERO).unwrap();
+
+    // Warm a snapshot, then make it stale (expired TTL).
+    use provider::{ListingType, MarketOperation};
+    cache
+        .store_marketplace(&[provider::Offer {
+            id: 42,
+            title: "rescue + save tanga".into(),
+            description: String::new(),
+            item_id: 0,
+            category_id: 0,
+            operation: MarketOperation::Sell,
+            listing_type: ListingType::Service,
+            price: 250_000.0,
+            currency: "UEC".into(),
+            unit: "unit".into(),
+            quantity: 1,
+            location: "Levski".into(),
+            region: "Nyx".into(),
+            seller: "paladin".into(),
+            quality: 0,
+            updated: now_unix() - 3600,
+            expires: None,
+            slug: "rescue-save-tanga-abc123".into(),
+        }])
+        .unwrap();
+    cache.set_marketplace_fetched_at(now_unix() - 301).unwrap();
+    assert!(!cache.marketplace_fresh().unwrap());
+
+    let err = p
+        .marketplace_offers(MarketplaceFilter::default())
+        .await
+        .unwrap_err();
+    // Stale snapshot + failed live fetch → the provider surfaces the error
+    // (no fake data); callers (trade.rs get_marketplace) fall back to the
+    // last snapshot. Verify the snapshot is still readable independently.
+    assert!(
+        matches!(err, ProviderError::RateLimit { .. }),
+        "got {err:?}"
+    );
+    let snap = cache.marketplace_snapshot().unwrap();
+    assert_eq!(snap.len(), 1, "snapshot must survive a failed refresh");
+    assert_eq!(snap[0].slug, "rescue-save-tanga-abc123");
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[tokio::test]

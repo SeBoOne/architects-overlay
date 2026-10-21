@@ -133,6 +133,10 @@ pub struct ListingRow {
     pub id_item: u64,
     #[serde(default)]
     pub id_category: u64,
+    /// Star system the listing is placed in (0 = unknown) — resolved to a
+    /// region name via `/star_systems`.
+    #[serde(default)]
+    pub id_star_system: u64,
     /// "buy" | "sell".
     #[serde(default)]
     pub operation: String,
@@ -156,12 +160,27 @@ pub struct ListingRow {
     /// Quality on the source's scale (UEX: 0–1000); null when not set.
     #[serde(default)]
     pub quality: Option<u16>,
+    /// The live API sends this sometimes as `null`, sometimes as empty string
+    /// `""` — kept as String so both shapes deserialize. Not used in Phase 2.
     #[serde(default)]
-    pub hours_expiration: Option<u64>,
+    pub hours_expiration: Option<String>,
     #[serde(default)]
     pub date_added: u64,
     #[serde(default)]
     pub date_expiration: Option<u64>,
+    /// Permalink slug on uexcorp.space (deep-link target).
+    #[serde(default)]
+    pub slug: String,
+}
+
+/// `/star_systems` row — few rows, used to resolve listing regions.
+#[derive(Debug, Deserialize)]
+pub struct StarSystemRow {
+    pub id: u64,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub code: Option<String>,
 }
 
 #[cfg(test)]
@@ -206,12 +225,36 @@ mod tests {
             r#"{"id": 179901, "operation": "sell", "type": "item",
                 "price": "400000", "in_stock": 8, "location": "Levski",
                 "user_name": "alexlejero", "date_added": 1792551295,
-                "date_expiration": 1797738895, "quality": null}"#,
+                "date_expiration": 1797738895, "quality": null,
+                "id_star_system": 55,
+                "slug": "stark-compensator-2-UKCqAtSM3p"}"#,
         )
         .unwrap();
         assert_eq!(row.price, "400000");
         assert_eq!(row.date_expiration, Some(1_797_738_895));
         assert_eq!(row.quality, None);
+        assert_eq!(row.id_star_system, 55);
+        assert_eq!(row.slug, "stark-compensator-2-UKCqAtSM3p");
+    }
+
+    #[test]
+    fn listing_row_defaults_missing_slug_and_system() {
+        // Live responses sometimes omit quality/slug/system; defaults must not
+        // fail (older fixtures without the Phase-2 fields).
+        let row: ListingRow =
+            serde_json::from_str(r#"{"id": 1, "operation": "buy", "type": "service"}"#).unwrap();
+        assert_eq!(row.slug, "");
+        assert_eq!(row.id_star_system, 0);
+        assert_eq!(row.quality, None);
+    }
+
+    #[test]
+    fn star_system_row_parses() {
+        let row: StarSystemRow =
+            serde_json::from_str(r#"{"id": 68, "name": "Stanton", "code": "ST"}"#).unwrap();
+        assert_eq!(row.id, 68);
+        assert_eq!(row.name, "Stanton");
+        assert_eq!(row.code.as_deref(), Some("ST"));
     }
 
     #[test]

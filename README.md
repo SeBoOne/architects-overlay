@@ -59,6 +59,8 @@ cargo check --workspace
 | `O` | Error-Pane, kein Feld fokussiert | Offline mit Cache fortsetzen |
 | `↑` / `↓` / `↵` / `Esc` | Palette | Navigation / öffnen / ausblenden-leeren |
 | `Tab` | Palette | Suchfilter zyklisch wechseln |
+| `↑` / `↓` / `↵` / `↹` / `→` / `Esc` | Market-Pane | Angebote navigieren / Detail öffnen / zurück |
+| `↵` | Angebots-Detail | Listing auf uexcorp.space im Browser öffnen (Deep-Link) |
 
 `M` und `O` sind druckbare Buchstaben: Solange ein Eingabefeld fokussiert ist
 (die Suchzeile ist immer autofokussiert), werden sie als Zeichen getippt und
@@ -119,5 +121,18 @@ unter der Electron-Baseline 1031 MiB PSS).
   Boot (auch mit warmem Cache), Hyprland-Geometrie per `set_size` nach Map
   abgesichert, Click-through-Default konsistent (klarer Default, Hotkey toggelt
   in Fokus-Modus).
+- **Phase 2 (t_7b8772e2, Branch `feature/marketplace-deeplinks`):** Marketplace
+  lesen — Live-Offers anderer Spieler über `/marketplace_listings`, Filter
+  (Operation, Region über `/star_systems`, Freitext über Titel/Beschreibung/
+  Anbieter), Sortierung nach Preis/Neueste im Provider (die API bietet kein
+  Server-Sort). Market-Pane im Spotlight (Strg+M) mit Angebotsliste (Preis,
+  Menge, Ort, Region, Verkäufer, Alter), Detail-Ansicht pro Angebot und
+  **Deep-Link**-Button, der die uexcorp.space-Listing-Seite
+  (`/marketplace/item/info/{slug}/`) per Tauri-Opener im Standard-Browser
+  öffnet — reine Lese-Pfade, keine Schreib-Endpunkte. Hintergrund-Sync mit
+  kurzer TTL (5 min, eigener, rate-limit-schonender Zyklus: 1 Listing-Fetch je
+  Fenster) in den bestehenden SQLite-Cache; Reads kommen aus dem frischen
+  Snapshot, bei Ausfall greift ein Offline-Snapshot. Schema-Migration fügt
+  `region`/`slug` zu bestehenden Phase-1-Caches hinzu.
 - CI-Skeleton ist bewusst noch nicht grün (Windows-Runner braucht Admin; Gitea
   Action-Mapping muss im Runner eingerichtet sein).

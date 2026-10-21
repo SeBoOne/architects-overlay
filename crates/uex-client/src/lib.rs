@@ -11,24 +11,28 @@
 //!   lazily if stale, or by the background sync task ([`cache::sync`]);
 //! * **prices** — cached up to 30 min, then live fetch
 //!   `/commodities_prices?id_commodity=…`;
-//! * **marketplace** — always live (`/marketplace_listings`), never served
-//!   stale; the last snapshot is stored for offline display;
+//! * **marketplace** — served from the short-TTL snapshot (5 min) for
+//!   API-parameter-free reads; `id_item`/`operation` filters always fetch live
+//!   `/marketplace_listings`; the snapshot is replaced on unfiltered fetches
+//!   only, so the cache always holds the general market view;
 //! * **entities** — full reference datasets: `/commodities`, `/terminals`,
-//!   `/items` (per category, items require `id_category`).
+//!   `/items` (per category, items require `id_category`), `/star_systems`
+//!   (region names for marketplace listings).
 
 mod dto;
 mod http;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use cache::{Cache, CacheError};
 use http::{DEFAULT_BASE_URL, DEFAULT_MIN_INTERVAL, UexHttpClient};
 use provider::{
     DataProvider, Entity, EntityKind, ListingType, MarketOperation, MarketplaceFilter, Offer,
-    PricePoint, ProviderError, Result, SearchEntities, SearchHit,
+    OfferSort, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
 };
 
-use dto::{CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, TerminalRow};
+use dto::{CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, StarSystemRow, TerminalRow};
 
 /// Search result page size served from the cache.
 const SEARCH_LIMIT: u32 = 25;
@@ -93,6 +97,44 @@ impl UexProvider {
         })?;
         Ok((hit.id, hit.name.clone()))
     }
+
+    /// Map star-system id → region name from the cached reference dataset.
+    /// Fetches once when stale (12h TTL) — one extra request per TTL window.
+    async fn star_system_names(&self) -> Result<HashMap<u64, String>> {
+        self.ensure_fresh(EntityKind::StarSystems).await?;
+        Ok(self
+            .cache
+            .entities_of(EntityKind::StarSystems)
+            .map_err(map_cache_err)?
+            .into_iter()
+            .map(|e| (e.id, e.name))
+            .collect())
+    }
+
+    /// Client-side filter + sort, shared by the live and cache paths so both
+    /// views behave identically. All filters except item_id/operation are
+    /// applied here (the API exposes no text/sort parameters).
+    fn apply_local(mut offers: Vec<Offer>, filters: &MarketplaceFilter) -> Vec<Offer> {
+        let query = filters.q.to_lowercase();
+        let location = filters.location.to_lowercase();
+        let region = filters.region.to_lowercase();
+        offers.retain(|o| {
+            (query.is_empty()
+                || o.title.to_lowercase().contains(&query)
+                || o.description.to_lowercase().contains(&query)
+                || o.seller.to_lowercase().contains(&query))
+                && (location.is_empty() || o.location.to_lowercase().contains(&location))
+                && (region.is_empty() || o.region.to_lowercase().contains(&region))
+        });
+        match filters.sort.unwrap_or(OfferSort::Newest) {
+            OfferSort::Newest => {
+                offers.sort_by(|a, b| b.updated.cmp(&a.updated).then(b.id.cmp(&a.id)))
+            }
+            OfferSort::PriceAsc => offers.sort_by(|a, b| a.price.total_cmp(&b.price)),
+            OfferSort::PriceDesc => offers.sort_by(|a, b| b.price.total_cmp(&a.price)),
+        }
+        offers
+    }
 }
 
 #[async_trait::async_trait]
@@ -155,6 +197,16 @@ impl DataProvider for UexProvider {
     }
 
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>> {
+        // Short-TTL cache (Phase 2): API-parameter-free reads are served from
+        // the last snapshot while it is < TTL_MARKETPLACE old, keeping the
+        // offers view instant and rate-limit-schonend. item_id/operation are
+        // API params — they always fetch live (cache would be filter-specific).
+        let cacheable = filters.item_id.is_none() && filters.operation.is_none();
+        if cacheable && self.cache.marketplace_fresh().map_err(map_cache_err)? {
+            let snapshot = self.cache.marketplace_snapshot().map_err(map_cache_err)?;
+            return Ok(Self::apply_local(snapshot, &filters));
+        }
+
         let mut params: Vec<(String, String)> = Vec::new();
         if let Some(item_id) = filters.item_id {
             params.push(("id_item".to_string(), item_id.to_string()));
@@ -170,47 +222,54 @@ impl DataProvider for UexProvider {
         params.push(("limit".to_string(), limit.to_string()));
 
         let rows: Vec<ListingRow> = self.http.get("/marketplace_listings", &params).await?;
-        let query = filters.q.to_lowercase();
-        let location = filters.location.to_lowercase();
 
-        let offers = rows
+        // Region names: resolve id_star_system → name via the star-systems
+        // dataset (lazily fetched once, then 12h TTL in the cache).
+        let regions = self.star_system_names().await?;
+
+        let offers: Vec<Offer> = rows
             .into_iter()
-            .filter(|r| {
-                (query.is_empty()
-                    || r.title.to_lowercase().contains(&query)
-                    || r.description.to_lowercase().contains(&query)
-                    || r.user_name.to_lowercase().contains(&query))
-                    && (location.is_empty() || r.location.to_lowercase().contains(&location))
-            })
-            .map(|r| Offer {
-                id: r.id,
-                title: r.title,
-                description: r.description,
-                item_id: r.id_item,
-                category_id: r.id_category,
-                operation: r.operation.parse().unwrap_or(MarketOperation::Sell),
-                listing_type: r.r#type.parse().unwrap_or(ListingType::Item),
-                price: r.price.parse::<f64>().unwrap_or(0.0),
-                currency: if r.currency.is_empty() {
-                    "UEC".into()
+            .map(|r| {
+                let region = if r.id_star_system != 0 {
+                    regions.get(&r.id_star_system).cloned().unwrap_or_default()
                 } else {
-                    r.currency
-                },
-                unit: r.unit,
-                quantity: r.in_stock,
-                location: r.location,
-                seller: r.user_name,
-                quality: r.quality.unwrap_or(0),
-                updated: r.date_added,
-                expires: r.date_expiration,
+                    String::new()
+                };
+                Offer {
+                    id: r.id,
+                    title: r.title,
+                    description: r.description,
+                    item_id: r.id_item,
+                    category_id: r.id_category,
+                    operation: r.operation.parse().unwrap_or(MarketOperation::Sell),
+                    listing_type: r.r#type.parse().unwrap_or(ListingType::Item),
+                    price: r.price.parse::<f64>().unwrap_or(0.0),
+                    currency: if r.currency.is_empty() {
+                        "UEC".into()
+                    } else {
+                        r.currency
+                    },
+                    unit: r.unit,
+                    quantity: r.in_stock,
+                    location: r.location,
+                    region,
+                    seller: r.user_name,
+                    quality: r.quality.unwrap_or(0),
+                    updated: r.date_added,
+                    expires: r.date_expiration,
+                    slug: r.slug,
+                }
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        // Keep the snapshot for offline display (never served as fresh).
-        self.cache
-            .store_marketplace(&offers)
-            .map_err(map_cache_err)?;
-        Ok(offers)
+        // Keep the snapshot for cache/offline display. Only API-parameter-free
+        // fetches replace it — a filter-specific fetch would poison the cache.
+        if cacheable {
+            self.cache
+                .store_marketplace(&offers)
+                .map_err(map_cache_err)?;
+        }
+        Ok(Self::apply_local(offers, &filters))
     }
 
     async fn fetch_entities(&self, kind: EntityKind) -> Result<Vec<Entity>> {
@@ -298,6 +357,19 @@ impl DataProvider for UexProvider {
                 }
                 Ok(entities)
             }
+            EntityKind::StarSystems => {
+                let rows: Vec<StarSystemRow> = self.http.get("/star_systems", &[]).await?;
+                Ok(rows
+                    .into_iter()
+                    .map(|r| Entity {
+                        id: r.id,
+                        kind: EntityKind::StarSystems,
+                        name: r.name,
+                        code: r.code,
+                        subtitle: String::new(),
+                    })
+                    .collect())
+            }
         }
     }
 
@@ -312,5 +384,7 @@ fn map_cache_err(e: CacheError) -> ProviderError {
 
 /// Re-export of wire DTOs for integration tests only. Not part of the API.
 pub mod private {
-    pub use crate::dto::{CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, TerminalRow};
+    pub use crate::dto::{
+        CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, StarSystemRow, TerminalRow,
+    };
 }

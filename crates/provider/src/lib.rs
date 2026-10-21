@@ -13,8 +13,8 @@
 mod model;
 
 pub use crate::model::{
-    Entity, EntityKind, ListingType, MarketOperation, MarketplaceFilter, Offer, PricePoint,
-    SearchEntities, SearchHit,
+    Entity, EntityKind, ListingType, MarketOperation, MarketplaceFilter, Offer, OfferSort,
+    PricePoint, SearchEntities, SearchHit,
 };
 
 /// Domain error produced by a provider implementation.
@@ -171,6 +171,8 @@ mod tests {
             q: "compensator".into(),
             item_id: Some(5332),
             operation: Some(MarketOperation::Sell),
+            region: "Nyx".into(),
+            sort: Some(OfferSort::PriceAsc),
             limit: 100,
         };
         assert!(

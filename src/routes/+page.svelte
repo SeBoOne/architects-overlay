@@ -42,6 +42,37 @@
 		datasets: DatasetStatus[];
 	};
 
+	// Mirrors provider::MarketOperation / ListingType / OfferSort / Offer.
+	type MarketOp = 'buy' | 'sell';
+	type ListingType = 'item' | 'service' | 'contract';
+	type OfferSort = 'newest' | 'price_asc' | 'price_desc';
+	type Offer = {
+		id: number;
+		title: string;
+		description: string;
+		item_id: number;
+		category_id: number;
+		operation: MarketOp;
+		listing_type: ListingType;
+		price: number;
+		currency: string;
+		unit: string;
+		quantity: number;
+		location: string;
+		region: string;
+		seller: string;
+		quality: number;
+		updated: number;
+		expires: number | null;
+		slug: string;
+	};
+	type MarketResponse = {
+		source: 'cache' | 'live' | 'offline';
+		fetched_at: number;
+		offers: Offer[];
+		note: string | null;
+	};
+
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	const SYNC_EVENT = 'trade-sync';
 
@@ -59,6 +90,24 @@
 	let detailBusy = $state(false);
 	let status = $state<SyncStatus | null>(null);
 	let errorMsg = $state<string | null>(null);
+
+	// ---- Market-State (Phase 2) --------------------------------------------
+	let offers = $state<Offer[]>([]);
+	let mLoading = $state(false);
+	let mSource = $state<'cache' | 'live' | 'offline'>('live');
+	let mNote = $state<string | null>(null);
+	let mSel = $state(0);
+	// Selected offer → deep-link detail view.
+	let offerDetail = $state<Offer | null>(null);
+	// Client-side filter/order controls (all applied server-side by the provider).
+	let mSort = $state<OfferSort>('price_asc');
+	let mOp = $state<'all' | MarketOp>('all');
+	let mRegion = $state('all');
+	// Free-text filter (title/description/seller) — provider's `q`.
+	let mQuery = $state('');
+	// Ordered/filtered list for display (client mirrors of what the provider sent).
+	let marketRegions = $state<string[]>([]);
+	let mDebounce: ReturnType<typeof setTimeout> | null = null;
 
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
 	let flat: SearchHit[] = [];
@@ -221,6 +270,85 @@
 
 	function toggleMarket() {
 		phase = phase === 'market' ? 'typing' : 'market';
+		if (phase === 'market') void loadMarket();
+		else {
+			offerDetail = null;
+			mSel = 0;
+		}
+	}
+
+	// Load / refresh the marketplace via the provider (cache-first with short
+	// TTL; live when a filter forces it; offline snapshot on failure).
+	async function loadMarket() {
+		mLoading = true;
+		mNote = null;
+		const filters = {
+			location: '',
+			q: mQuery.trim(),
+			item_id: null,
+			operation: mOp === 'all' ? null : mOp,
+			region: mRegion === 'all' ? '' : mRegion,
+			sort: mSort,
+			limit: 100
+		};
+		try {
+			const resp = await invoke<MarketResponse>('get_marketplace', { filters });
+			offers = resp.offers;
+			mSource = resp.source;
+			mNote = resp.note;
+			mSel = Math.min(mSel, Math.max(offers.length - 1, 0));
+			marketRegions = [...new Set(resp.offers.map((o) => o.region).filter(Boolean))].sort();
+		} catch (e) {
+			// Live fetch failed with no offline snapshot → show the market error.
+			offers = [];
+			mNote = String(e);
+			mSource = 'offline';
+		}
+		mLoading = false;
+	}
+
+	function onMarketQuery() {
+		if (mDebounce) clearTimeout(mDebounce);
+		mDebounce = setTimeout(() => void loadMarket(), 200);
+	}
+
+	function openOfferDetail() {
+		if (!offers.length) return;
+		offerDetail = offers[mSel] ?? null;
+	}
+
+	async function openOfferDeepLink() {
+		if (!offerDetail) return;
+		try {
+			await invoke<string>('open_marketplace_listing', { slug: offerDetail.slug });
+		} catch (e) {
+			errorMsg = String(e);
+		}
+	}
+
+	function setSort(s: OfferSort) {
+		mSort = s;
+		void loadMarket();
+	}
+
+	function setOp(o: 'all' | MarketOp) {
+		mOp = o;
+		void loadMarket();
+	}
+
+	function setRegion(r: string) {
+		mRegion = r;
+		void loadMarket();
+	}
+
+	function fmtPrice(p: number): string {
+		if (!p) return '—';
+		// Full unit price without decimals (aUEC), German grouping.
+		return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(p);
+	}
+
+	function fmtQty(n: number): string {
+		return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(n);
 	}
 
 	async function toggleClickThrough() {
@@ -254,6 +382,54 @@
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
+		// Market phase: offer list navigation + detail. Tab/→ öffnet das Detail
+		// (Task: "vom Spotlight navigierbar, z.B. Tab/'→' ins Detail"). In der
+		// Market-Ansicht greift der Filter-Cycle für Tab NICHT — dort navigiert
+		// Tab in die Detail-Ansicht des markierten Angebots.
+		if (phase === 'market') {
+			if (k === 'ArrowDown' && !offerDetail) {
+				mSel = Math.min(offers.length - 1, mSel + 1);
+				e.preventDefault();
+				return;
+			}
+			if (k === 'ArrowUp' && !offerDetail) {
+				mSel = Math.max(0, mSel - 1);
+				e.preventDefault();
+				return;
+			}
+			if (k === 'ArrowRight' || k === 'Tab') {
+				if (offerDetail) return; // Detail offen: nichts weiter
+				openOfferDetail();
+				e.preventDefault();
+				return;
+			}
+			if (k === 'ArrowLeft' && offerDetail) {
+				offerDetail = null;
+				e.preventDefault();
+				return;
+			}
+			if (k === 'Enter' && offerDetail) {
+				void openOfferDeepLink();
+				e.preventDefault();
+				return;
+			}
+			if (k === 'Enter' && !offerDetail) {
+				openOfferDetail();
+				e.preventDefault();
+				return;
+			}
+			if (k === 'Escape') {
+				if (offerDetail) {
+					offerDetail = null; // erst Detail schließen
+				} else {
+					toggleMarket(); // dann Markt verlassen
+				}
+				e.preventDefault();
+				return;
+			}
+			// andere Tasten in Market-Ansicht: normal durchlassen (Eingaben ins Feld ok)
+			return;
+		}
 		if (k === 'ArrowDown') {
 			move(1);
 			e.preventDefault();
@@ -268,7 +444,7 @@
 			e.preventDefault();
 		} else if (k === 'm' || k === 'M') {
 			// Im fokussierten Eingabefeld ist 'm' Dateninput → nur mit Modifier
-			// (Strg/Meta) den Market toggeln, sonst den Buchstaben durchlassen.
+			// (Strg/Meta) den Market togglen, sonst den Buchstaben durchlassen.
 			if (isFieldFocused(e) && !e.ctrlKey && !e.metaKey) {
 				return;
 			}
@@ -495,13 +671,141 @@
 
 		{:else if phase === 'market'}
 			<div class="pane-market">
-				<div class="center">
-					<div class="big">Marketplace</div>
-					<div class="sm">
-						Anzeigen anderer Spieler erscheinen hier in Phase 2.<br />
-						Zum Einstellen eigener Anzeigen fehlt der <b style="color: var(--fgdim)">UEX User-Token</b>.
+				{#if offerDetail}
+					<!-- Angebots-Detail + Deep-Link -->
+					<div class="mdetail">
+						<div class="md-head">
+							<div class="md-t">
+								<h2>{offerDetail.title}</h2>
+								<span class="tag" style="color: var(--fgdim)">
+									{offerDetail.operation === 'sell' ? 'WTS' : 'WTB'} · {offerDetail.listing_type.toUpperCase()}{offerDetail.region ? ' · ' + offerDetail.region : ''}
+								</span>
+							</div>
+							<div class="md-price">
+								<div class="v {offerDetail.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(offerDetail.price)}</div>
+								<div class="u">{offerDetail.currency}{offerDetail.unit ? ' / ' + offerDetail.unit : ''}</div>
+							</div>
+						</div>
+						<div class="md-meta">
+							<span><b>Anbieter</b> {offerDetail.seller || '—'}</span>
+							<span><b>Menge</b> {fmtQty(offerDetail.quantity)}</span>
+							<span><b>Ort</b> {offerDetail.location || '—'}</span>
+							<span><b>Alter</b> {rel(offerDetail.updated)}</span>
+							{#if offerDetail.expires}
+								<span><b>Ende</b> {rel(offerDetail.expires)}</span>
+							{/if}
+							{#if offerDetail.quality}
+								<span><b>Qualität</b> {offerDetail.quality}</span>
+							{/if}
+						</div>
+						{#if offerDetail.description}
+							<div class="md-desc">{offerDetail.description}</div>
+						{:else}
+							<div class="md-desc empty">Keine Beschreibung.</div>
+						{/if}
+						<div class="md-actions">
+							<span class="btn" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+							<span class="btn-ghost" onclick={() => (offerDetail = null)}>Zurück</span>
+						</div>
+						<div class="md-note">
+							Öffnet <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — nur Lesen, keine Änderungen.
+						</div>
 					</div>
-				</div>
+				{:else if mLoading && !offers.length}
+					<div class="center">
+						<span class="spin"></span>
+						<div class="big" style="margin-top: 12px">Lade Marketplace …</div>
+					</div>
+				{:else if mNote && !offers.length}
+					<div class="pane-error">
+						<div class="center">
+							<div class="big" style="color: var(--alert)">Marketplace nicht erreichbar</div>
+							<div class="sm">{mNote}</div>
+							<span class="btn" onclick={() => loadMarket()}>Erneut versuchen</span>
+						</div>
+					</div>
+				{:else}
+					<!-- Filterzeile: Operation · Region · Sortierung · Text -->
+					<div class="mbar">
+						<span
+							class="chip"
+							class:is-on={mOp === 'all'}
+							onclick={() => setOp('all')}>Alle</span>
+						<span
+							class="chip"
+							class:is-on={mOp === 'sell'}
+							onclick={() => setOp('sell')}><span class="dot"></span>Verkauf</span>
+						<span
+							class="chip"
+							class:is-on={mOp === 'buy'}
+							onclick={() => setOp('buy')}><span class="dot"></span>Kauf</span>
+						<span class="m-spacer"></span>
+						<span class="m-lbl">Region</span>
+						<span
+							class="chip"
+							class:is-on={mRegion === 'all'}
+							onclick={() => setRegion('all')}>Alle</span>
+						{#each marketRegions as r}
+							<span class="chip" class:is-on={mRegion === r} onclick={() => setRegion(r)}>{r}</span>
+						{/each}
+					</div>
+					<div class="mbar2">
+						<input
+							class="mq"
+							type="text"
+							bind:value={mQuery}
+							oninput={onMarketQuery}
+							placeholder="Kommodity / Item / Anbieter filtern …"
+							spellcheck="false"
+							autocomplete="off"
+						/>
+						<span class="m-lbl">Sort</span>
+						<span class="chip" class:is-on={mSort === 'price_asc'} onclick={() => setSort('price_asc')}>Preis ↑</span>
+						<span class="chip" class:is-on={mSort === 'price_desc'} onclick={() => setSort('price_desc')}>Preis ↓</span>
+						<span class="chip" class:is-on={mSort === 'newest'} onclick={() => setSort('newest')}>Neueste</span>
+						<span class="m-spacer"></span>
+						{#if mSource === 'offline'}
+							<span class="chip warn"><span class="dot"></span>Offline-Snapshot</span>
+						{:else if mSource === 'cache'}
+							<span class="chip"><span class="dot"></span>Cache</span>
+						{/if}
+					</div>
+
+					{#if offers.length}
+						<div class="mlist">
+							{#each offers as o, i}
+								<div
+									class="mrow"
+									role="option"
+									aria-selected={i === mSel}
+									class:is-sel={i === mSel}
+									onclick={() => {
+										mSel = i;
+										openOfferDetail();
+									}}
+								>
+									<div class="m-op {o.operation}">{o.operation === 'sell' ? 'WTS' : 'WTB'}</div>
+									<div class="m-main">
+										<div class="m-title">{o.title}</div>
+										<div class="m-sub">
+											{o.location || '—'}{o.region ? ' · ' + o.region : ''} · {o.seller}
+										</div>
+									</div>
+									<div class="m-right">
+										<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
+										<div class="m-meta">{fmtQty(o.quantity)} Einheiten · {rel(o.updated)}</div>
+									</div>
+								</div>
+							{/each}
+						</div>
+						<div class="m-foot">
+							<span>{offers.length} Angebote</span>
+							<span class="src">UEX Corp</span>
+						</div>
+					{:else}
+						<div class="row-empty" style="padding: 28px 16px">Keine Angebote für diese Filter.</div>
+					{/if}
+				{/if}
 			</div>
 
 		{:else if phase === 'typing' || phase === 'offline' || phase === 'idle'}
@@ -561,10 +865,19 @@
 		<!-- Fußzeile (bleibt in allen Zuständen stehen → kein Layoutsprung) -->
 		<div class="foot">
 			<div class="hints">
-				<span><kbd>↑↓</kbd> Nav</span>
-				<span><kbd>↵</kbd> öffnen</span>
-				<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
-				<span><kbd>Ctrl+M</kbd> Market</span>
+				{#if phase === 'market'}
+					<span><kbd>↑↓</kbd> Angebote</span>
+					<span><kbd>↹</kbd> Detail</span>
+					{#if offerDetail}
+						<span><kbd>↵</kbd> im Browser öffnen</span>
+					{/if}
+					<span><kbd>Esc</kbd> zurück</span>
+				{:else}
+					<span><kbd>↑↓</kbd> Nav</span>
+					<span><kbd>↵</kbd> öffnen</span>
+					<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
+					<span><kbd>Ctrl+M</kbd> Market</span>
+				{/if}
 			</div>
 			<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
 			{#if isSpotlight}

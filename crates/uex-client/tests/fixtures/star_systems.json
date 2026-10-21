@@ -1,0 +1,54 @@
+{
+ "status": "ok",
+ "http_code": 200,
+ "data": [
+  {
+   "id": 55,
+   "id_faction": 0,
+   "id_jurisdiction": 0,
+   "name": "Nyx",
+   "code": "NX",
+   "is_available": 1,
+   "is_available_live": 1,
+   "is_visible": 1,
+   "is_default": 0,
+   "wiki": "https://starcitizen.tools/Nyx_system",
+   "date_added": 1682371194,
+   "date_modified": 1761964350,
+   "faction_name": null,
+   "jurisdiction_name": null
+  },
+  {
+   "id": 64,
+   "id_faction": 0,
+   "id_jurisdiction": 0,
+   "name": "Pyro",
+   "code": "PY",
+   "is_available": 1,
+   "is_available_live": 1,
+   "is_visible": 1,
+   "is_default": 0,
+   "wiki": "https://starcitizen.tools/Pyro_system",
+   "date_added": 1682371194,
+   "date_modified": 1745775327,
+   "faction_name": null,
+   "jurisdiction_name": null
+  },
+  {
+   "id": 68,
+   "id_faction": 0,
+   "id_jurisdiction": 0,
+   "name": "Stanton",
+   "code": "ST",
+   "is_available": 1,
+   "is_available_live": 1,
+   "is_visible": 1,
+   "is_default": 1,
+   "wiki": "https://starcitizen.tools/Stanton_system",
+   "date_added": 1682371194,
+   "date_modified": 1734643829,
+   "faction_name": null,
+   "jurisdiction_name": null
+  }
+ ]
+}
