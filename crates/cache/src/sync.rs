@@ -99,7 +99,9 @@ mod tests {
 
     #[tokio::test]
     async fn sync_refetches_stale_kind_only() {
-        let provider = Arc::new(RecordingProvider { fetch_calls: AtomicUsize::new(0) });
+        let provider = Arc::new(RecordingProvider {
+            fetch_calls: AtomicUsize::new(0),
+        });
         let cache = Arc::new(Cache::open_in_memory().unwrap());
 
         let handle = spawn_sync(provider.clone(), cache.clone(), Duration::from_millis(50));
@@ -110,13 +112,18 @@ mod tests {
         // commodities + items + terminals = 3 refetches on the first tick;
         // after storage they are fresh, so later ticks must not refetch.
         let calls = provider.fetch_calls.load(Ordering::SeqCst);
-        assert_eq!(calls, 3, "expected exactly one full sweep, got {calls} refreshes");
+        assert_eq!(
+            calls, 3,
+            "expected exactly one full sweep, got {calls} refreshes"
+        );
         assert!(cache.is_fresh(EntityKind::Commodities).unwrap());
         assert!(cache.is_fresh(EntityKind::Items).unwrap());
         assert!(cache.is_fresh(EntityKind::Terminals).unwrap());
 
         // data actually landed
-        let hits = cache.search(&[EntityKind::Commodities], "sample", 10).unwrap();
+        let hits = cache
+            .search(&[EntityKind::Commodities], "sample", 10)
+            .unwrap();
         assert_eq!(hits.len(), 1);
     }
 

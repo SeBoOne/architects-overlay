@@ -22,7 +22,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, Manager};
@@ -32,20 +31,11 @@ use crate::overlay::{self, OverlayState, set_click_through, toggle_visible};
 /// Socket file name inside the session runtime dir.
 const SOCKET_FILE: &str = "architects-overlay.sock";
 
-/// Resolved socket path so the bundled client binary can find the app.
-static SOCKET_PATH: OnceLock<std::path::PathBuf> = OnceLock::new();
-
-/// Public socket path for the bundled CLI wrapper.
-pub fn socket_path() -> Option<&'static std::path::PathBuf> {
-    SOCKET_PATH.get()
-}
-
 /// Bind the control socket and spawn the accept loop. Fails soft: a socket
 /// problem must never prevent the app from starting.
 pub fn init(app: &AppHandle) {
     match bind_socket() {
-        Ok((path, listener)) => {
-            let _ = SOCKET_PATH.set(path);
+        Ok((_path, listener)) => {
             let handle = app.clone();
             std::thread::spawn(move || accept_loop(handle, listener));
         }

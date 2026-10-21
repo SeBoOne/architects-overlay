@@ -80,6 +80,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-log",
+ "tokio",
  "uex_client",
  "windows-sys 0.59.0",
  "x11rb",

@@ -134,7 +134,10 @@ pub fn search(
 ) -> Result<SearchResponse, String> {
     let query = query.trim();
     if query.is_empty() {
-        return Ok(SearchResponse { groups: Vec::new(), total: 0 });
+        return Ok(SearchResponse {
+            groups: Vec::new(),
+            total: 0,
+        });
     }
     let filter = filter.as_deref().unwrap_or("all");
 
@@ -167,11 +170,13 @@ pub async fn get_prices(
     state: State<'_, TradeState>,
     commodity: String,
 ) -> Result<PriceDetail, String> {
-    maybe_start_background(&state.provider, &state.cache, &state.tracker);
     let prices = state.provider.prices(&commodity).await.map_err(friendly)?;
     let fetched_at = now_unix();
     Ok(PriceDetail {
-        commodity: prices.first().map(|p| p.commodity.clone()).unwrap_or(commodity),
+        commodity: prices
+            .first()
+            .map(|p| p.commodity.clone())
+            .unwrap_or(commodity),
         source: state.provider.name(),
         fetched_at,
         prices,
@@ -197,13 +202,12 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
 
     // Only one sweep at a time; a concurrent call just re-reads the status.
     if !tracker.syncing.swap(true, Ordering::SeqCst) {
-        let outcome: Result<(), String> = sweep(provider.as_ref(), cache.as_ref()).await;
+        let outcome: Result<(), String> = sweep(provider.as_ref(), cache.as_ref(), false).await;
         {
             let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
             *guard = outcome.err();
         }
         tracker.syncing.store(false, Ordering::SeqCst);
-        maybe_start_background(&provider, &cache, &tracker);
         let _ = handle.emit(SYNC_EVENT, build_status(&provider, &cache, &tracker));
     }
     Ok(build_status(&state.provider, &state.cache, &state.tracker))
@@ -213,38 +217,105 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
 // Internals
 // ---------------------------------------------------------------------------
 
-/// Start the background TTL refresh loop, exactly once. Safe from any thread:
-/// it just spawns onto the app-owned Tokio global runtime.
-fn maybe_start_background(
+/// Start the background freshness/health loop, exactly once (guarded by
+/// `tracker.background`). Safe from any thread: it spawns onto Tauri's own
+/// async (Tokio) runtime via `tauri::async_runtime`, so the tokio-based
+/// provider futures have a reactor even when the loop is booted from the
+/// app-setup (main) thread — the setup thread itself has no Tokio context.
+///
+/// Booted once from `setup_trade` — **not** lazily from a command. That was the
+/// B1 bug: with a warm cache and a dead network the loop never started, so the
+/// `online` flag (driven by `tracker.last_error`) stayed optimistic green.
+///
+/// The first tick probes reachability almost immediately, independent of the
+/// cache TTL, and every outcome is written into `tracker.last_error` and
+/// broadcast via [`SYNC_EVENT`], so the frontend's `OFFLINE · CACHE …` banner
+/// and `online` status update live.
+pub fn start_background_refresh(
+    app: &AppHandle,
     provider: &Arc<dyn DataProvider>,
     cache: &Arc<Cache>,
-    tracker: &SyncTracker,
+    tracker: &Arc<SyncTracker>,
 ) {
     if tracker.background.swap(true, Ordering::SeqCst) {
         return;
     }
-    _ = cache::sync::spawn_sync(
-        provider.clone(),
-        cache.clone(),
-        cache::sync::DEFAULT_INTERVAL,
-    );
+    let provider = provider.clone();
+    let cache = cache.clone();
+    let tracker = tracker.clone();
+    let handle = app.clone();
+    _ = tauri::async_runtime::spawn(async move {
+        // Erste Probe kurz nach Boot: Netz-Erreichbarkeit prüfen, unabhängig
+        // von der TTL — ein frischer Cache mit totem Netz muss trotzdem als
+        // offline erkannt werden.
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+        background_tick(&tracker, &provider, &cache, &handle).await;
+        loop {
+            tokio::time::sleep(cache::sync::DEFAULT_INTERVAL).await;
+            background_tick(&tracker, &provider, &cache, &handle).await;
+        }
+    });
 }
 
-/// Re-fetch every reference dataset that is older than its TTL. Stops at the
-/// first failure and reports it (the sweep is all-or-nothing so the tracker
-/// stays truthful about the "online" flag).
-async fn sweep(provider: &dyn DataProvider, cache: &Cache) -> Result<(), String> {
+/// One background iteration: refresh stale datasets (computed via
+/// [`sweep`] with `probe_if_fresh`), record the outcome and broadcast it.
+async fn background_tick(
+    tracker: &Arc<SyncTracker>,
+    provider: &Arc<dyn DataProvider>,
+    cache: &Arc<Cache>,
+    handle: &AppHandle,
+) {
+    let outcome = sweep(provider.as_ref(), cache.as_ref(), true).await;
+    {
+        let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
+        *guard = outcome.err();
+    }
+    let _ = handle.emit(SYNC_EVENT, build_status(provider, cache, tracker));
+}
+
+/// Re-fetch every reference dataset older than its TTL. Stops at the first
+/// failure and reports it (the sweep is all-or-nothing so the tracker stays
+/// truthful about the "online" flag).
+///
+/// `probe_if_fresh`: when *nothing* is stale (warm cache), re-fetch the
+/// commodities dataset once anyway as a real connectivity probe — the background
+/// loop uses this so a blocked network is noticed even right after a clean
+/// sync; the on-demand `sync_now` path passes `false` (it may not waste an
+/// API quota on fresh data).
+async fn sweep(
+    provider: &dyn DataProvider,
+    cache: &Cache,
+    probe_if_fresh: bool,
+) -> Result<(), String> {
+    let mut fetched = false;
     for (_kind, label, entity_kind) in GROUPS {
-        let fresh = cache.is_fresh(*entity_kind).map_err(|e| format!("Cache-Fehler: {e}"))?;
+        let fresh = cache
+            .is_fresh(*entity_kind)
+            .map_err(|e| format!("Cache-Fehler: {e}"))?;
         if fresh {
             continue;
         }
+        fetched = true;
         log::info!("sync: fetching {label} (stale)");
-        let entities = provider.fetch_entities(*entity_kind).await.map_err(friendly)?;
+        let entities = provider
+            .fetch_entities(*entity_kind)
+            .await
+            .map_err(friendly)?;
         cache
             .store_entities(*entity_kind, &entities)
             .map_err(|e| format!("Cache-Fehler: {e}"))?;
         log::info!("sync: {label} stored ({} entries)", entities.len());
+    }
+    if probe_if_fresh && !fetched {
+        // Warm cache → only a forced round-trip detects an outage. Stored, so
+        // the probe is not pure waste (keeps commodities fresh).
+        let entities = provider
+            .fetch_entities(EntityKind::Commodities)
+            .await
+            .map_err(friendly)?;
+        cache
+            .store_entities(EntityKind::Commodities, &entities)
+            .map_err(|e| format!("Cache-Fehler: {e}"))?;
     }
     Ok(())
 }
@@ -275,8 +346,7 @@ fn build_status(
         .last_error
         .try_lock()
         .ok()
-        .map(move |guard| guard.clone())
-        .flatten();
+        .and_then(move |guard| guard.clone());
     let online = last_error.is_none();
     SyncStatus {
         provider: provider.name(),
@@ -317,17 +387,25 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::test::mock_app;
     use tauri::Manager;
+    use tauri::test::mock_app;
 
     #[test]
     fn friendly_rate_limit_is_german_and_actionable() {
         assert_eq!(
-            friendly(ProviderError::RateLimit { retry_after: Some(34) }),
+            friendly(ProviderError::RateLimit {
+                retry_after: Some(34)
+            }),
             "HTTP 429 · Rate-Limit (Retry in 34 s)"
         );
         assert!(friendly(ProviderError::Timeout).contains("UEX"));
-        assert!(friendly(ProviderError::Http { status: 500, body: "x".into() }).contains("500"));
+        assert!(
+            friendly(ProviderError::Http {
+                status: 500,
+                body: "x".into()
+            })
+            .contains("500")
+        );
     }
 
     /// The grouped search contract: three groups in a fixed order, per-group

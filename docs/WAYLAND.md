@@ -43,9 +43,15 @@ ggf. input-transparent per Regel statt per App-API):
 ```ini
 windowrulev2 = float, class:^(architects-overlay)$
 windowrulev2 = pin, class:^(architects-overlay)$
+windowrulev2 = size 660 600, class:^(architects-overlay)$
 # Input-Transparenz erzwingen, solange die App nicht in den Fokus-Modus schaltet:
 windowrulev2 = noinput, class:^(architects-overlay)$
 ```
+
+Die App erzwingt die Panel-Größe 660×600 außerdem selbst nach jedem Map
+(`set_size` in `overlay::apply_visibility`) — die `size`-Regel ist nur die
+Absicherung auf Compositor-Seite, falls ein Mapping dennoch mit einer
+Standardgröße (z. B. 1720×1410) startet.
 
 Hinweis: `noinput` macht das Fenster pauschal klick-durchlässig. Wer den
 Fokus-Modus (Klicken im Overlay) nutzen will, lässt die Regel weg und steuert
@@ -56,7 +62,9 @@ den Modus über `arch-overlay clickthrough`.
 - Erkennt die App, dass Star Citizen beendet wurde, versteckt sie das
   Spotlight-Fenster wieder (der letzte `user_visible`-Zustand bleibt für die
   nächste Session erhalten).
-- Beim App-Exit wird der Socket-Datei-Eintrag entfernt; nach einem Crash
-  entfernt der nächste Start die alte Socket-Datei automatisch.
-- Sauber beenden: Fenster-Close des Hauptfensters oder `kill` des Prozesses;
-  es gibt keinen Daemon-Modus außerhalb der App.
+- Die Socket-Datei wird beim App-Exit **nicht** entfernt — weder bei
+  Fenster-Close noch bei `kill` (SIGTERM). Sie bleibt an Ort und Stelle und
+  wird erst beim **nächsten App-Start** beim Binden automatisch weggeräumt
+  (`remove_file` vor `bind`, gleiches Verhalten nach einem Crash).
+- Sauber beenden: `kill`/Beenden des Prozesses genügt; es gibt keinen
+  Daemon-Modus außerhalb der App.

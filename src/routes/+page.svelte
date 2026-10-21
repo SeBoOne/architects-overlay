@@ -77,12 +77,12 @@
 			return;
 		}
 		try {
-			await invoke<boolean>('overlay_set_click_through', { ignore: false });
-		} catch {
-			// unkritisch — nur der Click-through-Default; ohne Tauri eh n/а.
-		}
-		try {
-			const label = getCurrentWindow().label;
+				// Click-through ist bereits der Rust-seitige Default (OverlayState);
+				// wir überschreiben ihn bewusst NICHT, damit das Overlay beim Spielen
+				// standardmäßig durchklickbar bleibt und die Maus im Spiel ankommt.
+				// Der User schaltet in den Fokus-Modus über Hotkey (Strg+Shift+O),
+				// Socket-CLI (`arch-overlay clickthrough`) oder den Badge-Button.
+				const label = getCurrentWindow().label;
 			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
 			if (label === 'spotlight') {
 				isSpotlight = true;
@@ -236,6 +236,22 @@
 		await invoke('sync_now');
 	}
 
+	// 'm' und 'o' sind druckbare Buchstaben — die Shortcuts dürfen sie NICHT
+	// schlucken, während der User in einem Eingabefeld tippt (Bug A1: das 'm'
+	// aus "titanium" verschwand, die Palette sprang in den Market-Pane).
+	// Regel: im Suchfeld toggelt nur noch Ctrl+M (Meta+ eine starke Modifier-
+	// Art); ohne fokussiertes Feld schaltet das bloße 'M' weiter.
+	function isFieldFocused(e: KeyboardEvent): boolean {
+		const t = e.target;
+		if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) {
+			return true;
+		}
+		return (
+			typeof (t as HTMLElement | null)?.isContentEditable === 'boolean' &&
+			(t as HTMLElement).isContentEditable
+		);
+	}
+
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
 		if (k === 'ArrowDown') {
@@ -251,12 +267,20 @@
 			esc();
 			e.preventDefault();
 		} else if (k === 'm' || k === 'M') {
+			// Im fokussierten Eingabefeld ist 'm' Dateninput → nur mit Modifier
+			// (Strg/Meta) den Market toggeln, sonst den Buchstaben durchlassen.
+			if (isFieldFocused(e) && !e.ctrlKey && !e.metaKey) {
+				return;
+			}
 			toggleMarket();
 			e.preventDefault();
 		} else if (k === 'Tab') {
 			cycleFilter();
 			e.preventDefault();
 		} else if ((k === 'o' || k === 'O') && phase === 'error') {
+			// 'o' ist druckbar — nur als Offline-Shortcut, wenn kein Feld
+			// bearbeitet wird (der Klick-Button deckt den Feld-Fall ab).
+			if (isFieldFocused(e)) return;
 			phase = 'offline';
 		}
 	}
@@ -526,7 +550,7 @@
 						<div class="recent"><span class="r">Keine — tippe, um zu suchen</span></div>
 						<div class="sect"><div class="h">Schnellzugriff</div></div>
 						<div class="recent">
-							<span class="r"><b>Marketplace</b> · M</span>
+							<span class="r"><b>Marketplace</b> · Ctrl+M</span>
 							<span class="r"><b>Vollständiger Sync</b></span>
 						</div>
 					</div>
@@ -540,7 +564,7 @@
 				<span><kbd>↑↓</kbd> Nav</span>
 				<span><kbd>↵</kbd> öffnen</span>
 				<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
-				<span><kbd>M</kbd> Market</span>
+				<span><kbd>Ctrl+M</kbd> Market</span>
 			</div>
 			<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
 			{#if isSpotlight}

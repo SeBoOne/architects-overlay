@@ -43,7 +43,8 @@ pub struct UexHttpClient {
 
 impl UexHttpClient {
     /// Build a client against `base_url`. Both credentials optional (read
-    /// endpoints work without auth; key forwarded as `Authorization: Bearer`).
+    /// endpoints work without auth; the API key is forwarded via an
+    /// `Authorization` header when configured).
     pub fn new(
         base_url: &str,
         api_key: Option<String>,
@@ -54,9 +55,7 @@ impl UexHttpClient {
             .timeout(REQUEST_TIMEOUT)
             .user_agent(concat!("architects-overlay/", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|e| {
-                ProviderError::Config(format!("cannot build http client: {e}"))
-            })?;
+            .map_err(|e| ProviderError::Config(format!("cannot build http client: {e}")))?;
         Ok(UexHttpClient {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -73,13 +72,9 @@ impl UexHttpClient {
         path: &str,
         params: &[(String, String)],
     ) -> Result<T> {
-        self.get_optional(path, params)
-            .await?
-            .ok_or_else(|| {
-                ProviderError::Json(format!(
-                    "response status ok but `data` missing for {path}"
-                ))
-            })
+        self.get_optional(path, params).await?.ok_or_else(|| {
+            ProviderError::Json(format!("response status ok but `data` missing for {path}"))
+        })
     }
 
     /// Like [`UexHttpClient::get`], but `data: null` (a category with no
@@ -118,9 +113,7 @@ impl UexHttpClient {
 
         if envelope.status != "ok" {
             return match envelope.status.as_str() {
-                "requests_limit_reached" => Err(ProviderError::RateLimit {
-                    retry_after: None,
-                }),
+                "requests_limit_reached" => Err(ProviderError::RateLimit { retry_after: None }),
                 _ => Err(ProviderError::Http {
                     status: envelope.http_code.unwrap_or(status.as_u16()),
                     body: envelope.message.clone().unwrap_or(envelope.status.clone()),

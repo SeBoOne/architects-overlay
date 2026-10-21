@@ -162,7 +162,9 @@ impl Cache {
             .map_err(|e| CacheError::Open(e.to_string()))?;
         conn.execute_batch(SCHEMA)
             .map_err(|e| CacheError::Open(format!("schema: {e}")))?;
-        Ok(Cache { conn: Mutex::new(conn) })
+        Ok(Cache {
+            conn: Mutex::new(conn),
+        })
     }
 
     fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T> {
@@ -277,7 +279,9 @@ impl Cache {
     /// Seconds since the reference dataset of `kind` was fetched
     /// (`Ok(None)` = never fetched). Feeds the UI's freshness indicator.
     pub fn dataset_age(&self, kind: EntityKind) -> Result<Option<u64>> {
-        Ok(self.meta_get(&meta_key(kind))?.map(|ts| now_unix().saturating_sub(ts)))
+        Ok(self
+            .meta_get(&meta_key(kind))?
+            .map(|ts| now_unix().saturating_sub(ts)))
     }
 
     /// Number of cached reference entities of one kind (sync progress UI).
@@ -483,7 +487,9 @@ impl Cache {
             let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?1")?;
             let mut rows = stmt.query([key])?;
             match rows.next()? {
-                Some(row) => Ok(row.get::<_, Option<String>>(0)?.and_then(|v| v.parse().ok())),
+                Some(row) => Ok(row
+                    .get::<_, Option<String>>(0)?
+                    .and_then(|v| v.parse().ok())),
                 None => Ok(None),
             }
         })
@@ -493,7 +499,7 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use provider::{MarketOperation, ListingType};
+    use provider::{ListingType, MarketOperation};
 
     fn entity(id: u64, kind: EntityKind, name: &str, code: &str, subtitle: &str) -> Entity {
         Entity {
@@ -516,7 +522,13 @@ mod tests {
                 &[
                     entity(1, EntityKind::Commodities, "Agricium", "AGRI", "Metal"),
                     entity(2, EntityKind::Commodities, "Titanium", "TITN", "Metal"),
-                    entity(3, EntityKind::Commodities, "Distilled Spirits", "DISP", "Agricultural"),
+                    entity(
+                        3,
+                        EntityKind::Commodities,
+                        "Distilled Spirits",
+                        "DISP",
+                        "Agricultural",
+                    ),
                 ],
             )
             .unwrap();
@@ -537,11 +549,15 @@ mod tests {
         assert_eq!(hits[0].code.as_deref(), Some("AGRI"));
 
         // code search
-        let hits = cache.search(&[EntityKind::Commodities], "titn", 10).unwrap();
+        let hits = cache
+            .search(&[EntityKind::Commodities], "titn", 10)
+            .unwrap();
         assert_eq!(hits[0].code.as_deref(), Some("TITN"));
 
         // phrase prefix: "distilled s" matches both words as a phrase
-        let hits = cache.search(&[EntityKind::Commodities], "distilled", 10).unwrap();
+        let hits = cache
+            .search(&[EntityKind::Commodities], "distilled", 10)
+            .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name, "Distilled Spirits");
 
@@ -549,13 +565,22 @@ mod tests {
         cache
             .store_entities(
                 EntityKind::Terminals,
-                &[entity(10, EntityKind::Terminals, "Area 18", "TDA18", "Stanton > ArcCorp")],
+                &[entity(
+                    10,
+                    EntityKind::Terminals,
+                    "Area 18",
+                    "TDA18",
+                    "Stanton > ArcCorp",
+                )],
             )
             .unwrap();
         let hits = cache
             .search(&[EntityKind::Commodities], "area", 10)
             .unwrap();
-        assert!(hits.is_empty(), "terminal must not leak into commodity search");
+        assert!(
+            hits.is_empty(),
+            "terminal must not leak into commodity search"
+        );
         let hits = cache.search(&[EntityKind::Terminals], "area", 10).unwrap();
         assert_eq!(hits.len(), 1);
     }
@@ -564,7 +589,9 @@ mod tests {
     fn search_escapes_user_input() {
         let cache = Cache::open_in_memory().unwrap();
         // Quote characters must not break the FTS query or leak into SQL.
-        let hits = cache.search(&[EntityKind::Commodities], "\" OR 1=1 --", 10).unwrap();
+        let hits = cache
+            .search(&[EntityKind::Commodities], "\" OR 1=1 --", 10)
+            .unwrap();
         assert!(hits.is_empty());
         let hits = cache.search(&[EntityKind::Commodities], "   ", 10).unwrap();
         assert!(hits.is_empty());
@@ -576,7 +603,13 @@ mod tests {
         cache
             .store_entities(
                 EntityKind::Commodities,
-                &[entity(1, EntityKind::Commodities, "Agricium", "AGRI", "Metal")],
+                &[entity(
+                    1,
+                    EntityKind::Commodities,
+                    "Agricium",
+                    "AGRI",
+                    "Metal",
+                )],
             )
             .unwrap();
         assert!(cache.is_fresh(EntityKind::Commodities).unwrap());
@@ -611,7 +644,9 @@ mod tests {
             quality: 10,
             updated: 1_700_000_000,
         };
-        cache.store_prices(&[p(12, 9_725.0), p(13, 9_600.0)]).unwrap();
+        cache
+            .store_prices(&[p(12, 9_725.0), p(13, 9_600.0)])
+            .unwrap();
         assert!(cache.prices_fresh(1).unwrap());
         let rows = cache.prices_for(1).unwrap();
         assert_eq!(rows.len(), 2);
@@ -621,7 +656,13 @@ mod tests {
         cache.store_prices(&[p(12, 9_900.0)]).unwrap();
         let rows = cache.prices_for(1).unwrap();
         assert_eq!(rows.len(), 2, "upsert must not duplicate rows");
-        assert_eq!(rows.iter().find(|r| r.terminal_id == 12).unwrap().sell_price, 9_900.0);
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.terminal_id == 12)
+                .unwrap()
+                .sell_price,
+            9_900.0
+        );
 
         // expiry
         let old = now_unix() - TTL_PRICES.as_secs() - 1;
@@ -658,7 +699,9 @@ mod tests {
             updated: 1_792_551_295,
             expires: Some(1_797_738_895),
         };
-        cache.store_marketplace(&[offer(1, "a"), offer(2, "b")]).unwrap();
+        cache
+            .store_marketplace(&[offer(1, "a"), offer(2, "b")])
+            .unwrap();
         let snap = cache.marketplace_snapshot().unwrap();
         assert_eq!(snap.len(), 2);
         assert_eq!(snap[0].id, 2, "snapshot ordered newest first");

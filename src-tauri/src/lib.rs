@@ -69,10 +69,7 @@ pub fn run() {
 fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     use tauri::Manager;
 
-    let cache_path = app
-        .path()
-        .app_local_data_dir()?
-        .join("cache.sqlite3");
+    let cache_path = app.path().app_local_data_dir()?.join("cache.sqlite3");
     let cache = Arc::new(cache::Cache::open(&cache_path).map_err(|e| {
         std::io::Error::other(format!("cache open at {}: {e}", cache_path.display()))
     })?);
@@ -84,9 +81,8 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
         .and_then(|s| s.uex_api_key().map(str::to_owned));
 
     let provider: Arc<dyn provider::DataProvider> = Arc::new(
-        uex_client::UexProvider::new(cache.clone(), api_key).map_err(|e| {
-            std::io::Error::other(format!("UEX provider init: {e}"))
-        })?,
+        uex_client::UexProvider::new(cache.clone(), api_key)
+            .map_err(|e| std::io::Error::other(format!("UEX provider init: {e}")))?,
     );
 
     let tracker = Arc::new(trade::SyncTracker::default());
@@ -96,10 +92,33 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
         tracker: tracker.clone(),
     });
 
-    // The background freshness loop (commodities 1h / items 4h / terminals 12h)
-    // is started lazily on the first on-demand sweep — see `trade::sync_now` /
-    // `trade::maybe_start_background`. It runs on Tauri's async (Tokio) runtime,
-    // which is exactly the context the tokio-based provider futures need.
+    // Start the background freshness/health loop once at boot (see
+    // trade::start_background_refresh). Independent of any on-demand command so
+    // a warm cache with a dead network still flips the UI to OFFLINE — that
+    // flips `tracker.last_error`, which the frontend's `online` flag reads.
+    // Runs on Tauri's async (Tokio) runtime, exactly the context the
+    // tokio-based provider futures need.
+    let handle = app.handle();
+    trade::start_background_refresh(handle, &provider, &cache, &tracker);
+
+    // Dev shell: a second, hidden window (label "main") showing the same
+    // SvelteKit palette as the spotlight. Release builds must NOT create it —
+    // an unused webview would add a ~70 MiB WebKitWebProcess (review A2). The
+    // config-level window was removed from tauri.conf.json; only debug/dev
+    // builds get one, created here programmatically.
+    #[cfg(debug_assertions)]
+    {
+        let _ = tauri::WebviewWindowBuilder::new(
+            app,
+            "main",
+            tauri::WebviewUrl::App("index.html".into()),
+        )
+        .title("SC Architects Overlay")
+        .inner_size(800., 600.)
+        .resizable(true)
+        .visible(false)
+        .build();
+    }
 
     Ok(())
 }

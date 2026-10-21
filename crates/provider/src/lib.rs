@@ -110,8 +110,13 @@ mod tests {
     fn provider_error_display_is_not_empty() {
         // Regression: the scaffold left a Display impl returning an empty string.
         let errs = [
-            ProviderError::Http { status: 500, body: "boom".into() },
-            ProviderError::RateLimit { retry_after: Some(60) },
+            ProviderError::Http {
+                status: 500,
+                body: "boom".into(),
+            },
+            ProviderError::RateLimit {
+                retry_after: Some(60),
+            },
             ProviderError::Timeout,
             ProviderError::Json("expected array".into()),
             ProviderError::NotFound("Agricium".into()),
@@ -130,7 +135,10 @@ mod tests {
         // Locations are served from the terminal dataset (trade locations).
         assert_eq!(SearchEntities::Locations.kinds(), &[EntityKind::Terminals]);
         assert_eq!(SearchEntities::Terminals.kinds(), &[EntityKind::Terminals]);
-        assert_eq!(SearchEntities::Commodities.kinds(), &[EntityKind::Commodities]);
+        assert_eq!(
+            SearchEntities::Commodities.kinds(),
+            &[EntityKind::Commodities]
+        );
         assert_eq!(SearchEntities::Items.kinds(), &[EntityKind::Items]);
     }
 
@@ -150,7 +158,10 @@ mod tests {
             quality: 0,
             updated: 1_792_341_485,
         };
-        assert_eq!(serde_json::to_string(&pp).unwrap(), r#"{"commodity":"Agricium","commodity_id":1,"location":"Area 18","terminal_id":12,"sell_price":9725.0,"buy_price":8631.0,"sell_stock":301.0,"buy_stock":0.0,"sell_status":1,"buy_status":0,"quality":0,"updated":1792341485}"#);
+        assert_eq!(
+            serde_json::to_string(&pp).unwrap(),
+            r#"{"commodity":"Agricium","commodity_id":1,"location":"Area 18","terminal_id":12,"sell_price":9725.0,"buy_price":8631.0,"sell_stock":301.0,"buy_stock":0.0,"sell_status":1,"buy_status":0,"quality":0,"updated":1792341485}"#
+        );
         let back: PricePoint = serde_json::from_str(&serde_json::to_string(&pp).unwrap()).unwrap();
         assert_eq!(back.commodity, "Agricium");
         assert_eq!(back.sell_price, 9_725.0);
@@ -162,7 +173,9 @@ mod tests {
             operation: Some(MarketOperation::Sell),
             limit: 100,
         };
-        assert!(serde_json::from_str::<MarketplaceFilter>(&serde_json::to_string(&filter).unwrap())
-            .is_ok());
+        assert!(
+            serde_json::from_str::<MarketplaceFilter>(&serde_json::to_string(&filter).unwrap())
+                .is_ok()
+        );
     }
 }

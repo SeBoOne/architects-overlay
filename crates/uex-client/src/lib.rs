@@ -46,12 +46,7 @@ impl UexProvider {
     /// Construct with the shared cache and an optional API key (read endpoints
     /// work without auth; the key is stored locally via `settings`).
     pub fn new(cache: Arc<Cache>, api_key: Option<String>) -> Result<UexProvider> {
-        UexProvider::with_base_url(
-            cache,
-            api_key,
-            DEFAULT_BASE_URL,
-            DEFAULT_MIN_INTERVAL,
-        )
+        UexProvider::with_base_url(cache, api_key, DEFAULT_BASE_URL, DEFAULT_MIN_INTERVAL)
     }
 
     /// Constructor with an explicit base URL + pacing override (tests, staging).
@@ -89,11 +84,12 @@ impl UexProvider {
         let exact = hits
             .iter()
             .find(|h| h.name.eq_ignore_ascii_case(query.trim()))
-            .or_else(|| hits.iter().find(|h| h.code.as_deref() == Some(query.trim())));
+            .or_else(|| {
+                hits.iter()
+                    .find(|h| h.code.as_deref() == Some(query.trim()))
+            });
         let hit = exact.or(hits.first()).ok_or_else(|| {
-            ProviderError::NotFound(format!(
-                "commodity '{query}' not found in reference data"
-            ))
+            ProviderError::NotFound(format!("commodity '{query}' not found in reference data"))
         })?;
         Ok((hit.id, hit.name.clone()))
     }
@@ -132,9 +128,17 @@ impl DataProvider for UexProvider {
         let points = rows
             .into_iter()
             .map(|r| PricePoint {
-                commodity: if r.commodity_name.is_empty() { name.clone() } else { r.commodity_name },
+                commodity: if r.commodity_name.is_empty() {
+                    name.clone()
+                } else {
+                    r.commodity_name
+                },
                 commodity_id: r.id_commodity,
-                location: if r.terminal_name.is_empty() { format!("terminal {}", r.id_terminal) } else { r.terminal_name },
+                location: if r.terminal_name.is_empty() {
+                    format!("terminal {}", r.id_terminal)
+                } else {
+                    r.terminal_name
+                },
                 terminal_id: r.id_terminal,
                 sell_price: r.price_sell,
                 buy_price: r.price_buy,
@@ -187,7 +191,11 @@ impl DataProvider for UexProvider {
                 operation: r.operation.parse().unwrap_or(MarketOperation::Sell),
                 listing_type: r.r#type.parse().unwrap_or(ListingType::Item),
                 price: r.price.parse::<f64>().unwrap_or(0.0),
-                currency: if r.currency.is_empty() { "UEC".into() } else { r.currency },
+                currency: if r.currency.is_empty() {
+                    "UEC".into()
+                } else {
+                    r.currency
+                },
                 unit: r.unit,
                 quantity: r.in_stock,
                 location: r.location,
@@ -199,7 +207,9 @@ impl DataProvider for UexProvider {
             .collect::<Vec<_>>();
 
         // Keep the snapshot for offline display (never served as fresh).
-        self.cache.store_marketplace(&offers).map_err(map_cache_err)?;
+        self.cache
+            .store_marketplace(&offers)
+            .map_err(map_cache_err)?;
         Ok(offers)
     }
 
@@ -237,7 +247,9 @@ impl DataProvider for UexProvider {
                         .into_iter()
                         .flatten()
                         {
-                            if !field.is_empty() && parts.last().map(String::as_str) != Some(field.as_str()) {
+                            if !field.is_empty()
+                                && parts.last().map(String::as_str) != Some(field.as_str())
+                            {
                                 parts.push(field);
                             }
                         }

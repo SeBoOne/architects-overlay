@@ -85,12 +85,18 @@ impl Settings {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => RawConfig::default(),
             Err(e) => return Err(SettingsError::Io(e.to_string())),
         };
-        Ok(Settings { path: path.to_path_buf(), uex_api_key: raw.uex.and_then(|u| u.api_key) })
+        Ok(Settings {
+            path: path.to_path_buf(),
+            uex_api_key: raw.uex.and_then(|u| u.api_key),
+        })
     }
 
     /// Settings handle pinned to a given file path (tests/embedded use).
     pub fn with_path(path: PathBuf) -> Settings {
-        Settings { path, uex_api_key: None }
+        Settings {
+            path,
+            uex_api_key: None,
+        }
     }
 
     /// Configured UEX API key, or None.
@@ -107,7 +113,9 @@ impl Settings {
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
         let raw = RawConfig {
-            uex: Some(UexSection { api_key: self.uex_api_key.clone() }),
+            uex: Some(UexSection {
+                api_key: self.uex_api_key.clone(),
+            }),
         };
         let content = toml::to_string_pretty(&raw)
             .map_err(|e| SettingsError::Parse(format!("serialize: {e}")))?;
@@ -120,8 +128,7 @@ impl Settings {
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o600);
-            std::fs::set_permissions(&tmp, perms)
-                .map_err(|e| SettingsError::Io(e.to_string()))?;
+            std::fs::set_permissions(&tmp, perms).map_err(|e| SettingsError::Io(e.to_string()))?;
         }
         std::fs::rename(&tmp, &self.path).map_err(|e| SettingsError::Io(e.to_string()))?;
         Ok(())
@@ -130,7 +137,9 @@ impl Settings {
 
 /// Path to the per-user config file (App-Config-Dir / architects-overlay/config.toml).
 pub fn config_path() -> Option<String> {
-    Settings::config_path().ok().map(|p| p.to_string_lossy().into_owned())
+    Settings::config_path()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
 }
 
 /// Returns the configured UEX API key, or None if unset.
@@ -203,6 +212,11 @@ mod tests {
         s.set_uex_api_key(Some(String::from("topsecret")));
         s.save().unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o777, 0o600, "config file must be 0600, got {:o}", mode & 0o777);
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "config file must be 0600, got {:o}",
+            mode & 0o777
+        );
     }
 }

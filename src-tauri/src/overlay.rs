@@ -29,6 +29,13 @@ use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutEvent, Sho
 /// frontend (`getCurrentWebviewWindow().getLabel()`).
 pub const SPOTLIGHT_LABEL: &str = "spotlight";
 
+/// Spotlight panel size in logical px. Asserted again after every map, because
+/// some compositors (Hyprland) may float the window at their own default size
+/// (observed 1720×1410) instead of honouring the build-time `inner_size`
+/// (review B2).
+const PANEL_W: f64 = 660.;
+const PANEL_H: f64 = 600.;
+
 /// Tauri event the frontend listens to for live overlay state updates
 /// (game started/stopped, visibility toggled, click-through toggled).
 pub const OVERLAY_STATE_EVENT: &str = "overlay-state-changed";
@@ -112,7 +119,7 @@ fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Web
     .always_on_top(true)
     .skip_taskbar(true)
     .resizable(false)
-    .inner_size(660., 600.)
+    .inner_size(PANEL_W, PANEL_H)
     .visible(false) // shown when Star Citizen is detected
     .build()?;
 
@@ -127,9 +134,9 @@ fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Web
 /// Register the global shortcuts. The `global-shortcut` backend is X11-based
 /// (global_hotkey has no Wayland implementation), so on a pure Wayland session
 /// the plugin fails to initialise; we swallow that — the overlay still works,
-/// only the global hotkey is unavailable there.
-/// TODO(wayland): wire the toggle through the compositor (e.g. a Hyprland
-/// binding) or a tray/CLI entry point, when Sebo's Wayland setup needs it.
+/// only the global hotkey is unavailable there. The Wayland fallback is the
+/// Unix-socket CLI (`arch-overlay toggle`, see `ipc_socket` + docs/WAYLAND.md),
+/// which compositor keybinds exec directly.
 fn register_global_shortcuts<R: Runtime>(app: &tauri::App<R>) {
     // Strg+Shift+U toggles visibility, Strg+Shift+O toggles click-through.
     // Hard-coded for Phase 1 — both become configurable via `settings`.
@@ -263,6 +270,14 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
         if let Some(win) = worker.get_webview_window(SPOTLIGHT_LABEL) {
             if visible {
                 let _ = win.show();
+                // Re-assert the panel size after the window is mapped: on
+                // Hyprland the compositor can float the window at its own
+                // default size (observed 1720×1410) instead of the requested
+                // 660×600 (review B2). Forcing the size before the centering
+                // math keeps both geometry and hit-area correct. Logical
+                // (matching the build-time `inner_size`) so HiDPI scales stay
+                // correct.
+                let _ = win.set_size(tauri::LogicalSize::new(PANEL_W, PANEL_H));
                 // The GTK window is only realized after the first map; shape
                 // the (hidden-at-boot) window only now, when click-through is
                 // safe to apply. On Wayland the compositor may ignore the
