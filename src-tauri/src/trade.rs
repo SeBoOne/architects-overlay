@@ -13,6 +13,13 @@
 //!   counts, sync-in-progress and last error; `sync_now` triggers the
 //!   on-demand sweep the UI needs for the first sync and the "Erneut
 //!   versuchen" action.
+//! - `get_marketplace(filters)` — live/cached marketplace offers with
+//!   client-side region filter + price sort; `source` tells the UI whether the
+//!   data came from the fresh short-TTL snapshot ("cache"), a live fetch
+//!   ("live") or the last snapshot after a failed live fetch ("offline").
+//! - `open_marketplace_listing(slug)` — opens the listing's uexcorp.space page
+//!   in the system default browser (tauri-plugin-opener, external URL — no app
+//!   navigation). Read-only, no write endpoints called anywhere in Phase 2.
 //!
 //! Errors cross the IPC boundary as human-readable German strings (the
 //! design contract wants rate limits etc. in the user's language, e.g.
@@ -120,6 +127,19 @@ pub struct SyncStatus {
     pub datasets: Vec<DatasetStatus>,
 }
 
+/// Marketplace response payloads (mirrored as TS types in +page.svelte).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct MarketResponse {
+    /// "cache" = served from the fresh short-TTL snapshot · "live" = freshly
+    /// fetched · "offline" = last snapshot after the live fetch failed.
+    pub source: String,
+    /// unix seconds the snapshot/response was assembled.
+    pub fetched_at: u64,
+    pub offers: Vec<provider::Offer>,
+    /// Non-fatal note (e.g. last live fetch failed, showing stale snapshot).
+    pub note: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -213,6 +233,70 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
     Ok(build_status(&state.provider, &state.cache, &state.tracker))
 }
 
+/// Marketplace offers, filtered client-side (q/location/region/sort) by the
+/// provider. Served from the short-TTL cache when fresh; falls back to the last
+/// snapshot (marked `source: "offline"`) when the live fetch fails but a
+/// snapshot exists — the market view stays usable without a connection.
+#[tauri::command]
+pub async fn get_marketplace(
+    state: State<'_, TradeState>,
+    filters: provider::MarketplaceFilter,
+) -> Result<MarketResponse, String> {
+    // Was the snapshot already fresh before the call? Then the provider serves
+    // it from cache (live only when item_id/operation filter forces a fetch).
+    let cache_fresh = state.cache.marketplace_fresh().unwrap_or(false);
+    match state.provider.marketplace_offers(filters).await {
+        Ok(offers) => Ok(MarketResponse {
+            source: if cache_fresh {
+                "cache".to_string()
+            } else {
+                "live".to_string()
+            },
+            fetched_at: now_unix(),
+            offers,
+            note: None,
+        }),
+        Err(e) => {
+            // Offline / rate-limited: serve the last snapshot if we have one,
+            // else surface the error.
+            match state.cache.marketplace_snapshot() {
+                Ok(snapshot) if !snapshot.is_empty() => Ok(MarketResponse {
+                    source: "offline".into(),
+                    fetched_at: now_unix(),
+                    offers: snapshot,
+                    note: Some(friendly(e)),
+                }),
+                _ => Err(friendly(e)),
+            }
+        }
+    }
+}
+
+/// Open one listing's page on uexcorp.space in the system default browser.
+/// URL scheme verified against the live site (October 2026): both item and
+/// service listings live under `/marketplace/item/info/{slug}/`. No slug → the
+/// marketplace home. Pure external navigation; nothing is written to UEX.
+#[tauri::command]
+pub fn open_marketplace_listing(app: AppHandle, slug: String) -> Result<String, String> {
+    let url = listing_deep_link(&slug);
+    // Free-form opener API (no scope check — the URL comes from our own cache,
+    // not from user/remote input). Opens in the system default browser.
+    let _ = &app; // AppHandle kept for signature symmetry with sibling commands
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(url)
+}
+
+/// Build the external deep link for a listing slug.
+fn listing_deep_link(slug: &str) -> String {
+    let slug = slug.trim();
+    if slug.is_empty() {
+        "https://uexcorp.space/marketplace/".to_string()
+    } else {
+        format!("https://uexcorp.space/marketplace/item/info/{slug}/")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
@@ -244,6 +328,13 @@ pub fn start_background_refresh(
     let cache = cache.clone();
     let tracker = tracker.clone();
     let handle = app.clone();
+    // Marketplace-Sync (Phase 2): kurze TTL (5 min) → eigener, schneller Zyklus,
+    // damit der Boards-Snapshot nahezu frisch bleibt. Rate-Limit-schonend: ein
+    // /marketplace_listings-Request pro TTL-Fenster (≈12/h), plus der einmalige
+    // Star-System-Fetch pro 12h. Fehler sind hier nicht fatal — der nächste Tick
+    // versucht es erneut und die UI fällt auf den letzten Snapshot zurück.
+    let mprovider = provider.clone();
+    let mcache = cache.clone();
     _ = tauri::async_runtime::spawn(async move {
         // Erste Probe kurz nach Boot: Netz-Erreichbarkeit prüfen, unabhängig
         // von der TTL — ein frischer Cache mit totem Netz muss trotzdem als
@@ -255,7 +346,31 @@ pub fn start_background_refresh(
             background_tick(&tracker, &provider, &cache, &handle).await;
         }
     });
+
+    _ = tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(MARKET_REFRESH_INTERVAL).await;
+            match (
+                mcache.marketplace_fresh(),
+                mprovider
+                    .marketplace_offers(provider::MarketplaceFilter::default())
+                    .await,
+            ) {
+                (Ok(true), _) => log::debug!("market: snapshot fresh, skip"),
+                (_, Err(e)) => log::warn!("market: refresh failed: {e}"),
+                (_, Ok(offers)) => log::info!("market: cached {} offers", offers.len()),
+            }
+        }
+    });
 }
+
+/// Cadence of the background marketplace refresh (= the marketplace TTL, so we
+/// never hammer the API: exactly one listing fetch per fresh window + failures
+/// are retried on the next tick).
+const MARKET_REFRESH_INTERVAL: std::time::Duration = match cache::TTL_MARKETPLACE {
+    Some(d) => d,
+    None => std::time::Duration::from_secs(300),
+};
 
 /// One background iteration: refresh stale datasets (computed via
 /// [`sweep`] with `probe_if_fresh`), record the outcome and broadcast it.
@@ -438,6 +553,105 @@ mod tests {
             assert_eq!(resp.total, 0);
         }
         let _ = app; // state borrow keeps app alive for the duration
+    }
+
+    #[test]
+    fn listing_deep_link_builds_verified_url_scheme() {
+        // URL scheme is the one verified against the live site (items AND
+        // services live under /marketplace/item/info/{slug}/).
+        assert_eq!(
+            listing_deep_link("stark-compensator-2-UKCqAtSM3p"),
+            "https://uexcorp.space/marketplace/item/info/stark-compensator-2-UKCqAtSM3p/"
+        );
+        // Whitespace-only / empty slug → marketplace home (no broken URL).
+        assert_eq!(listing_deep_link(""), "https://uexcorp.space/marketplace/");
+        assert_eq!(
+            listing_deep_link("   "),
+            "https://uexcorp.space/marketplace/"
+        );
+    }
+
+    /// get_marketplace: no snapshot → provider error surfaces as a command
+    /// error (UI shows the error pane); with snapshot → offline fallback.
+    #[tokio::test]
+    async fn get_marketplace_falls_back_to_snapshot_offline() {
+        use provider::{ListingType, MarketOperation};
+
+        struct FailingProvider;
+        #[async_trait::async_trait]
+        impl DataProvider for FailingProvider {
+            async fn search(
+                &self,
+                _e: provider::SearchEntities,
+                _q: &str,
+            ) -> provider::Result<Vec<SearchHit>> {
+                Ok(vec![])
+            }
+            async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
+                Ok(vec![])
+            }
+            async fn marketplace_offers(
+                &self,
+                _f: provider::MarketplaceFilter,
+            ) -> provider::Result<Vec<provider::Offer>> {
+                Err(provider::ProviderError::Timeout)
+            }
+            async fn fetch_entities(
+                &self,
+                _k: EntityKind,
+            ) -> provider::Result<Vec<provider::Entity>> {
+                Ok(vec![])
+            }
+            fn name(&self) -> String {
+                "failing".into()
+            }
+        }
+
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(FailingProvider),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+        });
+        let state = app.state::<TradeState>();
+
+        // no snapshot → error surfaces
+        let err = get_marketplace(state.clone(), provider::MarketplaceFilter::default())
+            .await
+            .unwrap_err();
+        assert!(err.contains("Zeitüberschreitung"), "got {err}");
+
+        // with a snapshot → offline fallback with note
+        state
+            .cache
+            .store_marketplace(&[provider::Offer {
+                id: 1,
+                title: "x".into(),
+                description: String::new(),
+                item_id: 0,
+                category_id: 0,
+                operation: MarketOperation::Sell,
+                listing_type: ListingType::Item,
+                price: 1.0,
+                currency: "UEC".into(),
+                unit: "unit".into(),
+                quantity: 1,
+                location: "Levski".into(),
+                region: "Stanton".into(),
+                seller: "s".into(),
+                quality: 0,
+                updated: 1,
+                expires: None,
+                slug: "s".into(),
+            }])
+            .unwrap();
+        let resp = get_marketplace(state.clone(), provider::MarketplaceFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(resp.source, "offline");
+        assert_eq!(resp.offers.len(), 1);
+        assert!(resp.note.is_some(), "offline fallback must carry the note");
+        let _ = app;
     }
 
     struct StubProvider;

@@ -13,8 +13,8 @@
 mod model;
 
 pub use crate::model::{
-    Entity, EntityKind, ListingType, MarketOperation, MarketplaceFilter, Offer, PricePoint,
-    SearchEntities, SearchHit,
+    Entity, EntityKind, ListingType, MarketOperation, MarketplaceFilter, Offer, OfferSort,
+    PricePoint, SearchEntities, SearchHit,
 };
 
 /// Domain error produced by a provider implementation.
@@ -131,6 +131,25 @@ mod tests {
     }
 
     #[test]
+    fn offer_sort_wire_format_matches_frontend_contract() {
+        // The Svelte UI declares OfferSort = 'newest' | 'price_asc' | 'price_desc'
+        // and sends `sort` verbatim in the get_marketplace filter — regression for
+        // the IPC mismatch (sent price_asc, backend expected priceasc).
+        for (variant, wire) in [
+            (OfferSort::Newest, "newest"),
+            (OfferSort::PriceAsc, "price_asc"),
+            (OfferSort::PriceDesc, "price_desc"),
+        ] {
+            assert_eq!(
+                serde_json::to_string(&variant).unwrap(),
+                format!("\"{wire}\"")
+            );
+            let back: OfferSort = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
+            assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
     fn search_entities_maps_to_data_kinds() {
         // Locations are served from the terminal dataset (trade locations).
         assert_eq!(SearchEntities::Locations.kinds(), &[EntityKind::Terminals]);
@@ -171,6 +190,8 @@ mod tests {
             q: "compensator".into(),
             item_id: Some(5332),
             operation: Some(MarketOperation::Sell),
+            region: "Nyx".into(),
+            sort: Some(OfferSort::PriceAsc),
             limit: 100,
         };
         assert!(

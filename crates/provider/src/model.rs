@@ -15,6 +15,9 @@ pub enum EntityKind {
     Commodities,
     Items,
     Terminals,
+    /// Star systems — only used to resolve a listing's `id_star_system` to a
+    /// region name for the marketplace view; never a searchable dataset.
+    StarSystems,
 }
 
 impl EntityKind {
@@ -24,6 +27,7 @@ impl EntityKind {
             EntityKind::Commodities => "commodity",
             EntityKind::Items => "item",
             EntityKind::Terminals => "terminal",
+            EntityKind::StarSystems => "star_system",
         }
     }
 }
@@ -176,6 +180,21 @@ impl std::str::FromStr for ListingType {
     }
 }
 
+/// How marketplace offers are ordered (client-side — the UEX API exposes no
+/// sort parameter, only filter inputs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OfferSort {
+    /// `date_added` descending (API default order).
+    #[serde(rename = "newest")]
+    Newest,
+    /// Unit price ascending (cheapest first).
+    #[serde(rename = "price_asc")]
+    PriceAsc,
+    /// Unit price descending (most expensive first).
+    #[serde(rename = "price_desc")]
+    PriceDesc,
+}
+
 /// Filters for the marketplace listing.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MarketplaceFilter {
@@ -188,6 +207,11 @@ pub struct MarketplaceFilter {
     pub item_id: Option<u64>,
     /// Restrict to buy or sell offers (API `operation`).
     pub operation: Option<MarketOperation>,
+    /// Restrict to one star-system region by name (e.g. "Stanton", "Nyx");
+    /// matched locally against the resolved region of each listing.
+    pub region: String,
+    /// Ordering of the returned offers (default [`OfferSort::Newest`]).
+    pub sort: Option<OfferSort>,
     /// Page size hint (API allows 100 default, up to 1000 with item+operation).
     pub limit: u32,
 }
@@ -208,6 +232,9 @@ pub struct Offer {
     /// In-stock quantity.
     pub quantity: u64,
     pub location: String,
+    /// Resolved star-system (region) name, e.g. "Stanton" — empty when the
+    /// source did not carry a system id. Not a free-text field.
+    pub region: String,
     pub seller: String,
     /// Quality on the source's scale (UEX: 0–1000).
     pub quality: u16,
@@ -215,4 +242,6 @@ pub struct Offer {
     pub updated: u64,
     /// unix seconds the listing expires, if set.
     pub expires: Option<u64>,
+    /// Permalink slug on the source website (deep-link target).
+    pub slug: String,
 }

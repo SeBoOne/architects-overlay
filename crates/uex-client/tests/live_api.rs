@@ -81,3 +81,57 @@ async fn live_search_and_prices() {
         .unwrap();
     assert!(!terminals.is_empty(), "expected Area 18 terminals");
 }
+
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored"]
+async fn live_marketplace_filter_and_sort() {
+    use provider::{MarketplaceFilter, OfferSort};
+
+    let p = live_provider().await;
+
+    // Region filter: restricting to Nyx must return only Nyx listings.
+    let nyx = p
+        .marketplace_offers(MarketplaceFilter {
+            region: "Nyx".into(),
+            sort: Some(OfferSort::PriceAsc),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(
+        !nyx.is_empty(),
+        "expected active Nyx listings, got {}",
+        nyx.len()
+    );
+    assert!(
+        nyx.iter().all(|o| o.region == "Nyx"),
+        "region filter leaked: {:?}",
+        nyx.iter().map(|o| &o.region).collect::<Vec<_>>()
+    );
+    // Ascending sort must be monotone for the returned page.
+    let mut sorted = nyx
+        .iter()
+        .map(|o| o.price)
+        .filter(|p| *p > 0.0)
+        .collect::<Vec<_>>();
+    let orig = sorted.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    assert_eq!(orig, sorted, "price ascending sort failed");
+
+    // Every live listing must carry a slug (deep-link target).
+    assert!(nyx.iter().all(|o| !o.slug.is_empty()));
+    // And a region resolve (star-systems mapping worked).
+    assert!(nyx.iter().all(|o| !o.region.is_empty()));
+
+    // Free-text q matches title/description/seller.
+    let first = &nyx[0].title.split_whitespace().next().unwrap_or("x");
+    let q = first.chars().take(4).collect::<String>();
+    let filtered = p
+        .marketplace_offers(MarketplaceFilter {
+            q,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert!(!filtered.is_empty());
+}

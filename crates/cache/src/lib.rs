@@ -32,8 +32,11 @@ pub const TTL_TERMINALS: Duration = Duration::from_secs(43_200); // 12h
 pub const TTL_ITEMS: Duration = Duration::from_secs(14_400); // 4h
 /// Prices are volatile (hourly updates upstream) — short TTL.
 pub const TTL_PRICES: Duration = Duration::from_secs(1_800); // 30min
-/// Marketplace listings are realtime; never served stale.
-pub const TTL_MARKETPLACE: Option<Duration> = None;
+/// Marketplace listings are realtime; Phase 2 caches the last snapshot for a
+/// short TTL (5 min) so the offers view opens instantly from cache while the
+/// background sync keeps it warm — rate-limit-schonend (one listing fetch per
+/// TTL window at most).
+pub const TTL_MARKETPLACE: Option<Duration> = Some(Duration::from_secs(300));
 
 /// TTL for one reference dataset.
 pub fn ttl_for(kind: EntityKind) -> Duration {
@@ -41,6 +44,8 @@ pub fn ttl_for(kind: EntityKind) -> Duration {
         EntityKind::Commodities => TTL_COMMODITIES,
         EntityKind::Items => TTL_ITEMS,
         EntityKind::Terminals => TTL_TERMINALS,
+        // Star systems change on game-patch cadence, like terminals.
+        EntityKind::StarSystems => TTL_TERMINALS,
     }
 }
 
@@ -113,10 +118,12 @@ CREATE TABLE IF NOT EXISTS marketplace_offers (
   unit         TEXT    NOT NULL DEFAULT '',
   quantity     INTEGER NOT NULL DEFAULT 0,
   location     TEXT    NOT NULL DEFAULT '',
+  region       TEXT    NOT NULL DEFAULT '',
   seller       TEXT    NOT NULL DEFAULT '',
   quality      INTEGER NOT NULL DEFAULT 0,
   updated      INTEGER NOT NULL,
   expires      INTEGER,
+  slug         TEXT    NOT NULL DEFAULT '',
   fetched_at   INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (
@@ -134,6 +141,35 @@ fn prices_meta_key(commodity_id: u64) -> String {
 }
 
 const MARKETPLACE_META_KEY: &str = "fetched_at:marketplace";
+
+/// Columns added to `marketplace_offers` after the initial Phase-1 schema.
+/// `CREATE TABLE IF NOT EXISTS` does not alter an existing table, so pre-Phase-2
+/// caches need a column migration here.
+const MARKETPLACE_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "region",
+        "ALTER TABLE marketplace_offers ADD COLUMN region TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "slug",
+        "ALTER TABLE marketplace_offers ADD COLUMN slug TEXT NOT NULL DEFAULT ''",
+    ),
+];
+
+fn migrate_columns(conn: &Connection) -> Result<()> {
+    for (column, alter) in MARKETPLACE_MIGRATIONS {
+        let has = conn
+            .prepare("SELECT 1 FROM pragma_table_info('marketplace_offers') WHERE name = ?1")
+            .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
+            .exists([column])
+            .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?;
+        if !has {
+            conn.execute(alter, [])
+                .map_err(|e| CacheError::Open(format!("migration {alter}: {e}")))?;
+        }
+    }
+    Ok(())
+}
 
 /// The local SQLite cache. Share via `Arc<Cache>`.
 pub struct Cache {
@@ -162,6 +198,7 @@ impl Cache {
             .map_err(|e| CacheError::Open(e.to_string()))?;
         conn.execute_batch(SCHEMA)
             .map_err(|e| CacheError::Open(format!("schema: {e}")))?;
+        migrate_columns(&conn)?;
         Ok(Cache {
             conn: Mutex::new(conn),
         })
@@ -296,6 +333,29 @@ impl Cache {
         })
     }
 
+    /// All cached reference entities of one kind, id → row. Used for small
+    /// lookups (e.g. star system id → region name) rather than FTS search.
+    pub fn entities_of(&self, kind: EntityKind) -> Result<Vec<Entity>> {
+        self.with(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT id, name, code, subtitle FROM entities WHERE kind = ?1")?;
+            let rows = stmt.query_map([kind.as_str()], |row| {
+                Ok(Entity {
+                    id: row.get::<_, i64>(0)? as u64,
+                    kind,
+                    name: row.get(1)?,
+                    code: row.get(2)?,
+                    subtitle: row.get(3)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
+
     // ---------- prices ----------
 
     /// Whether cached prices for `commodity_id` are younger than `TTL_PRICES`.
@@ -397,8 +457,36 @@ impl Cache {
 
     // ---------- marketplace ----------
 
+    /// Whether the cached marketplace snapshot is younger than `TTL_MARKETPLACE`
+    /// (always false when the TTL is `None`).
+    pub fn marketplace_fresh(&self) -> Result<bool> {
+        let Some(ttl) = TTL_MARKETPLACE else {
+            return Ok(false);
+        };
+        let fetched = self.meta_get(MARKETPLACE_META_KEY)?;
+        Ok(match fetched {
+            Some(ts) => now_unix().saturating_sub(ts) < ttl.as_secs(),
+            None => false,
+        })
+    }
+
+    /// Override the snapshot's fetched-at marker (unix seconds). The next
+    /// [`Cache::marketplace_fresh`] call judges against this timestamp — used
+    /// by tests to simulate an expired snapshot and by a future manual-refresh
+    /// action to force staleness.
+    pub fn set_marketplace_fetched_at(&self, unix_secs: u64) -> Result<()> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (MARKETPLACE_META_KEY, unix_secs.to_string()),
+            )?;
+            Ok(())
+        })
+    }
+
     /// Replace the marketplace snapshot (full snapshot semantics). The snapshot
-    /// is marked fetched but is *never* considered fresh (TTL `None`).
+    /// is marked fetched and counts as fresh for `TTL_MARKETPLACE`.
     pub fn store_marketplace(&self, offers: &[Offer]) -> Result<()> {
         self.with(|conn| {
             let tx = conn.transaction()?;
@@ -407,8 +495,8 @@ impl Cache {
                 let mut stmt = tx.prepare(
                     "INSERT INTO marketplace_offers (id, title, description, item_id,
                         category_id, operation, listing_type, price, currency, unit,
-                        quantity, location, seller, quality, updated, expires, fetched_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                        quantity, location, region, seller, quality, updated, expires, slug, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                 )?;
                 let now = now_unix() as i64;
                 for o in offers {
@@ -425,10 +513,12 @@ impl Cache {
                         o.unit,
                         o.quantity as i64,
                         o.location,
+                        o.region,
                         o.seller,
                         o.quality as i64,
                         o.updated as i64,
                         o.expires.map(|e| e as i64),
+                        o.slug,
                         now
                     ])?;
                 }
@@ -443,13 +533,13 @@ impl Cache {
     }
 
     /// The last marketplace snapshot, newest first (offline display only —
-    /// always stale by design).
+    /// always stale by design unless [`Cache::marketplace_fresh`]).
     pub fn marketplace_snapshot(&self) -> Result<Vec<Offer>> {
         self.with(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, title, description, item_id, category_id, operation,
-                        listing_type, price, currency, unit, quantity, location, seller,
-                        quality, updated, expires
+                        listing_type, price, currency, unit, quantity, location, region, seller,
+                        quality, updated, expires, slug
                  FROM marketplace_offers ORDER BY updated DESC, id DESC",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -468,10 +558,12 @@ impl Cache {
                     unit: row.get(9)?,
                     quantity: row.get::<_, i64>(10)? as u64,
                     location: row.get(11)?,
-                    seller: row.get(12)?,
-                    quality: row.get::<_, i64>(13)? as u16,
-                    updated: row.get::<_, i64>(14)? as u64,
-                    expires: row.get::<_, Option<i64>>(15)?.map(|e| e as u64),
+                    region: row.get(12)?,
+                    seller: row.get(13)?,
+                    quality: row.get::<_, i64>(14)? as u16,
+                    updated: row.get::<_, i64>(15)? as u64,
+                    expires: row.get::<_, Option<i64>>(16)?.map(|e| e as u64),
+                    slug: row.get(17)?,
                 })
             })?;
             let mut out = Vec::new();
@@ -694,10 +786,12 @@ mod tests {
             unit: "unit".into(),
             quantity: 8,
             location: "Levski".into(),
+            region: "Nyx".into(),
             seller: "alexlejero".into(),
             quality: 0,
             updated: 1_792_551_295,
             expires: Some(1_797_738_895),
+            slug: "stark-compensator-2-UKCqAtSM3p".into(),
         };
         cache
             .store_marketplace(&[offer(1, "a"), offer(2, "b")])
@@ -706,8 +800,86 @@ mod tests {
         assert_eq!(snap.len(), 2);
         assert_eq!(snap[0].id, 2, "snapshot ordered newest first");
         assert_eq!(snap[0].price, 400_000.0);
+        assert_eq!(snap[0].slug, "stark-compensator-2-UKCqAtSM3p");
+        assert_eq!(snap[0].region, "Nyx");
         // replacing wipes the old snapshot
         cache.store_marketplace(&[offer(3, "c")]).unwrap();
         assert_eq!(cache.marketplace_snapshot().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn marketplace_fresh_respects_ttl() {
+        let cache = Cache::open_in_memory().unwrap();
+        // nothing stored → not fresh
+        assert!(!cache.marketplace_fresh().unwrap());
+        cache.store_marketplace(&[]).unwrap();
+        // an empty snapshot still marks fetched_at → fresh until TTL elapses
+        assert!(cache.marketplace_fresh().unwrap());
+        let old = now_unix() - TTL_MARKETPLACE.unwrap().as_secs() - 1;
+        cache
+            .with(|conn| {
+                conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = ?2",
+                    [old.to_string(), MARKETPLACE_META_KEY.to_string()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!cache.marketplace_fresh().unwrap());
+    }
+
+    #[test]
+    fn marketplace_schema_migrates_existing_db() {
+        // Simulate a Phase-1 cache (marketplace_offers WITHOUT region/slug):
+        // opening it must add the missing columns rather than fail.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.sqlite3");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(
+                "DROP TABLE marketplace_offers;
+                 CREATE TABLE marketplace_offers (
+                   id INTEGER PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+                   description TEXT NOT NULL DEFAULT '', item_id INTEGER NOT NULL DEFAULT 0,
+                   category_id INTEGER NOT NULL DEFAULT 0, operation TEXT NOT NULL DEFAULT 'sell',
+                   listing_type TEXT NOT NULL DEFAULT 'item', price REAL NOT NULL DEFAULT 0,
+                   currency TEXT NOT NULL DEFAULT 'UEC', unit TEXT NOT NULL DEFAULT '',
+                   quantity INTEGER NOT NULL DEFAULT 0, location TEXT NOT NULL DEFAULT '',
+                   seller TEXT NOT NULL DEFAULT '', quality INTEGER NOT NULL DEFAULT 0,
+                   updated INTEGER NOT NULL, expires INTEGER, fetched_at INTEGER NOT NULL);",
+            )
+            .unwrap();
+        }
+        let cache = Cache::open(&path).unwrap();
+        // New columns present after migration.
+        cache
+            .store_marketplace(&[Offer {
+                id: 1,
+                title: "x".into(),
+                description: String::new(),
+                item_id: 0,
+                category_id: 0,
+                operation: MarketOperation::Sell,
+                listing_type: ListingType::Item,
+                price: 1.0,
+                currency: "UEC".into(),
+                unit: "unit".into(),
+                quantity: 1,
+                location: "L".into(),
+                region: "Stanton".into(),
+                seller: "s".into(),
+                quality: 0,
+                updated: 1,
+                expires: None,
+                slug: "s".into(),
+            }])
+            .unwrap();
+        let snap = cache.marketplace_snapshot().unwrap();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].region, "Stanton");
+        assert_eq!(snap[0].slug, "s");
+        let _ = path;
+        drop(dir);
     }
 }

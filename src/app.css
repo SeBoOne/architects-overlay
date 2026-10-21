@@ -577,6 +577,298 @@ html[data-window="spotlight"] .pal-root {
 	color: var(--fg);
 }
 
+/* --------------------------- Marketplace (Phase 2) ------------------------ */
+.pane-market {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.mbar,
+.mbar2 {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel3);
+	flex-wrap: wrap;
+}
+
+.mbar2 {
+	border-bottom: 0;
+}
+
+.mbar .m-spacer,
+.mbar2 .m-spacer {
+	flex: 1;
+}
+
+.m-lbl {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.mq {
+	flex: 1;
+	min-width: 140px;
+	background: var(--panel);
+	border: 1px solid var(--lineb);
+	color: var(--fg);
+	font: 500 12px/1.4 var(--font-ui);
+	padding: 5px 9px;
+	outline: none;
+}
+
+.mq:focus {
+	border-color: var(--accent);
+}
+
+.mlist {
+	max-height: min(54vh, 400px);
+	overflow: auto;
+	scrollbar-width: thin;
+}
+
+.mrow {
+	display: grid;
+	grid-template-columns: 44px 1fr auto;
+	gap: 10px;
+	align-items: center;
+	padding: 7px 16px;
+	min-height: 46px;
+	border-bottom: 1px solid var(--line);
+	cursor: default;
+}
+
+.mrow.is-sel {
+	background: var(--panel2);
+	box-shadow: inset 4px 0 0 var(--accent-h);
+}
+
+.m-op {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.08em;
+	border: 1px solid var(--lineb);
+	padding: 4px 5px;
+	text-align: center;
+	color: var(--fgdim);
+}
+
+.m-op.sell {
+	color: var(--sell);
+	border-color: color-mix(in srgb, var(--sell) 45%, transparent);
+}
+
+.m-op.buy {
+	color: var(--buy);
+	border-color: color-mix(in srgb, var(--buy) 45%, transparent);
+}
+
+.m-title {
+	font-size: 13.5px;
+	font-weight: 500;
+	color: var(--fg);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.m-sub {
+	font-size: 11px;
+	color: var(--fgdim);
+	margin-top: 2px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.m-right {
+	text-align: right;
+	white-space: nowrap;
+}
+
+.m-price {
+	font: 600 13px/1.35 var(--font-mono);
+	color: var(--sell);
+}
+
+.m-price.buy {
+	color: var(--buy);
+}
+
+.m-price.sell {
+	color: var(--sell);
+}
+
+.m-meta {
+	font: 500 10px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+	margin-top: 2px;
+}
+
+.m-foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 8px 14px;
+	background: var(--panel3);
+	border-top: 1px solid var(--lineb);
+	font: 600 10px/1.4 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.src {
+	color: var(--fgdim);
+	font-weight: 600;
+}
+
+/* Detail-Ansicht eines Angebots (Deep-Link) */
+.mdetail {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.md-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 14px 16px 12px;
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel2);
+}
+
+.md-t h2 {
+	font: 600 17px/1.2 var(--font-ui);
+	letter-spacing: -0.01em;
+}
+
+.md-t .tag {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgdim);
+	border: 1px solid var(--lineb);
+	padding: 3px 6px;
+	border-radius: 3px;
+	display: inline-block;
+	margin-top: 6px;
+}
+
+.md-price {
+	text-align: right;
+	white-space: nowrap;
+}
+
+.md-price .v {
+	font: 600 19px/1.2 var(--font-mono);
+	color: var(--sell);
+}
+
+.md-price .v.buy {
+	color: var(--buy);
+}
+
+.md-price .u {
+	font: 500 10.5px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+	margin-top: 3px;
+}
+
+.md-meta {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 14px;
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--line);
+	font: 500 11.5px/1.5 var(--font-ui);
+	color: var(--fgdim);
+}
+
+.md-meta b {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+	margin-right: 5px;
+}
+
+.md-desc {
+	padding: 12px 16px;
+	overflow: auto;
+	max-height: 200px;
+	font: 500 12px/1.6 var(--font-ui);
+	color: var(--fgdim);
+	white-space: pre-wrap;
+	word-break: break-word;
+	border-bottom: 1px solid var(--line);
+}
+
+.md-desc.empty {
+	font-style: italic;
+	color: var(--fgfaint);
+}
+
+.md-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 12px 16px;
+	flex-wrap: wrap;
+}
+
+.md-actions .btn {
+	display: inline-block;
+	padding: 7px 13px;
+	border: 1px solid var(--accent);
+	background: var(--accent);
+	color: #0b0b0b;
+	border-radius: 3px;
+	font: 700 11px/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+
+.md-actions .btn:hover {
+	background: var(--accent-h);
+	border-color: var(--accent-h);
+}
+
+.btn-ghost {
+	display: inline-block;
+	padding: 7px 13px;
+	border: 1px solid var(--lineb);
+	color: var(--fgdim);
+	border-radius: 3px;
+	font: 700 11px/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+
+.btn-ghost:hover {
+	border-color: var(--fgdim);
+}
+
+.md-note {
+	padding: 0 16px 12px;
+	font: 500 10.5px/1.5 var(--font-mono);
+	color: var(--fgfaint);
+}
+
+.md-note .src {
+	word-break: break-all;
+}
+
 /* --------------------------- Status / Lade- / Fehler- / Offline ------------ */
 .center {
 	padding: 34px 20px;

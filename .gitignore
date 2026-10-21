@@ -35,3 +35,5 @@ src-tauri/gen
 *.iml
 .vscode/*
 !.vscode/extensions.json
+# Smoke-test screenshots (review artifacts, not repo content)
+market_screens/

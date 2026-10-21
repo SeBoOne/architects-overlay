@@ -1,0 +1,135 @@
+# GitHub Actions — Windows-Build & Gitea-Release-Upload (architects-overlay)
+#
+# Geplanter Weg aus docs/CI-WINDOWS.md §8: Windows-Builds über einen
+# GitHub-Actions-Mirror statt über einen eigenen Windows-PC. GitHub stellt
+# managed windows-latest-Runner (auch für private Repos); die NSIS/MSI-Assets
+# werden zurück auf die Gitea-Release (git.sebo-home.de) hochgeladen.
+#
+# Trigger:
+#   push auf main  -> Windows-Bundle als CI-Artifact (Sanity)
+#   Tag v*         -> Windows-Bundle + Upload als Assets der Gitea-Release
+#
+# Unterschiede zur Gitea-Variante (.gitea/workflows/build.yml):
+#   - runs-on: windows-latest  (GitHub-managed; kein if: false)
+#   - Toolchain-Setup über Standard-GitHub-Actions (setup-node), da auf
+#     GitHub Actions native (nicht act_runner) gelaufen wird — docker/`sh`
+#     Desktop-Setups sind hier Standard; kein selfhosted Runner nötig.
+#   - Release-Upload via GITEA_TOKEN (GitHub-Secret = Repo-Write-Token auf
+#     git.sebo-home.de). NICHT GITHUB_TOKEN: der ist auf github.com scoped
+#     und für die Gitea-API ungültig. Instance hart auf git.sebo-home.de
+#     gesetzt (GITHUB_SERVER_URL == github.com auf GitHub-Runnern).
+#
+# Hinweis: Diese Datei unter .github/ wird von Gitea-Actions ignoriert (dort
+# zählt nur .gitea/workflows/). Aktivierung/erster Run erst in einem späteren
+# Task, sobald der Push-Mirror auf GitHub eingerichtet ist.
+
+name: windows-build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  windows:
+    name: Windows (windows-latest) — NSIS/MSI
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm MUSS vor setup-node installiert sein: setup-node v4 liefert den
+      # Cache-Pfad ueber `pnpm store path` und wirft ohne pnpm im PATH
+      # ("Could not get pnpm cache folder path"); windows-latest bringt kein
+      # pnpm mit. Erst installieren, dann setup-node mit cache: pnpm.
+      - name: pnpm bereitstellen (gepinnt)
+        run: npm install -g pnpm@12.14.0
+
+      - name: Node 22 (gepinnt)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Rust-Toolchain (gepinnt, MSRV ist 1.90)
+        uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Toolchain-Versionen anzeigen
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -v
+          pnpm -v
+          rustc -V
+          cargo -V
+
+      - name: Dependencies installieren
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend bauen (vite → ./build)
+        run: pnpm build
+
+      - name: Tauri-Bundle bauen (NSIS-Installer + MSI)
+        id: bundle
+        run: pnpm tauri build
+
+      - name: Artefakte hochladen (CI-Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+
+      - name: Gitea-Release an Tag (v*) befüllen (Windows-Assets)
+        if: startsWith(github.ref, 'refs/tags/v')
+        # PowerShell statt Bash: Git-Bash auf Windows hat kein jq. curl.exe
+        # übernimmt den Multipart-Upload. Upload geht an die Gitea-API
+        # (git.sebo-home.de) — Auth via GITEA_TOKEN, NICHT GITHUB_TOKEN.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $TAG = $env:GITHUB_REF_NAME
+          $instance = 'https://git.sebo-home.de'
+          # Gitea-Ziel-Repo explizit pinnen: GITHUB_REPOSITORY waere auf GitHub
+          # owner/name des Mirror-Repos (das nicht zwingend sebo/architects-overlay
+          # sein muss) und liesse die Release-API ins Leere laufen.
+          $repo = 'sebo/architects-overlay'
+          $api = "$instance/api/v1"
+          $headers = @{ Authorization = "token $env:GITEA_TOKEN" }
+
+          # Release zum Tag suchen; fehlt es (z. B. Windows-Job schneller als
+          # der Linux-Job auf Gitea), selbst anlegen — sonst fehlen hier Assets.
+          $release = $null
+          try {
+            $release = Invoke-RestMethod -Uri "$api/repos/$repo/releases/tags/$TAG" -Headers $headers
+          } catch { $release = $null }
+          if (-not $release -or -not $release.id) {
+            try {
+              $body = @{ tag_name = $TAG; name = "Architects Overlay $TAG"; body = 'Automatischer CI-Build.' } | ConvertTo-Json
+              $release = Invoke-RestMethod -Method Post -Uri "$api/repos/$repo/releases" -Headers $headers -ContentType 'application/json' -Body $body
+            } catch {
+              # Race: der Linux-Job kann das Release dazwischen angelegt haben.
+              $release = Invoke-RestMethod -Uri "$api/repos/$repo/releases/tags/$TAG" -Headers $headers
+            }
+          }
+
+          $files = Get-ChildItem -Path 'target\release\bundle\nsis\*-setup.exe', 'target\release\bundle\msi\*.msi' -ErrorAction SilentlyContinue
+          foreach ($f in $files) {
+            # -f: HTTP-Fehler (401/404/422) zum Exit != 0 machen — sonst meldet
+            #    der Schritt trotz fehlgeschlagenem Upload "Release-Asset: ...".
+            curl.exe -fsS -X POST -H "Authorization: token $env:GITEA_TOKEN" -F "attachment=@$($f.FullName)" "$api/repos/$repo/releases/$($release.id)/assets" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Asset-Upload fehlgeschlagen (uebersprungen): $($f.FullName)"
+            } else {
+              Write-Host "Release-Asset: $($f.FullName)"
+            }
+          }
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}

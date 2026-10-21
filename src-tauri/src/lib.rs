@@ -29,10 +29,13 @@ pub fn run() {
             trade::get_prices,
             trade::sync_status,
             trade::sync_now,
+            trade::get_marketplace,
+            trade::open_marketplace_listing,
         ]);
     }
 
     builder
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(

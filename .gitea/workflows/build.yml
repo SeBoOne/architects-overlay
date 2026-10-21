@@ -1,76 +1,208 @@
-# Gitea Actions — build skeleton
+# Gitea Actions — Build & Release
 #
-# Baut bei Tag-Push (v*) Linux- und Windows-Release-Bundles via tauri-action.
+# Trigger:
+#   push auf main  -> Linux-Bundle als CI-Artifact (Sanity)
+#   Tag v*         -> Linux- + Windows-Bundle, angehängt an die Gitea-Release
 #
-# STATUS (Scaffold): Struktur-Skeleton — läuft NOCH NICHT grün. Gründe:
-#   - Windows-Runner: braucht einen eingerichteten Gitea-Actions-Runner
-#     (Admin; dieser Job ist bewusst noch nicht ausgestattet).
-#   - `actions/`-Org und `tauri-apps/*` müssen im Gitea-Runner als Mirror/
-#     Eingangs-Mapping eingerichtet sein (siehe Gitea Docs "Actions").
-# Sobald ein Runner registriert ist, kann der Job über Tags ausgelöst werden.
+# Runner-Labels:
+#   Linux   -> ubuntu-latest       (Docker-Runner; Tauri-Systemdeps werden im
+#                                   Job selbst installiert, kein Image-Wissen)
+#   Windows -> windows-selfhosted  (Sebos Windows-PC; eigene Label, damit der
+#                                   Job NICHT rot schlägt, solange kein
+#                                   Windows-Runner registriert ist — er wartet
+#                                   einfach in der Queue. Einrichtung:
+#                                   docs/CI-WINDOWS.md)
 #
-# Ablauf: Checkout → Node/pnpm → Rust-Toolchain → UI bauen → tauri-action
-# erzeugt .deb/.AppImage (Linux) bzw. .exe/.msi (Windows) und hängt sie an die
-# Tag-Release an.
+# Gitea-act_runner-Kompatibilität (bewusst minimierter Action-Footprint):
+#   Verwendet werden NUR actions/checkout@v4 + actions/upload-artifact@v3
+#   (Standard-Set, das act_runner über sein GitHub-Host-Mapping bezieht).
+#   Kein setup-node/setup-pnpm, kein dtolnay/rust-toolchain, kein
+#   tauri-apps/tauri-action: Toolchain kommt per Plain Shell (gepinnte
+#   Versionen), `tauri build` wird direkt aufgerufen.
+#   Keine Secrets in dieser Datei; ausschließlich der von Gitea bereitgestellte
+#   GITHUB_TOKEN (repo-scoped) für das Release-Upload an die Gitea-API.
 
 name: build
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux: natives Bundle (deb, AppImage). Der derzeitige dev-Host
-          # (Omarchy) kann diesen Pfad lokal gegenprüfen.
-          - platform: ubuntu-22.04
-            args: ''
-          # Windows: Release-Bundle signiert/nicht-signiert. Braucht einen
-          # konfigurierten windows Runner (Admin) — TODO.
-          - platform: windows-latest
-            args: ''
-
-    runs-on: ${{ matrix.platform }}
+  linux:
+    name: Linux (ubuntu-latest) — deb/AppImage
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
+      - name: System-Builddeps (Tauri v2 Linux)
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates curl wget file jq pkg-config \
+            libssl-dev libxdo-dev \
+            libwebkit2gtk-4.1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - name: Node 22 + pnpm (gepinnt)
+        run: |
+          set -euo pipefail
+          curl -fsSLO https://nodejs.org/dist/v22.23.4/node-v22.23.4-linux-x64.tar.xz
+          tar -xJf node-v22.23.4-linux-x64.tar.xz -C /opt
+          rm node-v22.23.4-linux-x64.tar.xz
+          echo "/opt/node-v22.23.4-linux-x64/bin" >> "$GITHUB_PATH"
+          /opt/node-v22.23.4-linux-x64/bin/npm install -g pnpm@12.14.0
 
-      - name: Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Rust-Toolchain (gepinnt, MSRV ist 1.90)
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - name: Cache Rust
-        uses: actions/cache@v4
+      - name: Toolchain-Versionen anzeigen
+        run: |
+          node -v
+          pnpm -v
+          rustc -V
+          cargo -V
+
+      - name: Dependencies installieren
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend bauen (vite → ./build)
+        run: pnpm build
+
+      - name: Tauri-Bundle bauen (deb + AppImage)
+        run: pnpm tauri build
+
+      - name: Artefakte hochladen (CI-Artifact)
+        uses: actions/upload-artifact@v3
         with:
+          name: linux-bundle
           path: |
-            ~/.cargo/target
-            ~/.cargo/registry
-          key: cargo-${{ matrix.platform }}
+            target/release/bundle/deb/*.deb
+            target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
 
-      # tauri-action führt `pnpm build` (= vite build → ./build) selbst aus,
-      # dann `cargo build --release` in src-tauri und bündelt je Plattform.
-      - name: Build with Tauri
-        uses: tauri-apps/tauri-action@v0
+      - name: Gitea-Release an Tag (v*) befüllen
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          INSTANCE="${GITHUB_SERVER_URL:-https://git.sebo-home.de}"
+          API="${INSTANCE}/api/v1"
+          AUTH="Authorization: token ${GITHUB_TOKEN}"
+
+          # Release zum Tag suchen; fehlt es, anlegen.
+          ID="$(curl -sS -H "$AUTH" \
+            "$API/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" \
+            | jq -r '.id // empty' 2>/dev/null || true)"
+          if [ -z "${ID}" ]; then
+            ID="$(curl -fsS -X POST -H "$AUTH" -H 'Content-Type: application/json' \
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"Architects Overlay ${TAG}\",\"body\":\"Automatischer CI-Build.\"}" \
+              "$API/repos/${GITHUB_REPOSITORY}/releases" | jq -r '.id')"
+          fi
+
+          # Assets anhängen (existierende Dateien; Duplikat-Upload = warnen,
+          # z. B. bei Re-Tag gleicher Version — Artefakte liegen eh im Run).
+          for f in target/release/bundle/deb/*.deb \
+                   target/release/bundle/appimage/*.AppImage; do
+            [ -f "$f" ] || continue
+            if ! curl -fsS -X POST -H "$AUTH" -F "attachment=@${f}" \
+              "$API/repos/${GITHUB_REPOSITORY}/releases/${ID}/assets" >/dev/null; then
+              echo "WARN: Asset-Upload fehlgeschlagen (übersprungen): ${f}"
+            else
+              echo "Release-Asset: ${f}"
+            fi
+          done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows:
+    name: Windows (windows-selfhosted) — NSIS/MSI
+    # Windows-Build AUFgeschoben (2026-10-21, Sebo): kein permanent laufender
+    # Windows-PC verfügbar. Später via GitHub-Actions-Mirror bauen (kein
+    # eigener Runner nötig — GH stellt windows Runner für private Repos).
+    # Aktivierung: wenn GitHub-Mirror existiert ODER ein selfhosted Runner
+    # mit diesem Label registriert ist. Ohne Aktivierung: Job läuft nie an.
+    if: false
+    runs-on: windows-selfhosted
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: PC-Prereqs prüfen (Node, npm, Rust MSVC)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -v
+          npm -v
+          rustc -V
+          cargo -V
+
+      - name: pnpm installieren (gepinnt)
+        run: npm install -g pnpm@12.14.0
+
+      - name: Dependencies installieren
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend bauen (vite → ./build)
+        run: pnpm build
+
+      - name: Tauri-Bundle bauen (NSIS-Installer + MSI)
+        run: pnpm tauri build
+
+      - name: Artefakte hochladen (CI-Artifact)
+        uses: actions/upload-artifact@v3
         with:
-          tagName: app-v__VERSION__
-          releaseName: 'Architects Overlay v__VERSION__'
-          releaseBody: 'see the assets to download this version'
-          args: ${{ matrix.args }}
+          name: windows-bundle
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+
+      - name: Gitea-Release an Tag (v*) befüllen (Windows-Assets)
+        if: startsWith(github.ref, 'refs/tags/v')
+        # PowerShell statt Bash: Git-Bash auf Windows hat kein jq. curl.exe
+        # (Win10+) übernimmt den Multipart-Upload.
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $TAG = $env:GITHUB_REF_NAME
+          $instance = if ($env:GITHUB_SERVER_URL) { $env:GITHUB_SERVER_URL } else { 'https://git.sebo-home.de' }
+          $api = "$instance/api/v1"
+          $headers = @{ Authorization = "token $env:GITHUB_TOKEN" }
+
+          # Release zum Tag suchen; fehlt es (z. B. Windows-Job schneller als der
+          # Linux-Job), selbst anlegen — sonst fehlen hier die Assets.
+          $release = $null
+          try {
+            $release = Invoke-RestMethod -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases/tags/$TAG" -Headers $headers
+          } catch { $release = $null }
+          if (-not $release -or -not $release.id) {
+            try {
+              $body = @{ tag_name = $TAG; name = "Architects Overlay $TAG"; body = 'Automatischer CI-Build.' } | ConvertTo-Json
+              $release = Invoke-RestMethod -Method Post -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases" -Headers $headers -ContentType 'application/json' -Body $body
+            } catch {
+              # Race: der Linux-Job kann das Release dazwischen angelegt haben.
+              $release = Invoke-RestMethod -Uri "$api/repos/$env:GITHUB_REPOSITORY/releases/tags/$TAG" -Headers $headers
+            }
+          }
+
+          $files = Get-ChildItem -Path 'target\release\bundle\nsis\*-setup.exe', 'target\release\bundle\msi\*.msi' -ErrorAction SilentlyContinue
+          foreach ($f in $files) {
+            curl.exe -sS -X POST -H "Authorization: token $env:GITHUB_TOKEN" -F "attachment=@$($f.FullName)" "$api/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)/assets" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Asset-Upload fehlgeschlagen (uebersprungen): $($f.FullName)"
+            } else {
+              Write-Host "Release-Asset: $($f.FullName)"
+            }
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

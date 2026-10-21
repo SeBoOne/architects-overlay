@@ -35,6 +35,8 @@ serde_json = "1.0"
 log = "0.4"
 tauri = { version = "2.12.4", features = [] }
 tauri-plugin-log = "2"
+# Deep links: open uexcorp.space listing pages in the system default browser.
+tauri-plugin-opener = "2"
 # Background freshness/health loop (see trade::start_background_refresh): the
 # loop body uses `tokio::time::sleep` while running on Tauri's async runtime.
 tokio = { version = "1", features = ["rt", "time"] }
