@@ -206,7 +206,9 @@ mod tests {
         // "flip off after the test child exits" assertion can never pass.
         // Skip instead of failing — the scanner is behaving correctly.
         if is_game_running() {
-            eprintln!("SKIP: a real StarCitizen process is running — e2e flip-off assertion not testable");
+            eprintln!(
+                "SKIP: a real StarCitizen process is running — e2e flip-off assertion not testable"
+            );
             return;
         }
 
