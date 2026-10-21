@@ -5,37 +5,45 @@
 // commands are cfg-gated.
 
 #[cfg(desktop)]
+mod ipc_socket;
+#[cfg(desktop)]
 mod overlay;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let mut builder = tauri::Builder::default();
+    let mut builder = tauri::Builder::default();
 
-  #[cfg(desktop)]
-  {
-    builder = builder.invoke_handler(tauri::generate_handler![
-      overlay::overlay_get_state,
-      overlay::overlay_set_click_through,
-    ]);
-  }
+    #[cfg(desktop)]
+    {
+        builder = builder.invoke_handler(tauri::generate_handler![
+            overlay::overlay_get_state,
+            overlay::overlay_set_click_through,
+        ]);
+    }
 
-  builder
-    .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
+    builder
+        .setup(|app| {
+            if cfg!(debug_assertions) {
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .build(),
+                )?;
+            }
 
-      // Create the spotlight window, register its global shortcuts and start
-      // the game-detection poller. Also creates our shared overlay state.
-      #[cfg(desktop)]
-      overlay::init(app)?;
+            // Create the spotlight window, register its global shortcuts and start
+            // the game-detection poller. Also creates our shared overlay state.
+            #[cfg(desktop)]
+            overlay::init(app)?;
 
-      Ok(())
-    })
-    .run(tauri::generate_context!())
-    .expect("error while building tauri application");
+            // Local control socket: lets the desktop session (e.g. Hyprland
+            // keybinds on Wayland, where global shortcuts are unreliable) drive
+            // the overlay. Best-effort — must not block startup.
+            #[cfg(desktop)]
+            ipc_socket::init(app.handle());
+
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while building tauri application");
 }

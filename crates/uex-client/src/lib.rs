@@ -6,7 +6,9 @@
 
 use std::collections::HashSet;
 
-use provider::{DataProvider, MarketplaceFilter, Offer, PricePoint, Result, SearchEntities, SearchHit};
+use provider::{
+    DataProvider, MarketplaceFilter, Offer, PricePoint, Result, SearchEntities, SearchHit,
+};
 
 /// Concrete provider for the UEX source.
 pub struct UexProvider {

@@ -82,7 +82,11 @@ fn linux_procs() -> Vec<ProcEntry> {
             // net, …) are skipped.
             let stem = path.file_stem();
             if let Some(pid) = stem {
-                if !pid.as_encoded_bytes().iter().all(|b| *b >= b'0' && *b <= b'9') {
+                if !pid
+                    .as_encoded_bytes()
+                    .iter()
+                    .all(|b| *b >= b'0' && *b <= b'9')
+                {
                     continue;
                 }
             } else {
@@ -114,14 +118,21 @@ fn windows_procs() -> Vec<ProcEntry> {
     if cfg!(test) {
         return out;
     }
-    if let Ok(output) = Command::new("tasklist").arg("/FO").arg("CSV").arg("/NH").output() {
+    if let Ok(output) = Command::new("tasklist")
+        .arg("/FO")
+        .arg("CSV")
+        .arg("/NH")
+        .output()
+    {
         // Match against the raw line: the CSV row repeats the image name
         // verbatim, so substring matching suffices and avoids CSV parsing.
         if let Ok(stdout) = String::from_utf8(output.stdout) {
             for line in stdout.split('\n') {
                 let line = line.trim_end_matches('\r').trim();
                 if !line.is_empty() {
-                    out.push(ProcEntry { cmdline: line.to_string() });
+                    out.push(ProcEntry {
+                        cmdline: line.to_string(),
+                    });
                 }
             }
         }
@@ -134,12 +145,17 @@ mod tests {
     use super::*;
 
     fn proc(cmdline: &str) -> ProcEntry {
-        ProcEntry { cmdline: cmdline.to_string() }
+        ProcEntry {
+            cmdline: cmdline.to_string(),
+        }
     }
 
     #[test]
     fn matches_star_citizen_win_exe() {
-        assert!(scan_candidates(&[proc("StarCitizen.exe"), proc("explorer.exe")]));
+        assert!(scan_candidates(&[
+            proc("StarCitizen.exe"),
+            proc("explorer.exe")
+        ]));
     }
 
     #[test]
@@ -151,7 +167,10 @@ mod tests {
 
     #[test]
     fn matches_rsi_launcher() {
-        assert!(scan_candidates(&[proc("RSI Launcher.exe"), proc("cmd.exe")]));
+        assert!(scan_candidates(&[
+            proc("RSI Launcher.exe"),
+            proc("cmd.exe")
+        ]));
     }
 
     #[test]
@@ -161,7 +180,11 @@ mod tests {
 
     #[test]
     fn rejects_unrelated_processes() {
-        assert!(!scan_candidates(&[proc("explorer.exe"), proc("systemd"), proc("Hyprland")]));
+        assert!(!scan_candidates(&[
+            proc("explorer.exe"),
+            proc("systemd"),
+            proc("Hyprland")
+        ]));
     }
 
     #[test]
@@ -197,7 +220,10 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            assert!(seen_true, "expected /proc scan to detect the spawned SC process");
+            assert!(
+                seen_true,
+                "expected /proc scan to detect the spawned SC process"
+            );
 
             // And flip off once the child (bounded to 4s) has exited.
             let mut seen_false = false;
@@ -208,7 +234,10 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            assert!(seen_false, "expected /proc scan to stop detecting after SC exited");
+            assert!(
+                seen_false,
+                "expected /proc scan to stop detecting after SC exited"
+            );
             let _ = child.wait();
         } else {
             panic!("failed to spawn the test child process");

@@ -20,8 +20,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 use tauri::webview::WebviewWindow;
+use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutEvent, ShortcutState};
 
@@ -97,15 +97,15 @@ fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Web
         // overlay view when it detects it is running in this window.
         WebviewUrl::App("index.html".into()),
     )
-        .title("SC Architects Spotlight")
-        .decorations(false)
-        .transparent(true)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .inner_size(360., 240.)
-        .visible(false) // shown when Star Citizen is detected
-        .build()?;
+    .title("SC Architects Spotlight")
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .resizable(false)
+    .inner_size(360., 240.)
+    .visible(false) // shown when Star Citizen is detected
+    .build()?;
 
     // Initial placement: center on the window's display (the primary monitor).
     // Every *show* re-places the window on the monitor under the pointer —
@@ -145,8 +145,15 @@ fn register_global_shortcuts<R: Runtime>(app: &tauri::App<R>) {
         )
         .build();
 
-    // Failure (e.g. no X11 on Wayland) must not abort startup — dropped.
-    let _ = app.handle().plugin(plugin).ok();
+    // Failure (e.g. no X11 on Wayland) must not abort startup — but it must
+    // be visible: a silently missing hotkey looks like a dead overlay. The
+    // socket CLI (`ipc_socket`) is the Wayland fallback.
+    if let Err(err) = app.handle().plugin(plugin) {
+        log::warn!(
+            "global shortcuts unavailable ({err}); under Wayland use the socket CLI: \
+             arch-overlay toggle (see docs/WAYLAND.md)"
+        );
+    }
 }
 
 /// Toggle spotlight visibility. Only meaningful while the game runs (the toggle
@@ -225,12 +232,10 @@ pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
 
 /// Read a snapshot for the IPC state command.
 pub fn snapshot<R: Runtime>(app: &AppHandle<R>) -> Option<OverlaySnapshot> {
-    app.try_state::<OverlayState>().map(|st| {
-        OverlaySnapshot {
-            visible: st.user_visible.load(Ordering::SeqCst) && st.game_running.load(Ordering::SeqCst),
-            game_running: st.game_running.load(Ordering::SeqCst),
-            click_through: st.click_through.load(Ordering::SeqCst),
-        }
+    app.try_state::<OverlayState>().map(|st| OverlaySnapshot {
+        visible: st.user_visible.load(Ordering::SeqCst) && st.game_running.load(Ordering::SeqCst),
+        game_running: st.game_running.load(Ordering::SeqCst),
+        click_through: st.click_through.load(Ordering::SeqCst),
     })
 }
 
@@ -340,7 +345,10 @@ fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
     let msize = mon.size();
     let x = mpos.x + (msize.width as i32 - ws.width as i32) / 2;
     let y = mpos.y + (msize.height as i32 - ws.height as i32) / 2;
-    let _ = win.set_position(tauri::PhysicalPosition::new(x.max(0), y.max(0)));
+    // Monitors may sit at negative global coordinates (e.g. a display above
+    // the primary): these are valid global physical positions — clamping to 0
+    // would pull the window onto the wrong monitor.
+    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
 }
 
 /// Background poller: every `POLL_INTERVAL_MS` re-checks whether Star Citizen
@@ -384,8 +392,8 @@ pub fn overlay_set_click_through(app: tauri::AppHandle, ignore: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::test::mock_app;
     use tauri::Manager;
+    use tauri::test::mock_app;
 
     fn managed_app() -> tauri::App<tauri::test::MockRuntime> {
         let app = mock_app();
