@@ -103,9 +103,23 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Create the borderless, always-on-top, taskbar-skipped spotlight window,
-/// centered on its (primary) monitor. Hidden until the game is detected.
+/// Create the borderless, always-on-top, taskbar-skipped spotlight window.
+/// Hidden until the game is detected. Initial size = full primary monitor:
+/// on Wayland the client's own geometry (set at map time) is what actually
+/// sticks — compositor windowrule size effects were silently overridden by
+/// the client's initial 660×600 geometry, and post-map resizes don't work on
+/// Wayland at all. The CSS floats the compact palette inside this window.
 fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<WebviewWindow<R>> {
+    // Best-effort monitor size for the initial map. `resizable(false)` keeps
+    // users from accidentally shrinking the overlay; the window is never
+    // meant to be resized by hand.
+    let (w, h) = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .map(|m| (m.size().width as f64, m.size().height as f64))
+        .unwrap_or((PANEL_W, PANEL_H));
+
     let win = WebviewWindowBuilder::new(
         app,
         SPOTLIGHT_LABEL,
@@ -118,12 +132,15 @@ fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Web
     .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
-    .resizable(false)
-    .inner_size(PANEL_W, PANEL_H)
+    // MUST stay resizable: a non-resizable xdg_toplevel advertises fixed
+    // min=max geometry, and neither compositor windowrules nor client resizes
+    // can then grow the window to full-monitor overlay size. Nobody resizes
+    // it by hand anyway (borderless, no decorations).
+    .resizable(true)
+    .inner_size(w, h)
     .visible(false) // shown when Star Citizen is detected
     .build()?;
 
-    // Initial placement: center on the window's display (the primary monitor).
     // Every *show* re-places the window on the monitor under the pointer —
     // the multi-monitor behaviour — see `place_on_pointer_monitor`.
     win.center()?;
@@ -220,6 +237,14 @@ pub fn set_click_through<R: Runtime>(app: &AppHandle<R>, ignore: bool) -> bool {
             // on the next show — the hotkey stays active in either state.
             if win.is_visible().unwrap_or(false) {
                 let _ = win.set_ignore_cursor_events(ignore);
+                // Switching INTO focus mode must also move keyboard focus to
+                // the overlay — under Hyprland/Wayland the game would other-
+                // wise keep swallowing every keystroke (practical report).
+                if !ignore {
+                    compositor_focus(SPOTLIGHT_LABEL);
+                } else {
+                    compositor_focus("starcitizen.exe");
+                }
             }
         }
     });
@@ -270,14 +295,14 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
         if let Some(win) = worker.get_webview_window(SPOTLIGHT_LABEL) {
             if visible {
                 let _ = win.show();
-                // Re-assert the panel size after the window is mapped: on
-                // Hyprland the compositor can float the window at its own
-                // default size (observed 1720×1410) instead of the requested
-                // 660×600 (review B2). Forcing the size before the centering
-                // math keeps both geometry and hit-area correct. Logical
-                // (matching the build-time `inner_size`) so HiDPI scales stay
-                // correct.
-                let _ = win.set_size(tauri::LogicalSize::new(PANEL_W, PANEL_H));
+                // NOTE: no panel-size re-assert here. Under Hyprland the
+                // client's post-map resize request WINS over the compositor's
+                // `maximize` windowrule, which silently shrank the full-screen
+                // overlay back to the 660×600 panel (practical report 1/3).
+                // The single source of window geometry is
+                // `place_on_pointer_monitor` below (full monitor, Arkanis-
+                // style) — the CSS keeps the visible panel compact inside the
+                // transparent full-screen window.
                 // The GTK window is only realized after the first map; shape
                 // the (hidden-at-boot) window only now, when click-through is
                 // safe to apply. On Wayland the compositor may ignore the
@@ -286,11 +311,16 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                     let ignore = st.click_through.load(Ordering::SeqCst);
                     let _ = win.set_ignore_cursor_events(ignore);
                 }
-                // Multi-monitor: land centered on the monitor under the
-                // pointer (falling back to the primary display).
+                // Multi-monitor: span the full monitor under the pointer.
                 place_on_pointer_monitor(&win);
+                // Take keyboard focus so the search is immediately typable —
+                // compositors do not move keyboard focus to a newly shown
+                // window, and the game would keep swallowing keystrokes.
+                compositor_focus(SPOTLIGHT_LABEL);
             } else {
                 let _ = win.hide();
+                // Hand keyboard focus back to the game.
+                compositor_focus("starcitizen.exe");
             }
         }
     });
@@ -338,48 +368,71 @@ fn cursor_position() -> Option<(i32, i32)> {
 /// pointer position is unknown or no monitor contains it. Physical-coordinate
 /// math throughout (monitor position/size are physical; so is the pointer).
 fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
-    let Some((cx, cy)) = cursor_position() else {
-        let _ = win.center();
-        return;
-    };
-
-    let mut target = None;
-    if let Ok(monitors) = win.available_monitors() {
-        for mon in monitors {
-            let pos = mon.position();
-            let size = mon.size();
-            let contains = cx >= pos.x
-                && cx < pos.x + size.width as i32
-                && cy >= pos.y
-                && cy < pos.y + size.height as i32;
-            if contains {
-                target = Some(mon);
-                break;
+    // Pointer query is best-effort (X11 needs DISPLAY+XAUTHORITY; a bare
+    // Wayland session has no global pointer query). Without it we still span
+    // the FULL monitor the window currently lives on — falling back to plain
+    // centering (the old 660×600 panel behaviour) must never happen again.
+    let target = match cursor_position() {
+        Some((cx, cy)) => {
+            let mut target = None;
+            if let Ok(monitors) = win.available_monitors() {
+                for mon in monitors {
+                    let pos = mon.position();
+                    let size = mon.size();
+                    let contains = cx >= pos.x
+                        && cx < pos.x + size.width as i32
+                        && cy >= pos.y
+                        && cy < pos.y + size.height as i32;
+                    if contains {
+                        target = Some(mon);
+                        break;
+                    }
+                }
+            }
+            match target {
+                Some(mon) => Some(mon),
+                None => win.primary_monitor().ok().flatten(),
             }
         }
-    }
-    let target = match target {
-        Some(mon) => Some(mon),
-        // Pointer on no monitor (strange) or not queryable → primary display.
-        None => win.primary_monitor().ok().flatten(),
+        None => win.current_monitor().ok().flatten(),
     };
+
     let Some(mon) = target else {
-        let _ = win.center();
+        // Truly nothing known (mock runtime in tests): the compositor's
+        // windowrules (Wayland) or the initial inner_size decide.
         return;
     };
 
-    let Ok(ws) = win.outer_size() else {
-        let _ = win.center();
-        return;
-    };
     let mpos = mon.position();
     let msize = mon.size();
-    let x = mpos.x + (msize.width as i32 - ws.width as i32) / 2;
-    let y = mpos.y + (msize.height as i32 - ws.height as i32) / 2;
-    // Monitors may sit at negative global coordinates (e.g. a display above
-    // the primary): these are valid global physical positions — clamping to 0
-    // would pull the window onto the wrong monitor.
-    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+    // Arkanis-style: the overlay uses the WHOLE monitor — the transparent
+    // window spans the screen, the palette UI floats inside it (CSS keeps the
+    // visible shell compact). This also makes the click/keyboard surface
+    // predictable across monitor layouts.
+    let _ = win.set_size(tauri::PhysicalSize::new(msize.width, msize.height));
+    let _ = win.set_position(tauri::PhysicalPosition::new(mpos.x, mpos.y));
+}
+
+/// Best-effort keyboard-focus management for the Wayland/Hyprland case:
+/// compositors do not transfer keyboard focus to a newly shown overlay window
+/// on their own, and the game keeps grabbing keystrokes. We shell out to
+/// `hyprctl` (present on the target desktop; a no-op everywhere else):
+/// show → focus the spotlight so search typing works, hide → hand focus back
+/// to the game.
+fn compositor_focus(class: &str) {
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+            return;
+        }
+        let _ = std::process::Command::new("hyprctl")
+            .args(["dispatch", "focuswindow", &format!("class:{class}")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = class;
 }
 
 /// Background poller: every `POLL_INTERVAL_MS` re-checks whether Star Citizen
