@@ -22,7 +22,9 @@ crates/
   game-detection/           Star-Citizen-Prozess-Erkennung
   settings/                 Config-Persistenz (App-Config-Dir, API-Key)
 src/                        SvelteKit-Frontend (Layout, Dark-Mode-Shell)
-.gitea/workflows/build.yml  Gitea-Actions-Skeleton (Tag-Builds, noch nicht grün)
+.gitea/workflows/build.yml  Gitea Actions: Linux-Bundle bei push main + Tag v*
+                            (Windows-Job wartet auf Label windows-selfhosted,
+                            siehe docs/CI-WINDOWS.md — kein Rot ohne Runner)
 ```
 
 ### Architektur-Grundsatz
@@ -134,5 +136,7 @@ unter der Electron-Baseline 1031 MiB PSS).
   Fenster) in den bestehenden SQLite-Cache; Reads kommen aus dem frischen
   Snapshot, bei Ausfall greift ein Offline-Snapshot. Schema-Migration fügt
   `region`/`slug` zu bestehenden Phase-1-Caches hinzu.
-- CI-Skeleton ist bewusst noch nicht grün (Windows-Runner braucht Admin; Gitea
-  Action-Mapping muss im Runner eingerichtet sein).
+- CI: `.gitea/workflows/build.yml` finalisiert — Linux-Job baut deb/AppImage bei
+  push auf main und an `v*`-Tags (inkl. Gitea-Release-Upload). Windows-Job
+  (Label `windows-selfhosted`, Einrichtung: `docs/CI-WINDOWS.md`) wartet
+  sauber, bis ein Windows-Runner registriert ist — kein Rot ohne Runner.
