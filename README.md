@@ -52,7 +52,15 @@ cargo check --workspace
 
 ## Status
 
-Scaffold (Task t_65980b75): Struktur steht und kompiliert. UEX-Client,
-Overlay-Fenster (Hotkey/Click-through/Prozess-Erkennung) sind nachfolgende Tasks.
-CI-Skeleton ist bewusst noch nicht grün (Windows-Runner braucht Admin; Gitea
-Action-Mapping muss im Runner eingerichtet sein).
+- **Datenbasis (t_7e0a8993, Branch `feature/uex-client-cache`):** Provider-Seam
+  (`crates/provider` mit async `DataProvider`-Trait, typisierten Fehlern und
+  Cluster-DTOs), UEX-HTTP-Client (`crates/uex-client`: reqwest+rustls, Timeout,
+  Rate-Limit-Pacing, Fehler-Mapping), SQLite-Cache (`crates/cache`: Entities
+  inkl. FTS5-Suche, Preise mit 30-min-TTL, Marketplace-Snapshot, TTL je
+  Datentyp, Hintergrund-Sync-Task) und `crates/settings` (Config-Datei im
+  App-Config-Dir, API-Key 0600). Alle Tests grün (Unit + Fixture + wiremock,
+  Live-Tests `#[ignore]`).
+- Overlay-Fenster (Hotkey/Click-through/Prozess-Erkennung) und UI-Verkabelung
+  sind nachfolgende Tasks.
+- CI-Skeleton ist bewusst noch nicht grün (Windows-Runner braucht Admin; Gitea
+  Action-Mapping muss im Runner eingerichtet sein).
