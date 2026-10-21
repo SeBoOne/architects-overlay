@@ -118,6 +118,13 @@ html[data-window="main"] body {
 	position: relative;
 }
 
+/* Vollbild-Overlay (Arkanis-Style): das Fenster umspannt den ganzen Monitor,
+   die Palette schwebt im oberen Drittel darüber — Hintergrund transparent,
+   nur die Shell selbst ist opak. */
+html[data-window="spotlight"] .pal-root {
+	margin-top: clamp(48px, 14vh, 160px);
+}
+
 /* Shell: opak, Cut-Corners 16px, Akzentkante links, Schlagschatten als
    Abgrenzung zum Gameplay (Design: Kantentrennung leistet bewusst der Schatten). */
 .shell {
