@@ -214,6 +214,30 @@ async def main():
         print(f"boot +1s: idle={idle2} loading={loading2} error={err2} calls={str(cj)[:300]}")
 
         # ===================================================================
+        # 0) Item-Detail: kaubares Item 'CSP-68H Backpack' → echte Preise
+        #    (Point 8: nicht mehr "nicht kaufbar", sondern /items_prices)
+        # ===================================================================
+        print("scenario 0: Item-Detail CSP-68H (Point 8)")
+        await typeQuery("csp-68h")
+        await typeQuery("csp-68h")
+        await wait_for("document.querySelectorAll('.row').length", want=lambda x: x and x >= 1, timeout=8)
+        irows = await js("document.querySelectorAll('.row').length")
+        iname = await txt(".row .name")
+        print(f"  rows={irows} first={iname!r}")
+        await js("document.querySelector('.row').click()")
+        await wait_for("document.querySelector('.pane-detail') ? 1 : 0", want=1, timeout=8)
+        dpr = await js("document.querySelectorAll('.pane-detail .pr').length")
+        ih2 = await txt(".d-head h2")
+        print(f"  .pr={dpr} h2={ih2!r}")
+        check("item: detail opens with prices (Point 8)", (dpr or 0) >= 1, f".pr={dpr}")
+        check("item: title is CSP-68H Backpack", "CSP-68H Backpack" in (ih2 or ""), f"h2={ih2!r}")
+        idetail_text = await js("document.querySelector('.pane-detail') ? document.querySelector('.pane-detail').innerText : ''") or ''
+        check("item: not 'nicht kaufbar' (Point 8)", "nicht kaufbar" not in idetail_text, f"detail_text={idetail_text[:80]!r}")
+        await shot("00-item-detail-csp68h")
+        await esc()
+        await wait_for("document.querySelector('.pane-detail') ? 0 : 1", want=1, timeout=5)
+
+        # ===================================================================
         # 1) Detail-Seite: Commodity 'Gold' → 43 Preiszeilen
         # ===================================================================
         print("scenario 1: Detail-Seite Gold (43 rows)")
@@ -240,14 +264,14 @@ async def main():
         await wait_for("document.querySelector('.pane-detail') ? 0 : 1", want=1, timeout=5)
         await typeQuery("")
         await asyncio.sleep(0.5)
-        await typeQuery("checkmate")
-        await typeQuery("checkmate")
+        await typeQuery(":l checkmate")
+        await typeQuery(":l checkmate")
         await wait_for("document.querySelectorAll('.row').length", want=lambda x: x and x >= 1, timeout=8)
         await key("l")
         await wait_for("document.querySelector('.lock-badge') ? 1 : 0", want=1, timeout=6)
         badge = await js("document.querySelector('.lock-badge') ? document.querySelector('.lock-badge').innerText : ''")
         check("lock: badge visible", "📌" in (badge or ""), f"badge={badge!r}")
-        check("lock: badge Checkmate Station", "Checkmate Station" in (badge or ""), f"badge={badge!r}")
+        check("lock: badge Admin Office", "Admin Office" in (badge or ""), f"badge={badge!r}")
         await typeQuery("gold")
         await typeQuery("gold")
         await wait_for("document.querySelectorAll('.row').length", want=lambda x: x and x >= 1, timeout=8)

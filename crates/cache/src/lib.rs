@@ -123,6 +123,24 @@ CREATE TABLE IF NOT EXISTS terminal_prices (
   fetched_at   INTEGER NOT NULL,
   PRIMARY KEY (id_terminal, id_commodity)
 );
+-- Item price table (feedback fix Punkt 8): buy/sell prices for ONE item
+-- across all terminals that sell it, fetched on demand per item and cached
+-- with the same 30-min TTL as commodity prices.
+CREATE TABLE IF NOT EXISTS item_prices (
+  id_item       INTEGER NOT NULL,
+  id_terminal   INTEGER NOT NULL,
+  commodity     TEXT    NOT NULL,
+  buy_price     REAL    NOT NULL DEFAULT 0,
+  sell_price    REAL    NOT NULL DEFAULT 0,
+  buy_stock     REAL    NOT NULL DEFAULT 0,
+  sell_stock    REAL    NOT NULL DEFAULT 0,
+  buy_status    INTEGER NOT NULL DEFAULT 0,
+  sell_status   INTEGER NOT NULL DEFAULT 0,
+  quality       INTEGER NOT NULL DEFAULT 0,
+  updated       INTEGER NOT NULL,
+  fetched_at    INTEGER NOT NULL,
+  PRIMARY KEY (id_item, id_terminal)
+);
 CREATE TABLE IF NOT EXISTS marketplace_offers (
   id           INTEGER PRIMARY KEY,
   title        TEXT    NOT NULL DEFAULT '',
@@ -161,6 +179,11 @@ fn prices_meta_key(commodity_id: u64) -> String {
 /// Freshness marker for one terminal's price table (location aggregate).
 fn terminal_prices_meta_key(terminal_id: u64) -> String {
     format!("fetched_at:terminal_prices:{}", terminal_id)
+}
+
+/// Freshness marker for one item's price table (item detail).
+fn item_prices_meta_key(item_id: u64) -> String {
+    format!("fetched_at:item_prices:{}", item_id)
 }
 
 const MARKETPLACE_META_KEY: &str = "fetched_at:marketplace";
@@ -603,6 +626,108 @@ impl Cache {
                     commodity: row.get(0)?,
                     commodity_id: row.get::<_, i64>(1)? as u64,
                     terminal_id,
+                    location: String::new(),
+                    buy_price: row.get(2)?,
+                    sell_price: row.get(3)?,
+                    buy_stock: row.get(4)?,
+                    sell_stock: row.get(5)?,
+                    buy_status: row.get::<_, i64>(6)? as u8,
+                    sell_status: row.get::<_, i64>(7)? as u8,
+                    quality: row.get::<_, i64>(8)? as u16,
+                    updated: row.get::<_, i64>(9)? as u64,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
+
+    // ---------- item prices ----------
+
+    /// Whether cached price table of `item_id` is younger than `TTL_PRICES`.
+    pub fn item_prices_fresh(&self, item_id: u64) -> Result<bool> {
+        let fetched = self.meta_get(&item_prices_meta_key(item_id))?;
+        Ok(match fetched {
+            Some(ts) => now_unix().saturating_sub(ts) < TTL_PRICES.as_secs(),
+            None => false,
+        })
+    }
+
+    /// Upsert one item's price table (key = item × terminal) and mark it
+    /// fetched. Empty tables are allowed.
+    pub fn store_item_prices(&self, item_id: u64, points: &[PricePoint]) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            if points.is_empty() {
+                tx.execute(
+                    "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (item_prices_meta_key(item_id), now_unix().to_string()),
+                )?;
+                return tx.commit();
+            }
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO item_prices (id_item, id_terminal, commodity,
+                                              buy_price, sell_price, buy_stock, sell_stock,
+                                              buy_status, sell_status, quality, updated, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                     ON CONFLICT(id_item, id_terminal) DO UPDATE SET
+                       commodity = excluded.commodity,
+                       buy_price = excluded.buy_price,
+                       sell_price = excluded.sell_price,
+                       buy_stock = excluded.buy_stock,
+                       sell_stock = excluded.sell_stock,
+                       buy_status = excluded.buy_status,
+                       sell_status = excluded.sell_status,
+                       quality = excluded.quality,
+                       updated = excluded.updated,
+                       fetched_at = excluded.fetched_at",
+                )?;
+                let now = now_unix() as i64;
+                for p in points {
+                    stmt.execute(rusqlite::params![
+                        item_id as i64,
+                        p.terminal_id as i64,
+                        p.commodity,
+                        p.buy_price,
+                        p.sell_price,
+                        p.buy_stock,
+                        p.sell_stock,
+                        p.buy_status as i64,
+                        p.sell_status as i64,
+                        p.quality as i64,
+                        p.updated as i64,
+                        now
+                    ])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (item_prices_meta_key(item_id), now_unix().to_string()),
+            )?;
+            tx.commit()
+        })
+    }
+
+    /// Cached price table of one item (may be stale — caller checks
+    /// [`Cache::item_prices_fresh`] first).
+    pub fn item_prices_for(&self, item_id: u64) -> Result<Vec<PricePoint>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT commodity, id_terminal, buy_price, sell_price,
+                        buy_stock, sell_stock, buy_status, sell_status, quality, updated
+                 FROM item_prices WHERE id_item = ?1 ORDER BY commodity",
+            )?;
+            let rows = stmt.query_map([item_id as i64], |row| {
+                Ok(PricePoint {
+                    commodity: row.get(0)?,
+                    commodity_id: item_id,
+                    terminal_id: row.get::<_, i64>(1)? as u64,
                     location: String::new(),
                     buy_price: row.get(2)?,
                     sell_price: row.get(3)?,
