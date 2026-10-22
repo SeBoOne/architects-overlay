@@ -26,6 +26,7 @@ pub fn run() {
             overlay::overlay_set_click_through,
             overlay::overlay_set_visible,
             trade::search,
+            trade::math_eval,
             trade::get_prices,
             trade::sync_status,
             trade::sync_now,

@@ -270,28 +270,64 @@ impl Cache {
 
     /// FTS5 prefix search across the given kinds (`ORDER BY rank` = best match
     /// first). `query` is escaped; a literal `*`-suffix enables prefix matching.
-    /// Empty query → no rows.
+    /// Empty query → browse mode: the first `limit` rows of the requested kinds
+    /// (Arkanis: a bare `:c`/`:i`/`:l` prefix lists that category).
     pub fn search(&self, kinds: &[EntityKind], query: &str, limit: u32) -> Result<Vec<SearchHit>> {
         let query = query.trim();
+        // rusqlite numbers parameters by token VALUE ("?1"?1" is ONE slot), so
+        // each kind gets its own index.
+        let placeholders = (1..=kinds.len())
+            .map(|i| format!("?{i}"))
+            .collect::<Vec<_>>()
+            .join(",");
+        let kind_params = kinds
+            .iter()
+            .map(|k| Box::new(k.as_str()) as Box<dyn rusqlite::ToSql>)
+            .collect::<Vec<_>>();
         if query.is_empty() {
-            return Ok(Vec::new());
+            // No FTS match expression to rank by — list the kind in id order.
+            let sql = format!(
+                "SELECT kind, entity_id, name, code, subtitle
+                 FROM entities_fts
+                 WHERE kind IN ({placeholders})
+                 ORDER BY entity_id LIMIT ?{}",
+                kinds.len() + 1
+            );
+            return self.with(|conn| {
+                let mut stmt = conn.prepare(&sql)?;
+                let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+                params.extend(kind_params);
+                params.push(Box::new(limit as i64));
+                let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
+                    Ok(SearchHit {
+                        id: row.get::<_, i64>(1)? as u64,
+                        name: row.get(2)?,
+                        kind: row.get(0)?,
+                        code: row.get(3)?,
+                        subtitle: row.get(4)?,
+                    })
+                })?;
+                let mut out = Vec::new();
+                for r in rows {
+                    out.push(r?);
+                }
+                Ok(out)
+            });
         }
         let escaped = query.replace('"', "\"\"");
         let match_expr = format!("\"{escaped}\"*");
-        let mut placeholders = String::from("?1,").repeat(kinds.len());
-        placeholders.pop(); // drop trailing comma
         let sql = format!(
             "SELECT kind, entity_id, name, code, subtitle
              FROM entities_fts
-             WHERE kind IN ({placeholders}) AND entities_fts MATCH ?2
-             ORDER BY rank LIMIT ?3"
+             WHERE kind IN ({placeholders}) AND entities_fts MATCH ?{}
+             ORDER BY rank LIMIT ?{}",
+            kinds.len() + 1,
+            kinds.len() + 2
         );
         self.with(|conn| {
             let mut stmt = conn.prepare(&sql)?;
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            for k in kinds {
-                params.push(Box::new(k.as_str()));
-            }
+            params.extend(kind_params);
             params.push(Box::new(match_expr));
             params.push(Box::new(limit as i64));
             let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
@@ -687,6 +723,52 @@ mod tests {
         assert!(hits.is_empty());
         let hits = cache.search(&[EntityKind::Commodities], "   ", 10).unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn empty_query_browses_requested_kinds() {
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .store_entities(
+                EntityKind::Commodities,
+                &[
+                    entity(1, EntityKind::Commodities, "Agricium", "AGRI", "Metal"),
+                    entity(2, EntityKind::Commodities, "Titanium", "TITN", "Metal"),
+                    entity(3, EntityKind::Commodities, "Spirits", "DISP", "Agri"),
+                ],
+            )
+            .unwrap();
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[entity(
+                    100,
+                    EntityKind::Terminals,
+                    "Area18",
+                    "A18",
+                    "Stanton",
+                )],
+            )
+            .unwrap();
+
+        // Bare `:c` → first rows of the commodity kind, in id order.
+        let hits = cache.search(&[EntityKind::Commodities], "", 10).unwrap();
+        assert_eq!(hits.len(), 3);
+        assert_eq!(hits[0].name, "Agricium");
+        assert_eq!(hits[2].name, "Spirits");
+
+        // Multiple kinds + limit.
+        let hits = cache
+            .search(&[EntityKind::Commodities, EntityKind::Terminals], "  ", 2)
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].name, "Agricium");
+        assert_eq!(hits[1].name, "Titanium");
+
+        // Kinds outside the request never leak in.
+        let hits = cache.search(&[EntityKind::Terminals], "", 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "Area18");
     }
 
     #[test]
