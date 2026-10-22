@@ -13,6 +13,41 @@
 
 use serde::Deserialize;
 
+/// Deserialize a JSON number that may be `null` (or absent) into `f64`,
+/// mapping null/absent to `0.0`. UEX sends explicit `null` ("not traded",
+/// "price unknown") in price rows — `#[serde(default)]` alone does NOT cover
+/// an explicit null, only a *missing* field.
+pub(crate) fn de_f64_null_to_zero<'de, D>(d: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<f64>::deserialize(d)?.unwrap_or(0.0))
+}
+
+/// Same for `u8` (inventory status).
+pub(crate) fn de_u8_null_to_zero<'de, D>(d: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u8>::deserialize(d)?.unwrap_or(0))
+}
+
+/// Same for `u16` (quality).
+pub(crate) fn de_u16_null_to_zero<'de, D>(d: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u16>::deserialize(d)?.unwrap_or(0))
+}
+
+/// Same for `u64` (unix timestamps).
+pub(crate) fn de_u64_null_to_zero<'de, D>(d: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<u64>::deserialize(d)?.unwrap_or(0))
+}
+
 /// Generic UEX response envelope.
 #[derive(Debug, Deserialize)]
 pub struct Envelope<T> {
@@ -108,23 +143,23 @@ pub struct PriceRow {
     pub commodity_name: String,
     #[serde(default)]
     pub terminal_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
     pub price_buy: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
     pub price_sell: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
     pub scu_buy_avg: f64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
     pub scu_sell_avg: f64,
     /// Inventory level, 1..=7; 0 = unknown / out of stock.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
     pub status_buy: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
     pub status_sell: u8,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u16_null_to_zero")]
     pub quality: u16,
     /// Unix seconds of the last data update.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
     pub date_modified: u64,
 }
 
@@ -180,6 +215,29 @@ pub struct ListingRow {
     pub slug: String,
 }
 
+/// `/items_prices` row (per terminal or per item). Only `price_buy` carries
+/// the terminal's purchase price (what the player pays); `price_sell` is 0
+/// for items (shops don't buy items back). The `min/max/avg` variants and
+/// durability/faction fields are omitted — they mirror the buy price.
+#[derive(Debug, Deserialize)]
+pub struct ItemPriceRow {
+    pub id: u64,
+    pub id_item: u64,
+    pub id_terminal: u64,
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub price_buy: f64,
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub price_sell: f64,
+    #[serde(default)]
+    pub item_name: String,
+    #[serde(default)]
+    pub terminal_name: String,
+    #[serde(default)]
+    pub terminal_code: Option<String>,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub date_modified: u64,
+}
+
 /// `/star_systems` row — few rows, used to resolve listing regions.
 #[derive(Debug, Deserialize)]
 pub struct StarSystemRow {
@@ -224,6 +282,52 @@ mod tests {
         assert_eq!(row.scu_buy_avg, 0.0);
         assert_eq!(row.quality, 0);
         assert_eq!(row.price_sell, 10000.0);
+    }
+
+    #[test]
+    fn price_row_tolerates_explicit_null_fields() {
+        // UEX sends explicit `null` for "not traded" prices and unknown
+        // inventory (QA runde 2, Punkt 3/7). `#[serde(default)]` alone does
+        // NOT cover an explicit null — only a *missing* field.
+        let row: PriceRow = serde_json::from_str(
+            r#"{
+                "id_commodity": 1, "id_terminal": 12,
+                "commodity_name": "Agricium", "terminal_name": "X",
+                "price_buy": null, "price_sell": 4200,
+                "scu_buy_avg": null, "scu_sell_avg": null,
+                "status_buy": null, "status_sell": 3,
+                "quality": null, "date_modified": null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(row.price_buy, 0.0, "null buy price must map to 0");
+        assert_eq!(row.price_sell, 4200.0);
+        assert_eq!(row.scu_buy_avg, 0.0);
+        assert_eq!(row.scu_sell_avg, 0.0);
+        assert_eq!(row.status_buy, 0);
+        assert_eq!(row.status_sell, 3);
+        assert_eq!(row.quality, 0);
+        assert_eq!(row.date_modified, 0);
+    }
+
+    #[test]
+    fn item_price_row_tolerates_explicit_null_price() {
+        // /items_prices rows carry `"price_sell": null` (shops never buy
+        // back) — live measured on id_item=465 and id_terminal=437. Must
+        // deserialize to 0, not fail the whole table.
+        let row: ItemPriceRow = serde_json::from_str(
+            r#"{
+                "id": 1, "id_item": 465, "id_terminal": 107,
+                "price_buy": 295, "price_sell": null,
+                "item_name": "CSP-68H Backpack",
+                "terminal_name": "CenterMass - ArcCorp",
+                "terminal_code": "CMAC", "date_modified": null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(row.price_buy, 295.0);
+        assert_eq!(row.price_sell, 0.0, "null sell must map to 0");
+        assert_eq!(row.date_modified, 0, "null ts must map to 0");
     }
 
     #[test]

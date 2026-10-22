@@ -33,7 +33,10 @@ use provider::{
     SearchHit, TerminalPriceGroup,
 };
 
-use dto::{CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, StarSystemRow, TerminalRow};
+use dto::{
+    CategoryRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow, StarSystemRow,
+    TerminalRow,
+};
 
 /// Search result page size served from the cache.
 const SEARCH_LIMIT: u32 = 25;
@@ -212,6 +215,10 @@ impl DataProvider for UexProvider {
         self.terminal_prices_impl(terminal_id).await
     }
 
+    async fn item_prices(&self, item_id: u64) -> Result<Vec<PricePoint>> {
+        self.item_prices_impl(item_id).await
+    }
+
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>> {
         // Short-TTL cache (Phase 2): API-parameter-free reads are served from
         // the last snapshot while it is < TTL_MARKETPLACE old, keeping the
@@ -342,6 +349,7 @@ impl DataProvider for UexProvider {
                             subtitle: parts.join(" > "),
                         }
                     })
+                    .filter(|e| !e.name.chars().all(|c| c.is_ascii_digit()) && !e.name.is_empty())
                     .collect())
             }
             EntityKind::Items => {
@@ -427,9 +435,10 @@ impl UexProvider {
         )))
     }
 
-    /// Price points of ONE terminal (buy/sell per commodity). Cached 30 min,
-    /// else fetched live via `/commodities_prices?id_terminal=…` (the
-    /// terminal-scoped variant of the same endpoint used for commodities).
+    /// Price points of ONE terminal (buy/sell per commodity, plus item prices
+    /// for non-commodity shops like Guns/Medical). Cached 30 min, else fetched
+    /// live via `/commodities_prices?id_terminal=…` and
+    /// `/items_prices?id_terminal=…`.
     async fn terminal_prices_impl(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
         // Fresh marker = "this terminal was checked recently" — an EMPTY
         // cached table is a valid state (fuel/refinery docks trade nothing)
@@ -451,12 +460,57 @@ impl UexProvider {
                 &[("id_terminal".to_string(), terminal_id.to_string())],
             )
             .await?;
-        let points = rows
+        let mut points = rows
             .into_iter()
             .map(|r| map_price_point(r, ""))
             .collect::<Vec<_>>();
+        // Merge item prices (weapons/armor/shop items) so non-commodity
+        // terminals show their shop inventories alongside commodities. This
+        // is a *best-effort* enrich: a single malformed /items_prices row (or
+        // endpoint outage) must never sink the commodity table — fall back to
+        // empty item rows (QA runde 2: ein `null` in price_sell riss die
+        // ganze Terminal-Tabelle runter).
+        let item_rows: Vec<ItemPriceRow> = self
+            .http
+            .get_optional(
+                "/items_prices",
+                &[("id_terminal".to_string(), terminal_id.to_string())],
+            )
+            .await
+            .unwrap_or_default()
+            .unwrap_or_default();
+        points.extend(item_rows.into_iter().map(|r| map_item_price_point(r, "")));
         self.cache
             .store_terminal_prices(terminal_id, &points)
+            .map_err(map_cache_err)?;
+        Ok(points)
+    }
+
+    /// Cached price table of ONE item across all terminals that sell it
+    /// (the item detail view). Fetched live via `/items_prices?id_item=…`
+    /// when the cache is stale.
+    async fn item_prices_impl(&self, item_id: u64) -> Result<Vec<PricePoint>> {
+        if self
+            .cache
+            .item_prices_fresh(item_id)
+            .map_err(map_cache_err)?
+        {
+            return self.cache.item_prices_for(item_id).map_err(map_cache_err);
+        }
+        let rows: Vec<ItemPriceRow> = self
+            .http
+            .get_optional(
+                "/items_prices",
+                &[("id_item".to_string(), item_id.to_string())],
+            )
+            .await?
+            .unwrap_or_default();
+        let points = rows
+            .into_iter()
+            .map(|r| map_item_price_point(r, ""))
+            .collect::<Vec<_>>();
+        self.cache
+            .store_item_prices(item_id, &points)
             .map_err(map_cache_err)?;
         Ok(points)
     }
@@ -545,10 +599,44 @@ fn map_price_point(r: PriceRow, fallback_commodity: &str) -> PricePoint {
     }
 }
 
+/// Map a `/items_prices` row onto the seam [`PricePoint`]. Items only carry a
+/// buy price (the terminal buys nothing back from the player — `price_sell`
+/// is always 0); the item name is used as the commodity label so the same
+/// frontend table renders both commodity and item prices.
+fn map_item_price_point(r: ItemPriceRow, fallback_item: &str) -> PricePoint {
+    PricePoint {
+        commodity: if r.item_name.is_empty() {
+            if fallback_item.is_empty() {
+                format!("item {}", r.id_item)
+            } else {
+                fallback_item.to_string()
+            }
+        } else {
+            r.item_name
+        },
+        commodity_id: r.id_item,
+        location: if r.terminal_name.is_empty() {
+            format!("terminal {}", r.id_terminal)
+        } else {
+            r.terminal_name
+        },
+        terminal_id: r.id_terminal,
+        sell_price: r.price_sell,
+        buy_price: r.price_buy,
+        sell_stock: 0.0,
+        buy_stock: 0.0,
+        sell_status: if r.price_sell > 0.0 { 1 } else { 0 },
+        buy_status: if r.price_buy > 0.0 { 1 } else { 0 },
+        quality: 0,
+        updated: r.date_modified,
+    }
+}
+
 /// Re-export of wire DTOs for integration tests only. Not part of the API.
 pub mod private {
     pub use crate::dto::{
-        CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, StarSystemRow, TerminalRow,
+        CategoryRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow, StarSystemRow,
+        TerminalRow,
     };
 }
 

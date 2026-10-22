@@ -98,14 +98,22 @@ pub trait DataProvider: Send + Sync {
         Err(ProviderError::Unsupported("location prices".to_string()))
     }
 
-    /// The price table of ONE terminal (buy/sell per commodity). This is what
-    /// an individual terminal search row expands to — NOT the location chain
-    /// aggregate (that lives in [`DataProvider::location_prices`]). Cached
-    /// 30 min; an empty table is a valid answer (fuel/refinery docks trade
-    /// nothing). Default reports the source as unsupported.
+    /// The price table of ONE terminal (buy/sell per commodity, plus item
+    /// prices for non-commodity shops like Guns/Medical). Cached 30 min;
+    /// an empty table is a valid answer (fuel/refinery docks trade nothing).
+    /// Default reports the source as unsupported.
     async fn terminal_prices(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
         let _ = terminal_id;
         Err(ProviderError::Unsupported("terminal prices".to_string()))
+    }
+
+    /// Price points for ONE item across all terminals that sell it
+    /// (the item's buy/sell table in the item detail view). Cached 30 min;
+    /// an empty table is valid (item not sold anywhere). Default reports the
+    /// source as unsupported.
+    async fn item_prices(&self, item_id: u64) -> Result<Vec<PricePoint>> {
+        let _ = item_id;
+        Err(ProviderError::Unsupported("item prices".to_string()))
     }
 
     /// Live marketplace offers, filtered. Marketplace data is never presented

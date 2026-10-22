@@ -9,13 +9,19 @@
 	//   - Kategorie-Präfixe  :c :i :l  filtern je Term der Suchzeile
 	//     (case-insensitive — :C/:I/:L parsen identisch, UI zeigt lowercase)
 	//   - Inline-Rechner     =2*250+15%  → Ergebnis-Chip statt Ergebnisliste
-	//   - Zeile anklicken/Enter → Inline-Expansion mit Preis-Tabelle (Kauf/Verkauf)
+	//   - Zeile anklicken/Enter → Detail-Seite mit Preis-Tabelle (Kauf/Verkauf)
+	//     (keine Inline-Expansion mehr; Rückkehr behält Scroll-Position +
+	//      Selektion der geöffneten Zeile)
 	//   - Alt+1..0 fokussiert den n-ten Treffer, erneut → zurück ins Suchfeld
 	//   - Esc: Suchfeld-Fokus ⇒ Overlay ausblenden; sonst Fokus ins Suchfeld
 	//   - Pfeil-Navigation scrollt die Liste auf die fokussierte Zeile (auto)
 	// Market-Modus (Tab/M): DAS Haupt-Suchfeld durchsucht Offers (Name/Typ/
 	// Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung, Alt+Zahl-
 	// Badges auf den ersten 10 Offers, Esc zurück zur Suche.
+	//   - Ortssperre (+/L): sperrt einen Location-/Terminal-Treffer; die
+	//     Commodity-Detail-Seite filtert Preise auf diesen Ort (< 43 Zeilen).
+	//   - Detail-Tastatur: ↑↓ Zeile, ↵ Auswahl, Esc zurück, L sperren.
+	//   - Marketplace: ≥15 Offers pro Seite + "Weitere laden" (Pagination).
 	//
 	// Zustände: idle · typing · loading · error · offline · market
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -47,11 +53,11 @@
 	fetched_at: number;
 	prices: PricePoint[];
 	// Location-Aggregat (kind:'location'): Gruppen je Terminal + flach
-	// gefaltete Preise in `prices`. Null auf dem Commodity-/Item-Pfad.
+	// gefaltene Preise in `prices`. Null auf dem Commodity-/Item-Pfad.
 	location: LocationPrices | null;
-};
-type LocationPrices = { location: string; terminal: string; groups: TerminalPriceGroup[] };
-type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: PricePoint[] };
+	};
+	type LocationPrices = { location: string; terminal: string; groups: TerminalPriceGroup[] };
+	type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: PricePoint[] };
 	type CalcResult = { value: string };
 	type DatasetStatus = { kind: string; label: string; fresh: boolean; age_secs: number | null; count: number };
 	type SyncStatus = {
@@ -93,8 +99,12 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		note: string | null;
 	};
 
+	// Ortssperre (Location / Terminal): Commodity-Detail filtert Preise darauf.
+	type LocationLock = { id: number; name: string; kind: 'location' | 'terminal' };
+
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	const SYNC_EVENT = 'trade-sync';
+	const M_PAGE = 15; // Min. 15 Offers pro Seite (statt 1)
 
 	type Phase = 'idle' | 'typing' | 'loading' | 'error' | 'offline' | 'market';
 
@@ -116,20 +126,65 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 	let searchMs = $state(0);
 	let searchTotal = $state(0);
 
-	// Inline-Expansion: nur EINE Zeile ist gleichzeitig aufgeklappt, also reicht
-	// ein reaktives Skalar (Map-Mutationen würden Svelte 5 NICHT neu rendern —
-	// die X-Pan würde ewig „Lade Preise …" zeigen; ein reaktiver Vergleich
-	// `expanded === idx` plus dieses Skalar triggert jedes Mal).
+	// Detail-Seite: nur EINE Zeile ist gleichzeitig geöffnet (Detail-View statt
+	// Inline-Expansion). `expanded` merkt die geöffnete Zeile für Rückkehr.
 	type RowDetail = { busy: boolean; detail: PriceDetail | null; error: string | null };
 	let xpan = $state<RowDetail | null>(null);
 	// Stale-Response-Guard: eine spät eintreffende get_prices-Antwort darf eine
 	// neuer geöffnete Zeile (oder eine geleerte Liste) nicht überschreiben.
 	let xpanToken = 0;
-	// `expanded` = welche Zeile auf-/zugeklappt ist; `focusIdx` = per Alt+Zahl
-	// fokussierte Zeile (Badge ausgegraut).
 	let expanded = $state<number | null>(null);
 	let focusIdx = $state<number | null>(null);
 	let searchEl = $state<HTMLInputElement | null>(null);
+
+	// Detail-Ansicht (statt Inline-Expansion): blendet die Liste aus, zeigt die
+	// Preis-Tabelle. Keyboard-Navigation über die `.pr`-Zeilen.
+	let inDetail = $state(false);
+	let detailHit = $state<SearchHit | null>(null);
+	// `dSel` = fokussierte Detail-Zeile, `dChosen` = per Enter ausgewählt.
+	let dSel = $state(0);
+	let dChosen = $state<number | null>(null);
+	// Scroll-Position der Ergebnisliste für den Zurück-Blick.
+	let listScroll = $state(0);
+	// Status-Toast nach Auswahl einer Detail-Zeile.
+	let dToast = $state('');
+	// Reactive Zeilen-Liste der Detail-Ansicht (Kauf dann Verkauf, jeweils
+	// absteigend sortiert, ggf. ortssperren-gefiltert). Leer bei
+	// Location-Aggregaten (keine Zeilen-Navigation dort).
+	// Point 2: Terminal-Detail zeigt Warenname statt Terminal-Name.
+	let dRows = $derived<{ price: number; loc: string; kind: 'buy' | 'sell' }[]>(xpan?.detail && !xpan.detail.location
+		? (() => {
+			const d = xpan?.detail!;
+			const isTerminal = detailHit?.kind === 'terminal';
+			const b = lockFilter(buyPoints(d));
+			const s = lockFilter(sellPoints(d));
+			return [
+				...b.map((p) => ({ price: p.buy_price, loc: isTerminal ? p.commodity : p.location, kind: 'buy' as const })),
+				...s.map((p) => ({ price: p.sell_price, loc: isTerminal ? p.commodity : p.location, kind: 'sell' as const }))
+			];
+		})()
+		: []);
+
+	// ---- Ortssperre (Lock) --------------------------------------------------
+	// Setzt/entfernt die Ortssperre für die Commodity-Detail-Ansicht. Die
+	// Commodity-Filterung erfolgt clientseitig über terminal_id (Spec: Ort
+	// primär im Angebot/der Preise). Das Suchfeld bleibt aktiv.
+	let locationLock = $state<LocationLock | null>(null);
+	function lockLocation(h: SearchHit) {
+		if (h.kind !== 'location' && h.kind !== 'terminal') return;
+		locationLock = { id: h.id, name: h.name, kind: h.kind as 'location' | 'terminal' };
+		dSel = 0;
+	}
+	function unlockLocation() {
+		locationLock = null;
+		dSel = 0;
+	}
+	// Clientseitiger Filter: nur Preise dieses Terminals/Ortes (Spec Ortssperre).
+	function lockFilter(prices: PricePoint[]): PricePoint[] {
+		const lock = locationLock;
+		if (!lock) return prices;
+		return prices.filter((p) => p.terminal_id === lock.id);
+	}
 
 	// ---- Market-State (Phase 2) --------------------------------------------
 	let offers = $state<Offer[]>([]);
@@ -147,10 +202,26 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 	let mqMax = $state('');
 	let marketRegions = $state<string[]>([]);
 
+	// Progressive Market-Pagination: erst die in-Memory-Snapshot-Seite (15)
+	// zeigen, "Weitere laden" deckt Mehr aus dem Snapshot; ist auch das 100-
+	// Angebot-Limit des Snapshots erschöpft, wird progressiv nachgefetcht
+	// (Limit 200 → 400 → 800 → 1000) — bis das Backend nichts mehr liefert.
+	let mMshown = $state(M_PAGE);
+	let mLimit = $state(100);
+	let mAllLoaded = $state(false);
+	let mLoadingMore = $state(false);
+
 	// Sichtbare Offers = API-/Provider-Antwort + clientseitiger Qualitätsfilter
 	// (mit Sortierung kombinierbar — die Sortierung passiert im Provider, der
 	// Filter danach verändert die Reihenfolge nicht).
 	let visOffers = $derived(offers.filter((o) => qualityPasses(o, mqMin, mqMax)));
+	let mVew = $derived(visOffers.slice(0, mMshown));
+	// Qualitätsfilter neu setzen → immer ab Seite 1 beginnen (kein abgeschnittenes
+	// Ergebnis, wenn der Filter die Liste verkürzt).
+	$effect(() => {
+		mqMin; mqMax;
+		mMshown = Math.min(M_PAGE, visOffers.length);
+	});
 	$effect(() => {
 		// mSel auf die gefilterte Liste klemmen (Qualitätsfilter ändert Länge).
 		const top = Math.max(visOffers.length - 1, 0);
@@ -280,6 +351,11 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		focusIdx = null;
 		xpan = null;
 		xpanToken++;
+		inDetail = false;
+		detailHit = null;
+		dSel = 0;
+		dChosen = null;
+		dToast = '';
 
 		if (q.isCalc) {
 			// Inline-Rechner: Ergebnis-Chip anstelle der Ergebnisliste.
@@ -389,25 +465,51 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		return true;
 	}
 
-	// ---- Inline-Expansion (Preis-Tabelle) statt separates Detail-Panel --------
+	// ---- Detail-Seite (statt Inline-Expansion) ------------------------------
+	// Öffnet die Detail-Seite für eine Ergebnis-Zeile: lazy-Laden der Preise,
+	// Scroll-Position der Liste merken, Rückkehr behält Selektion + Position.
 	function openRow(idx: number) {
 		if (!flat[idx]) return;
-		// Taggleiche Zeile → zuklappen.
-		if (expanded === idx) {
-			clampIdx();
-			return;
-		}
 		sel = idx;
 		expanded = idx;
-		// Preise lazy laden — reaktiv in `xpan` (Svelte-5-sicher).
 		xpan = { busy: true, detail: null, error: null };
-		void loadDetail(flat[idx]);
+		// Scroll-Position der Ergebnisliste merken, damit "zurück" genau dort
+		// hinläuft, wo der User aufgehört hat (statt zum Listen-Top).
+		const list = document.querySelector('.list');
+		if (list) listScroll = list.scrollTop;
+		detailHit = flat[idx];
+		inDetail = true;
+		dSel = 0;
+		dChosen = null;
+		dToast = '';
 		focusRow(idx);
+		void loadDetail(flat[idx]);
 	}
 
-	// Alt+Zahl nur fokussieren: Badge ausgegraut, aber NICHT aufklappen.
-	// (NB-1: Verhalten entspricht jetzt dem Kommentar/Spec §4 — das Aufklappen
-	// übernimmt Enter auf der fokussierten Zeile.)
+	function closeDetail() {
+		inDetail = false;
+		detailHit = null;
+		dSel = 0;
+		dChosen = null;
+		dToast = '';
+		// Scroll-Position der Liste wiederherstellen (kein Scroll-Back to top).
+		const list = document.querySelector('.list');
+		if (list) list.scrollTop = listScroll;
+		// Fokus auf die Zeile, die geöffnet worden war → seamless.
+		focusRow(expanded ?? sel);
+	}
+
+	// Öffnet bzw. schließt (Toggle) die Detail-Ansicht für `idx`.
+	function toggleOpen(idx: number) {
+		if (inDetail && expanded === idx) {
+			closeDetail();
+		} else {
+			openRow(idx);
+		}
+	}
+
+	// Alt+Zahl nur fokussieren: Badge ausgegraut, aber NICHT öffnen.
+	// (NB-1: das Öffnen übernimmt Enter auf der fokussierten Zeile.)
 	function focusOnly(idx: number) {
 		focusRow(idx);
 	}
@@ -416,6 +518,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 	// das Ergebnis") — der Fokus-Zustand darf nicht nur CSS sein. `.row` ist über
 	// `tabindex="-1"` fokussierbar, aber nicht im Tab-Order (kein Formular-Tab).
 	function focusRow(idx: number) {
+		focusIdx = idx;
 		document.querySelectorAll<HTMLElement>('.row')[idx]?.focus();
 	}
 
@@ -424,6 +527,11 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		focusIdx = null;
 		xpan = null;
 		xpanToken++;
+		inDetail = false;
+		detailHit = null;
+		dSel = 0;
+		dChosen = null;
+		dToast = '';
 	}
 
 	async function loadDetail(h: SearchHit) {
@@ -434,7 +542,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		// - location (die Standort-Entity selbst): das Terminal-Aggregat in
 		//   `location.groups` (je Terminal eine Gruppe).
 		// - item: nie Preise, leere Tabelle → "nicht kaufbar"-Zustand unten.
-		// - commodity/Default: unverändert wie bisher (nur der Name).
+		// - commodity/Default: Commodity-Preisliste.
 		// id gehört nur an die kind-Abhängigen Pfade (Reviewer NB-1).
 		const kindArg =
 			h.kind === 'terminal' ? 'terminal' : h.kind === 'location' ? 'location' : h.kind === 'item' ? 'item' : null;
@@ -460,6 +568,8 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 			focusIdx = null;
 			expanded = null;
 			xpan = null;
+			inDetail = false;
+			detailHit = null;
 			focusSearch(true);
 			return;
 		}
@@ -473,12 +583,16 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 	}
 
 	// ---- Esc-Toggle (Kernfeature) --------------------------------------------
-	// Esc-Zustände (Spec §3/§4): 1) Ergebnis fokussiert (Alt+Zahl) oder eine
-	// Expansion offen → erst zuklappen + Fokus zurück ins Suchfeld; der nächste
-	// Esc blendet aus. 2) Suchfeld fokussiert → Overlay ausblenden (hide) bzw.
-	// leeren. 3) Fokus woanders → Fokus zurück ins Suchfeld (Select-All).
+	// Esc-Zustände (Spec §3/§4): 1) Detail-Ansicht offen → schließen + Fokus zurück;
+	// 2) Ergebnis fokussiert (Alt+Zahl) oder eine Zeile geöffnet → zuklappen +
+	//    Fokus ins Suchfeld; 3) Suchfeld fokussiert → Overlay ausblenden (Spotlight)
+	//    bzw. leeren; 4) Fokus woanders → Fokus ins Suchfeld (Select-All).
 	// Nie ausblenden, wenn der Fokus woanders liegt (Arkanis-Verhalten).
 	function escSearch() {
+		if (inDetail) {
+			closeDetail();
+			return;
+		}
 		if (focusIdx !== null || expanded !== null) {
 			clampIdx();
 			focusSearch(true);
@@ -513,6 +627,8 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		else {
 			offerDetail = null;
 			mSel = 0;
+			mMshown = M_PAGE;
+			mAllLoaded = false;
 			// Wieder im Such-Modus: Ergebnisliste an den Suchtext des HAUPT-
 			// Suchfelds angleichen (im Market-Modus wurde dort der Offer-Query
 			// getippt — keine veralteten Treffer stehen lassen).
@@ -520,12 +636,9 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		}
 	}
 
-	// Load / refresh the marketplace via the provider (cache-first with short
-	// TTL; live when a filter forces it; offline snapshot on failure). Das
-	// HAUPT-Suchfeld liefert `q` (Name/Typ/Terminal/Verkäufer, provider-seitig
-	// gegen den Cache-Index gematcht).
-	async function loadMarket() {
-		mLoading = true;
+	// Kern-Loader für den Marketplace (cache-first, progressive Limits).
+	async function fetchMarket(limit: number, showAll = false) {
+		if (showAll) mLoadingMore = true; else mLoading = true;
 		mNote = null;
 		const filterObj = {
 			location: '',
@@ -534,20 +647,32 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 			operation: mOp === 'all' ? null : mOp,
 			region: mRegion === 'all' ? '' : mRegion,
 			sort: mSort,
-			limit: 100
+			limit
 		};
 		try {
 			const resp = await invoke<MarketResponse>('get_marketplace', { filters: filterObj });
 			offers = resp.offers;
 			mSource = resp.source;
-			mNote = resp.note;
+			mNote = resp.note ?? null;
 			marketRegions = [...new Set(resp.offers.map((o) => o.region).filter(Boolean))].sort();
+			// Nach einem frischen Fetch: neue Seite 1, oder alles anzeigen (bei
+			// progressiver Nachladung) — bis das Snapshot-Limit erreicht ist.
+			mMshown = showAll ? offers.length : Math.min(M_PAGE, offers.length);
+			mAllLoaded = offers.length < limit; // Backend lieferte weniger als gefordert
 		} catch (e) {
 			offers = [];
 			mNote = String(e);
 			mSource = 'offline';
+			mAllLoaded = true;
 		}
 		mLoading = false;
+		mLoadingMore = false;
+	}
+
+	async function loadMarket() {
+		mLimit = 100;
+		mAllLoaded = false;
+		await fetchMarket(100, false);
 	}
 
 	// Pfeil-Navigation durch die Offers (sichtbare = qualitätsgefilterte Liste).
@@ -555,6 +680,19 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		if (!visOffers.length) return;
 		mSel = Math.min(Math.max(mSel + dir, 0), visOffers.length - 1);
 		scrollOfferIntoView(mSel);
+	}
+
+	// "Weitere laden": zuerst aus dem Snapshot nachladen, bei Bedarf progressiv
+	// (Limit 200/400/800/1000) nachfetchen — bis das Backend nichts mehr liefert.
+	function loadMore() {
+		if (mMshown < visOffers.length) {
+			mMshown = Math.min(mMshown + M_PAGE, visOffers.length);
+			return;
+		}
+		if (mLimit < 1000 && !mAllLoaded) {
+			mLimit = Math.min(mLimit * 2, 1000);
+			void fetchMarket(mLimit, true);
+		}
 	}
 
 	function openOfferDetail() {
@@ -573,17 +711,95 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 
 	function setSort(s: OfferSort) {
 		mSort = s;
+		mMshown = M_PAGE;
 		void loadMarket();
 	}
 
 	function setOp(o: 'all' | MarketOp) {
 		mOp = o;
+		mMshown = M_PAGE;
 		void loadMarket();
 	}
 
 	function setRegion(r: string) {
 		mRegion = r;
+		mMshown = M_PAGE;
 		void loadMarket();
+	}
+
+	// ---- Detail-Seiten-Tastatur (über .pane-detail .pr) ---------------------
+	// ↑↓ scrollt die Preis-Zeile in den Fokus (per Effekt gekennzeichnet),
+	// ↵ wählt sie aus (Highlight + Toast), Esc verlässt die Detail-Ansicht.
+	function dMove(dir: number) {
+		if (!dRows.length) return;
+		dSel = Math.min(Math.max(dSel + dir, 0), dRows.length - 1);
+		document.querySelectorAll<HTMLElement>('.pane-detail .pr')[dSel]?.scrollIntoView({ block: 'nearest' });
+	}
+	function dSelect() {
+		if (!dRows.length) return;
+		dChosen = dSel;
+		const r = dRows[dSel];
+		dToast = `${r.kind === 'buy' ? 'Kauf' : 'Verkauf'} · ${fmt(r.price)} aUEC · ${r.loc}`;
+	}
+	// Sync highlight-Klassen (is-sel/is-chosen) — deklarativ per class: im
+	// Template gebunden (siehe .pr in der Detail-Tabelle), NICHT per DOM-Query:
+	// manuell gesetzte Klassen überleben den Svelte-Flush nicht.
+	// → Die Zeilen binden class:is-sel={i === dSel} / class:is-chosen={i === dChosen}
+	//   über den flachen Index (Kauf-Zeilen zuerst, dann Verkauf).
+
+	// QA Runde 2 (N3): rohen serde-/Rust-Fehlertext nicht als deutsche UI zeigen.
+	// Bekannte Muster auf freundliche Meldungen mappen; Unbekanntes bleibt lesbar,
+	// aber mit deutschem Rahmen statt technischem Fehler-String.
+	function friendlyErr(e: unknown): string {
+		const s = String(e ?? '');
+		const lo = s.toLowerCase();
+		if (!s) return 'Unbekanntes Problem beim Laden der Preise.';
+		if (lo.includes('invalid type: null') || lo.includes('expected f64') || lo.includes('expected u'))
+			return 'Preisdaten unvollständig — der Anbieter lieferte leere Werte. Bitte erneut versuchen.';
+		if (lo.includes('requests limit reached') || lo.includes('rate limit'))
+			return 'Anfragenlimit erreicht — bitte kurz warten und erneut versuchen.';
+		if (lo.includes('not found'))
+			return 'Keine Preisdaten für diesen Eintrag gefunden.';
+		if (lo.includes('timeout') || lo.includes('timed out'))
+			return 'Zeitüberschreitung beim Laden — bitte erneut versuchen.';
+		if (lo.includes('connection failed') || lo.includes('network') || lo.includes('offline'))
+			return 'Keine Verbindung zum Preisdienst. Bitte Internet prüfen.';
+		// Fallback: bekannte Fehlermeldung, aber mit deutschem Kontext.
+		return `Preise konnten nicht geladen werden (${s}).`;
+	}
+
+	function nowSec(): number {
+		return Math.floor(Date.now() / 1000);
+	}
+
+	function rel(ts: number): string {
+		if (!ts) return '—';
+		const s = Math.max(0, nowSec() - ts);
+		if (s < 60) return `vor ${Math.max(1, s)} s`;
+		if (s < 3600) return `vor ${Math.floor(s / 60)} min`;
+		if (s < 86400) return `vor ${Math.floor(s / 3600)} h`;
+		return `vor ${Math.floor(s / 86400)} T`;
+	}
+
+	function cacheAge(s?: SyncStatus | null): string {
+		const ds = (s ?? status)?.datasets ?? [];
+		const ages = ds.map((d) => d.age_secs).filter((i) => i != null);
+		if (!ages.length) return '—';
+		return rel(nowSec() - Math.max(...(ages as number[])));
+	}
+
+	function syncLabel(): { text: string; cls: string } {
+		const s = status;
+		if (!s) return { text: 'SYNC …', cls: 'load' };
+		if (s.syncing) return { text: 'SYNC LÄUFT', cls: 'load' };
+		if (!hasData(s)) return s.last_error ? { text: 'SYNC FEHLER', cls: 'alert' } : { text: 'SYNC LÄUFT', cls: 'load' };
+		if (!s.online) return { text: `OFFLINE · CACHE ${cacheAge(s)}`, cls: 'off' };
+		return { text: `SYNC ${cacheAge(s)} · ${s.provider.toUpperCase()}`, cls: '' };
+	}
+
+	// ---- Formatierung (Deutsch, Mono — Spalten bleiben stehen) ---------------
+	function fmt(n: number, d = 2): string {
+		return n.toLocaleString('de-DE', { maximumFractionDigits: d, minimumFractionDigits: 0 });
 	}
 
 	function fmtPrice(p: number): string {
@@ -623,11 +839,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
-		// Market phase: offer list navigation + detail. Das HAUPT-Suchfeld ist
-		// der Offer-Query; Pfeile navigieren trotz Fokus im Suchfeld (wie im
-		// Such-Modus). Qualitäts-Stepper (type=number) und Filter-Chips
-		// (buttons) behalten ihre nativen Tasten (↑↓/Enter/Space), Tab wandert
-		// nativ durch die Controls (Sortierung/Filter per Tastatur erreichbar).
+		// Marktplatz-Modus: Angebot-Navigation + Detail.
 		if (phase === 'market') {
 			const t = e.target;
 			const inStepper = t instanceof HTMLInputElement && t.type === 'number';
@@ -673,8 +885,16 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 				e.preventDefault();
 				return;
 			}
-			// Alt+Zahl-Badges wie im Such-Modus: ersten 10 Offers fokussieren,
-			// erneut → zurück ins Suchfeld.
+			if (k === 'Tab' && mMshown < visOffers.length && !offerDetail && !inStepper) {
+				// Tab erreicht den "Weitere laden"-Button (nächste Seite).
+				const btn = document.querySelector<HTMLButtonElement>('.btn-more');
+				if (btn) {
+					btn.focus();
+					e.preventDefault();
+					return;
+				}
+			}
+			// Alt+Zahl-Badges wie im Such-Modus: ersten 10 Offers fokussieren.
 			if (e.altKey && !offerDetail && /^[0-9]$/.test(k)) {
 				if (!visOffers.length) return;
 				const n = k === '0' ? 9 : Number(k) - 1;
@@ -686,6 +906,42 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 				}
 				mSel = n;
 				scrollOfferIntoView(n);
+				e.preventDefault();
+				return;
+			}
+			return;
+		}
+
+		// Ortssperre per Tastatur (L) — wie m/M: nicht schlucken, wenn ein
+		// Eingabefeld fokussiert ist. Funktioniert in Listen- und Detail-Ansicht.
+		if ((k === 'l' || k === 'L') && !isFieldFocused(e)) {
+			const cur = inDetail ? detailHit : flat[sel];
+			if (!cur) return;
+			if (!locationLock && (cur.kind === 'location' || cur.kind === 'terminal')) lockLocation(cur);
+			else if (locationLock) unlockLocation();
+			e.preventDefault();
+			return;
+		}
+
+		// Detail-Ansicht: ↑↓/↵/Esc (Ortssperre wird oben behandelt).
+		if (inDetail) {
+			if (k === 'ArrowDown') {
+				dMove(1);
+				e.preventDefault();
+				return;
+			}
+			if (k === 'ArrowUp') {
+				dMove(-1);
+				e.preventDefault();
+				return;
+			}
+			if (k === 'Enter') {
+				dSelect();
+				e.preventDefault();
+				return;
+			}
+			if (k === 'Escape') {
+				closeDetail();
 				e.preventDefault();
 				return;
 			}
@@ -708,7 +964,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 		} else if (k === 'Enter') {
 			// NB-2: Enter trifft die fokussierte Zeile (Alt+Zahl), sonst die
 			// per Pfeil selektierte.
-			openRow(focusIdx ?? sel);
+			toggleOpen(focusIdx ?? sel);
 			e.preventDefault();
 		} else if (k === 'Escape') {
 			escSearch();
@@ -720,47 +976,13 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 			toggleMarket();
 			e.preventDefault();
 		} else if (k === 'Tab') {
-			// Inline-Expansion ist der Hauptpfad; Tab navigiert weiterhin durch
-			// das Formular nativer — kein Filter-Cycle mehr (Arkanis nutzt Präfixe).
+			// Suche/Liste ist der Hauptpfad; Tab navigiert natürlich weiter
+			// (kein Filter-Cycle — Arkanis nutzt Präfixe für Kategorien).
 			return;
 		}
 	}
 
-	// ---- Formatierung (Deutsch, Mono — Spalten bleiben stehen) ---------------
-	function fmt(n: number, d = 2): string {
-		return n.toLocaleString('de-DE', { maximumFractionDigits: d, minimumFractionDigits: 0 });
-	}
-
-	function nowSec(): number {
-		return Math.floor(Date.now() / 1000);
-	}
-
-	function rel(ts: number): string {
-		if (!ts) return '—';
-		const s = Math.max(0, nowSec() - ts);
-		if (s < 60) return `vor ${Math.max(1, s)} s`;
-		if (s < 3600) return `vor ${Math.floor(s / 60)} min`;
-		if (s < 86400) return `vor ${Math.floor(s / 3600)} h`;
-		return `vor ${Math.floor(s / 86400)} T`;
-	}
-
-	function cacheAge(s?: SyncStatus | null): string {
-		const ds = (s ?? status)?.datasets ?? [];
-		const ages = ds.map((d) => d.age_secs).filter((a) => a != null);
-		if (!ages.length) return '—';
-		return rel(nowSec() - Math.max(...(ages as number[])));
-	}
-
-	function syncLabel(): { text: string; cls: string } {
-		const s = status;
-		if (!s) return { text: 'SYNC …', cls: 'load' };
-		if (s.syncing) return { text: 'SYNC LÄUFT', cls: 'load' };
-		if (!hasData(s)) return s.last_error ? { text: 'SYNC FEHLER', cls: 'alert' } : { text: 'SYNC LÄUFT', cls: 'load' };
-		if (!s.online) return { text: `OFFLINE · CACHE ${cacheAge(s)}`, cls: 'off' };
-		return { text: `SYNC ${cacheAge(s)} · ${s.provider.toUpperCase()}`, cls: '' };
-	}
-
-	// ---- Preis-Tabellen für die Inline-Expansion (Kauf | Verkauf) ------------
+	// ---- Preis-Tabellen für die Detail-Ansicht (Kauf | Verkauf) -------------
 	// Arkanis GameEntitySearchDetails/PriceTagTable: zwei Spalten nebeneinander.
 	function buyPoints(d: PriceDetail): PricePoint[] {
 		return (d.prices ?? [])
@@ -771,7 +993,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 	function sellPoints(d: PriceDetail): PricePoint[] {
 		return (d.prices ?? [])
 			.filter((p) => p.sell_price > 0)
-			.sort((a, b) => b.sell_price - a.sell_price);
+			.sort((a, b) => b.sell_price - a.buy_price);
 	}
 
 	// Per-Terminal-Gruppen des Location-Aggregats (QA-Auflage A): gleiche
@@ -785,21 +1007,21 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 	function groupSells(g: TerminalPriceGroup): PricePoint[] {
 		return (g.prices ?? [])
 			.filter((p) => p.sell_price > 0)
-			.sort((a, b) => b.sell_price - a.sell_price);
+			.sort((a, b) => b.sell_price - a.buy_price);
 	}
 
 	function fmtStock(p: PricePoint): string {
 		return fmtQty(Math.max(p.sell_stock, p.buy_stock));
 	}
 
-	// Beste Preise für die Inline-Meta-Felder (der Expansion entnommen).
+	// Beste Preise für die Detail-Kopfzeile (aus der ortsgefilterten Menge).
 	function bestBuy(d: PriceDetail | null): number {
-		const xs = (d?.prices ?? []).map((p) => p.buy_price).filter((v) => v > 0);
+		const xs = (lockFilter(d?.prices ?? []).map((p) => p.buy_price).filter((v) => v > 0));
 		return xs.length ? Math.max(...xs) : 0;
 	}
 
 	function bestSell(d: PriceDetail | null): number {
-		const xs = (d?.prices ?? []).map((p) => p.sell_price).filter((v) => v > 0);
+		const xs = (lockFilter(d?.prices ?? []).map((p) => p.sell_price).filter((v) => v > 0));
 		return xs.length ? Math.max(...xs) : 0;
 	}
 
@@ -811,7 +1033,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 <svelte:window onkeydown={onKey} />
 
 <main class="pal-root">
-	<div class="shell">
+	<div class="shell" class:in-detail={inDetail}>
 		<i class="deco t1"></i><i class="deco t2"></i>
 
 		<!-- Suchzeile -->
@@ -837,7 +1059,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 			<span class="esc">ESC</span>
 		</div>
 
-		<!-- Helper-Zeile: Shortcuts (Arkanis - Overline/Typo secondary) -->
+		<!-- Helper-Zeile: Shortcuts -->
 		<div class="helper">
 			{#if phase === 'market'}
 				<span><kbd>↑↓</kbd> offers</span>
@@ -846,7 +1068,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 				<span class="sep">·</span>
 				<span><kbd>↵</kbd> detail</span>
 				<span class="sep">·</span>
-				<span><kbd>Tab</kbd> filter</span>
+				<span><kbd>Tab</kbd> → Weitere laden</span>
 				<span class="sep">·</span>
 				<span><kbd>Esc</kbd> zurück zur Suche</span>
 				<span class="sep">·</span>
@@ -861,6 +1083,10 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 				<span><kbd>=</kbd> math</span>
 				<span class="sep">·</span>
 				<span><kbd>%</kbd> ÷100</span>
+				<span class="sep">·</span>
+				<span><kbd>↵</kbd> öffnet Detail</span>
+				<span class="sep">·</span>
+				<span><kbd>L</kbd> Ort sperren</span>
 			{/if}
 		</div>
 
@@ -945,74 +1171,26 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 					</div>
 				{:else}
 					<div class="mbar">
-						<button
-							type="button"
-							class="chip"
-							class:is-on={mOp === 'all'}
-							onclick={() => setOp('all')}>Alle</button>
-						<button
-							type="button"
-							class="chip"
-							class:is-on={mOp === 'sell'}
-							onclick={() => setOp('sell')}><span class="dot"></span>Verkauf</button>
-						<button
-							type="button"
-							class="chip"
-							class:is-on={mOp === 'buy'}
-							onclick={() => setOp('buy')}><span class="dot"></span>Kauf</button>
+						<button type="button" class="chip" class:is-on={mOp === 'all'} onclick={() => setOp('all')}>Alle</button>
+						<button type="button" class="chip" class:is-on={mOp === 'sell'} onclick={() => setOp('sell')}><span class="dot"></span>Verkauf</button>
+						<button type="button" class="chip" class:is-on={mOp === 'buy'} onclick={() => setOp('buy')}><span class="dot"></span>Kauf</button>
 						<span class="m-spacer"></span>
 						<span class="m-lbl">Region</span>
-						<button
-							type="button"
-							class="chip"
-							class:is-on={mRegion === 'all'}
-							onclick={() => setRegion('all')}>Alle</button>
+						<button type="button" class="chip" class:is-on={mRegion === 'all'} onclick={() => setRegion('all')}>Alle</button>
 						{#each marketRegions as r}
 							<button type="button" class="chip" class:is-on={mRegion === r} onclick={() => setRegion(r)}>{r}</button>
 						{/each}
 					</div>
 					<div class="mbar2">
 						<span class="m-lbl">Qualität</span>
-						<input
-							class="qnum"
-							type="number"
-							min="0"
-							max="1000"
-							step="10"
-							placeholder="min"
-							aria-label="Min-Qualität (0–1000)"
-							title="Min-Qualität (0–1000)"
-							bind:value={mqMin}
-						/>
+						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder="min" aria-label="Min-Qualität (0–1000)" title="Min-Qualität (0–1000)" bind:value={mqMin} />
 						<span class="qnum-dash">–</span>
-						<input
-							class="qnum"
-							type="number"
-							min="0"
-							max="1000"
-							step="10"
-							placeholder="max"
-							aria-label="Max-Qualität (0–1000)"
-							title="Max-Qualität (0–1000)"
-							bind:value={mqMax}
-						/>
+						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder="max" aria-label="Max-Qualität (0–1000)" title="Max-Qualität (0–1000)" bind:value={mqMax} />
 						<button type="button" class="chip" onclick={() => { mqMin = ''; mqMax = ''; }}>Q ×</button>
 						<span class="m-lbl">Sort</span>
-						<button
-							type="button"
-							class="chip"
-							class:is-on={mSort === 'price_asc'}
-							onclick={() => setSort('price_asc')}>Preis ↑</button>
-						<button
-							type="button"
-							class="chip"
-							class:is-on={mSort === 'price_desc'}
-							onclick={() => setSort('price_desc')}>Preis ↓</button>
-						<button
-							type="button"
-							class="chip"
-							class:is-on={mSort === 'newest'}
-							onclick={() => setSort('newest')}>Neueste</button>
+						<button type="button" class="chip" class:is-on={mSort === 'price_asc'} onclick={() => setSort('price_asc')}>Preis ↑</button>
+						<button type="button" class="chip" class:is-on={mSort === 'price_desc'} onclick={() => setSort('price_desc')}>Preis ↓</button>
+						<button type="button" class="chip" class:is-on={mSort === 'newest'} onclick={() => setSort('newest')}>Neueste</button>
 						<span class="m-spacer"></span>
 						{#if mSource === 'offline'}
 							<span class="chip warn"><span class="dot"></span>Offline-Snapshot</span>
@@ -1023,7 +1201,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 
 					{#if visOffers.length}
 						<div class="mlist">
-							{#each visOffers as o, i}
+							{#each mVew as o, i}
 								<div
 									class="mrow"
 									role="option"
@@ -1050,8 +1228,19 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 							{/each}
 						</div>
 						<div class="m-foot">
-							<span>{visOffers.length} Angebote</span>
-							<span class="src">UEX Corp</span>
+							<span>{mVew.length} / {visOffers.length} Angebote · Seite {Math.min(M_PAGE, mMshown) === 0 ? 0 : Math.ceil(mMshown / M_PAGE)}</span>
+							<div class="m-more">
+								{#if mLoadingMore}
+									<span class="spin"></span><span class="sm">lädt …</span>
+								{:else if mMshown < visOffers.length}
+									<button class="btn-more" onclick={loadMore}>Weitere laden</button>
+								{:else if !mAllLoaded}
+									<button class="btn-more" onclick={loadMore}>(noch mehr laden)</button>
+								{:else}
+									<span class="sm">Alle geladen</span>
+								{/if}
+								<span class="src">UEX Corp</span>
+							</div>
 						</div>
 					{:else}
 						<div class="row-empty" style="padding: 28px 16px">Keine Angebote für diese Filter.</div>
@@ -1059,8 +1248,8 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 				{/if}
 			</div>
 
-		{:else if phase === 'typing' || phase === 'offline' || phase === 'idle'}
-			<div class="pane-list">
+		{:else}
+			<div class="pane-list" class:in-detail={inDetail}>
 				{#if status?.online === false}
 					<div class="offlineband">
 						<span class="dot"></span>Offline · Cache von {cacheAge()} · Preise ggf. veraltet
@@ -1077,10 +1266,22 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 						<span class="c" style="color: var(--alert)">{calcError}</span>
 					</div>
 				{:else if (input as string).trim() && flat.length}
-					<!-- Found-Chip über der Liste -->
+					<!-- Found-Chip über der Liste + Ortssperre -->
 					<div class="found">
 						<span class="c">Found <b>{searchTotal}</b> results in <b>{searchMs}</b> ms</span>
+						{#if !locationLock}
+							{@const cur = flat[sel]}
+							{#if cur && (cur.kind === 'location' || cur.kind === 'terminal')}
+								<button class="lock-btn" aria-label="Ort sperren (L)" onclick={() => lockLocation(cur)}>+</button>
+							{/if}
+						{:else}
+							<span class="lock-badge">📌 {locationLock.name} <button class="lock-x" aria-label="sperren aufheben" onclick={unlockLocation}>×</button></span>
+						{/if}
 					</div>
+
+					{#if locationLock && detailHit?.kind === 'commodity'}
+						<div class="lock-hint"><span class="dot"></span>Preise gefiltert auf <b>{locationLock.name}</b> · <span class="sm">{dRows.length} Preiszeilen</span> · <button class="btn-ghost sm" onclick={unlockLocation}>× sperren aufheben</button></div>
+					{/if}
 
 					<div class="list">
 						{#each groups as g, gi}
@@ -1089,7 +1290,7 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 								<div class="vgroup">{g.label} <span class="n">{g.hits.length}</span></div>
 								{#each g.hits as h, hi}
 									{@const idx = groupOffset(gi) + hi}
-									<div class="rwrap" class:is-open={expanded === idx}>
+									<div class="rwrap" class:in-detail={inDetail && expanded === idx}>
 										<div
 											class="row"
 											tabindex="-1"
@@ -1097,143 +1298,18 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 											class:is-focus={focusIdx === idx}
 											role="option"
 											aria-selected={idx === sel}
-											onclick={() => {
-												sel = idx;
-												if (expanded === idx) {
-													clampIdx();
-												} else {
-													openRow(idx);
-												}
-											}}
+											onclick={() => toggleOpen(idx)}
 										>
 											<span class="rbadge">{badgeOf(idx)}</span>
-											<span class="ic">{ICONS[g.kind] ?? '?'}</span>
+											<span class="ic">{ICONS[g.kind] ?? '?'}{locationLock && (h.kind === 'location' || h.kind === 'terminal') && locationLock.id === h.id ? ' 🔒' : ''}</span>
 											<div>
 												<div class="name">{h.name}</div>
 												<div class="sub">{h.subtitle}</div>
 											</div>
 											<div class="meta">
 												<div class="mf"><span class="k">UEX-ID</span><span class="v">{h.code ?? h.id}</span></div>
-												{#if expanded === idx && xpan?.detail && (xpan.detail.prices ?? []).length}
-													<div class="mf">
-														<span class="k">Kauf ab</span>
-														<span class="v buy">{fmt(bestBuy(xpan.detail))} aUEC</span>
-													</div>
-													<div class="mf">
-														<span class="k">Verkauf bis</span>
-														<span class="v sell">{fmt(bestSell(xpan.detail))} aUEC</span>
-													</div>
-												{/if}
-											</div>
-											<div class="ctl">
-												{#if expanded === idx}
-													<span class="btn-x primary">{xpan?.busy ? '…' : '▼ PREISE'}</span>
-												{:else}
-													<span class="btn-x">↵ Preise</span>
-												{/if}
 											</div>
 										</div>
-
-										{#if expanded === idx && xpan}
-											<div class="xpan is-open" class:xpan-loc={g.kind === 'location'}>
-												<div class="inner">
-													{#if xpan.busy && !xpan.detail}
-														<div class="ptab">
-															<div class="cap">Lade Preise …</div>
-														</div>
-													{:else if xpan.error}
-														<div class="ptab">
-															<div class="cap">Fehler</div>
-															<div class="ph"><span>Preise nicht geladen</span></div>
-														</div>
-													{:else if xpan.detail?.location}
-													<!-- QA-Auflage A: Location-Aggregat — Standort-Kette als Header,
-													     je Terminal eine Gruppe (Kauf/Verkauf), leere Gruppe → "keine
-													     Preisdaten", nie "Preise nicht geladen". -->
-													{@const loc = xpan.detail.location}
-													<div class="ploc">
-														<div class="ploc-head">
-															<span class="ploc-chain">{loc.location}</span>
-														</div>
-														{#each loc.groups as grp, gi}
-															{@const gbuys = groupBuys(grp)}
-															{@const gsells = groupSells(grp)}
-															<div class="ptab">
-																<div class="cap">{grp.terminal_name}</div>
-																{#if gbuys.length || gsells.length}
-																	<div class="ph"><span>Terminal</span><span>Preis</span><span>SCU</span></div>
-																	{#if gbuys.length}
-																		<div class="psub buy">Kauf</div>
-																		{#each gbuys as p, bi}
-																			<div class="pr" class:best={bi === 0}>
-																				<span class="loc">{p.location}</span>
-																				<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
-																			</div>
-																		{/each}
-																	{:else}
-																		<div class="psub buy empty">Kauf — kein Terminal</div>
-																	{/if}
-																	{#if gsells.length}
-																		<div class="psub sell">Verkauf</div>
-																		{#each gsells as p, si}
-																			<div class="pr" class:best={si === 0}>
-																				<span class="loc">{p.location}</span>
-																				<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
-																			</div>
-																		{/each}
-																	{:else}
-																		<div class="psub sell empty">Verkauf — kein Terminal</div>
-																	{/if}
-																{:else}
-																	<!-- Leere Terminal-Gruppe (Fuel-/Raffinerie-Docks, leere Shops). -->
-																	<div class="pr"><span class="loc" style="color: var(--fgfaint)">keine Preisdaten</span></div>
-																{/if}
-															</div>
-														{/each}
-													</div>
-												{:else if xpan.detail && h.kind === 'item' && !(xpan.detail.prices ?? []).length}
-													<!-- QA-Auflage B: Item ohne Preisdaten → "nicht kaufbar"-Anzeige
-													     statt der Terminal-Tabellen (prices:[] ist nie ein Fehler). -->
-													<div class="np-state">nicht kaufbar · keine Preisdaten</div>
-												{:else if xpan.detail}
-														{@const buys = buyPoints(xpan.detail)}
-														{@const sells = sellPoints(xpan.detail)}
-														<div class="ptab">
-															<div class="cap">Alle verfügbaren <b class="buy">Kauf</b>-Preise</div>
-															<div class="ph"><span>Terminal</span><span>Preis</span><span>SCU</span></div>
-															{#if buys.length}
-																{#each buys as p, bi}
-																	<div class="pr" class:best={bi === 0}>
-																		<span class="loc">{p.location}</span>
-																		<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
-																	</div>
-																{/each}
-															{:else}
-																<div class="pr"><span class="loc" style="color: var(--fgfaint)">Kein Terminal kauft</span></div>
-															{/if}
-														</div>
-														<div class="ptab">
-															<div class="cap">Alle verfügbaren <b class="sell">Verkauf</b>-Preise</div>
-															<div class="ph"><span>Terminal</span><span>Preis</span><span>SCU</span></div>
-															{#if sells.length}
-																{#each sells as p, si}
-																	<div class="pr" class:best={si === 0}>
-																		<span class="loc">{p.location}</span>
-																		<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
-																	</div>
-																{/each}
-															{:else}
-																<div class="pr"><span class="loc" style="color: var(--fgfaint)">Kein Terminal verkauft</span></div>
-															{/if}
-														</div>
-													{:else}
-														<div class="ptab">
-															<div class="cap">Lade Preise …</div>
-														</div>
-													{/if}
-												</div>
-											</div>
-										{/if}
 									</div>
 								{/each}
 							{:else if show && !g.hits.length}
@@ -1242,6 +1318,134 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 							{/if}
 						{/each}
 					</div>
+
+					<!-- Detail-Seite (Overlay über der Liste) -->
+					{#if inDetail}
+						<div class="pane-detail" role="dialog" aria-modal="true" aria-label="Detail">
+							{#if xpan?.busy && !xpan?.detail}
+								<div class="d-ghost">
+									<div class="cap">Lade Preise …</div>
+								</div>
+							{:else if xpan?.error}
+								<div class="d-ghost">
+									<div class="cap">Fehler</div>
+									<div class="sm">{friendlyErr(xpan.error)}</div>
+								</div>
+							{:else if xpan?.detail}
+								{@const d = xpan.detail}
+								<div class="d-head">
+									<button class="d-back" aria-label="zurück zur Liste" onclick={closeDetail}>←</button>
+									<div class="d-title">
+										<h2>{detailHit?.name ?? d.commodity}</h2>
+										<span class="c">{detailHit?.subtitle ?? ''}</span>
+									</div>
+									<div class="d-price">
+										<span class="buy">↗ {fmt(bestBuy(d))}</span>
+										<span class="sell">↘ {fmt(bestSell(d))}</span>
+									</div>
+								</div>
+
+								{#if locationLock && detailHit?.kind === 'commodity'}
+									<div class="lock-hint"><span class="dot"></span>↳ gefiltert auf <b>{locationLock.name}</b> · {dRows.length} Preiszeilen · <button class="btn-ghost sm" onclick={unlockLocation}>×</button></div>
+								{/if}
+
+								{#if dToast}
+									<div class="d-toast" role="status">{dToast} <b>↵ Auswahl</b></div>
+								{/if}
+
+								<div class="d-body">
+									{#if d.location}
+										<!-- Location-Aggregat: je Terminal eine Gruppe -->
+										{@const loc = d.location}
+										{#each loc.groups as grp, gi}
+											{@const gbuys = groupBuys(grp)}
+											{@const gsells = groupSells(grp)}
+											<div class="ptab">
+												<div class="cap">{grp.terminal_name}</div>
+												{#if gbuys.length || gsells.length}
+													<div class="ph"><span>Item</span><span>Preis</span><span>SCU</span></div>
+													{#if gbuys.length}
+														<div class="psub buy">Kauf</div>
+														{#each gbuys as p, bi}
+															<div class="pr" class:best={bi === 0}>
+																<span class="loc">{p.commodity}</span>
+																<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
+														</div>
+														{/each}
+													{:else}
+														<div class="psub buy empty">Kauf — kein Terminal</div>
+													{/if}
+													{#if gsells.length}
+														<div class="psub sell">Verkauf</div>
+														{#each gsells as p, si}
+															<div class="pr" class:best={si === 0}>
+																<span class="loc">{p.commodity}</span>
+																<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+															</div>
+														{/each}
+													{:else}
+														<div class="psub sell empty">Verkauf — kein Terminal</div>
+													{/if}
+												{:else}
+													<div class="pr"><span class="loc" style="color: var(--fgfaint)">keine Preisdaten</span></div>
+												{/if}
+											</div>
+										{/each}
+									{:else if d.prices.length === 0}
+										<!-- QA-Auflage B: Item ohne Preise → "nicht kaufbar" -->
+										<div class="np-state">nicht kaufbar · keine Preisdaten</div>
+									{:else}
+										<!-- Commodity / Terminal mit Preisen -->
+										{@const dIsTerminal = detailHit?.kind === 'terminal'}
+										{@const buys = lockFilter(buyPoints(d))}
+										{@const sells = lockFilter(sellPoints(d))}
+										<div class="ptab">
+											<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} Terminal</div>
+											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+											{#if buys.length}
+												{#each buys as p, bi}
+													<div class="pr" class:best={bi === 0} class:is-sel={dRows.length > 0 && bi === dSel} class:is-chosen={dRows.length > 0 && bi === dChosen}>
+													<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
+													<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
+												</div>
+												{/each}
+											{:else}
+												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Kauf' : 'Kein Terminal kauft'}</span></div>
+											{/if}
+										</div>
+										<div class="ptab">
+											<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} Terminal</div>
+											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+											{#if sells.length}
+												{#each sells as p, si}
+													<div class="pr" class:best={si === 0} class:is-sel={dRows.length > 0 && buys.length + si === dSel} class:is-chosen={dRows.length > 0 && buys.length + si === dChosen}>
+													<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
+													<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+												</div>
+												{/each}
+											{:else}
+												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Verkauf' : 'Kein Terminal verkauft'}</span></div>
+											{/if}
+										</div>
+									{/if}
+								</div>
+
+								<div class="d-foot">
+									{#if dRows.length}
+										<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
+										<span class="sep">·</span>
+										<span><kbd>↵</kbd> Auswahl</span>
+										<span class="sep">·</span>
+										<span><kbd>Esc</kbd> zurück</span>
+										<span class="sep">·</span>
+										<span><kbd>L</kbd> sperren</span>
+									{:else}
+										<span><kbd>Esc</kbd> zurück</span>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					{/if}
 				{:else}
 					<!-- idle -->
 					<div class="pane-idle">
@@ -1269,11 +1473,12 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 					{#if offerDetail}
 						<span><kbd>↵</kbd> im Browser öffnen</span>
 					{/if}
-					<span><kbd>Esc</kbd> zur Suche</span>
+					<span><kbd>Esc</kbd> zurück zur Suche</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
-					<span><kbd>↵</kbd> aufklappen</span>
+					<span><kbd>↵</kbd> Detail</span>
+					<span><kbd>L</kbd> Ort sperren</span>
 					<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
 					<span><kbd>Ctrl+M</kbd> Market</span>
 				{/if}

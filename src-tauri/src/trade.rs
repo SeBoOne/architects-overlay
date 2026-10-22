@@ -269,15 +269,23 @@ fn with_location_rows(
     Ok(out)
 }
 
-/// Anzeigename der Location-Entity = letzter Pfad-Teil der Kette
-/// ("Pyro > … > Checkmate Station" → "Checkmate Station"). Fällt die Kette nur
-/// aus einem Segment, wird sie unverändert als Name verwendet.
+/// Anzeigename der Location-Entity. Pro Standort-Kette steht der Name der
+/// Station (das letzte Kettenglied, z. B. "Checkmate Station") statt eines
+/// Terminal-Namens — das ist die zusätzliche Aggregations-Metapher, die
+/// `kind='location'` klickbar macht, ohne sich mit den Terminal-Zeilen
+/// (Kriterium 1) zu vermengen.
+///
+/// QA Runde 2 (N2): der frühere Wert war eine Konstante ("Admin Office") für
+/// JEDE Kette — zwei Stationen in der Liste hießen gleich. Jetzt kommt der
+/// Name aus der Kette selbst, damit sich Standorte unterscheiden. Fallback auf
+/// "Station" bei leerer Kette (sollte nie eintreten: leere Ketten werden oben
+/// übersprungen).
 fn location_name(chain: &str) -> String {
     chain
-        .rsplit(" > ")
-        .next()
-        .unwrap_or(chain)
-        .trim()
+        .rsplit('>')
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or("Station")
         .to_string()
 }
 
@@ -372,10 +380,10 @@ fn fmt_number(v: f64) -> String {
 /// * `kind = "location"` (+ `id` = terminal id): the location aggregate —
 ///   every terminal of the location chain with its own buy/sell table, in
 ///   `location.groups` (feedback fix "Preise nicht geladen").
-/// * `kind = "item"` (+ `id` = item id): items carry no commodity price
-///   table unless they are commodities (those were deduped into the
-///   commodity dataset at import). The detail comes back with an empty
-///   `prices` list so the UI renders "nicht kaufbar / keine Preisdaten".
+/// * `kind = "item"` (+ `id` = item id): items that are not commodities
+///   carry their shop prices in `/items_prices` — fetched via
+///   `provider.item_prices(id)` (cached 30 min). Point 3: items now show
+///   real buy/sell prices instead of the empty "nicht kaufbar" table.
 /// * default (or `kind = "commodity"`): per-commodity price points, cached
 ///   30 min, refetched live when stale. May also resolve to `Ok(empty)` for
 ///   a known item/terminal passed by name (defensive fallback).
@@ -429,15 +437,22 @@ pub async fn get_prices(
             })
         }
         Some("item") => {
-            // Items are no commodities: validate the id exists in the item
-            // dataset and hand back an empty table (UI shows the
-            // "nicht kaufbar" state instead of an error).
-            let item_name = item_name(&state, id, &commodity).await?;
+            // Items that are NOT commodities carry their shop prices in the
+            // UEX `/items_prices` table (weapons, armor, MedPens, etc.).
+            // Fetch those live (cached 30 min) instead of returning an empty
+            // table — Point 3: "falsches 'nicht kaufbar'".
+            let item_id = id.ok_or_else(|| "Item öffnen: fehlende Item-ID".to_string())?;
+            let item_name = item_name(&state, Some(item_id), &commodity).await?;
+            let prices = state
+                .provider
+                .item_prices(item_id)
+                .await
+                .map_err(friendly)?;
             Ok(PriceDetail {
                 commodity: item_name,
                 source: state.provider.name(),
                 fetched_at,
-                prices: Vec::new(),
+                prices,
                 location: None,
             })
         }
@@ -996,7 +1011,10 @@ mod tests {
             loc_row.id, 436,
             "location row id must be the money terminal"
         );
-        assert_eq!(loc_row.name, "Checkmate Station");
+        assert_eq!(
+            loc_row.name, "Checkmate Station",
+            "location name derives from the chain's last segment (N2)"
+        );
 
         // Kriterium 1: die Terminal-Zeilen bleiben kind='terminal' mit echter id.
         let term_hits = loc_group
@@ -1052,9 +1070,10 @@ mod tests {
     }
 
     /// get_prices routes by `kind`: terminal → own per-terminal prices with a
-    /// resolved display name, location → aggregate groups, item → empty
-    /// table, default → commodity points. Verifies the backend contract the
-    /// frontend mirrors in +page.svelte.
+    /// resolved display name, location → aggregate groups, item → item
+    /// price points from `/items_prices`, default → commodity provider
+    /// path. Verifies the backend contract the frontend mirrors in
+    /// +page.svelte.
     #[tokio::test]
     async fn get_prices_routes_terminal_location_and_item_kinds() {
         use provider::{LocationPrices, TerminalPriceGroup};
@@ -1130,6 +1149,25 @@ mod tests {
                     buy_stock: 0.0,
                     sell_status: 0,
                     buy_status: 7,
+                    quality: 0,
+                    updated: 1_792_355_842,
+                }])
+            }
+            async fn item_prices(
+                &self,
+                _item_id: u64,
+            ) -> provider::Result<Vec<provider::PricePoint>> {
+                Ok(vec![provider::PricePoint {
+                    commodity: "CSP-68H Backpack".into(),
+                    commodity_id: 465,
+                    location: String::new(),
+                    terminal_id: 107,
+                    sell_price: 0.0,
+                    buy_price: 295.0,
+                    sell_stock: 0.0,
+                    buy_stock: 0.0,
+                    sell_status: 0,
+                    buy_status: 1,
                     quality: 0,
                     updated: 1_792_355_842,
                 }])
@@ -1218,7 +1256,7 @@ mod tests {
         assert_eq!(loc.groups[0].prices[0].buy_price, 1108.0);
         assert_eq!(d.prices.len(), 1, "flattened prices mirror the groups");
 
-        // item route → empty table, no location
+        // item route → item prices (not empty), no location
         let d = get_prices(
             state.clone(),
             "CSP-68H Backpack".into(),
@@ -1227,7 +1265,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(d.prices.is_empty());
+        assert_eq!(d.prices.len(), 1, "item route must now fetch item prices");
+        assert_eq!(d.prices[0].commodity_id, 465);
+        assert_eq!(d.prices[0].buy_price, 295.0);
         assert!(d.location.is_none());
 
         // default route → commodity provider path
@@ -1338,6 +1378,9 @@ mod tests {
         async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
             Ok(vec![])
         }
+        async fn item_prices(&self, _item_id: u64) -> provider::Result<Vec<provider::PricePoint>> {
+            Ok(vec![])
+        }
         async fn marketplace_offers(
             &self,
             _f: provider::MarketplaceFilter,
@@ -1413,7 +1456,7 @@ mod tests {
         assert_eq!(out[0].id, 436, "location row id must be the money terminal");
         assert_eq!(
             out[0].name, "Checkmate Station",
-            "name is the station, not the terminal"
+            "name is the station aggregate, not the terminal (N2)"
         );
         assert_eq!(out[0].subtitle, chain);
         // code None (kein UEX-Terminal-Code, sondern eine Standort-Entity).
