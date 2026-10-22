@@ -105,6 +105,24 @@ CREATE TABLE IF NOT EXISTS prices (
   fetched_at   INTEGER NOT NULL,
   PRIMARY KEY (id_commodity, id_terminal)
 );
+-- Location price aggregate (feedback fix): the price table of ONE terminal
+-- (all commodities it trades), fetched on demand per terminal and cached
+-- with the same 30-min TTL as commodity prices.
+CREATE TABLE IF NOT EXISTS terminal_prices (
+  id_terminal  INTEGER NOT NULL,
+  id_commodity INTEGER NOT NULL,
+  commodity    TEXT    NOT NULL,
+  buy_price    REAL    NOT NULL DEFAULT 0,
+  sell_price   REAL    NOT NULL DEFAULT 0,
+  buy_stock    REAL    NOT NULL DEFAULT 0,
+  sell_stock   REAL    NOT NULL DEFAULT 0,
+  buy_status   INTEGER NOT NULL DEFAULT 0,
+  sell_status  INTEGER NOT NULL DEFAULT 0,
+  quality      INTEGER NOT NULL DEFAULT 0,
+  updated      INTEGER NOT NULL,
+  fetched_at   INTEGER NOT NULL,
+  PRIMARY KEY (id_terminal, id_commodity)
+);
 CREATE TABLE IF NOT EXISTS marketplace_offers (
   id           INTEGER PRIMARY KEY,
   title        TEXT    NOT NULL DEFAULT '',
@@ -138,6 +156,11 @@ fn meta_key(kind: EntityKind) -> String {
 
 fn prices_meta_key(commodity_id: u64) -> String {
     format!("fetched_at:prices:{}", commodity_id)
+}
+
+/// Freshness marker for one terminal's price table (location aggregate).
+fn terminal_prices_meta_key(terminal_id: u64) -> String {
+    format!("fetched_at:terminal_prices:{}", terminal_id)
 }
 
 const MARKETPLACE_META_KEY: &str = "fetched_at:marketplace";
@@ -481,6 +504,114 @@ impl Cache {
                     sell_status: row.get::<_, i64>(8)? as u8,
                     quality: row.get::<_, i64>(9)? as u16,
                     updated: row.get::<_, i64>(10)? as u64,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
+
+    // ---------- terminal prices (location aggregate) ----------
+
+    /// Whether the cached price table of `terminal_id` is younger than
+    /// `TTL_PRICES`.
+    pub fn terminal_prices_fresh(&self, terminal_id: u64) -> Result<bool> {
+        let fetched = self.meta_get(&terminal_prices_meta_key(terminal_id))?;
+        Ok(match fetched {
+            Some(ts) => now_unix().saturating_sub(ts) < TTL_PRICES.as_secs(),
+            None => false,
+        })
+    }
+
+    /// Upsert one terminal's price table (key = terminal × commodity) and
+    /// mark it fetched. Empty tables are allowed (a terminal trading nothing
+    /// cached as "checked, nothing there"), so the next open does not refetch
+    /// within the TTL window.
+    pub fn store_terminal_prices(&self, terminal_id: u64, points: &[PricePoint]) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            if points.is_empty() {
+                // No rows to upsert — still record that this terminal was
+                // CHECKED now; an empty result must not trigger a refetch
+                // loop while the marker is fresh.
+                tx.execute(
+                    "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (terminal_prices_meta_key(terminal_id), now_unix().to_string()),
+                )?;
+                return tx.commit();
+            }
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO terminal_prices (id_terminal, id_commodity, commodity,
+                                                  buy_price, sell_price, buy_stock, sell_stock,
+                                                  buy_status, sell_status, quality, updated, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                     ON CONFLICT(id_terminal, id_commodity) DO UPDATE SET
+                       commodity = excluded.commodity,
+                       buy_price = excluded.buy_price,
+                       sell_price = excluded.sell_price,
+                       buy_stock = excluded.buy_stock,
+                       sell_stock = excluded.sell_stock,
+                       buy_status = excluded.buy_status,
+                       sell_status = excluded.sell_status,
+                       quality = excluded.quality,
+                       updated = excluded.updated,
+                       fetched_at = excluded.fetched_at",
+                )?;
+                let now = now_unix() as i64;
+                for p in points {
+                    stmt.execute(rusqlite::params![
+                        terminal_id as i64,
+                        p.commodity_id as i64,
+                        p.commodity,
+                        p.buy_price,
+                        p.sell_price,
+                        p.buy_stock,
+                        p.sell_stock,
+                        p.buy_status as i64,
+                        p.sell_status as i64,
+                        p.quality as i64,
+                        p.updated as i64,
+                        now
+                    ])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (terminal_prices_meta_key(terminal_id), now_unix().to_string()),
+            )?;
+            tx.commit()
+        })
+    }
+
+    /// Cached price table of one terminal (may be stale — caller checks
+    /// [`Cache::terminal_prices_fresh`] first).
+    pub fn terminal_prices_for(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT commodity, id_commodity, buy_price, sell_price,
+                        buy_stock, sell_stock, buy_status, sell_status, quality, updated
+                 FROM terminal_prices WHERE id_terminal = ?1 ORDER BY commodity",
+            )?;
+            let rows = stmt.query_map([terminal_id as i64], |row| {
+                Ok(PricePoint {
+                    commodity: row.get(0)?,
+                    commodity_id: row.get::<_, i64>(1)? as u64,
+                    terminal_id,
+                    location: String::new(),
+                    buy_price: row.get(2)?,
+                    sell_price: row.get(3)?,
+                    buy_stock: row.get(4)?,
+                    sell_stock: row.get(5)?,
+                    buy_status: row.get::<_, i64>(6)? as u8,
+                    sell_status: row.get::<_, i64>(7)? as u8,
+                    quality: row.get::<_, i64>(8)? as u16,
+                    updated: row.get::<_, i64>(9)? as u64,
                 })
             })?;
             let mut out = Vec::new();
@@ -850,6 +981,119 @@ mod tests {
             })
             .unwrap();
         assert!(!cache.prices_fresh(1).unwrap());
+    }
+
+    #[test]
+    fn terminal_prices_upsert_freshness_and_expiry() {
+        let cache = Cache::open_in_memory().unwrap();
+        let p = |c: u64, buy: f64, sell: f64| PricePoint {
+            commodity: format!("Commodity {c}"),
+            commodity_id: c,
+            terminal_id: 436,
+            location: String::new(),
+            sell_price: sell,
+            buy_price: buy,
+            sell_stock: 0.0,
+            buy_stock: 100.0,
+            sell_status: 0,
+            buy_status: 7,
+            quality: 0,
+            updated: 1_700_000_000,
+        };
+        assert!(!cache.terminal_prices_fresh(436).unwrap());
+        cache
+            .store_terminal_prices(436, &[p(3, 1108.0, 0.0), p(27, 1427.0, 0.0)])
+            .unwrap();
+        assert!(cache.terminal_prices_fresh(436).unwrap());
+        let rows = cache.terminal_prices_for(436).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.terminal_id == 436));
+
+        // upsert replaces in place, per-terminal isolation
+        cache
+            .store_terminal_prices(436, &[p(3, 1200.0, 0.0)])
+            .unwrap();
+        let rows = cache.terminal_prices_for(436).unwrap();
+        assert_eq!(rows.len(), 2, "upsert must not duplicate rows");
+        assert_eq!(
+            rows.iter().find(|r| r.commodity_id == 3).unwrap().buy_price,
+            1200.0
+        );
+        cache.store_terminal_prices(435, &[p(1, 9.0, 0.0)]).unwrap();
+        assert!(cache.terminal_prices_fresh(435).unwrap());
+        assert_eq!(cache.terminal_prices_for(435).unwrap().len(), 1);
+        assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 2);
+
+        // an empty fetch must still mark the terminal as checked
+        cache
+            .with(|conn| {
+                conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = ?2",
+                    [
+                        (now_unix() - TTL_PRICES.as_secs() - 1).to_string(),
+                        terminal_prices_meta_key(428),
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        cache.store_terminal_prices(428, &[]).unwrap();
+        assert!(cache.terminal_prices_fresh(428).unwrap());
+        assert!(cache.terminal_prices_for(428).unwrap().is_empty());
+
+        // expiry
+        cache
+            .with(|conn| {
+                conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = ?2",
+                    [
+                        (now_unix() - TTL_PRICES.as_secs() - 1).to_string(),
+                        terminal_prices_meta_key(436),
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!cache.terminal_prices_fresh(436).unwrap());
+    }
+
+    #[test]
+    fn terminal_prices_table_added_to_existing_db() {
+        // Schema migration: a pre-fix cache has no `terminal_prices` table.
+        // Opening it must create the table (CREATE IF NOT EXISTS) instead of
+        // failing — existing installs keep their data and gain the location
+        // price dataset.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.sqlite3");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+                .unwrap();
+        }
+        let cache = Cache::open(&path).unwrap();
+        assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 0);
+        cache
+            .store_terminal_prices(
+                436,
+                &[PricePoint {
+                    commodity: "Agricium".into(),
+                    commodity_id: 1,
+                    terminal_id: 436,
+                    location: String::new(),
+                    sell_price: 0.0,
+                    buy_price: 1108.0,
+                    sell_stock: 0.0,
+                    buy_stock: 0.0,
+                    sell_status: 0,
+                    buy_status: 1,
+                    quality: 0,
+                    updated: 1_700_000_000,
+                }],
+            )
+            .unwrap();
+        assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 1);
+        let _ = path;
+        drop(dir);
     }
 
     #[test]

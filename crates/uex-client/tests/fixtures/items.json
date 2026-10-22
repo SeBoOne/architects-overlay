@@ -61,6 +61,15 @@
    "screenshot": "",
    "game_version": "4.0.1",
    "notification": null
+  },
+  {
+   "id": 4745,
+   "name": "Quantainium",
+   "slug": "quantainium",
+   "section": "Commodities",
+   "company_name": null,
+   "category": "Commodities",
+   "is_commodity": 1
   }
  ]
 }

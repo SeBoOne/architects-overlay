@@ -13,8 +13,8 @@
 mod model;
 
 pub use crate::model::{
-    Entity, EntityKind, ListingType, MarketOperation, MarketplaceFilter, Offer, OfferSort,
-    PricePoint, SearchEntities, SearchHit,
+    Entity, EntityKind, ListingType, LocationPrices, MarketOperation, MarketplaceFilter, Offer,
+    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup,
 };
 
 /// Domain error produced by a provider implementation.
@@ -89,6 +89,15 @@ pub trait DataProvider: Send + Sync {
     /// local copy is older than the price TTL.
     async fn prices(&self, commodity: &str) -> Result<Vec<PricePoint>>;
 
+    /// Price aggregate of one location (= the trade terminal the user opened):
+    /// every terminal sharing the location chain, each with its commodity
+    /// prices (buy/sell per terminal, location header). Implementations fetch
+    /// per-terminal and cache; the default reports the source as unsupported.
+    async fn location_prices(&self, terminal_id: u64) -> Result<LocationPrices> {
+        let _ = terminal_id;
+        Err(ProviderError::Unsupported("location prices".to_string()))
+    }
+
     /// Live marketplace offers, filtered. Marketplace data is never presented
     /// stale — a fresh fetch happens on every call; the last snapshot is kept
     /// locally for offline display only.
@@ -147,6 +156,47 @@ mod tests {
             let back: OfferSort = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
             assert_eq!(back, variant);
         }
+    }
+
+    #[test]
+    fn location_prices_serde_roundtrip() {
+        // The aggregate crosses the Tauri IPC boundary as JSON — the wire
+        // shape must be stable for the frontend TS mirror.
+        use crate::{LocationPrices, TerminalPriceGroup};
+        let agg = LocationPrices {
+            location: "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station".into(),
+            terminal: "Commodity Shop - Admin - Checkmate".into(),
+            groups: vec![TerminalPriceGroup {
+                terminal_id: 436,
+                terminal_name: "Commodity Shop - Admin - Checkmate".into(),
+                prices: vec![PricePoint {
+                    commodity: "Agricultural Supplies".into(),
+                    commodity_id: 3,
+                    location: "Admin - Checkmate".into(),
+                    terminal_id: 436,
+                    sell_price: 0.0,
+                    buy_price: 1108.0,
+                    sell_stock: 0.0,
+                    buy_stock: 0.0,
+                    sell_status: 0,
+                    buy_status: 7,
+                    quality: 0,
+                    updated: 1_792_355_842,
+                }],
+            }],
+        };
+        let json = serde_json::to_string(&agg).unwrap();
+        assert!(
+            json.contains(
+                "\"location\":\"Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station\""
+            ),
+            "location header must be the chain: {json}"
+        );
+        assert!(json.contains("\"groups\""));
+        assert!(json.contains("\"terminal_name\":\"Commodity Shop - Admin - Checkmate\""));
+        let back: LocationPrices = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.groups.len(), 1);
+        assert_eq!(back.groups[0].prices[0].buy_price, 1108.0);
     }
 
     #[test]

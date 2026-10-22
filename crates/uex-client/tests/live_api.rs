@@ -84,6 +84,93 @@ async fn live_search_and_prices() {
 
 #[tokio::test]
 #[ignore = "network test — run with -- --ignored"]
+async fn live_location_aggregate_checkmate() {
+    let p = live_provider().await;
+
+    // Live-feedback case: open the Checkmate commodity terminal and expect
+    // the aggregate of ALL four Checkmate terminals (not "Preise nicht
+    // geladen"), grouped per terminal, with real prices on 436.
+    let agg = p.location_prices(436).await.unwrap();
+    assert!(
+        agg.location.contains("Checkmate"),
+        "location header must carry the chain: {}",
+        agg.location
+    );
+    let ids: Vec<u64> = agg.groups.iter().map(|g| g.terminal_id).collect();
+    assert!(
+        ids.contains(&436),
+        "clicked terminal must be part of the aggregate: {ids:?}"
+    );
+    let commodity = agg.groups.iter().find(|g| g.terminal_id == 436).unwrap();
+    assert!(
+        commodity.prices.len() >= 5,
+        "commodity terminal must carry its price table ({} rows)",
+        commodity.prices.len()
+    );
+    for g in &agg.groups {
+        assert!(
+            !g.terminal_name.is_empty(),
+            "every group needs a display name"
+        );
+    }
+    eprintln!(
+        "CHECKMATE: location={} groups={} prices@436={}",
+        agg.location,
+        agg.groups.len(),
+        commodity.prices.len()
+    );
+
+    // Same terminal search now shows full names (no ID-raten).
+    let hits = p
+        .search(SearchEntities::Locations, "checkmate")
+        .await
+        .unwrap();
+    assert!(
+        hits.iter().any(|h| h.name.contains("Checkmate")),
+        "terminal hits must carry full names: {hits:?}"
+    );
+    assert!(
+        hits.iter()
+            .find(|h| h.id == 436)
+            .map(|h| h.name == "Commodity Shop - Admin - Checkmate")
+            .unwrap_or(false),
+        "commodity terminal must show its full shop name"
+    );
+}
+
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored"]
+async fn live_item_without_prices_and_dedupe() {
+    let p = live_provider().await;
+
+    // Dedup at import: commodities (is_commodity=1) must never appear as
+    // items in the cached dataset. Commodity ids are a small range (1..205)
+    // and DO overlap ordinary item ids — the flag, not the id, is the
+    // criterion (research Q4/Q1).
+    let items = p.fetch_entities(EntityKind::Items).await.unwrap();
+    let _ = p.fetch_entities(EntityKind::Commodities).await.unwrap();
+    let quant = items.iter().find(|e| e.name == "Quantainium");
+    assert!(
+        quant.is_none(),
+        "Quantainium (is_commodity=1) must be deduped from items"
+    );
+    assert!(
+        items.len() > 500,
+        "item catalog must survive the filter, got {}",
+        items.len()
+    );
+
+    // An armor item has no commodity price table → empty (not an error), so
+    // the UI can render "nicht kaufbar / keine Preisdaten".
+    let prices = p.prices("CSP-68H Backpack").await.unwrap();
+    assert!(
+        prices.is_empty(),
+        "item detail must be empty, got {prices:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored"]
 async fn live_marketplace_filter_and_sort() {
     use provider::{MarketplaceFilter, OfferSort};
 

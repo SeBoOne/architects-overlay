@@ -45,6 +45,8 @@ pub struct CommodityRow {
 pub struct TerminalRow {
     pub id: u64,
     #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
     pub displayname: Option<String>,
     #[serde(default)]
     pub fullname: Option<String>,
@@ -84,6 +86,11 @@ pub struct ItemRow {
     pub company_name: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
+    /// 1 = the item is a trade commodity (also listed in `/commodities` via
+    /// `id_item`) and has no regular shop/storage entry — the dedup
+    /// criterion that keeps commodities from also appearing as items.
+    #[serde(default)]
+    pub is_commodity: u8,
 }
 
 /// `/categories` row (used to enumerate items).
