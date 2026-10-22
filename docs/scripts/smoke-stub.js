@@ -1,5 +1,11 @@
 /* Smoke-harness Tauri-stub: real Svelte palette JS logic, canned IPC data.
-   Only for screenshots — real IPC math/search is covered by cargo tests. */
+   Only for screenshots / DOM probes — real IPC search/math/market matching is
+   covered by cargo tests (crates/uex-client apply_local u.a.).
+
+   NB: 'get_marketplace' mirrors the PROVIDER contract in JS (q = jeder Term
+   trifft mindestens ein Feld Name/Typ/Terminal/Verkäufer, operation-Regel,
+   Sortierung, Limit) — der echte Pfad ist durch cargo tests belegt, dieser
+   Mirror dient nur der Svelte-Logik-Verifikation (Live-Feedback, t_594c213c). */
 window.isTauri = true;
 window.__TAURI__ = {};
 window.__TAURI_INTERNALS__ = {
@@ -21,9 +27,9 @@ window.__TAURI_INTERNALS__ = {
 					online: true,
 					last_error: null,
 					datasets: [
-						{ kind: 'commodity', label: 'Commodities', fresh: true, age_secs: 300, count: 120 },
-						{ kind: 'item', label: 'Items', fresh: true, age_secs: 600, count: 340 },
-						{ kind: 'location', label: 'Locations', fresh: true, age_secs: 400, count: 80 }
+						{ kind: 'commodity', label: 'Commodities', fresh: true, age_secs: 300, count: 205 },
+						{ kind: 'item', label: 'Items', fresh: true, age_secs: 600, count: 7767 },
+						{ kind: 'location', label: 'Locations', fresh: true, age_secs: 400, count: 826 }
 					]
 				};
 			case 'sync_now':
@@ -48,8 +54,18 @@ window.__TAURI_INTERNALS__ = {
 				const f = a.filters || null;
 				const kinds = [];
 				const groups = [];
+				// >20 Gold-Varianten, damit die Liste über den sichtbaren Bereich
+				// hinausragt (Auto-Scroll-Prüfung im Smoke).
+				const goldPool = Array.from({ length: 22 }, (_, i) => ({
+					id: 1000 + i,
+					name: 'Gold ' + String(i + 1).padStart(2, '0'),
+					kind: 'commodity',
+					subtitle: 'Commodity · börsenfähig (Stub)',
+					code: 'AU' + (i + 1)
+				}));
 				const pool = {
 					commodity: [
+						...goldPool,
 						{ id: 3, name: 'Gold', kind: 'commodity', subtitle: 'Commodity · börsenfähig', code: 'AU' },
 						{ id: 57, name: 'Bexalite (Raw)', kind: 'commodity', subtitle: 'Commodity · Raffinerie nötig', code: 'BEX' },
 						{ id: 48, name: 'Quantanium (Raw)', kind: 'commodity', subtitle: 'Commodity · instabil', code: 'QNT' },
@@ -83,13 +99,13 @@ window.__TAURI_INTERNALS__ = {
 					}
 				}
 				var res = { groups, total };
-				globalThis.__resp = res;
+				globalThis.__lastSearch = { query: a.query, filters: f };
 				return res;
 			}
 			case 'math_eval': {
 				// JS mirror of the Rust evaluator for screenshots only.
 				function ev(src) {
-					function skip(p){while(p.i<p.c.length && (p.c[p.i]===' '||p.c[p.i]==='	'))p.i++;}
+					function skip(p){while(p.i<p.c.length && (p.c[p.i]===' '||p.c[p.i]==='\t'))p.i++;}
 					const P={i:0,c:Array.from(src)};
 					function n(){skip(P);let s='';while(P.i<P.c.length&&(/[0-9.]/.test(P.c[P.i]))&&s.length<20){s+=P.c[P.i];P.i++;}return parseFloat(s)||0;}
 					function p(){skip(P);if(P.i>=P.c.length)throw Error('vollständig');let ch=P.c[P.i];if(ch==='-'){P.i++;return -p();}if(ch==='('){P.i++;const v=e();skip(P);if(P.c[P.i]===')')P.i++;return v;}let v=n();skip(P);if(P.c[P.i]==='%'){P.i++;v/=100;}return v;}
@@ -100,12 +116,60 @@ window.__TAURI_INTERNALS__ = {
 				try {
 					const v2 = ev(String((a.expr||'').replace(/^=+/,'')).trim());
 					if (!isFinite(v2)) throw Error('nicht endlich');
-					const s = String(v2); const body=s.includes('.')?String(v2.toFixed(10)).replace(/0+$/,'').replace(/\.$/,''):s;
+					const s = String(v2); const body=s.includes('.')?String(v2.toFixed(10)).replace(/0+$/,'').replace(/\\.$/,''):s;
 					return body;
 				} catch (e) { throw Error(String(e.message||e)); }
 			}
-			case 'get_marketplace':
-				return { source: 'cache', fetched_at: Math.floor(Date.now() / 1000), offers: [], note: null };
+			case 'get_marketplace': {
+				const filter = a.filters || {};
+				// Offer-Pool (Qualität 0–1000, UEX-Skala) — deckt Name/Typ/
+				// Terminal/Verkäufer und Qualitäts-Spreizung für den Smoke ab.
+				const now = Math.floor(Date.now() / 1000);
+				const O = (id, title, location, seller, quality, price, extra) => Object.assign({
+					id, title, description: '', item_id: 0, category_id: 0,
+					operation: 'sell', listing_type: 'item', price,
+					currency: 'UEC', unit: 'scu', quantity: 1200,
+					location, region: 'Stanton', seller, quality,
+					updated: now - id * 60, expires: null, slug: 'slug-' + id
+				}, extra || {});
+				const pool = [
+					O(1, 'Gold Ore (Raw)', 'Port Tressler', 'HaulerCo', 950, 4812),
+					O(2, 'Gold Ore (Refined)', 'Everus Harbor', 'HaulerCo', 880, 962),
+					O(3, 'Iron Ore (Raw)', 'Port Tressler', 'OrbitalMining', 720, 512),
+					O(4, 'MedPen', 'Orison — Providence', 'RedCrossShop', 640, 45),
+					O(5, 'Hull-C Charter', 'Everus Harbor', 'RentABoat', 300, 25000, { listing_type: 'service' }),
+					O(6, 'Kartographie-Service', 'Lorville — TDD', 'ServiceGmbH', 500, 120, { listing_type: 'service' }),
+					O(7, 'Bexalite (Raw)', 'Port Tressler', 'HaulerCo', 990, 6200),
+					O(8, 'Quantanium (Raw)', 'ARC-L1 Wide Forest Station', 'InstaMiner', 300, 8100),
+					O(9, 'Titanium', 'Lorville — TDD', 'BulkHaul', 600, 3150),
+					O(10, 'Gold Beret', 'Area18 — TDD', 'FashionCo', 400, 2500),
+					O(11, 'Goldschnalle — Helmvisier', 'Area18 — TDD', 'FashionCo', 350, 1800),
+					O(12, 'Laranite', 'Port Tressler', 'HaulerCo', 980, 7300),
+					O(13, 'Laranite (Ankauf)', 'Port Tressler', 'BuyWant', 450, 7100, { operation: 'buy' }),
+					O(14, 'Artifex Ore', 'Levski — Grand Barter', 'NyxMiner', 800, 880, { region: 'Nyx' })
+				];
+				// Provider-Mirror: q = jeder Term trifft mindestens ein Feld
+				// (Name/Typ/Terminal/Verkäufer/Beschreibung); operation-Regel;
+				// Sortierung; dann Limit.
+				const terms = (filter.q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+				let out = pool.filter((o) => {
+					if (filter.operation && o.operation !== filter.operation) return false;
+					if (!terms.length) return true;
+					const hay = [
+						o.title, o.description, o.seller, o.location,
+						o.listing_type, o.operation, o.region
+					].map((s) => String(s).toLowerCase());
+					return terms.every((t) => hay.some((h) => h.includes(t)));
+				});
+				if (filter.region) out = out.filter((o) => o.region === filter.region);
+				const sort = filter.sort || 'newest';
+				if (sort === 'price_asc') out.sort((x, y) => x.price - y.price);
+				else if (sort === 'price_desc') out.sort((x, y) => y.price - x.price);
+				else out.sort((x, y) => y.updated - x.updated);
+				out = out.slice(0, filter.limit || 100);
+				globalThis.__lastMarket = { filters: filter, returned: out.length };
+				return { source: 'cache', fetched_at: now, offers: out, note: null };
+			}
 			default:
 				return null;
 		}
