@@ -16,7 +16,7 @@ die Browser-Defaults (Fokus-Traversierung, Button-Aktivierung) greifen.
 import asyncio, base64, json, os, pathlib, sys
 import websockets
 
-ROOT = pathlib.Path("/home/sebo/Projects/Architects-Overlay-wt-t_594c213c")
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 STUB = (ROOT / "docs/scripts/smoke-stub.js").read_text()
 OUT = ROOT / "docs/screens"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -287,6 +287,40 @@ async def main():
         hides = await js("window.__calls ? window.__calls.filter(function(c){return c.indexOf('overlay_set_visible')>=0 && c.indexOf('false')>=0}).length : -1")
         check("market-esc-back-to-search", smode2.strip() == "SUCHE", smode2)
         check("market-esc-no-overlay-hide", hides == 0, "hide-calls=" + str(hides))
+
+        # ---- 5. QA-Auflagen A/B: Location-Aggregat + Item-"nicht kaufbar" --
+        # (t_cbd58b00): loadDetail() muss get_prices um id+kind erweitern.
+        # Location-Call trägt kind:'location' + Panel zeigt Terminal-Gruppen;
+        # Item-Call trägt kind:'item' + Panel zeigt "nicht kaufbar".
+        async def last_price_call():
+            calls = await js("window.__calls ? window.__calls.filter(function(c){return c.indexOf('get_prices:')>=0}) : []")
+            return calls[-1] if calls else None
+
+        # A: :l Checkmate öffnen → Location-Aggregat
+        await js("(function(){var i=document.querySelector('input.q'); if(i) i.focus();})()")
+        await typeQuery(":l Checkmate")
+        names = await js("[...document.querySelectorAll('.row .name')].map(function(n){return n.textContent})")
+        check("loc-part5-search-shows-checkmate", any("Checkmate" in (n or "") for n in (names or [])), str(names)[:120])
+        await js("document.querySelector('.row').click()")
+        await asyncio.sleep(1.0)
+        lp = await last_price_call()
+        check("loc-part5-call-carries-kind-location", (lp or "").startswith('get_prices:{"commodity":"Commodity Shop - Admin - Checkmate"') and '"kind":"location"' in (lp or ""), str(lp)[:200])
+        xpanA = await js("document.querySelector('.xpan') ? document.querySelector('.xpan').innerText.replace(/\\s+/g,' ').trim() : 'NONE'")
+        print("    xpan-location:", xpanA[:200])
+        check("loc-part5-panel-shows-terminal-group", "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station" in (xpanA or ""), xpanA[:180])
+        check("loc-part5-shows-per-terminal-rows", ("Admin - Checkmate" in (xpanA or "") or "keine Preisdaten" in (xpanA or "")), xpanA[:180])
+        await shot("11-location-aggregate-checkmate.png")
+
+        # B: :i CSP-68H öffnen → nicht kaufbar (keine Terminal-Tabellen)
+        await typeQuery(":i CSP-68H")
+        await js("document.querySelector('.row').click()")
+        await asyncio.sleep(1.0)
+        ip = await last_price_call()
+        check("item-part5-call-carries-kind-item", (ip or "").startswith('get_prices:{"commodity":"CSP-68H Backpack"') and '"kind":"item"' in (ip or ""), str(ip)[:200])
+        xpanB = await js("document.querySelector('.xpan') ? document.querySelector('.xpan').innerText.replace(/\\s+/g,' ').trim() : 'NONE'")
+        print("    xpan-item:", xpanB[:200])
+        check("item-part5-panel-not-purchasable", "nicht kaufbar" in (xpanB or ""), xpanB[:180])
+        await shot("12-item-not-purchasable.png")
 
         console_events = console_events[:8]
         check("no-console-exceptions", len(console_events) == 0, str(console_events))

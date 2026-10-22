@@ -597,6 +597,13 @@ html[data-window="spotlight"] .shell {
 	border-top-color: var(--lineb);
 }
 
+/* QA-Auflage A: Das Location-Aggregat kann viele Terminal-Gruppen umfassen
+   (Checkmate: 18 Terminals) — feste 3-Zeilen-Höhe würde fast alles verstecken.
+   Der Standort-Panel bekommt eine höhere (innen scrollbare) Fläche. */
+.rwrap.is-open .xpan.xpan-loc {
+	max-height: min(44vh, 560px);
+}
+
 .xpan .inner {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -632,6 +639,66 @@ html[data-window="spotlight"] .shell {
 
 .ptab .cap b.sell {
 	color: var(--sell);
+}
+
+/* Unter-Kennzeichnung Kauf/Verkauf innerhalb einer Terminal-Gruppe
+   (QA-Auflage A): klar zugeordnete Spalten, Farben wie .cap b.buy/b.sell. */
+.ptab .psub {
+	margin: 0.6vh 0 0.2vh;
+	padding: 0.1vh 0.6em;
+	font: 700 max(1.05vh, 9.5px)/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.ptab .psub.buy {
+	color: var(--buy);
+}
+
+.ptab .psub.sell {
+	color: var(--sell);
+}
+
+.ptab .psub.empty {
+	font-style: italic;
+	opacity: 0.75;
+}
+
+/* QA-Auflage A: Location-Aggregat — Standort-Kette als Header, je Terminal
+   eine Gruppe. Spannt beide Spalten des `.inner`-Grids. */
+.ploc {
+	grid-column: 1 / -1;
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--pad-x) * 0.8);
+}
+
+.ploc-head {
+	padding-bottom: 0.6vh;
+	margin-bottom: 0.2vh;
+	border-bottom: 1px solid var(--lineb);
+}
+
+.ploc-chain {
+	display: block;
+	font: 700 max(1.25vh, 11px)/1.4 var(--font-mono);
+	letter-spacing: 0.08em;
+	color: var(--fg-dim, var(--fgdim));
+	line-break: anywhere;
+}
+
+/* QA-Auflage B: Item-"nicht kaufbar"-State — zentriert, beide Spalten. */
+.np-state {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: calc(var(--xpan-h) - 3vh);
+	text-align: center;
+	font: 500 max(1.5vh, 12px)/1.6 var(--font-mono);
+	color: var(--fgfaint);
+	letter-spacing: 0.02em;
 }
 
 .ptab .ph,

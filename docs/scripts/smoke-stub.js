@@ -36,16 +36,53 @@ window.__TAURI_INTERNALS__ = {
 				return { provider: 'uex', syncing: true, online: true, last_error: null, datasets: [] };
 			case 'get_prices': {
 				const name = String(a.commodity || '');
+				const now = Math.floor(Date.now() / 1000);
+				const price = (loc, tid, buy, sell, q, extra) => Object.assign({
+					commodity: name, commodity_id: 1, location: loc, terminal_id: tid,
+					sell_price: sell, buy_price: buy, sell_stock: 0, buy_stock: 0,
+					sell_status: sell > 0 ? 1 : 0, buy_status: buy > 0 ? 1 : 0,
+					quality: q, updated: now - 240
+				}, extra || {});
+				// QA-Auflage C: Kontrakt-treuer Mirror — Location → `location.groups`
+				// (je Terminal eine Gruppe, leere Gruppe = "keine Preisdaten"),
+				// Item → `prices: []` (nie ein Fehler), sonst Commodity wie bisher.
+				if (a.kind === 'location') {
+					const groups = [
+						{
+							terminal_id: 436, terminal_name: name,
+							prices: [
+								price('Checkmate — Admin Terminal', 436, 1108, 0, 680),
+								price('Checkmate — Admin Terminal', 436, 0, 4812, 710)
+							]
+						},
+						{
+							terminal_id: 438, terminal_name: 'Commodity Console - Checkmate Station',
+							prices: []
+						}
+					];
+					const prices = [].concat(...groups.map((g) => g.prices));
+					return {
+						commodity: name, source: 'uex', fetched_at: now, prices,
+						location: {
+							location: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station',
+							terminal: name, groups
+						}
+					};
+				}
+				if (a.kind === 'item') {
+					return { commodity: name, source: 'uex', fetched_at: now, location: null, prices: [] };
+				}
 				return {
 					commodity: name,
 					source: 'uex',
-					fetched_at: Math.floor(Date.now() / 1000),
+					fetched_at: now,
+					location: null,
 					prices: [
-						{ commodity: name, commodity_id: 1, location: 'ARC-L1 Wide Forest Station', terminal_id: 11, sell_price: 0, buy_price: 4812, sell_stock: 0, buy_stock: 1200, sell_status: 1, buy_status: 1, quality: 3, updated: Math.floor(Date.now() / 1000) - 240 },
-						{ commodity: name, commodity_id: 1, location: 'Area18 — TDD', terminal_id: 12, sell_price: 0, buy_price: 4930, sell_stock: 0, buy_stock: 900, sell_status: 1, buy_status: 1, quality: 3, updated: Math.floor(Date.now() / 1000) - 300 },
-						{ commodity: name, commodity_id: 1, location: 'Orison — Providence', terminal_id: 13, sell_price: 6305, buy_price: 0, sell_stock: 2200, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: Math.floor(Date.now() / 1000) - 180 },
-						{ commodity: name, commodity_id: 1, location: 'Levski — Grand Barter', terminal_id: 14, sell_price: 6118, buy_price: 0, sell_stock: 1800, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: Math.floor(Date.now() / 1000) - 360 },
-						{ commodity: name, commodity_id: 1, location: 'Lorville — Tammany & Sons', terminal_id: 15, sell_price: 5980, buy_price: 0, sell_stock: 1500, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: Math.floor(Date.now() / 1000) - 540 }
+						{ commodity: name, commodity_id: 1, location: 'ARC-L1 Wide Forest Station', terminal_id: 11, sell_price: 0, buy_price: 4812, sell_stock: 0, buy_stock: 1200, sell_status: 1, buy_status: 1, quality: 3, updated: now - 240 },
+						{ commodity: name, commodity_id: 1, location: 'Area18 — TDD', terminal_id: 12, sell_price: 0, buy_price: 4930, sell_stock: 0, buy_stock: 900, sell_status: 1, buy_status: 1, quality: 3, updated: now - 300 },
+						{ commodity: name, commodity_id: 1, location: 'Orison — Providence', terminal_id: 13, sell_price: 6305, buy_price: 0, sell_stock: 2200, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 180 },
+						{ commodity: name, commodity_id: 1, location: 'Levski — Grand Barter', terminal_id: 14, sell_price: 6118, buy_price: 0, sell_stock: 1800, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 360 },
+						{ commodity: name, commodity_id: 1, location: 'Lorville — Tammany & Sons', terminal_id: 15, sell_price: 5980, buy_price: 0, sell_stock: 1500, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 540 }
 					]
 				};
 			}
@@ -75,11 +112,12 @@ window.__TAURI_INTERNALS__ = {
 					item: [
 						{ id: 2914, name: 'Gold Beret', kind: 'item', subtitle: 'Item · Bekleidung', code: null },
 						{ id: 3105, name: 'Goldschnalle — Helmvisier', kind: 'item', subtitle: 'Item · Rüstungsteil', code: null },
-						{ id: 80, name: 'MedPen', kind: 'item', subtitle: 'Item · Verbrauchsgut', code: 'MED' }
+						{ id: 80, name: 'MedPen', kind: 'item', subtitle: 'Item · Verbrauchsgut', code: 'MED' },
+						{ id: 465, name: 'CSP-68H Backpack', kind: 'item', subtitle: 'Item · Rucksack', code: null }
 					],
 					location: [
-						{ id: 5001, name: 'Area18 — TDD', kind: 'location', subtitle: 'Terminal · Kauf/Verkauf', code: 'A18' },
-						{ id: 5002, name: 'Orison — Providence', kind: 'location', subtitle: 'Terminal · Kauf/Verkauf', code: 'ORS' }
+						{ id: 5001, name: 'Commodity Shop - Admin - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
+						{ id: 5002, name: 'Orison — Providence', kind: 'terminal', subtitle: 'Terminal · Kauf/Verkauf', code: 'ORS' }
 					]
 				};
 				const want = f && f.length ? f : Object.keys(pool);

@@ -41,7 +41,17 @@
 		quality: number;
 		updated: number;
 	};
-	type PriceDetail = { commodity: string; source: string; fetched_at: number; prices: PricePoint[] };
+	type PriceDetail = {
+	commodity: string;
+	source: string;
+	fetched_at: number;
+	prices: PricePoint[];
+	// Location-Aggregat (kind:'location'): Gruppen je Terminal + flach
+	// gefaltete Preise in `prices`. Null auf dem Commodity-/Item-Pfad.
+	location: LocationPrices | null;
+};
+type LocationPrices = { location: string; terminal: string; groups: TerminalPriceGroup[] };
+type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: PricePoint[] };
 	type CalcResult = { value: string };
 	type DatasetStatus = { kind: string; label: string; fresh: boolean; age_secs: number | null; count: number };
 	type SyncStatus = {
@@ -418,8 +428,19 @@
 
 	async function loadDetail(h: SearchHit) {
 		const myToken = ++xpanToken;
+		// QA-Auflage A/B (t_cbd58b00): get_prices nach `h.kind` routen.
+		// - location (FTS-Hit-Kind ist "terminal", Gruppen-Kind "location"): das
+		//   Terminal-Aggregat in `location.groups` (je Terminal eine Gruppe).
+		// - item: nie Preise, leere Tabelle → "nicht kaufbar"-Zustand unten.
+		// - commodity/Default: unverändert wie bisher (nur der Name).
+		const isLocation = h.kind === 'location' || h.kind === 'terminal';
+		const kindArg = isLocation ? 'location' : h.kind === 'item' ? 'item' : null;
 		try {
-			const d = await invoke<PriceDetail>('get_prices', { commodity: h.name });
+			const d = await invoke<PriceDetail>('get_prices', {
+				commodity: h.name,
+				...(h.id ? { id: h.id } : {}),
+				...(kindArg ? { kind: kindArg } : {})
+			});
 			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
 		} catch (e) {
 			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
@@ -750,6 +771,20 @@
 			.sort((a, b) => b.sell_price - a.sell_price);
 	}
 
+	// Per-Terminal-Gruppen des Location-Aggregats (QA-Auflage A): gleiche
+	// Kauf/Verkauf-Logik wie buyPoints/sellPoints, nur auf einer Gruppe.
+	function groupBuys(g: TerminalPriceGroup): PricePoint[] {
+		return (g.prices ?? [])
+			.filter((p) => p.buy_price > 0)
+			.sort((a, b) => b.buy_price - a.buy_price);
+	}
+
+	function groupSells(g: TerminalPriceGroup): PricePoint[] {
+		return (g.prices ?? [])
+			.filter((p) => p.sell_price > 0)
+			.sort((a, b) => b.sell_price - a.sell_price);
+	}
+
 	function fmtStock(p: PricePoint): string {
 		return fmtQty(Math.max(p.sell_stock, p.buy_stock));
 	}
@@ -1076,7 +1111,7 @@
 											</div>
 											<div class="meta">
 												<div class="mf"><span class="k">UEX-ID</span><span class="v">{h.code ?? h.id}</span></div>
-												{#if expanded === idx && xpan?.detail}
+												{#if expanded === idx && xpan?.detail && (xpan.detail.prices ?? []).length}
 													<div class="mf">
 														<span class="k">Kauf ab</span>
 														<span class="v buy">{fmt(bestBuy(xpan.detail))} aUEC</span>
@@ -1097,7 +1132,7 @@
 										</div>
 
 										{#if expanded === idx && xpan}
-											<div class="xpan is-open">
+											<div class="xpan is-open" class:xpan-loc={g.kind === 'location'}>
 												<div class="inner">
 													{#if xpan.busy && !xpan.detail}
 														<div class="ptab">
@@ -1108,7 +1143,56 @@
 															<div class="cap">Fehler</div>
 															<div class="ph"><span>Preise nicht geladen</span></div>
 														</div>
-													{:else if xpan.detail}
+													{:else if xpan.detail?.location}
+													<!-- QA-Auflage A: Location-Aggregat — Standort-Kette als Header,
+													     je Terminal eine Gruppe (Kauf/Verkauf), leere Gruppe → "keine
+													     Preisdaten", nie "Preise nicht geladen". -->
+													{@const loc = xpan.detail.location}
+													<div class="ploc">
+														<div class="ploc-head">
+															<span class="ploc-chain">{loc.location}</span>
+														</div>
+														{#each loc.groups as grp, gi}
+															{@const gbuys = groupBuys(grp)}
+															{@const gsells = groupSells(grp)}
+															<div class="ptab">
+																<div class="cap">{grp.terminal_name}</div>
+																{#if gbuys.length || gsells.length}
+																	<div class="ph"><span>Terminal</span><span>Preis</span><span>SCU</span></div>
+																	{#if gbuys.length}
+																		<div class="psub buy">Kauf</div>
+																		{#each gbuys as p, bi}
+																			<div class="pr" class:best={bi === 0}>
+																				<span class="loc">{p.location}</span>
+																				<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
+																			</div>
+																		{/each}
+																	{:else}
+																		<div class="psub buy empty">Kauf — kein Terminal</div>
+																	{/if}
+																	{#if gsells.length}
+																		<div class="psub sell">Verkauf</div>
+																		{#each gsells as p, si}
+																			<div class="pr" class:best={si === 0}>
+																				<span class="loc">{p.location}</span>
+																				<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+																			</div>
+																		{/each}
+																	{:else}
+																		<div class="psub sell empty">Verkauf — kein Terminal</div>
+																	{/if}
+																{:else}
+																	<!-- Leere Terminal-Gruppe (Fuel-/Raffinerie-Docks, leere Shops). -->
+																	<div class="pr"><span class="loc" style="color: var(--fgfaint)">keine Preisdaten</span></div>
+																{/if}
+															</div>
+														{/each}
+													</div>
+												{:else if xpan.detail && h.kind === 'item' && !(xpan.detail.prices ?? []).length}
+													<!-- QA-Auflage B: Item ohne Preisdaten → "nicht kaufbar"-Anzeige
+													     statt der Terminal-Tabellen (prices:[] ist nie ein Fehler). -->
+													<div class="np-state">nicht kaufbar · keine Preisdaten</div>
+												{:else if xpan.detail}
 														{@const buys = buyPoints(xpan.detail)}
 														{@const sells = sellPoints(xpan.detail)}
 														<div class="ptab">
