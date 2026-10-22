@@ -102,6 +102,7 @@
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	const SYNC_EVENT = 'trade-sync';
 	const M_PAGE = 15; // Min. 15 Offers pro Seite (statt 1)
+const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergrund-Refresh
 
 	type Phase = 'idle' | 'typing' | 'loading' | 'error' | 'offline' | 'market';
 
@@ -235,6 +236,10 @@
 	let mLimit = $state(100);
 	let mAllLoaded = $state(false);
 	let mLoadingMore = $state(false);
+	// P3/P4: Frische-Tracking + app-lokales F5-Feedback (Statuszeile, nicht modal).
+	let mFetchedAt = $state(0); // fetched_at des letzten erfolgreichen Market-Fetch
+	let f5Msg = $state(''); // kurzer Status-Text aus dem F5-Sync
+	let f5Clear: ReturnType<typeof setTimeout> | null = null;
 
 	// Sichtbare Offers = API-/Provider-Antwort + clientseitiger Qualitätsfilter
 	// (mit Sortierung kombinierbar — die Sortierung passiert im Provider, der
@@ -667,8 +672,12 @@
 
 	function toggleMarket() {
 		phase = phase === 'market' ? 'typing' : 'market';
-		if (phase === 'market') void loadMarket();
-		else {
+		if (phase === 'market') {
+			// P3: beim Wechsel in den Market-Modus — wenn die Market-Daten älter
+			// als 5 Minuten sind, sofortiger Sync im Hintergrund (kein Blocken).
+			const stale = mFetchedAt > 0 && nowSec() - mFetchedAt > MARKET_STALE_SECS;
+			void loadMarket(stale ? 'bg' : 'normal');
+		} else {
 			offerDetail = null;
 			mSel = 0;
 			mMshown = M_PAGE;
@@ -681,8 +690,9 @@
 	}
 
 	// Kern-Loader für den Marketplace (cache-first, progressive Limits).
-	async function fetchMarket(limit: number, showAll = false) {
-		if (showAll) mLoadingMore = true; else mLoading = true;
+	// `bg = true`: Hintergrund-Refresh (P3) — kein Spinner, UI bleibt bedienbar.
+	async function fetchMarket(limit: number, showAll = false, bg = false) {
+		if (showAll) mLoadingMore = true; else if (!bg) mLoading = true;
 		mNote = null;
 		const filterObj = {
 			location: '',
@@ -698,6 +708,7 @@
 			offers = resp.offers;
 			mSource = resp.source;
 			mNote = resp.note ?? null;
+			mFetchedAt = resp.fetched_at || nowSec();
 			marketRegions = [...new Set(resp.offers.map((o) => o.region).filter(Boolean))].sort();
 			// Nach einem frischen Fetch: neue Seite 1, oder alles anzeigen (bei
 			// progressiver Nachladung) — bis das Snapshot-Limit erreicht ist.
@@ -713,10 +724,36 @@
 		mLoadingMore = false;
 	}
 
-	async function loadMarket() {
+	async function loadMarket(mode: 'normal' | 'bg' = 'normal') {
 		mLimit = 100;
 		mAllLoaded = false;
-		await fetchMarket(100, false);
+		await fetchMarket(100, false, mode === 'bg');
+	}
+
+	// P4: F5 (app-lokal) — kontextsensitiver Sync.
+	//   Market-Modus → Market-Daten manuell syncen (Normal-Load mit Spinner,
+	//   kein Hintergrund-Refresh — der User hat explizit angefragt).
+	//   Normal/Detail-Modus → Commodity-Preise syncen (Backend `sync_now`).
+	// Feedback NUR in der Statuszeile (f5Msg), nie modal.
+	async function onF5() {
+		flashStatus('Sync läuft …');
+		if (phase === 'market') {
+			await loadMarket();
+			flashStatus(mNote ? `Market-Sync fehlgeschlagen · ${mNote}` : `Aktualisiert vor ${rel(mFetchedAt || nowSec())}`);
+		} else {
+			try {
+				status = await invoke<SyncStatus>('sync_now');
+				flashStatus(`Preise aktualisiert · Cache ${cacheAge(status)}`);
+			} catch (e) {
+				flashStatus(`Sync fehlgeschlagen · ${String(e)}`);
+			}
+		}
+	}
+
+	function flashStatus(t: string) {
+		f5Msg = t;
+		if (f5Clear) clearTimeout(f5Clear);
+		f5Clear = setTimeout(() => (f5Msg = ''), 5000);
 	}
 
 	// Pfeil-Navigation durch die Offers (sichtbare = qualitätsgefilterte Liste).
@@ -883,6 +920,13 @@
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
+		// P4: F5 ist app-lokal — nie Browser-Reload. Kontextsensitiv: Market-Modus
+		// syncen Market-Daten, sonst Commodity-Preise (Feedback in der Fußzeile).
+		if (k === 'F5') {
+			void onF5();
+			e.preventDefault();
+			return;
+		}
 		// Marktplatz-Modus: Angebot-Navigation + Detail.
 		if (phase === 'market') {
 			const t = e.target;
@@ -1062,21 +1106,10 @@
 			<span class="esc">ESC</span>
 		</div>
 
-		<!-- Helper-Zeile: Shortcuts -->
-		<div class="helper">
-			{#if phase === 'market'}
-				<span><kbd>↑↓</kbd> offers</span>
-				<span class="sep">·</span>
-				<span><kbd>Alt+1..0</kbd> offer</span>
-				<span class="sep">·</span>
-				<span><kbd>↵</kbd> detail</span>
-				<span class="sep">·</span>
-				<span><kbd>Tab</kbd> → Weitere laden</span>
-				<span class="sep">·</span>
-				<span><kbd>Esc</kbd> zurück zur Suche</span>
-				<span class="sep">·</span>
-				<span>Haupt-Suchfeld = Offer-Suche</span>
-			{:else}
+		<!-- Helper-Zeile (P7): nur Kategorie-Präfixe + math kurz. Alles andere
+		     (Navigation, Filter, Refresh) lebt in der dynamischen Fußzeile (P6). -->
+		{#if phase !== 'market' && !inDetail}
+			<div class="helper">
 				<span><kbd>:c</kbd> commodities</span>
 				<span class="sep">·</span>
 				<span><kbd>:i</kbd> items</span>
@@ -1084,14 +1117,8 @@
 				<span><kbd>:l</kbd> locations</span>
 				<span class="sep">·</span>
 				<span><kbd>=</kbd> math</span>
-				<span class="sep">·</span>
-				<span><kbd>%</kbd> ÷100</span>
-				<span class="sep">·</span>
-				<span><kbd>↵</kbd> öffnet Detail</span>
-				<span class="sep">·</span>
-				<span><kbd>Suchfeld</kbd> filtert im Detail</span>
-			{/if}
-		</div>
+			</div>
+		{/if}
 
 		<!-- Inhalt je Zustand -->
 		{#if phase === 'loading'}
@@ -1421,19 +1448,8 @@
 									{/if}
 								</div>
 
-								<div class="d-foot">
-									{#if dRows.length}
-										<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
-										<span class="sep">·</span>
-										<span><kbd>↵</kbd> Auswahl</span>
-										<span class="sep">·</span>
-										<span><kbd>Esc</kbd> zurück</span>
-										<span class="sep">·</span>
-										<span>Suchfeld = Filter</span>
-									{:else}
-										<span><kbd>Esc</kbd> zurück</span>
-									{/if}
-								</div>
+								<!-- P6: keine Extra-Hinweiszeile über der Fußzeile — die
+								     dynamische Fußzeile unten ist die einzige Hint-Zeile. -->
 							{/if}
 						</div>
 					{/if}
@@ -1453,26 +1469,43 @@
 			</div>
 		{/if}
 
-		<!-- Fußzeile (bleibt in allen Zuständen stehen → kein Layoutsprung) -->
+		<!-- Fußzeile (bleibt in allen Zuständen stehen → kein Layoutsprung) —
+		     EINZIGE dynamische Hint-Zeile (P6): Inhalt wechselt je Ansicht
+		     (Search / Detail / Market) und trägt das F5-Sync-Feedback (P4). -->
 		<div class="foot">
 			<div class="hints">
 				{#if phase === 'market'}
-					<span><kbd>↑↓</kbd> Angebote</span>
-					<span><kbd>Alt+1..0</kbd> Offer</span>
-					<span><kbd>↵</kbd> Detail</span>
-					<span><kbd>Tab</kbd> Filter</span>
 					{#if offerDetail}
+						<span><kbd>Esc</kbd> zurück zur Liste</span>
 						<span><kbd>↵</kbd> im Browser öffnen</span>
+					{:else}
+						<span><kbd>↑↓</kbd> Angebote</span>
+						<span><kbd>Alt+1..0</kbd> Offer</span>
+						<span><kbd>↵</kbd> Detail</span>
+						<span><kbd>Tab</kbd> Weitere laden</span>
+						<span><kbd>F5</kbd> Market syncen</span>
+						<span><kbd>Esc</kbd> zurück zur Suche</span>
 					{/if}
-					<span><kbd>Esc</kbd> zurück zur Suche</span>
+				{:else if inDetail}
+					{#if dRows.length}
+						<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
+						<span><kbd>↵</kbd> Auswahl</span>
+					{/if}
+					<span>Suchfeld = Filter</span>
+					<span><kbd>F5</kbd> Preise syncen</span>
+					<span><kbd>Esc</kbd> zurück</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
 					<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
-					<span><kbd>Ctrl+M</kbd> Market</span>
+					<span><kbd>M</kbd> Market</span>
+					<span><kbd>F5</kbd> Preise syncen</span>
 				{/if}
 			</div>
+			{#if f5Msg}
+				<span class="f5-msg" role="status">{f5Msg}</span>
+			{/if}
 			<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
 			{#if isSpotlight}
 				<div class="spot-status">

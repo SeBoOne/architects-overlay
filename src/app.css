@@ -1682,3 +1682,12 @@ html[data-window="spotlight"] .shell {
 	font-size: 10px;
 	letter-spacing: 0.06em;
 }
+/* P4: F5-Sync-Feedback in der Statuszeile (kurz, nicht modal, auto-clear). */
+.f5-msg {
+	color: var(--fgdim, #9aa);
+	font-size: 11px;
+	letter-spacing: 0.04em;
+	white-space: nowrap;
+	margin: 0 10px;
+	opacity: 0.9;
+}
