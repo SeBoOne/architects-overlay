@@ -225,7 +225,10 @@ pub struct MarketplaceFilter {
     /// Free-text location filter (terminal name/code or system), matched
     /// locally by the provider — the API exposes no location text search.
     pub location: String,
-    /// Free-text query, matched against title/description/seller locally.
+    /// Free-text query, matched locally against title/description/seller,
+    /// location (terminal) and listing type/operation — every whitespace-
+    /// separated term must hit at least one field (market main search field:
+    /// Name/Typ/Terminal/Verkäufer).
     pub q: String,
     /// Restrict to one item (API `id_item`).
     pub item_id: Option<u64>,

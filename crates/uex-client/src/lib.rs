@@ -115,16 +115,33 @@ impl UexProvider {
     /// Client-side filter + sort, shared by the live and cache paths so both
     /// views behave identically. All filters except item_id/operation are
     /// applied here (the API exposes no text/sort parameters).
+    ///
+    /// `q` is the market's free-text search (fed from the palette's MAIN search
+    /// field in market mode): every whitespace-separated term must hit at least
+    /// one offer field — Name (title), Typ (listing type + operation), Terminal
+    /// (location) or Verkäufer (seller); description completes the haystack.
+    /// Terms are AND-ed, fields OR-ed per term, case-insensitive.
     fn apply_local(mut offers: Vec<Offer>, filters: &MarketplaceFilter) -> Vec<Offer> {
-        let query = filters.q.to_lowercase();
+        let terms: Vec<String> = filters
+            .q
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .collect();
         let location = filters.location.to_lowercase();
         let region = filters.region.to_lowercase();
         offers.retain(|o| {
-            (query.is_empty()
-                || o.title.to_lowercase().contains(&query)
-                || o.description.to_lowercase().contains(&query)
-                || o.seller.to_lowercase().contains(&query))
-                && (location.is_empty() || o.location.to_lowercase().contains(&location))
+            let title = o.title.to_lowercase();
+            let desc = o.description.to_lowercase();
+            let seller = o.seller.to_lowercase();
+            let loc = o.location.to_lowercase();
+            let kind = o.listing_type.as_str().to_string();
+            let op = o.operation.as_str().to_string();
+            let hay = [&title, &desc, &seller, &loc, &kind, &op];
+            (terms.is_empty()
+                || terms
+                    .iter()
+                    .all(|term| hay.iter().any(|h| h.contains(term))))
+                && (location.is_empty() || loc.contains(&location))
                 && (region.is_empty() || o.region.to_lowercase().contains(&region))
         });
         match filters.sort.unwrap_or(OfferSort::Newest) {
@@ -529,4 +546,160 @@ pub mod private {
     pub use crate::dto::{
         CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, StarSystemRow, TerminalRow,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use provider::{ListingType, MarketOperation, OfferSort};
+
+    /// One test offer with a compact default.
+    fn offer(id: u64, title: &str, location: &str, seller: &str) -> Offer {
+        Offer {
+            id,
+            title: title.into(),
+            description: String::new(),
+            item_id: 0,
+            category_id: 0,
+            operation: MarketOperation::Sell,
+            listing_type: ListingType::Item,
+            price: 100.0 + id as f64,
+            currency: "UEC".into(),
+            unit: "scu".into(),
+            quantity: 1,
+            location: location.into(),
+            region: "Stanton".into(),
+            seller: seller.into(),
+            quality: 900,
+            updated: 1000 + id,
+            expires: None,
+            slug: "slug".into(),
+        }
+    }
+
+    fn filter(q: &str) -> MarketplaceFilter {
+        MarketplaceFilter {
+            q: q.into(),
+            ..Default::default()
+        }
+    }
+
+    fn ids(offers: &[Offer]) -> Vec<u64> {
+        offers.iter().map(|o| o.id).collect()
+    }
+
+    #[test]
+    fn market_q_matches_name_type_terminal_and_seller() {
+        let offers = vec![
+            offer(1, "Gold Ore (Raw)", "Port Tressler", "HaulerCo"),
+            offer(2, "Kartographie-Service", "Lorville — TDD", "ServiceGmbH"),
+            offer(3, "Hull-C Charter", "Everus Harbor", "RentABoat"),
+        ];
+        // Name
+        assert_eq!(
+            ids(&UexProvider::apply_local(offers.clone(), &filter("gold"))),
+            vec![offers[0].id],
+            "q must match the offer title"
+        );
+        // Terminal / location
+        assert_eq!(
+            ids(&UexProvider::apply_local(
+                offers.clone(),
+                &filter("tressler")
+            )),
+            vec![offers[0].id],
+            "q must match the offer location (Terminal)"
+        );
+        // Verkäufer
+        assert_eq!(
+            ids(&UexProvider::apply_local(
+                offers.clone(),
+                &filter("rentaboat")
+            )),
+            vec![offers[2].id],
+            "q must match the seller"
+        );
+    }
+
+    #[test]
+    fn market_q_matches_listing_type_and_operation() {
+        let mut svc = offer(2, "Kartographie-Service", "Lorville", "s");
+        svc.listing_type = ListingType::Service;
+        let mut buy = offer(3, "Hull-C Charter", "Everus Harbor", "s");
+        buy.operation = MarketOperation::Buy;
+        let offers = vec![offer(1, "Gold Ore", "Port Tressler", "s"), svc, buy];
+
+        let hits = ids(&UexProvider::apply_local(
+            offers[..2].to_vec(),
+            &filter("service"),
+        ));
+        assert_eq!(hits, vec![2], "listing type service must be searchable");
+
+        let hits = ids(&UexProvider::apply_local(
+            offers[..3].to_vec(),
+            &filter("buy"),
+        ));
+        assert_eq!(hits, vec![3], "operation buy must be searchable");
+    }
+
+    #[test]
+    fn market_q_multi_term_and_case_insensitive() {
+        let gold_tressler = offer(1, "Gold Ore (Raw)", "Port Tressler", "HaulerCo");
+        let tressler_iron = offer(2, "Iron Ore (Raw)", "Port Tressler", "OrbitalMining");
+        let gold_everus = offer(3, "Gold Ore (Refined)", "Everus Harbor", "HaulerCo");
+
+        let hits = ids(&UexProvider::apply_local(
+            vec![
+                gold_tressler.clone(),
+                tressler_iron.clone(),
+                gold_everus.clone(),
+            ],
+            &filter("tressler gold"),
+        ));
+        assert_eq!(hits, vec![gold_tressler.id], "each term must hit somewhere");
+
+        // Case-insensitivity, incl. mixed-case input.
+        let hits = ids(&UexProvider::apply_local(
+            vec![gold_tressler.clone(), tressler_iron.clone(), gold_everus],
+            &filter("TRESSLER Gold"),
+        ));
+        assert_eq!(hits, vec![gold_tressler.id]);
+
+        // A term that hits nowhere drops every offer.
+        let hits = UexProvider::apply_local(
+            vec![gold_tressler, tressler_iron.clone()],
+            &filter("tressler nickel"),
+        );
+        assert!(hits.is_empty(), "unknown term must not be silently dropped");
+        let _ = tressler_iron;
+    }
+
+    #[test]
+    fn market_q_empty_keeps_all_and_sorts() {
+        let mut old = offer(1, "Old", "Lorville", "s");
+        old.updated = 10;
+        let mut young = offer(2, "New", "Everus Harbor", "s");
+        young.updated = 20;
+
+        // Empty q → everything, default sort newest first.
+        let offers = vec![young.clone(), old.clone()];
+        let hits = UexProvider::apply_local(offers.clone(), &filter(""));
+        assert_eq!(hits.len(), 2, "empty q must not filter");
+
+        let hits = UexProvider::apply_local(offers.clone(), &filter("   "));
+        assert_eq!(hits.len(), 2, "whitespace-only q must not filter");
+
+        // Sort and q combine (price_asc).
+        let mut cheap = offer(1, "Cheap Gold", "Lorville", "s");
+        cheap.price = 50.0;
+        let mut dear = offer(2, "Dear Gold", "Everus Harbor", "s");
+        dear.price = 500.0;
+        let f = MarketplaceFilter {
+            q: "gold".into(),
+            sort: Some(OfferSort::PriceAsc),
+            ..Default::default()
+        };
+        let hits = UexProvider::apply_local(vec![dear, cheap], &f);
+        assert_eq!(hits[0].price, 50.0, "sort must combine with q");
+    }
 }

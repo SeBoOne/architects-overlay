@@ -7,10 +7,15 @@
 	//
 	// Bedienung orientiert an ArkanisOverlay:
 	//   - Kategorie-Präfixe  :c :i :l  filtern je Term der Suchzeile
+	//     (case-insensitive — :C/:I/:L parsen identisch, UI zeigt lowercase)
 	//   - Inline-Rechner     =2*250+15%  → Ergebnis-Chip statt Ergebnisliste
 	//   - Zeile anklicken/Enter → Inline-Expansion mit Preis-Tabelle (Kauf/Verkauf)
 	//   - Alt+1..0 fokussiert den n-ten Treffer, erneut → zurück ins Suchfeld
 	//   - Esc: Suchfeld-Fokus ⇒ Overlay ausblenden; sonst Fokus ins Suchfeld
+	//   - Pfeil-Navigation scrollt die Liste auf die fokussierte Zeile (auto)
+	// Market-Modus (Tab/M): DAS Haupt-Suchfeld durchsucht Offers (Name/Typ/
+	// Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung, Alt+Zahl-
+	// Badges auf den ersten 10 Offers, Esc zurück zur Suche.
 	//
 	// Zustände: idle · typing · loading · error · offline · market
 	import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -36,7 +41,17 @@
 		quality: number;
 		updated: number;
 	};
-	type PriceDetail = { commodity: string; source: string; fetched_at: number; prices: PricePoint[] };
+	type PriceDetail = {
+	commodity: string;
+	source: string;
+	fetched_at: number;
+	prices: PricePoint[];
+	// Location-Aggregat (kind:'location'): Gruppen je Terminal + flach
+	// gefaltete Preise in `prices`. Null auf dem Commodity-/Item-Pfad.
+	location: LocationPrices | null;
+};
+type LocationPrices = { location: string; terminal: string; groups: TerminalPriceGroup[] };
+type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: PricePoint[] };
 	type CalcResult = { value: string };
 	type DatasetStatus = { kind: string; label: string; fresh: boolean; age_secs: number | null; count: number };
 	type SyncStatus = {
@@ -126,9 +141,21 @@
 	let mSort = $state<OfferSort>('newest');
 	let mOp = $state<'all' | MarketOp>('all');
 	let mRegion = $state('all');
-	let mQuery = $state('');
+	// Qualitäts-Filter (clientseitig — die UEX-API bietet keinen Qualitäts-
+	// Query-Parameter, s. uex-api-reference.md §4b; leerer Wert = keine Grenze).
+	let mqMin = $state('');
+	let mqMax = $state('');
 	let marketRegions = $state<string[]>([]);
-	let mDebounce: ReturnType<typeof setTimeout> | null = null;
+
+	// Sichtbare Offers = API-/Provider-Antwort + clientseitiger Qualitätsfilter
+	// (mit Sortierung kombinierbar — die Sortierung passiert im Provider, der
+	// Filter danach verändert die Reihenfolge nicht).
+	let visOffers = $derived(offers.filter((o) => qualityPasses(o, mqMin, mqMax)));
+	$effect(() => {
+		// mSel auf die gefilterte Liste klemmen (Qualitätsfilter ändert Länge).
+		const top = Math.max(visOffers.length - 1, 0);
+		if (mSel > top || (visOffers.length === 0 && mSel !== 0)) mSel = top;
+	});
 
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
 	let flat = $state<SearchHit[]>([]);
@@ -215,6 +242,9 @@
 	// Jeder Leerzeichen-getrennte Term einzeln: `:c/:i/:l` → Kategorie-Filter,
 	// `=…` (erster Term) → Rechnermodus, sonst Fuzzy-Suchtext. Freie Terme werden
 	// mit Leerzeichen wieder zu einem Suchtext verbunden.
+	//
+	// Präfixe sind case-insensitive (Live-Feedback Punkt 1): `:c`, `:C`, `:C `,
+	// `' ':i` u.ä. parsen alle wie `:c`. Das UI zeigt Kategorien lowercase.
 	function parseQuery(): { text: string; cats: string[]; isCalc: boolean } {
 		const raw = input.trim();
 		if (!raw) return { text: '', cats: [], isCalc: false };
@@ -224,19 +254,22 @@
 		const cats: string[] = [];
 		const terms: string[] = [];
 		for (const tok of raw.split(/\s+/)) {
-			if (tok === ':c') cats.push('commodity');
-			else if (tok === ':i') cats.push('item');
-			else if (tok === ':l') cats.push('location');
-			else if (tok.startsWith(':')) terms.push(tok); // unbekanntes Präfix → Fuzzy-Term (Spec §2)
+			const low = tok.toLowerCase();
+			if (low === ':c') cats.push('commodity');
+			else if (low === ':i') cats.push('item');
+			else if (low === ':l') cats.push('location');
+			else if (low.startsWith(':')) terms.push(tok); // unbekanntes Präfix → Fuzzy-Term (Spec §2)
 			else terms.push(tok);
 		}
 		return { text: terms.join(' '), cats: [...new Set(cats)], isCalc: false };
 	}
 
-	// ---- Suche (debounced 180 ms, cache-only) ---------------------------------
+	// ---- Eingabe (debounced): Suche im Such-Modus, Marktplatz im Market-Modus
+	// Das HAUPT-Suchfeld treibt beide Modi — im Market-Modus durchsucht es die
+	// Offers (Name/Typ/Terminal/Verkäufer), der Platzhalter wechselt mit.
 	function onInput() {
 		if (debounce) clearTimeout(debounce);
-		debounce = setTimeout(() => void runSearch(), 180);
+		debounce = setTimeout(() => void (phase === 'market' ? loadMarket() : runSearch()), 180);
 	}
 
 	async function runSearch() {
@@ -330,6 +363,30 @@
 	function move(dir: number) {
 		if (!flat.length) return;
 		sel = Math.min(Math.max(sel + dir, 0), flat.length - 1);
+		// Pfeil-Navigation übernimmt die Fokus-Zeile — sonst bliebe ein per
+		// Alt+Zahl gesetzter Fokus als Enter-Ziel stehen (NB-2).
+		focusIdx = sel;
+		scrollRowIntoView(sel);
+	}
+
+	// Pfeiltasten-Navigation über die sichtbare Fensterhöhe hinaus scrollt die
+	// Liste automatisch auf die fokussierte Zeile (Live-Feedback Punkt 6).
+	// `.rwrap` umschließt auch die Inline-Expansion → auch aufgeklappt wird die
+	// volle Zeilenhöhe berücksichtigt; `block: 'nearest'` scrollt minimal.
+	function scrollRowIntoView(idx: number) {
+		document.querySelectorAll<HTMLElement>('.rwrap')[idx]?.scrollIntoView({ block: 'nearest' });
+	}
+	function scrollOfferIntoView(idx: number) {
+		document.querySelectorAll<HTMLElement>('.mrow')[idx]?.scrollIntoView({ block: 'nearest' });
+	}
+
+	// Clientseitiger Qualitätsfilter (UEX-Skala 0–1000; leerer Wert = offen).
+	function qualityPasses(o: Offer, minRaw: string, maxRaw: string): boolean {
+		const min = parseInt(minRaw, 10);
+		const max = parseInt(maxRaw, 10);
+		if (Number.isFinite(min) && o.quality < min) return false;
+		if (Number.isFinite(max) && o.quality > max) return false;
+		return true;
 	}
 
 	// ---- Inline-Expansion (Preis-Tabelle) statt separates Detail-Panel --------
@@ -349,12 +406,9 @@
 	}
 
 	// Alt+Zahl nur fokussieren: Badge ausgegraut, aber NICHT aufklappen.
+	// (NB-1: Verhalten entspricht jetzt dem Kommentar/Spec §4 — das Aufklappen
+	// übernimmt Enter auf der fokussierten Zeile.)
 	function focusOnly(idx: number) {
-		if (expanded !== idx) {
-			expanded = idx;
-			xpan = { busy: true, detail: null, error: null };
-			void loadDetail(flat[idx]);
-		}
 		focusRow(idx);
 	}
 
@@ -374,8 +428,19 @@
 
 	async function loadDetail(h: SearchHit) {
 		const myToken = ++xpanToken;
+		// QA-Auflage A/B (t_cbd58b00): get_prices nach `h.kind` routen.
+		// - location (FTS-Hit-Kind ist "terminal", Gruppen-Kind "location"): das
+		//   Terminal-Aggregat in `location.groups` (je Terminal eine Gruppe).
+		// - item: nie Preise, leere Tabelle → "nicht kaufbar"-Zustand unten.
+		// - commodity/Default: unverändert wie bisher (nur der Name).
+		const isLocation = h.kind === 'location' || h.kind === 'terminal';
+		const kindArg = isLocation ? 'location' : h.kind === 'item' ? 'item' : null;
 		try {
-			const d = await invoke<PriceDetail>('get_prices', { commodity: h.name });
+			const d = await invoke<PriceDetail>('get_prices', {
+				commodity: h.name,
+				...(h.id ? { id: h.id } : {}),
+				...(kindArg ? { kind: kindArg } : {})
+			});
 			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
 		} catch (e) {
 			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
@@ -445,17 +510,23 @@
 		else {
 			offerDetail = null;
 			mSel = 0;
+			// Wieder im Such-Modus: Ergebnisliste an den Suchtext des HAUPT-
+			// Suchfelds angleichen (im Market-Modus wurde dort der Offer-Query
+			// getippt — keine veralteten Treffer stehen lassen).
+			void runSearch();
 		}
 	}
 
 	// Load / refresh the marketplace via the provider (cache-first with short
-	// TTL; live when a filter forces it; offline snapshot on failure).
+	// TTL; live when a filter forces it; offline snapshot on failure). Das
+	// HAUPT-Suchfeld liefert `q` (Name/Typ/Terminal/Verkäufer, provider-seitig
+	// gegen den Cache-Index gematcht).
 	async function loadMarket() {
 		mLoading = true;
 		mNote = null;
 		const filterObj = {
 			location: '',
-			q: mQuery.trim(),
+			q: input.trim(),
 			item_id: null,
 			operation: mOp === 'all' ? null : mOp,
 			region: mRegion === 'all' ? '' : mRegion,
@@ -467,7 +538,6 @@
 			offers = resp.offers;
 			mSource = resp.source;
 			mNote = resp.note;
-			mSel = Math.min(mSel, Math.max(offers.length - 1, 0));
 			marketRegions = [...new Set(resp.offers.map((o) => o.region).filter(Boolean))].sort();
 		} catch (e) {
 			offers = [];
@@ -477,14 +547,16 @@
 		mLoading = false;
 	}
 
-	function onMarketQuery() {
-		if (mDebounce) clearTimeout(mDebounce);
-		mDebounce = setTimeout(() => void loadMarket(), 200);
+	// Pfeil-Navigation durch die Offers (sichtbare = qualitätsgefilterte Liste).
+	function mMove(dir: number) {
+		if (!visOffers.length) return;
+		mSel = Math.min(Math.max(mSel + dir, 0), visOffers.length - 1);
+		scrollOfferIntoView(mSel);
 	}
 
 	function openOfferDetail() {
-		if (!offers.length) return;
-		offerDetail = offers[mSel] ?? null;
+		if (!visOffers.length) return;
+		offerDetail = visOffers[mSel] ?? null;
 	}
 
 	async function openOfferDeepLink() {
@@ -548,20 +620,26 @@
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
-		// Market phase: offer list navigation + detail.
+		// Market phase: offer list navigation + detail. Das HAUPT-Suchfeld ist
+		// der Offer-Query; Pfeile navigieren trotz Fokus im Suchfeld (wie im
+		// Such-Modus). Qualitäts-Stepper (type=number) und Filter-Chips
+		// (buttons) behalten ihre nativen Tasten (↑↓/Enter/Space), Tab wandert
+		// nativ durch die Controls (Sortierung/Filter per Tastatur erreichbar).
 		if (phase === 'market') {
-			if (k === 'ArrowDown' && !offerDetail) {
-				mSel = Math.min(offers.length - 1, mSel + 1);
+			const t = e.target;
+			const inStepper = t instanceof HTMLInputElement && t.type === 'number';
+			const onChip = t instanceof HTMLButtonElement;
+			if (k === 'ArrowDown' && !offerDetail && !inStepper) {
+				mMove(1);
 				e.preventDefault();
 				return;
 			}
-			if (k === 'ArrowUp' && !offerDetail) {
-				mSel = Math.max(0, mSel - 1);
+			if (k === 'ArrowUp' && !offerDetail && !inStepper) {
+				mMove(-1);
 				e.preventDefault();
 				return;
 			}
-			if (k === 'ArrowRight' || k === 'Tab') {
-				if (offerDetail) return;
+			if (k === 'ArrowRight' && !offerDetail) {
 				openOfferDetail();
 				e.preventDefault();
 				return;
@@ -571,12 +649,12 @@
 				e.preventDefault();
 				return;
 			}
-			if (k === 'Enter' && offerDetail) {
+			if (k === 'Enter' && offerDetail && !onChip) {
 				void openOfferDeepLink();
 				e.preventDefault();
 				return;
 			}
-			if (k === 'Enter' && !offerDetail) {
+			if (k === 'Enter' && !offerDetail && !onChip && !inStepper) {
 				openOfferDetail();
 				e.preventDefault();
 				return;
@@ -585,8 +663,26 @@
 				if (offerDetail) {
 					offerDetail = null;
 				} else {
+					// Esc verlässt den Market-Modus zurück zur Suche — blendet
+					// das Overlay NICHT aus (Fokus liegt in der Ergebnisliste).
 					toggleMarket();
 				}
+				e.preventDefault();
+				return;
+			}
+			// Alt+Zahl-Badges wie im Such-Modus: ersten 10 Offers fokussieren,
+			// erneut → zurück ins Suchfeld.
+			if (e.altKey && !offerDetail && /^[0-9]$/.test(k)) {
+				if (!visOffers.length) return;
+				const n = k === '0' ? 9 : Number(k) - 1;
+				if (n >= visOffers.length) return;
+				if (mSel === n) {
+					focusSearch(true);
+					e.preventDefault();
+					return;
+				}
+				mSel = n;
+				scrollOfferIntoView(n);
 				e.preventDefault();
 				return;
 			}
@@ -607,7 +703,9 @@
 			move(-1);
 			e.preventDefault();
 		} else if (k === 'Enter') {
-			openRow(sel);
+			// NB-2: Enter trifft die fokussierte Zeile (Alt+Zahl), sonst die
+			// per Pfeil selektierte.
+			openRow(focusIdx ?? sel);
 			e.preventDefault();
 		} else if (k === 'Escape') {
 			escSearch();
@@ -673,6 +771,20 @@
 			.sort((a, b) => b.sell_price - a.sell_price);
 	}
 
+	// Per-Terminal-Gruppen des Location-Aggregats (QA-Auflage A): gleiche
+	// Kauf/Verkauf-Logik wie buyPoints/sellPoints, nur auf einer Gruppe.
+	function groupBuys(g: TerminalPriceGroup): PricePoint[] {
+		return (g.prices ?? [])
+			.filter((p) => p.buy_price > 0)
+			.sort((a, b) => b.buy_price - a.buy_price);
+	}
+
+	function groupSells(g: TerminalPriceGroup): PricePoint[] {
+		return (g.prices ?? [])
+			.filter((p) => p.sell_price > 0)
+			.sort((a, b) => b.sell_price - a.sell_price);
+	}
+
 	function fmtStock(p: PricePoint): string {
 		return fmtQty(Math.max(p.sell_stock, p.buy_stock));
 	}
@@ -688,7 +800,9 @@
 		return xs.length ? Math.max(...xs) : 0;
 	}
 
-	const ICONS: Record<string, string> = { commodity: 'C', item: 'I', location: 'L' };
+	// Kategorie-Icons = Präfixe lowercase im UI (Live-Feedback Punkt 1: das UI
+	// zeigt Präfixe wie die Eingabe, nicht `:L`/`:C`-Großbuchstaben).
+	const ICONS: Record<string, string> = { commodity: 'c', item: 'i', location: 'l' };
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -712,7 +826,7 @@
 				bind:this={searchEl}
 				bind:value={input}
 				oninput={onInput}
-				placeholder="Commodity, Item oder Terminal suchen …"
+				placeholder={phase === 'market' ? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …' : 'Commodity, Item oder Terminal suchen …'}
 				spellcheck="false"
 				autocomplete="off"
 			/>
@@ -722,15 +836,29 @@
 
 		<!-- Helper-Zeile: Shortcuts (Arkanis - Overline/Typo secondary) -->
 		<div class="helper">
-			<span><kbd>:c</kbd> commodities</span>
-			<span class="sep">·</span>
-			<span><kbd>:i</kbd> items</span>
-			<span class="sep">·</span>
-			<span><kbd>:l</kbd> locations</span>
-			<span class="sep">·</span>
-			<span><kbd>=</kbd> math</span>
-			<span class="sep">·</span>
-			<span><kbd>%</kbd> ÷100</span>
+			{#if phase === 'market'}
+				<span><kbd>↑↓</kbd> offers</span>
+				<span class="sep">·</span>
+				<span><kbd>Alt+1..0</kbd> offer</span>
+				<span class="sep">·</span>
+				<span><kbd>↵</kbd> detail</span>
+				<span class="sep">·</span>
+				<span><kbd>Tab</kbd> filter</span>
+				<span class="sep">·</span>
+				<span><kbd>Esc</kbd> zurück zur Suche</span>
+				<span class="sep">·</span>
+				<span>Haupt-Suchfeld = Offer-Suche</span>
+			{:else}
+				<span><kbd>:c</kbd> commodities</span>
+				<span class="sep">·</span>
+				<span><kbd>:i</kbd> items</span>
+				<span class="sep">·</span>
+				<span><kbd>:l</kbd> locations</span>
+				<span class="sep">·</span>
+				<span><kbd>=</kbd> math</span>
+				<span class="sep">·</span>
+				<span><kbd>%</kbd> ÷100</span>
+			{/if}
 		</div>
 
 		<!-- Inhalt je Zustand -->
@@ -814,42 +942,74 @@
 					</div>
 				{:else}
 					<div class="mbar">
-						<span
+						<button
+							type="button"
 							class="chip"
 							class:is-on={mOp === 'all'}
-							onclick={() => setOp('all')}>Alle</span>
-						<span
+							onclick={() => setOp('all')}>Alle</button>
+						<button
+							type="button"
 							class="chip"
 							class:is-on={mOp === 'sell'}
-							onclick={() => setOp('sell')}><span class="dot"></span>Verkauf</span>
-						<span
+							onclick={() => setOp('sell')}><span class="dot"></span>Verkauf</button>
+						<button
+							type="button"
 							class="chip"
 							class:is-on={mOp === 'buy'}
-							onclick={() => setOp('buy')}><span class="dot"></span>Kauf</span>
+							onclick={() => setOp('buy')}><span class="dot"></span>Kauf</button>
 						<span class="m-spacer"></span>
 						<span class="m-lbl">Region</span>
-						<span
+						<button
+							type="button"
 							class="chip"
 							class:is-on={mRegion === 'all'}
-							onclick={() => setRegion('all')}>Alle</span>
+							onclick={() => setRegion('all')}>Alle</button>
 						{#each marketRegions as r}
-							<span class="chip" class:is-on={mRegion === r} onclick={() => setRegion(r)}>{r}</span>
+							<button type="button" class="chip" class:is-on={mRegion === r} onclick={() => setRegion(r)}>{r}</button>
 						{/each}
 					</div>
 					<div class="mbar2">
+						<span class="m-lbl">Qualität</span>
 						<input
-							class="mq"
-							type="text"
-							bind:value={mQuery}
-							oninput={onMarketQuery}
-							placeholder="Kommodity / Item / Anbieter filtern …"
-							spellcheck="false"
-							autocomplete="off"
+							class="qnum"
+							type="number"
+							min="0"
+							max="1000"
+							step="10"
+							placeholder="min"
+							aria-label="Min-Qualität (0–1000)"
+							title="Min-Qualität (0–1000)"
+							bind:value={mqMin}
 						/>
+						<span class="qnum-dash">–</span>
+						<input
+							class="qnum"
+							type="number"
+							min="0"
+							max="1000"
+							step="10"
+							placeholder="max"
+							aria-label="Max-Qualität (0–1000)"
+							title="Max-Qualität (0–1000)"
+							bind:value={mqMax}
+						/>
+						<button type="button" class="chip" onclick={() => { mqMin = ''; mqMax = ''; }}>Q ×</button>
 						<span class="m-lbl">Sort</span>
-						<span class="chip" class:is-on={mSort === 'price_asc'} onclick={() => setSort('price_asc')}>Preis ↑</span>
-						<span class="chip" class:is-on={mSort === 'price_desc'} onclick={() => setSort('price_desc')}>Preis ↓</span>
-						<span class="chip" class:is-on={mSort === 'newest'} onclick={() => setSort('newest')}>Neueste</span>
+						<button
+							type="button"
+							class="chip"
+							class:is-on={mSort === 'price_asc'}
+							onclick={() => setSort('price_asc')}>Preis ↑</button>
+						<button
+							type="button"
+							class="chip"
+							class:is-on={mSort === 'price_desc'}
+							onclick={() => setSort('price_desc')}>Preis ↓</button>
+						<button
+							type="button"
+							class="chip"
+							class:is-on={mSort === 'newest'}
+							onclick={() => setSort('newest')}>Neueste</button>
 						<span class="m-spacer"></span>
 						{#if mSource === 'offline'}
 							<span class="chip warn"><span class="dot"></span>Offline-Snapshot</span>
@@ -858,9 +1018,9 @@
 						{/if}
 					</div>
 
-					{#if offers.length}
+					{#if visOffers.length}
 						<div class="mlist">
-							{#each offers as o, i}
+							{#each visOffers as o, i}
 								<div
 									class="mrow"
 									role="option"
@@ -871,6 +1031,7 @@
 										openOfferDetail();
 									}}
 								>
+									<span class="mbadge">{badgeOf(i)}</span>
 									<div class="m-op {o.operation}">{o.operation === 'sell' ? 'WTS' : 'WTB'}</div>
 									<div class="m-main">
 										<div class="m-title">{o.title}</div>
@@ -886,7 +1047,7 @@
 							{/each}
 						</div>
 						<div class="m-foot">
-							<span>{offers.length} Angebote</span>
+							<span>{visOffers.length} Angebote</span>
 							<span class="src">UEX Corp</span>
 						</div>
 					{:else}
@@ -950,7 +1111,7 @@
 											</div>
 											<div class="meta">
 												<div class="mf"><span class="k">UEX-ID</span><span class="v">{h.code ?? h.id}</span></div>
-												{#if expanded === idx && xpan?.detail}
+												{#if expanded === idx && xpan?.detail && (xpan.detail.prices ?? []).length}
 													<div class="mf">
 														<span class="k">Kauf ab</span>
 														<span class="v buy">{fmt(bestBuy(xpan.detail))} aUEC</span>
@@ -971,7 +1132,7 @@
 										</div>
 
 										{#if expanded === idx && xpan}
-											<div class="xpan is-open">
+											<div class="xpan is-open" class:xpan-loc={g.kind === 'location'}>
 												<div class="inner">
 													{#if xpan.busy && !xpan.detail}
 														<div class="ptab">
@@ -982,7 +1143,56 @@
 															<div class="cap">Fehler</div>
 															<div class="ph"><span>Preise nicht geladen</span></div>
 														</div>
-													{:else if xpan.detail}
+													{:else if xpan.detail?.location}
+													<!-- QA-Auflage A: Location-Aggregat — Standort-Kette als Header,
+													     je Terminal eine Gruppe (Kauf/Verkauf), leere Gruppe → "keine
+													     Preisdaten", nie "Preise nicht geladen". -->
+													{@const loc = xpan.detail.location}
+													<div class="ploc">
+														<div class="ploc-head">
+															<span class="ploc-chain">{loc.location}</span>
+														</div>
+														{#each loc.groups as grp, gi}
+															{@const gbuys = groupBuys(grp)}
+															{@const gsells = groupSells(grp)}
+															<div class="ptab">
+																<div class="cap">{grp.terminal_name}</div>
+																{#if gbuys.length || gsells.length}
+																	<div class="ph"><span>Terminal</span><span>Preis</span><span>SCU</span></div>
+																	{#if gbuys.length}
+																		<div class="psub buy">Kauf</div>
+																		{#each gbuys as p, bi}
+																			<div class="pr" class:best={bi === 0}>
+																				<span class="loc">{p.location}</span>
+																				<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
+																			</div>
+																		{/each}
+																	{:else}
+																		<div class="psub buy empty">Kauf — kein Terminal</div>
+																	{/if}
+																	{#if gsells.length}
+																		<div class="psub sell">Verkauf</div>
+																		{#each gsells as p, si}
+																			<div class="pr" class:best={si === 0}>
+																				<span class="loc">{p.location}</span>
+																				<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+																			</div>
+																		{/each}
+																	{:else}
+																		<div class="psub sell empty">Verkauf — kein Terminal</div>
+																	{/if}
+																{:else}
+																	<!-- Leere Terminal-Gruppe (Fuel-/Raffinerie-Docks, leere Shops). -->
+																	<div class="pr"><span class="loc" style="color: var(--fgfaint)">keine Preisdaten</span></div>
+																{/if}
+															</div>
+														{/each}
+													</div>
+												{:else if xpan.detail && h.kind === 'item' && !(xpan.detail.prices ?? []).length}
+													<!-- QA-Auflage B: Item ohne Preisdaten → "nicht kaufbar"-Anzeige
+													     statt der Terminal-Tabellen (prices:[] ist nie ein Fehler). -->
+													<div class="np-state">nicht kaufbar · keine Preisdaten</div>
+												{:else if xpan.detail}
 														{@const buys = buyPoints(xpan.detail)}
 														{@const sells = sellPoints(xpan.detail)}
 														<div class="ptab">
@@ -1050,11 +1260,13 @@
 			<div class="hints">
 				{#if phase === 'market'}
 					<span><kbd>↑↓</kbd> Angebote</span>
-					<span><kbd>↹</kbd> Detail</span>
+					<span><kbd>Alt+1..0</kbd> Offer</span>
+					<span><kbd>↵</kbd> Detail</span>
+					<span><kbd>Tab</kbd> Filter</span>
 					{#if offerDetail}
 						<span><kbd>↵</kbd> im Browser öffnen</span>
 					{/if}
-					<span><kbd>Esc</kbd> zurück</span>
+					<span><kbd>Esc</kbd> zur Suche</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>

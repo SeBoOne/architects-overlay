@@ -597,6 +597,13 @@ html[data-window="spotlight"] .shell {
 	border-top-color: var(--lineb);
 }
 
+/* QA-Auflage A: Das Location-Aggregat kann viele Terminal-Gruppen umfassen
+   (Checkmate: 18 Terminals) — feste 3-Zeilen-Höhe würde fast alles verstecken.
+   Der Standort-Panel bekommt eine höhere (innen scrollbare) Fläche. */
+.rwrap.is-open .xpan.xpan-loc {
+	max-height: min(44vh, 560px);
+}
+
 .xpan .inner {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -632,6 +639,66 @@ html[data-window="spotlight"] .shell {
 
 .ptab .cap b.sell {
 	color: var(--sell);
+}
+
+/* Unter-Kennzeichnung Kauf/Verkauf innerhalb einer Terminal-Gruppe
+   (QA-Auflage A): klar zugeordnete Spalten, Farben wie .cap b.buy/b.sell. */
+.ptab .psub {
+	margin: 0.6vh 0 0.2vh;
+	padding: 0.1vh 0.6em;
+	font: 700 max(1.05vh, 9.5px)/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.ptab .psub.buy {
+	color: var(--buy);
+}
+
+.ptab .psub.sell {
+	color: var(--sell);
+}
+
+.ptab .psub.empty {
+	font-style: italic;
+	opacity: 0.75;
+}
+
+/* QA-Auflage A: Location-Aggregat — Standort-Kette als Header, je Terminal
+   eine Gruppe. Spannt beide Spalten des `.inner`-Grids. */
+.ploc {
+	grid-column: 1 / -1;
+	display: flex;
+	flex-direction: column;
+	gap: calc(var(--pad-x) * 0.8);
+}
+
+.ploc-head {
+	padding-bottom: 0.6vh;
+	margin-bottom: 0.2vh;
+	border-bottom: 1px solid var(--lineb);
+}
+
+.ploc-chain {
+	display: block;
+	font: 700 max(1.25vh, 11px)/1.4 var(--font-mono);
+	letter-spacing: 0.08em;
+	color: var(--fg-dim, var(--fgdim));
+	line-break: anywhere;
+}
+
+/* QA-Auflage B: Item-"nicht kaufbar"-State — zentriert, beide Spalten. */
+.np-state {
+	grid-column: 1 / -1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: calc(var(--xpan-h) - 3vh);
+	text-align: center;
+	font: 500 max(1.5vh, 12px)/1.6 var(--font-mono);
+	color: var(--fgfaint);
+	letter-spacing: 0.02em;
 }
 
 .ptab .ph,
@@ -907,19 +974,30 @@ html[data-window="spotlight"] .shell {
 	color: var(--fgfaint);
 }
 
-.mq {
-	flex: 1;
-	min-width: 140px;
+/* Filter-Chips als <button> (Tab-Ordnung + Enter/Space nativ) */
+.chip:focus-visible {
+	outline: 1px dashed var(--accent);
+	outline-offset: 2px;
+}
+
+/* Qualitäts-Stepper (Min/Max) im Market-Modus */
+.qnum {
+	width: 62px;
 	background: var(--panel);
 	border: 1px solid var(--lineb);
+	border-radius: 0;
 	color: var(--fg);
-	font: 500 12px/1.4 var(--font-ui);
-	padding: 5px 9px;
+	font: 500 12px/1.4 var(--font-mono);
+	padding: 5px 6px;
 	outline: none;
 }
 
-.mq:focus {
+.qnum:focus {
 	border-color: var(--accent);
+}
+
+.qnum-dash {
+	color: var(--fgfaint);
 }
 
 .mlist {
@@ -930,13 +1008,33 @@ html[data-window="spotlight"] .shell {
 
 .mrow {
 	display: grid;
-	grid-template-columns: 44px 1fr auto;
+	grid-template-columns: 26px 44px 1fr auto;
 	gap: 10px;
 	align-items: center;
-	padding: 7px 16px;
+	padding: 7px 16px 7px 8px;
 	min-height: 46px;
 	border-bottom: 1px solid var(--line);
 	cursor: default;
+}
+
+/* Alt+Zahl-Badges 1..0 auf den ersten 10 Offers (wie im Such-Modus) */
+.mrow .mbadge {
+	align-self: start;
+	margin-top: 2px;
+	width: 20px;
+	height: 18px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--lineb);
+	color: var(--fgfaint);
+	font: 700 10px/1 var(--font-mono);
+}
+
+.mrow.is-sel .mbadge {
+	color: var(--on-accent);
+	background: var(--accent);
+	border-color: var(--accent);
 }
 
 .mrow.is-sel {
