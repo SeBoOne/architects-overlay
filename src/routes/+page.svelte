@@ -18,9 +18,9 @@
 	// Market-Modus (Tab/M): DAS Haupt-Suchfeld durchsucht Offers (Name/Typ/
 	// Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung, Alt+Zahl-
 	// Badges auf den ersten 10 Offers, Esc zurück zur Suche.
-	//   - Ortssperre (+/L): sperrt einen Location-/Terminal-Treffer; die
-	//     Commodity-Detail-Seite filtert Preise auf diesen Ort (< 43 Zeilen).
-	//   - Detail-Tastatur: ↑↓ Zeile, ↵ Auswahl, Esc zurück, L sperren.
+	//   - Detail-Tastatur: ↑↓ Zeile, ↵ Auswahl, Esc zurück.
+	//   - N2 Enter-Detail-Filter: das Suchfeld ist im Detail der In-Context-Filter
+	//     (Location → Waren-/Terminalnamen, Commodity/Item → Orts-/Terminalnamen).
 	//   - Marketplace: ≥15 Offers pro Seite + "Weitere laden" (Pagination).
 	//
 	// Zustände: idle · typing · loading · error · offline · market
@@ -99,9 +99,6 @@
 		note: string | null;
 	};
 
-	// Ortssperre (Location / Terminal): Commodity-Detail filtert Preise darauf.
-	type LocationLock = { id: number; name: string; kind: 'location' | 'terminal' };
-
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	const SYNC_EVENT = 'trade-sync';
 	const M_PAGE = 15; // Min. 15 Offers pro Seite (statt 1)
@@ -148,43 +145,71 @@
 	let listScroll = $state(0);
 	// Status-Toast nach Auswahl einer Detail-Zeile.
 	let dToast = $state('');
-	// Reactive Zeilen-Liste der Detail-Ansicht (Kauf dann Verkauf, jeweils
-	// absteigend sortiert, ggf. ortssperren-gefiltert). Leer bei
-	// Location-Aggregaten (keine Zeilen-Navigation dort).
-	// Point 2: Terminal-Detail zeigt Warenname statt Terminal-Name.
-	let dRows = $derived<{ price: number; loc: string; kind: 'buy' | 'sell' }[]>(xpan?.detail && !xpan.detail.location
-		? (() => {
-			const d = xpan?.detail!;
-			const isTerminal = detailHit?.kind === 'terminal';
-			const b = lockFilter(buyPoints(d));
-			const s = lockFilter(sellPoints(d));
-			return [
-				...b.map((p) => ({ price: p.buy_price, loc: isTerminal ? p.commodity : p.location, kind: 'buy' as const })),
-				...s.map((p) => ({ price: p.sell_price, loc: isTerminal ? p.commodity : p.location, kind: 'sell' as const }))
-			];
-		})()
-		: []);
 
-	// ---- Ortssperre (Lock) --------------------------------------------------
-	// Setzt/entfernt die Ortssperre für die Commodity-Detail-Ansicht. Die
-	// Commodity-Filterung erfolgt clientseitig über terminal_id (Spec: Ort
-	// primär im Angebot/der Preise). Das Suchfeld bleibt aktiv.
-	let locationLock = $state<LocationLock | null>(null);
-	function lockLocation(h: SearchHit) {
-		if (h.kind !== 'location' && h.kind !== 'terminal') return;
-		locationLock = { id: h.id, name: h.name, kind: h.kind as 'location' | 'terminal' };
-		dSel = 0;
+	// ---- In-Context-Filter (N2, ersetzt die alte Ortssperre) -----------------
+	// Ist eine Detail-Ansicht offen, wird das HAUPT-Suchfeld zum Live-Filter
+	// dieser Ansicht —
+	//   - Location-Detail  → filtert die Inhalte (Waren-/Terminalnamen),
+	//   - Commodity/Item   → filtert die Preisliste nach Orts-/Terminalnamen,
+	//   - Terminal-Detail  → filtert nach Warennamen.
+	// Leer = alles zeigen. Kein Badge, kein L-Shortcut, kein Backend-Parameter.
+	let dFilter = $derived(input.trim().toLowerCase());
+	type DRow = { p: PricePoint; kind: 'buy' | 'sell'; fi: number; name: string };
+	type LocGroupView = { terminal_id: number; terminal_name: string; buys: DRow[]; sells: DRow[] };
+
+	// Filtert + sortiert Preiszeilen einer Richtung; `c` zählt den flachen Index
+	// über Kauf→Verkauf (Tastatur-Navigation bleibt über den Filter hinweg).
+	function dRowsFor(prices: PricePoint[], kind: 'buy' | 'sell', byLoc: boolean, c: { i: number }): DRow[] {
+		const val = (p: PricePoint) => (kind === 'buy' ? p.buy_price : p.sell_price);
+		return prices
+			.filter((p) => val(p) > 0)
+			.filter((p) => !dFilter || (byLoc ? p.location : p.commodity).toLowerCase().includes(dFilter))
+			.sort((a, b) => val(b) - val(a))
+			.map((p) => ({ p, kind, fi: c.i++, name: byLoc ? p.location : p.commodity }));
 	}
-	function unlockLocation() {
-		locationLock = null;
-		dSel = 0;
-	}
-	// Clientseitiger Filter: nur Preise dieses Terminals/Ortes (Spec Ortssperre).
-	function lockFilter(prices: PricePoint[]): PricePoint[] {
-		const lock = locationLock;
-		if (!lock) return prices;
-		return prices.filter((p) => p.terminal_id === lock.id);
-	}
+
+	// Location-Aggregat: je Terminal eine Gruppe. Filter trifft Terminalname
+	// (ganze Gruppe bleibt) ODER Warenname (nur passende Zeilen bleiben); Gruppen
+	// ohne Treffer verschwinden.
+	let dLoc = $derived<LocGroupView[]>(
+		xpan?.detail?.location
+			? (() => {
+				const c = { i: 0 };
+				return (xpan?.detail!.location!.groups ?? []).flatMap((grp) => {
+					const buys = dRowsFor(grp.prices ?? [], 'buy', false, c);
+					const sells = dRowsFor(grp.prices ?? [], 'sell', false, c);
+					const termHit = !!dFilter && grp.terminal_name.toLowerCase().includes(dFilter);
+					if (!dFilter || termHit || buys.length || sells.length) {
+						return [{ terminal_id: grp.terminal_id, terminal_name: grp.terminal_name, buys, sells }];
+					}
+					return [];
+				});
+			})()
+			: []);
+
+	// Flache Zeilen-Liste der Detail-Ansicht (Kauf dann Verkauf) — für Location-
+	// Aggregate aus dLoc, sonst aus den Punktwolken (Commodity → Ortsname,
+	// Terminal → Warenname).
+	let dRows = $derived<DRow[]>(
+		xpan?.detail?.location
+			? dLoc.flatMap((g) => [...g.buys, ...g.sells])
+			: (() => {
+				const d = xpan?.detail;
+				if (!d) return [];
+				const c = { i: 0 };
+				const byLoc = detailHit?.kind !== 'terminal';
+				return [...dRowsFor(d.prices ?? [], 'buy', byLoc, c), ...dRowsFor(d.prices ?? [], 'sell', byLoc, c)];
+			})());
+	// Filter schrumpft die Liste → Selektion auf die verbleibenden Zeilen klemmen.
+	$effect(() => {
+		const top = Math.max(dRows.length - 1, 0);
+		if (dSel > top) dSel = top;
+	});
+	// Beste Preise der (gefilterten) Detail-Menge für die Kopfzeile.
+	let dBest = $derived({
+		buy: Math.max(0, ...dRows.filter((r) => r.kind === 'buy').map((r) => r.p.buy_price)),
+		sell: Math.max(0, ...dRows.filter((r) => r.kind === 'sell').map((r) => r.p.sell_price))
+	});
 
 	// ---- Market-State (Phase 2) --------------------------------------------
 	let offers = $state<Offer[]>([]);
@@ -339,6 +364,16 @@
 	// Das HAUPT-Suchfeld treibt beide Modi — im Market-Modus durchsucht es die
 	// Offers (Name/Typ/Terminal/Verkäufer), der Platzhalter wechselt mit.
 	function onInput() {
+		// N2: Im Detail ist das Suchfeld der In-Context-Filter — `input` fließt
+		// über das dFilter-Derived direkt in die gefilterten Zeilen (kein
+		// debounce, kein neuer search-Call). Erst zurück in der Hauptsuche
+		// treibt das Feld wieder die Volltextsuche.
+		if (inDetail) {
+			dSel = 0;
+			dChosen = null;
+			dToast = '';
+			return;
+		}
 		if (debounce) clearTimeout(debounce);
 		debounce = setTimeout(() => void (phase === 'market' ? loadMarket() : runSearch()), 180);
 	}
@@ -482,7 +517,11 @@
 		dSel = 0;
 		dChosen = null;
 		dToast = '';
-		focusRow(idx);
+		// N2: Suchfeld = In-Context-Filter der Detail-Ansicht → mit leerem Filter
+		// starten (alles zeigen); Fokus bleibt im Suchfeld zum sofortigen Filtern.
+		if (debounce) clearTimeout(debounce);
+		input = '';
+		focusSearch(false);
 		void loadDetail(flat[idx]);
 	}
 
@@ -492,6 +531,11 @@
 		dSel = 0;
 		dChosen = null;
 		dToast = '';
+		// N2: Filter zurücksetzen — das Feld ist in der Hauptsuche wieder die
+		// Volltextsuche (leer, Ergebnisliste der letzten Suche bleibt stehen).
+		if (debounce) clearTimeout(debounce);
+		input = '';
+		focusSearch(true);
 		// Scroll-Position der Liste wiederherstellen (kein Scroll-Back to top).
 		const list = document.querySelector('.list');
 		if (list) list.scrollTop = listScroll;
@@ -739,7 +783,7 @@
 		if (!dRows.length) return;
 		dChosen = dSel;
 		const r = dRows[dSel];
-		dToast = `${r.kind === 'buy' ? 'Kauf' : 'Verkauf'} · ${fmt(r.price)} aUEC · ${r.loc}`;
+		dToast = `${r.kind === 'buy' ? 'Kauf' : 'Verkauf'} · ${fmt(r.kind === 'buy' ? r.p.buy_price : r.p.sell_price)} aUEC · ${r.name}`;
 	}
 	// Sync highlight-Klassen (is-sel/is-chosen) — deklarativ per class: im
 	// Template gebunden (siehe .pr in der Detail-Tabelle), NICHT per DOM-Query:
@@ -912,18 +956,10 @@
 			return;
 		}
 
-		// Ortssperre per Tastatur (L) — wie m/M: nicht schlucken, wenn ein
-		// Eingabefeld fokussiert ist. Funktioniert in Listen- und Detail-Ansicht.
-		if ((k === 'l' || k === 'L') && !isFieldFocused(e)) {
-			const cur = inDetail ? detailHit : flat[sel];
-			if (!cur) return;
-			if (!locationLock && (cur.kind === 'location' || cur.kind === 'terminal')) lockLocation(cur);
-			else if (locationLock) unlockLocation();
-			e.preventDefault();
-			return;
-		}
+		// N2: Der alte 'L'-Ortssperren-Shortcut ist entfallen — im Detail filtert
+		// das Suchfeld (siehe onInput/dFilter), 'l' tippt dort einfach mit.
 
-		// Detail-Ansicht: ↑↓/↵/Esc (Ortssperre wird oben behandelt).
+		// Detail-Ansicht: ↑↓/↵/Esc.
 		if (inDetail) {
 			if (k === 'ArrowDown') {
 				dMove(1);
@@ -984,46 +1020,7 @@
 
 	// ---- Preis-Tabellen für die Detail-Ansicht (Kauf | Verkauf) -------------
 	// Arkanis GameEntitySearchDetails/PriceTagTable: zwei Spalten nebeneinander.
-	function buyPoints(d: PriceDetail): PricePoint[] {
-		return (d.prices ?? [])
-			.filter((p) => p.buy_price > 0)
-			.sort((a, b) => b.buy_price - a.buy_price);
-	}
-
-	function sellPoints(d: PriceDetail): PricePoint[] {
-		return (d.prices ?? [])
-			.filter((p) => p.sell_price > 0)
-			.sort((a, b) => b.sell_price - a.buy_price);
-	}
-
-	// Per-Terminal-Gruppen des Location-Aggregats (QA-Auflage A): gleiche
-	// Kauf/Verkauf-Logik wie buyPoints/sellPoints, nur auf einer Gruppe.
-	function groupBuys(g: TerminalPriceGroup): PricePoint[] {
-		return (g.prices ?? [])
-			.filter((p) => p.buy_price > 0)
-			.sort((a, b) => b.buy_price - a.buy_price);
-	}
-
-	function groupSells(g: TerminalPriceGroup): PricePoint[] {
-		return (g.prices ?? [])
-			.filter((p) => p.sell_price > 0)
-			.sort((a, b) => b.sell_price - a.buy_price);
-	}
-
-	function fmtStock(p: PricePoint): string {
-		return fmtQty(Math.max(p.sell_stock, p.buy_stock));
-	}
-
-	// Beste Preise für die Detail-Kopfzeile (aus der ortsgefilterten Menge).
-	function bestBuy(d: PriceDetail | null): number {
-		const xs = (lockFilter(d?.prices ?? []).map((p) => p.buy_price).filter((v) => v > 0));
-		return xs.length ? Math.max(...xs) : 0;
-	}
-
-	function bestSell(d: PriceDetail | null): number {
-		const xs = (lockFilter(d?.prices ?? []).map((p) => p.sell_price).filter((v) => v > 0));
-		return xs.length ? Math.max(...xs) : 0;
-	}
+	// Aufbau/Sortierung/Filterung läuft über dRowsFor/dLoc/dRows (oben, N2).
 
 	// Kategorie-Icons = Präfixe lowercase im UI (Live-Feedback Punkt 1: das UI
 	// zeigt Präfixe wie die Eingabe, nicht `:L`/`:C`-Großbuchstaben).
@@ -1051,7 +1048,13 @@
 				bind:this={searchEl}
 				bind:value={input}
 				oninput={onInput}
-				placeholder={phase === 'market' ? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …' : 'Commodity, Item oder Terminal suchen …'}
+				placeholder={phase === 'market'
+				? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
+				: inDetail
+					? detailHit?.kind === 'location' || detailHit?.kind === 'terminal'
+						? `Filter: Waren in ${detailHit?.name} …`
+						: `Filter: Orte mit Preisen für ${detailHit?.name} …`
+					: 'Commodity, Item oder Terminal suchen …'}
 				spellcheck="false"
 				autocomplete="off"
 			/>
@@ -1086,7 +1089,7 @@
 				<span class="sep">·</span>
 				<span><kbd>↵</kbd> öffnet Detail</span>
 				<span class="sep">·</span>
-				<span><kbd>L</kbd> Ort sperren</span>
+				<span><kbd>Suchfeld</kbd> filtert im Detail</span>
 			{/if}
 		</div>
 
@@ -1265,23 +1268,11 @@
 					<div class="found">
 						<span class="c" style="color: var(--alert)">{calcError}</span>
 					</div>
-				{:else if (input as string).trim() && flat.length}
-					<!-- Found-Chip über der Liste + Ortssperre -->
+				{:else if flat.length && ((input as string).trim() || searchTotal > 0)}
+					<!-- Found-Chip über der Liste -->
 					<div class="found">
 						<span class="c">Found <b>{searchTotal}</b> results in <b>{searchMs}</b> ms</span>
-						{#if !locationLock}
-							{@const cur = flat[sel]}
-							{#if cur && (cur.kind === 'location' || cur.kind === 'terminal')}
-								<button class="lock-btn" aria-label="Ort sperren (L)" onclick={() => lockLocation(cur)}>+</button>
-							{/if}
-						{:else}
-							<span class="lock-badge">📌 {locationLock.name} <button class="lock-x" aria-label="sperren aufheben" onclick={unlockLocation}>×</button></span>
-						{/if}
 					</div>
-
-					{#if locationLock && detailHit?.kind === 'commodity'}
-						<div class="lock-hint"><span class="dot"></span>Preise gefiltert auf <b>{locationLock.name}</b> · <span class="sm">{dRows.length} Preiszeilen</span> · <button class="btn-ghost sm" onclick={unlockLocation}>× sperren aufheben</button></div>
-					{/if}
 
 					<div class="list">
 						{#each groups as g, gi}
@@ -1301,7 +1292,7 @@
 											onclick={() => toggleOpen(idx)}
 										>
 											<span class="rbadge">{badgeOf(idx)}</span>
-											<span class="ic">{ICONS[g.kind] ?? '?'}{locationLock && (h.kind === 'location' || h.kind === 'terminal') && locationLock.id === h.id ? ' 🔒' : ''}</span>
+											<span class="ic">{ICONS[g.kind] ?? '?'}</span>
 											<div>
 												<div class="name">{h.name}</div>
 												<div class="sub">{h.subtitle}</div>
@@ -1340,13 +1331,13 @@
 										<span class="c">{detailHit?.subtitle ?? ''}</span>
 									</div>
 									<div class="d-price">
-										<span class="buy">↗ {fmt(bestBuy(d))}</span>
-										<span class="sell">↘ {fmt(bestSell(d))}</span>
+										<span class="buy">↗ {fmt(dBest.buy)}</span>
+										<span class="sell">↘ {fmt(dBest.sell)}</span>
 									</div>
 								</div>
 
-								{#if locationLock && detailHit?.kind === 'commodity'}
-									<div class="lock-hint"><span class="dot"></span>↳ gefiltert auf <b>{locationLock.name}</b> · {dRows.length} Preiszeilen · <button class="btn-ghost sm" onclick={unlockLocation}>×</button></div>
+								{#if dFilter}
+									<div class="lock-hint"><span class="dot"></span>Filter aktiv: <b>{dFilter}</b> · {dRows.length} Zeilen · Feld leeren = alles zeigen</div>
 								{/if}
 
 								{#if dToast}
@@ -1355,32 +1346,29 @@
 
 								<div class="d-body">
 									{#if d.location}
-										<!-- Location-Aggregat: je Terminal eine Gruppe -->
-										{@const loc = d.location}
-										{#each loc.groups as grp, gi}
-											{@const gbuys = groupBuys(grp)}
-											{@const gsells = groupSells(grp)}
+										<!-- Location-Aggregat: je Terminal eine Gruppe (N2: über dLoc gefiltert) -->
+										{#each dLoc as grp}
 											<div class="ptab">
 												<div class="cap">{grp.terminal_name}</div>
-												{#if gbuys.length || gsells.length}
+												{#if grp.buys.length || grp.sells.length}
 													<div class="ph"><span>Item</span><span>Preis</span><span>SCU</span></div>
-													{#if gbuys.length}
+													{#if grp.buys.length}
 														<div class="psub buy">Kauf</div>
-														{#each gbuys as p, bi}
-															<div class="pr" class:best={bi === 0}>
-																<span class="loc">{p.commodity}</span>
-																<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
-														</div>
+														{#each grp.buys as r}
+															<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+																<span class="loc">{r.name}</span>
+																<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
+															</div>
 														{/each}
 													{:else}
 														<div class="psub buy empty">Kauf — kein Terminal</div>
 													{/if}
-													{#if gsells.length}
+													{#if grp.sells.length}
 														<div class="psub sell">Verkauf</div>
-														{#each gsells as p, si}
-															<div class="pr" class:best={si === 0}>
-																<span class="loc">{p.commodity}</span>
-																<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+														{#each grp.sells as r}
+															<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+																<span class="loc">{r.name}</span>
+																<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
 															</div>
 														{/each}
 													{:else}
@@ -1391,22 +1379,25 @@
 												{/if}
 											</div>
 										{/each}
+										{#if !dLoc.length}
+											<div class="np-state">Kein Terminal/Keine Ware passt zum Filter</div>
+										{/if}
 									{:else if d.prices.length === 0}
 										<!-- QA-Auflage B: Item ohne Preise → "nicht kaufbar" -->
 										<div class="np-state">nicht kaufbar · keine Preisdaten</div>
 									{:else}
-										<!-- Commodity / Terminal mit Preisen -->
+										<!-- Commodity / Terminal mit Preisen (N2: über dRows gefiltert) -->
 										{@const dIsTerminal = detailHit?.kind === 'terminal'}
-										{@const buys = lockFilter(buyPoints(d))}
-										{@const sells = lockFilter(sellPoints(d))}
+										{@const buys = dRows.filter((r) => r.kind === 'buy')}
+										{@const sells = dRows.filter((r) => r.kind === 'sell')}
 										<div class="ptab">
 											<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} Terminal</div>
 											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 											{#if buys.length}
-												{#each buys as p, bi}
-													<div class="pr" class:best={bi === 0} class:is-sel={dRows.length > 0 && bi === dSel} class:is-chosen={dRows.length > 0 && bi === dChosen}>
-													<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
-													<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
+												{#each buys as r, bi}
+													<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+													<span class="loc">{r.name}</span>
+													<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
 												</div>
 												{/each}
 											{:else}
@@ -1417,10 +1408,10 @@
 											<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} Terminal</div>
 											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 											{#if sells.length}
-												{#each sells as p, si}
-													<div class="pr" class:best={si === 0} class:is-sel={dRows.length > 0 && buys.length + si === dSel} class:is-chosen={dRows.length > 0 && buys.length + si === dChosen}>
-													<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
-													<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+												{#each sells as r, si}
+													<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+													<span class="loc">{r.name}</span>
+													<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
 												</div>
 												{/each}
 											{:else}
@@ -1438,7 +1429,7 @@
 										<span class="sep">·</span>
 										<span><kbd>Esc</kbd> zurück</span>
 										<span class="sep">·</span>
-										<span><kbd>L</kbd> sperren</span>
+										<span>Suchfeld = Filter</span>
 									{:else}
 										<span><kbd>Esc</kbd> zurück</span>
 									{/if}
@@ -1478,7 +1469,6 @@
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
-					<span><kbd>L</kbd> Ort sperren</span>
 					<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
 					<span><kbd>Ctrl+M</kbd> Market</span>
 				{/if}

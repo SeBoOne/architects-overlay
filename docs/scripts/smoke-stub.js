@@ -146,6 +146,14 @@ window.__TAURI_INTERNALS__ = {
 							]
 						},
 						{
+							terminal_id: 429,
+							terminal_name: 'Lama Terminal - Checkmate',
+							prices: [
+								price('Checkmate — Lama Terminal', 429, 999, 0, 0, { code: 'LAMA', commodity_id: 88 }, 'Lama Feed'),
+								price('Checkmate — Lama Terminal', 429, 0, 5400, 0, { code: 'LAMX', commodity_id: 89 }, 'Lama Extract')
+							]
+						},
+						{
 							terminal_id: 436,
 							terminal_name: 'Admin - Checkmate',
 							prices: [
