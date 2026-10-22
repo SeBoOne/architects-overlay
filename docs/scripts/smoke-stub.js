@@ -277,19 +277,29 @@ window.__TAURI_INTERNALS__ = {
 				if (a.kind === 'item') {
 					// Point 8: Item detail returns real shop prices from /items_prices,
 					// not an empty table. (Stub: CSP-68H backpack @ CenterMass.)
+					//
+					// QA Runde 2 (Punkt C): die echte API sendet auf /items_prices auch
+					// `"price_sell": null` (shops kaufen nichts zurück — measured 1/16 @
+					// id_item=465). `sell_price` ist auf der SEAM-Ebene (PricePoint) immer
+					// eine Zahl: der Backend-DTO mappt wire-null → 0.0 (cargo fixture
+					// item_prices_465_null.json, siehe dto.rs de_f64_null_to_zero + Import
+					// in lib.rs map_item_price_point). Dieser Stub bildet das exakt nach —
+					// `sel0()` sourct aus einem *nullbaren* Kanalwert → 0, damit der Mirror
+					// den echten Pfad nicht länger verdeckt (Regression trennen: Cargo-Test
+					// ist die rote Assertion, der Stub der grüne UI-Mirror).
+					const sel0 = (v) => (v == null ? 0 : v);
 					const itemRows = {
 						465: [
-
-								{ commodity: 'CSP-68H Backpack', buy: 295, sell: 0, q: 0, code: null, commodity_id: 465, loc: 'CenterMass - ArcCorp', tid: 107, term: 'CenterMass - ArcCorp' },
-								{ commodity: 'CSP-68H Backpack', buy: 295, sell: 0, q: 0, code: null, commodity_id: 465, loc: 'CenterMass - Hurston', tid: 108, term: 'CenterMass - Hurston' }
+							{ commodity: 'CSP-68H Backpack', buy: 295, sell: null, q: 0, code: null, commodity_id: 465, loc: 'CenterMass - ArcCorp', tid: 107, term: 'CenterMass - ArcCorp' },
+							{ commodity: 'CSP-68H Backpack', buy: 295, sell: 0, q: 0, code: null, commodity_id: 465, loc: 'CenterMass - Hurston', tid: 108, term: 'CenterMass - Hurston' }
 						]
 					};
 					const iid = Number(a.id || 0);
 					const rows = itemRows[iid] || [];
 					const prices = rows.map((r) => ({
 						commodity: r.commodity, commodity_id: r.commodity_id, location: r.loc, terminal_id: r.tid,
-						sell_price: r.sell, buy_price: r.buy, sell_stock: 0, buy_stock: 0,
-						sell_status: r.sell > 0 ? 1 : 0, buy_status: r.buy > 0 ? 1 : 0,
+						sell_price: sel0(r.sell), buy_price: r.buy, sell_stock: 0, buy_stock: 0,
+						sell_status: sel0(r.sell) > 0 ? 1 : 0, buy_status: r.buy > 0 ? 1 : 0,
 						quality: r.q, updated: now - 240
 					}));
 					return { commodity: name, source: 'uex', fetched_at: now, location: null, prices };
@@ -344,7 +354,7 @@ window.__TAURI_INTERNALS__ = {
 						{ id: 465, name: 'CSP-68H Backpack', kind: 'item', subtitle: 'Item · Rucksack', code: null }
 					],
 					location: [
-						{ id: 436, name: 'Admin Office', kind: 'location', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
+						{ id: 436, name: 'Checkmate Station', kind: 'location', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
 							{ id: 428, name: 'Landing Services - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'LSCHE' },
 							{ id: 431, name: 'Refinement Center - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'RCCHE' },
 							{ id: 435, name: 'Medical Shop - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'MECHE' },

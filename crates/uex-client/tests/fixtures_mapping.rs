@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use uex_client::private::{CommodityRow, ListingRow, PriceRow, TerminalRow};
+use uex_client::private::{CommodityRow, ItemPriceRow, ListingRow, PriceRow, TerminalRow};
 
 fn fixture(name: &str) -> serde_json::Value {
     let path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "fixtures", name]
@@ -98,6 +98,22 @@ fn prices_fixture_maps_to_price_points() {
             "date_modified must be a unix ts"
         );
     }
+}
+
+#[test]
+fn item_prices_fixture_with_null_sell_parses() {
+    // QA runde 2 (Punkt 3/7): the live API sends `"price_sell": null` on
+    // rows where shops don't buy back — measured on id_item=465 (1/16 rows)
+    // and id_terminal=437 (22/90 rows). This is a REGRESSION guard: without
+    // null-tolerant fields, parsing this fixture fails with
+    // `invalid type: null, expected f64` and takes the whole table down.
+    let rows: Vec<ItemPriceRow> = envelope_data("item_prices_465_null.json");
+    assert_eq!(rows.len(), 2);
+    let null_row = rows.iter().find(|r| r.id == 1).unwrap();
+    assert_eq!(null_row.price_buy, 295.0);
+    assert_eq!(null_row.price_sell, 0.0, "explicit null must map to 0");
+    let priced_row = rows.iter().find(|r| r.id == 2).unwrap();
+    assert_eq!(priced_row.price_sell, 350.0, "real values must survive");
 }
 
 #[test]

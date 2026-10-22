@@ -762,6 +762,24 @@ html[data-window="spotlight"] .shell {
 	box-shadow: inset 3px 0 0 var(--accent-h);
 }
 
+/* Detail-Tastaturnavigation: ↑↓ fokussierte Zeile (is-sel), ↵ ausgewählte
+   Zeile (is-chosen). Werden deklarativ gepflegt (QA Runde 2, Punkt 6), damit
+   sie den Svelte-Flush überleben — ohne CSS-Regel bliebe die Markierung tot. */
+.ptab .pr.is-sel {
+	padding-left: 0.6em;
+	background: var(--panel2);
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+.ptab .pr.is-chosen {
+	padding-left: 0.6em;
+	background: var(--accent-h);
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+.ptab .pr.is-sel.is-chosen {
+	background: var(--accent-h);
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .ptab .stale {
 	color: var(--warn);
 }

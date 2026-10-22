@@ -89,7 +89,7 @@ impl MockedApi {
             .respond_with(json_response(&fixture("terminal_prices_checkmate.json")))
             .mount(&server)
             .await;
-        for other in ["428", "431", "435"] {
+        for other in ["428", "431", "435", "437"] {
             Mock::given(method("GET"))
                 .and(path("/commodities_prices"))
                 .and(query_param("id_terminal", other))
@@ -126,6 +126,35 @@ impl MockedApi {
             .respond_with(json_response(&fixture("item_prices_465.json")))
             .mount(&server)
             .await;
+
+        // Same item id, live-captured shape WITH explicit `"price_sell": null`
+        // (QA runde 2, Punkt 3/7 — the first row has null, the second a real
+        // value). Proves the whole provider path survives null rows.
+        Mock::given(method("GET"))
+            .and(path("/items_prices"))
+            .and(query_param("id_item", "466"))
+            .respond_with(json_response(&fixture("item_prices_465_null.json")))
+            .mount(&server)
+            .await;
+
+        // Terminal-scoped item prices WITH null sell rows (Guns terminal):
+        // terminal_prices() must merge them without failing the table.
+        Mock::given(method("GET"))
+            .and(path("/items_prices"))
+            .and(query_param("id_terminal", "437"))
+            .respond_with(json_response(&fixture("item_prices_465_null.json")))
+            .mount(&server)
+            .await;
+        for other in ["428", "431", "435", "436"] {
+            Mock::given(method("GET"))
+                .and(path("/items_prices"))
+                .and(query_param("id_terminal", other))
+                .respond_with(json_response(
+                    r#"{"status":"ok","http_code":200,"data":[]}"#,
+                ))
+                .mount(&server)
+                .await;
+        }
 
         Mock::given(method("GET"))
             .and(path("/marketplace_listings"))
@@ -360,6 +389,64 @@ async fn item_prices_fetches_live_then_serves_cache() {
     assert_eq!(
         after, before,
         "item prices must be served from cache while fresh"
+    );
+}
+
+#[tokio::test]
+async fn item_prices_survive_explicit_null_sell_rows() {
+    // QA runde 2, Punkt 3/7: /items_prices sends `"price_sell": null` rows
+    // (measured live: 1/16 on item 465, 22/90 on terminal 437). The whole
+    // provider path — wire DTO → seam PricePoint — must survive them; the row
+    // maps to sell 0 instead of a Json error.
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    let points = p.item_prices(466).await.unwrap();
+    assert_eq!(points.len(), 2, "both fixture rows must parse");
+    let null_row = points.iter().find(|pt| pt.terminal_id == 107).unwrap();
+    assert_eq!(null_row.buy_price, 295.0);
+    assert_eq!(null_row.sell_price, 0.0, "null sell must map to 0");
+    let priced = points.iter().find(|pt| pt.terminal_id == 113).unwrap();
+    assert_eq!(priced.sell_price, 350.0, "real values must survive");
+}
+
+#[tokio::test]
+async fn terminal_prices_survive_null_item_rows_and_item_fetch_failure() {
+    // Regression (QA runde 2): `terminal_prices_impl` merged the item fetch
+    // with `.await?` — one null in /items_prices sank the ENTIRE terminal
+    // table (incl. commodity rows). Two guards:
+    //   1. null item rows parse (Guns terminal 437 fixture).
+    //   2. even a hard item-fetch failure (500) must not sink commodities.
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    let prices = p.terminal_prices(437).await.unwrap();
+    assert!(
+        prices.iter().any(|pt| pt.commodity == "CSP-68H Backpack"),
+        "null item rows must still surface as rows: {prices:?}"
+    );
+
+    // Item fetch fails hard → commodity table must still come through.
+    let degraded = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/commodities_prices"))
+        .and(query_param("id_terminal", "436"))
+        .respond_with(json_response(&fixture("terminal_prices_checkmate.json")))
+        .mount(&degraded)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items_prices"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&degraded)
+        .await;
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let pk = UexProvider::with_base_url(cache, None, &degraded.uri(), Duration::ZERO).unwrap();
+    let prices = pk.terminal_prices(436).await.unwrap();
+    assert!(
+        prices
+            .iter()
+            .any(|pt| pt.commodity == "Agricultural Supplies"),
+        "commodity table must survive a failing /items_prices: {prices:?}"
     );
 }
 

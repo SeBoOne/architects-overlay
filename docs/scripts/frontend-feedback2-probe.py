@@ -233,6 +233,15 @@ async def main():
         check("item: title is CSP-68H Backpack", "CSP-68H Backpack" in (ih2 or ""), f"h2={ih2!r}")
         idetail_text = await js("document.querySelector('.pane-detail') ? document.querySelector('.pane-detail').innerText : ''") or ''
         check("item: not 'nicht kaufbar' (Point 8)", "nicht kaufbar" not in idetail_text, f"detail_text={idetail_text[:80]!r}")
+        # QA Runde 2 (Punkt C): die API sendet `"price_sell": null` für Items
+        # (shops kaufen nichts zurück). Der Stub sourct eine Null-Zeile und
+        # mappt sie auf der SEAM-Ebene zu 0 — REGRESSION: ohne Fix reißt die
+        # Null-Zeile die Tabelle (Json-Fehler). Hier: Zeile existiert, kein
+        # "Fehler"-Paneel, Preis 0 (kein NaN/undefined).
+        idpr0 = await js("document.querySelectorAll('.pane-detail .pr').length")
+        check("item: null-sell row survives (Punkt C), no UI error", (idpr0 or 0) >= 1 and "Fehler" not in idetail_text, f".pr={idpr0} text={idetail_text[:60]!r}")
+        jsell0 = await js("(document.querySelector('.pane-detail .pr .val.sell')?.innerText || '').trim()")
+        check("item: null-sell maps to a numeric 0 / dash (Punkt C)", "NaN" not in (jsell0 or ""), f"sell={jsell0!r}")
         await shot("00-item-detail-csp68h")
         await esc()
         await wait_for("document.querySelector('.pane-detail') ? 0 : 1", want=1, timeout=5)
@@ -271,7 +280,7 @@ async def main():
         await wait_for("document.querySelector('.lock-badge') ? 1 : 0", want=1, timeout=6)
         badge = await js("document.querySelector('.lock-badge') ? document.querySelector('.lock-badge').innerText : ''")
         check("lock: badge visible", "📌" in (badge or ""), f"badge={badge!r}")
-        check("lock: badge Admin Office", "Admin Office" in (badge or ""), f"badge={badge!r}")
+        check("lock: badge Checkmate Station", "Checkmate Station" in (badge or ""), f"badge={badge!r}")
         await typeQuery("gold")
         await typeQuery("gold")
         await wait_for("document.querySelectorAll('.row').length", want=lambda x: x and x >= 1, timeout=8)

@@ -465,14 +465,19 @@ impl UexProvider {
             .map(|r| map_price_point(r, ""))
             .collect::<Vec<_>>();
         // Merge item prices (weapons/armor/shop items) so non-commodity
-        // terminals show their shop inventories alongside commodities.
+        // terminals show their shop inventories alongside commodities. This
+        // is a *best-effort* enrich: a single malformed /items_prices row (or
+        // endpoint outage) must never sink the commodity table — fall back to
+        // empty item rows (QA runde 2: ein `null` in price_sell riss die
+        // ganze Terminal-Tabelle runter).
         let item_rows: Vec<ItemPriceRow> = self
             .http
             .get_optional(
                 "/items_prices",
                 &[("id_terminal".to_string(), terminal_id.to_string())],
             )
-            .await?
+            .await
+            .unwrap_or_default()
             .unwrap_or_default();
         points.extend(item_rows.into_iter().map(|r| map_item_price_point(r, "")));
         self.cache

@@ -270,11 +270,23 @@ fn with_location_rows(
 }
 
 /// Anzeigename der Location-Entity. Pro Standort-Kette steht der Name der
-/// Verwaltungs-Stelle ("Admin Office") statt des Terminal-Namens — das ist
-/// die zusätzliche Aggregations-Metapher, die `kind='location'` klickbar
-/// macht, ohne sich mit den Terminal-Zeilen (Kriterium 1) zu vermengen.
-fn location_name(_chain: &str) -> String {
-    String::from("Admin Office")
+/// Station (das letzte Kettenglied, z. B. "Checkmate Station") statt eines
+/// Terminal-Namens — das ist die zusätzliche Aggregations-Metapher, die
+/// `kind='location'` klickbar macht, ohne sich mit den Terminal-Zeilen
+/// (Kriterium 1) zu vermengen.
+///
+/// QA Runde 2 (N2): der frühere Wert war eine Konstante ("Admin Office") für
+/// JEDE Kette — zwei Stationen in der Liste hießen gleich. Jetzt kommt der
+/// Name aus der Kette selbst, damit sich Standorte unterscheiden. Fallback auf
+/// "Station" bei leerer Kette (sollte nie eintreten: leere Ketten werden oben
+/// übersprungen).
+fn location_name(chain: &str) -> String {
+    chain
+        .rsplit('>')
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or("Station")
+        .to_string()
 }
 
 /// Bestes Monetär-/Handels-Terminal einer Kette. Bevorzugt einen Treffer der
@@ -999,7 +1011,10 @@ mod tests {
             loc_row.id, 436,
             "location row id must be the money terminal"
         );
-        assert_eq!(loc_row.name, "Admin Office");
+        assert_eq!(
+            loc_row.name, "Checkmate Station",
+            "location name derives from the chain's last segment (N2)"
+        );
 
         // Kriterium 1: die Terminal-Zeilen bleiben kind='terminal' mit echter id.
         let term_hits = loc_group
@@ -1440,8 +1455,8 @@ mod tests {
         assert_eq!(out[0].kind, "location");
         assert_eq!(out[0].id, 436, "location row id must be the money terminal");
         assert_eq!(
-            out[0].name, "Admin Office",
-            "name is the location aggregate, not the terminal"
+            out[0].name, "Checkmate Station",
+            "name is the station aggregate, not the terminal (N2)"
         );
         assert_eq!(out[0].subtitle, chain);
         // code None (kein UEX-Terminal-Code, sondern eine Standort-Entity).

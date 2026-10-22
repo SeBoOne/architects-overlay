@@ -518,6 +518,7 @@
 	// das Ergebnis") — der Fokus-Zustand darf nicht nur CSS sein. `.row` ist über
 	// `tabindex="-1"` fokussierbar, aber nicht im Tab-Order (kein Formular-Tab).
 	function focusRow(idx: number) {
+		focusIdx = idx;
 		document.querySelectorAll<HTMLElement>('.row')[idx]?.focus();
 	}
 
@@ -740,16 +741,32 @@
 		const r = dRows[dSel];
 		dToast = `${r.kind === 'buy' ? 'Kauf' : 'Verkauf'} · ${fmt(r.price)} aUEC · ${r.loc}`;
 	}
-	// Sync highlight-Klassen (is-sel/is-chosen) über die DOM-Reihenfolge der
-	// `.pr`-Zeilen — funktioniert für Kauf- und Verkaufstabelle gleichermaßen,
-	// weil dRows genau diese Reihenfolge (Kauf dann Verkauf) widerspiegelt.
-	$effect(() => {
-		const rows = document.querySelectorAll<HTMLElement>('.pane-detail .pr');
-		rows.forEach((r, i) => {
-			r.classList.toggle('is-sel', dRows.length > 0 && i === dSel);
-			r.classList.toggle('is-chosen', dRows.length > 0 && i === dChosen);
-		});
-	});
+	// Sync highlight-Klassen (is-sel/is-chosen) — deklarativ per class: im
+	// Template gebunden (siehe .pr in der Detail-Tabelle), NICHT per DOM-Query:
+	// manuell gesetzte Klassen überleben den Svelte-Flush nicht.
+	// → Die Zeilen binden class:is-sel={i === dSel} / class:is-chosen={i === dChosen}
+	//   über den flachen Index (Kauf-Zeilen zuerst, dann Verkauf).
+
+	// QA Runde 2 (N3): rohen serde-/Rust-Fehlertext nicht als deutsche UI zeigen.
+	// Bekannte Muster auf freundliche Meldungen mappen; Unbekanntes bleibt lesbar,
+	// aber mit deutschem Rahmen statt technischem Fehler-String.
+	function friendlyErr(e: unknown): string {
+		const s = String(e ?? '');
+		const lo = s.toLowerCase();
+		if (!s) return 'Unbekanntes Problem beim Laden der Preise.';
+		if (lo.includes('invalid type: null') || lo.includes('expected f64') || lo.includes('expected u'))
+			return 'Preisdaten unvollständig — der Anbieter lieferte leere Werte. Bitte erneut versuchen.';
+		if (lo.includes('requests limit reached') || lo.includes('rate limit'))
+			return 'Anfragenlimit erreicht — bitte kurz warten und erneut versuchen.';
+		if (lo.includes('not found'))
+			return 'Keine Preisdaten für diesen Eintrag gefunden.';
+		if (lo.includes('timeout') || lo.includes('timed out'))
+			return 'Zeitüberschreitung beim Laden — bitte erneut versuchen.';
+		if (lo.includes('connection failed') || lo.includes('network') || lo.includes('offline'))
+			return 'Keine Verbindung zum Preisdienst. Bitte Internet prüfen.';
+		// Fallback: bekannte Fehlermeldung, aber mit deutschem Kontext.
+		return `Preise konnten nicht geladen werden (${s}).`;
+	}
 
 	function nowSec(): number {
 		return Math.floor(Date.now() / 1000);
@@ -1312,7 +1329,7 @@
 							{:else if xpan?.error}
 								<div class="d-ghost">
 									<div class="cap">Fehler</div>
-									<div class="sm">{xpan.error}</div>
+									<div class="sm">{friendlyErr(xpan.error)}</div>
 								</div>
 							{:else if xpan?.detail}
 								{@const d = xpan.detail}
@@ -1387,10 +1404,10 @@
 											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 											{#if buys.length}
 												{#each buys as p, bi}
-													<div class="pr" class:best={bi === 0}>
-														<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
-														<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
-													</div>
+													<div class="pr" class:best={bi === 0} class:is-sel={dRows.length > 0 && bi === dSel} class:is-chosen={dRows.length > 0 && bi === dChosen}>
+													<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
+													<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
+												</div>
 												{/each}
 											{:else}
 												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Kauf' : 'Kein Terminal kauft'}</span></div>
@@ -1401,10 +1418,10 @@
 											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 											{#if sells.length}
 												{#each sells as p, si}
-													<div class="pr" class:best={si === 0}>
-														<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
-														<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
-													</div>
+													<div class="pr" class:best={si === 0} class:is-sel={dRows.length > 0 && buys.length + si === dSel} class:is-chosen={dRows.length > 0 && buys.length + si === dChosen}>
+													<span class="loc">{dIsTerminal ? p.commodity : p.location}</span>
+													<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+												</div>
 												{/each}
 											{:else}
 												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Verkauf' : 'Kein Terminal verkauft'}</span></div>
