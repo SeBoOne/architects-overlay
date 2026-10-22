@@ -45,32 +45,60 @@ window.__TAURI_INTERNALS__ = {
 				}, extra || {});
 				// QA-Auflage C: Kontrakt-treuer Mirror — Location → `location.groups`
 				// (je Terminal eine Gruppe, leere Gruppe = "keine Preisdaten"),
-				// Item → `prices: []` (nie ein Fehler), Terminal → EIGENE Preise
-				// dieses Terminals, sonst Commodity wie bisher.
+				// Terminal → EIGENE Preise, Item → prices:[] (niemals Fehler),
+				// Commodity → Marktliste (unverändert).
 				if (a.kind === 'terminal') {
-					// Location-Expansion-Fix (t_d87ca3a4): pro Terminal eigene
-					// Daten — Landing Services ≠ Guns ≠ Aggregate.
-					const tid = Number(a.id || 5001);
+					const tid = Number(a.id || 436);
 					const byTerminal = {
-						5001: [
-							{ commodity: 'Agricultural Supplies', buy: 1108, sell: 0, q: 680 },
-							{ commodity: 'Distilled Water', buy: 320, sell: 0, q: 540 }
-						],
-						// 25 Warengruppen: Inhalt HOEHER als die max-height-Kappung
-						// (222px) → .inner muss innen scrollen statt abgeschnitten
-						// zu werden (Location-Expansion-Fix t_d87ca3a4).
-						5002: (function () {
-							const names = ['Karna', 'P4-AR', 'FS-9', 'Sledge Mass Driver', 'LH86 Pistol',
-								'Arrowhead Sniper', 'Salvo Frag Pistol', 'Coda Pistol', 'Gallant Rifle',
-								'Demeco LMG', 'F55 LMG', 'P8-SC', 'P6-LR', 'Atzkav', 'Scalpel Sniper',
-								'Custodian SMG', 'PDW-1 SMG', 'S71 Rifle', 'BR-2 Shotgun', 'R97 Shotgun',
-								'Devastator Shotgun', 'Fon Tang', 'A03', 'F55', 'Karna Heavy'];
-							return names.map((c, i) => ({ commodity: c, buy: 0, sell: 2320 - i * 40, q: 340 - i * 10 }));
-						})()
+						436: [
+							{ commodity: 'Agricultural Supplies', buy: 1108, sell: 0, q: 0, code: 'AGRS', commodity_id: 3 },
+							{ commodity: 'Carbon', buy: 235, sell: 0, q: 0, code: 'CARB', commodity_id: 102 },
+							{ commodity: 'Distilled Spirits', buy: 1427, sell: 0, q: 0, code: 'DIST', commodity_id: 27 },
+							{ commodity: 'DynaFlex', buy: 1235, sell: 0, q: 0, code: 'DYNF', commodity_id: 93 },
+							{ commodity: 'Helium', buy: 727, sell: 0, q: 0, code: 'HELI', commodity_id: 38 },
+							{ commodity: 'Mercury', buy: 715, sell: 0, q: 0, code: 'MERC', commodity_id: 123 },
+							{ commodity: 'Waste', buy: 229, sell: 0, q: 0, code: 'WAST', commodity_id: 79 },
+							{ commodity: 'Altruciatoxin', buy: 0, sell: 6200, q: 0, code: 'AUTR', commodity_id: 4 },
+							{ commodity: 'Revenant Tree Pollen', buy: 0, sell: 1200, q: 0, code: 'REVE', commodity_id: 66 },
+							{ commodity: 'Argon', buy: 0, sell: 420, q: 0, code: 'ARGO', commodity_id: 111 },
+							{ commodity: 'Beryl', buy: 0, sell: 19000, q: 0, code: 'BERY', commodity_id: 11 },
+							{ commodity: 'Bioplastic', buy: 0, sell: 8600, q: 0, code: 'BIOPL', commodity_id: 112 },
+							{ commodity: 'Borase', buy: 0, sell: 27000, q: 0, code: 'BORA', commodity_id: 15 },
+							{ commodity: 'Construction Materials', buy: 0, sell: 12000, q: 0, code: 'CMAT', commodity_id: 19 },
+							{ commodity: 'Corundum', buy: 0, sell: 3500, q: 0, code: 'CORU', commodity_id: 22 },
+							{ commodity: 'Fluorine', buy: 0, sell: 1200, q: 0, code: 'FLUO', commodity_id: 31 },
+							{ commodity: 'Hephaestanite', buy: 0, sell: 4600, q: 0, code: 'HEPH', commodity_id: 39 },
+							{ commodity: 'Human Food Bars', buy: 0, sell: 470, q: 0, code: 'HFBA', commodity_id: 97 },
+							{ commodity: 'Hydrogen', buy: 0, sell: 1100, q: 0, code: 'HYDR', commodity_id: 41 },
+							{ commodity: 'Neon', buy: 0, sell: 17000, q: 0, code: 'NEON', commodity_id: 52 },
+							{ commodity: 'Agricium', buy: 0, sell: 9200, q: 0, code: 'AGRI', commodity_id: 1 },
+							{ commodity: 'Nitrogen', buy: 0, sell: 3000, q: 0, code: 'NITR', commodity_id: 106 },
+							{ commodity: 'Omnapoxy', buy: 0, sell: 4300, q: 0, code: 'OMPO', commodity_id: 115 },
+							{ commodity: 'Pressurized Ice', buy: 0, sell: 5200, q: 0, code: 'PICE', commodity_id: 101 },
+							{ commodity: 'Processed Food', buy: 0, sell: 1400, q: 0, code: 'PFOO', commodity_id: 56 },
+							{ commodity: 'Quartz', buy: 0, sell: 4200, q: 0, code: 'QUAR', commodity_id: 60 },
+							{ commodity: 'Scrap', buy: 0, sell: 3500, q: 0, code: 'SCRA', commodity_id: 67 },
+							{ commodity: 'Steel', buy: 0, sell: 2000, q: 0, code: 'STEE', commodity_id: 109 },
+							{ commodity: 'Stims', buy: 0, sell: 5000, q: 0, code: 'STIM', commodity_id: 70 },
+							{ commodity: 'Tin', buy: 0, sell: 3000, q: 0, code: 'TIN', commodity_id: 103 },
+							{ commodity: 'Titanium', buy: 0, sell: 8300, q: 0, code: 'TITA', commodity_id: 75 },
+							{ commodity: 'Recycled Material Composite', buy: 7587, sell: 0, q: 0, code: 'RMC', commodity_id: 63 },
+							{ commodity: 'Ship Ammunition - Size 7', buy: 8671, sell: 0, q: 0, code: 'SHPA7', commodity_id: 207 },
+							{ commodity: 'Ship Ammunition - Size 1', buy: 6868, sell: 0, q: 0, code: 'SHPA1', commodity_id: 201 },
+							{ commodity: 'Ship Ammunition - Size 2', buy: 7126, sell: 0, q: 0, code: 'SHPA2', commodity_id: 202 },
+							{ commodity: 'Ship Ammunition - Size 3', buy: 7384, sell: 0, q: 0, code: 'SHPA3', commodity_id: 203 },
+							{ commodity: 'Ship Ammunition - Size 4', buy: 7641, sell: 0, q: 0, code: 'SHPA4', commodity_id: 204 },
+							{ commodity: 'Ship Ammunition - Size 5', buy: 7985, sell: 0, q: 0, code: 'SHPA5', commodity_id: 205 },
+							{ commodity: 'Ship Ammunition - Size 6', buy: 8328, sell: 0, q: 0, code: 'SHPA6', commodity_id: 206 },
+							{ commodity: 'Ship Decoy Countermeasures', buy: 4293, sell: 0, q: 0, code: 'SHPDC', commodity_id: 208 },
+							{ commodity: 'Hydrogen Fuel', buy: 782, sell: 0, q: 0, code: 'HYDF', commodity_id: 104 },
+							{ commodity: 'Quantum Fuel', buy: 1760, sell: 0, q: 0, code: 'QFUE', commodity_id: 87 },
+							{ commodity: 'Ship Noise Countermeasures', buy: 8585, sell: 0, q: 0, code: 'SHPNC', commodity_id: 209 }
+						]
 					};
-					const rows = byTerminal[tid] || [{ commodity: name, buy: 500, sell: 0, q: 100 }];
+					const rows = byTerminal[tid] || [];
 					const prices = rows.map((r) => ({
-						commodity: r.commodity, commodity_id: 1, location: 'Checkmate — ' + tid,
+						commodity: r.commodity, commodity_id: r.commodity_id || 1, location: 'Checkmate — ' + tid,
 						terminal_id: tid, sell_price: r.sell, buy_price: r.buy,
 						sell_stock: 0, buy_stock: 0, sell_status: r.sell > 0 ? 1 : 0,
 						buy_status: r.buy > 0 ? 1 : 0, quality: r.q, updated: now - 240
@@ -83,14 +111,137 @@ window.__TAURI_INTERNALS__ = {
 				if (a.kind === 'location') {
 					const groups = [
 						{
-							terminal_id: 436, terminal_name: name,
+							terminal_id: 428,
+							terminal_name: 'Landing Services - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 431,
+							terminal_name: 'Refinement Center - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 435,
+							terminal_name: 'Medical Shop - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 436,
+							terminal_name: 'Admin - Checkmate',
 							prices: [
-								price('Checkmate — Admin Terminal', 436, 1108, 0, 680),
-								price('Checkmate — Admin Terminal', 436, 0, 4812, 710)
+																price('Checkmate — Admin Terminal', 436, 1108, 0, 0, { code: 'AGRS', commodity_id: 3 }),
+																price('Checkmate — Admin Terminal', 436, 235, 0, 0, { code: 'CARB', commodity_id: 102 }),
+																price('Checkmate — Admin Terminal', 436, 1427, 0, 0, { code: 'DIST', commodity_id: 27 }),
+																price('Checkmate — Admin Terminal', 436, 1235, 0, 0, { code: 'DYNF', commodity_id: 93 }),
+																price('Checkmate — Admin Terminal', 436, 727, 0, 0, { code: 'HELI', commodity_id: 38 }),
+																price('Checkmate — Admin Terminal', 436, 715, 0, 0, { code: 'MERC', commodity_id: 123 }),
+																price('Checkmate — Admin Terminal', 436, 229, 0, 0, { code: 'WAST', commodity_id: 79 }),
+																price('Checkmate — Admin Terminal', 436, 0, 6200, 0, { code: 'AUTR', commodity_id: 4 }),
+																price('Checkmate — Admin Terminal', 436, 0, 1200, 0, { code: 'REVE', commodity_id: 66 }),
+																price('Checkmate — Admin Terminal', 436, 0, 420, 0, { code: 'ARGO', commodity_id: 111 }),
+																price('Checkmate — Admin Terminal', 436, 0, 19000, 0, { code: 'BERY', commodity_id: 11 }),
+																price('Checkmate — Admin Terminal', 436, 0, 8600, 0, { code: 'BIOPL', commodity_id: 112 }),
+																price('Checkmate — Admin Terminal', 436, 0, 27000, 0, { code: 'BORA', commodity_id: 15 }),
+																price('Checkmate — Admin Terminal', 436, 0, 12000, 0, { code: 'CMAT', commodity_id: 19 }),
+																price('Checkmate — Admin Terminal', 436, 0, 3500, 0, { code: 'CORU', commodity_id: 22 }),
+																price('Checkmate — Admin Terminal', 436, 0, 1200, 0, { code: 'FLUO', commodity_id: 31 }),
+																price('Checkmate — Admin Terminal', 436, 0, 4600, 0, { code: 'HEPH', commodity_id: 39 }),
+																price('Checkmate — Admin Terminal', 436, 0, 470, 0, { code: 'HFBA', commodity_id: 97 }),
+																price('Checkmate — Admin Terminal', 436, 0, 1100, 0, { code: 'HYDR', commodity_id: 41 }),
+																price('Checkmate — Admin Terminal', 436, 0, 17000, 0, { code: 'NEON', commodity_id: 52 }),
+																price('Checkmate — Admin Terminal', 436, 0, 9200, 0, { code: 'AGRI', commodity_id: 1 }),
+																price('Checkmate — Admin Terminal', 436, 0, 3000, 0, { code: 'NITR', commodity_id: 106 }),
+																price('Checkmate — Admin Terminal', 436, 0, 4300, 0, { code: 'OMPO', commodity_id: 115 }),
+																price('Checkmate — Admin Terminal', 436, 0, 5200, 0, { code: 'PICE', commodity_id: 101 }),
+																price('Checkmate — Admin Terminal', 436, 0, 1400, 0, { code: 'PFOO', commodity_id: 56 }),
+																price('Checkmate — Admin Terminal', 436, 0, 4200, 0, { code: 'QUAR', commodity_id: 60 }),
+																price('Checkmate — Admin Terminal', 436, 0, 3500, 0, { code: 'SCRA', commodity_id: 67 }),
+																price('Checkmate — Admin Terminal', 436, 0, 2000, 0, { code: 'STEE', commodity_id: 109 }),
+																price('Checkmate — Admin Terminal', 436, 0, 5000, 0, { code: 'STIM', commodity_id: 70 }),
+																price('Checkmate — Admin Terminal', 436, 0, 3000, 0, { code: 'TIN', commodity_id: 103 }),
+																price('Checkmate — Admin Terminal', 436, 0, 8300, 0, { code: 'TITA', commodity_id: 75 }),
+																price('Checkmate — Admin Terminal', 436, 7587, 0, 0, { code: 'RMC', commodity_id: 63 }),
+																price('Checkmate — Admin Terminal', 436, 8671, 0, 0, { code: 'SHPA7', commodity_id: 207 }),
+																price('Checkmate — Admin Terminal', 436, 6868, 0, 0, { code: 'SHPA1', commodity_id: 201 }),
+																price('Checkmate — Admin Terminal', 436, 7126, 0, 0, { code: 'SHPA2', commodity_id: 202 }),
+																price('Checkmate — Admin Terminal', 436, 7384, 0, 0, { code: 'SHPA3', commodity_id: 203 }),
+																price('Checkmate — Admin Terminal', 436, 7641, 0, 0, { code: 'SHPA4', commodity_id: 204 }),
+																price('Checkmate — Admin Terminal', 436, 7985, 0, 0, { code: 'SHPA5', commodity_id: 205 }),
+																price('Checkmate — Admin Terminal', 436, 8328, 0, 0, { code: 'SHPA6', commodity_id: 206 }),
+																price('Checkmate — Admin Terminal', 436, 4293, 0, 0, { code: 'SHPDC', commodity_id: 208 }),
+																price('Checkmate — Admin Terminal', 436, 782, 0, 0, { code: 'HYDF', commodity_id: 104 }),
+																price('Checkmate — Admin Terminal', 436, 1760, 0, 0, { code: 'QFUE', commodity_id: 87 }),
+																price('Checkmate — Admin Terminal', 436, 8585, 0, 0, { code: 'SHPNC', commodity_id: 209 })
 							]
 						},
 						{
-							terminal_id: 438, terminal_name: 'Commodity Console - Checkmate Station',
+							terminal_id: 437,
+							terminal_name: 'Guns - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 438,
+							terminal_name: 'Sharp Shooters - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 440,
+							terminal_name: 'Ship Parts - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 441,
+							terminal_name: 'Refinery Shop - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 442,
+							terminal_name: 'Refinery Ore Sales - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 490,
+							terminal_name: 'Chuan - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 491,
+							terminal_name: 'Filtered Water - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 492,
+							terminal_name: 'Station Convenience - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 493,
+							terminal_name: 'Cargo Services - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 494,
+							terminal_name: 'Buy and Fly - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 596,
+							terminal_name: 'Gear Up - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 597,
+							terminal_name: 'Ready To Trade - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 600,
+							terminal_name: 'Unique Quality - Checkmate',
+							prices: []
+						},
+						{
+							terminal_id: 689,
+							terminal_name: 'Equipment Contested Zone Checkmate',
 							prices: []
 						}
 					];
@@ -99,7 +250,7 @@ window.__TAURI_INTERNALS__ = {
 						commodity: name, source: 'uex', fetched_at: now, prices,
 						location: {
 							location: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station',
-							terminal: name, groups
+							terminal: 'Checkmate Station', groups
 						}
 					};
 				}
@@ -112,13 +263,13 @@ window.__TAURI_INTERNALS__ = {
 					fetched_at: now,
 					location: null,
 					prices: [
-						{ commodity: name, commodity_id: 1, location: 'ARC-L1 Wide Forest Station', terminal_id: 11, sell_price: 0, buy_price: 4812, sell_stock: 0, buy_stock: 1200, sell_status: 1, buy_status: 1, quality: 3, updated: now - 240 },
+												{ commodity: name, commodity_id: 1, location: 'ARC-L1 Wide Forest Station', terminal_id: 11, sell_price: 0, buy_price: 4812, sell_stock: 0, buy_stock: 1200, sell_status: 1, buy_status: 1, quality: 3, updated: now - 240 },
 						{ commodity: name, commodity_id: 1, location: 'Area18 — TDD', terminal_id: 12, sell_price: 0, buy_price: 4930, sell_stock: 0, buy_stock: 900, sell_status: 1, buy_status: 1, quality: 3, updated: now - 300 },
 						{ commodity: name, commodity_id: 1, location: 'Orison — Providence', terminal_id: 13, sell_price: 6305, buy_price: 0, sell_stock: 2200, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 180 },
 						{ commodity: name, commodity_id: 1, location: 'Levski — Grand Barter', terminal_id: 14, sell_price: 6118, buy_price: 0, sell_stock: 1800, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 360 },
 						{ commodity: name, commodity_id: 1, location: 'Lorville — Tammany & Sons', terminal_id: 15, sell_price: 5980, buy_price: 0, sell_stock: 1500, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 540 }
 					]
-				};
+			};
 			}
 			case 'search': {
 				const q = String(a.query || '').toLowerCase();
@@ -150,9 +301,25 @@ window.__TAURI_INTERNALS__ = {
 						{ id: 465, name: 'CSP-68H Backpack', kind: 'item', subtitle: 'Item · Rucksack', code: null }
 					],
 					location: [
-						{ id: 5010, name: 'Checkmate Station', kind: 'location', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
-						{ id: 5001, name: 'Landing Services - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
-						{ id: 5002, name: 'Guns - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null }
+						{ id: 436, name: 'Checkmate Station', kind: 'location', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
+							{ id: 428, name: 'Landing Services - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'LSCHE' },
+							{ id: 431, name: 'Refinement Center - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'RCCHE' },
+							{ id: 435, name: 'Medical Shop - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'MECHE' },
+							{ id: 436, name: 'Admin - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'CHECK' },
+							{ id: 437, name: 'Guns - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'GNCHE' },
+							{ id: 438, name: 'Sharp Shooters - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'SSCHE' },
+							{ id: 440, name: 'Ship Parts - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'SPCHE' },
+							{ id: 441, name: 'Refinery Shop - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'REFCHE' },
+							{ id: 442, name: 'Refinery Ore Sales - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'ROCHE' },
+							{ id: 490, name: 'Chuan - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'CHCHE' },
+							{ id: 491, name: 'Filtered Water - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'FWCHE' },
+							{ id: 492, name: 'Station Convenience - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'STCCH' },
+							{ id: 493, name: 'Cargo Services - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'CTCHE' },
+							{ id: 494, name: 'Buy and Fly - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'BFCHE' },
+							{ id: 596, name: 'Gear Up - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'GUCHE' },
+							{ id: 597, name: 'Ready To Trade - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'RTCHE' },
+							{ id: 600, name: 'Unique Quality - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'UQCHE' },
+							{ id: 689, name: 'Equipment Contested Zone Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'CZCMS' }
 					]
 				};
 				const want = f && f.length ? f : Object.keys(pool);

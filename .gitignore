@@ -37,3 +37,5 @@ src-tauri/gen
 !.vscode/extensions.json
 # Smoke-test screenshots (review artifacts, not repo content)
 market_screens/
+__pycache__/
+*.pyc

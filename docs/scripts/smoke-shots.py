@@ -3,7 +3,7 @@
 import asyncio, base64, json, os, pathlib
 import websockets
 
-ROOT = pathlib.Path("/home/sebo/Projects/Architects Overlay")
+ROOT = pathlib.Path(os.environ.get("SHOT_ROOT", "/home/sebo/Projects/Architects Overlay"))
 STUB = (ROOT / "docs/scripts/smoke-stub.js").read_text()
 OUT = pathlib.Path(os.environ.get("SHOT_DIR", "/tmp/smoke-shots"))
 OUT.mkdir(parents=True, exist_ok=True)
@@ -170,6 +170,23 @@ async def main():
         print("CONSOLE EVENTS:")
         for ce in console_events[:30]:
             print("  ", ce)
+
+        # State 7: Checkmate search -> Location-Entity (kind='location', id=436)
+        # und Expansion des Standort-aggregats. Screenshot der Location-Entity.
+        await typeQuery("checkmate")
+        await asyncio.sleep(0.8)
+        print("search 'checkmate' groups=", await js("document.querySelectorAll('.vgroup').length"),
+              "rows=", await js("document.querySelectorAll('.row').length"),
+              "badges=", await js("[...document.querySelectorAll('.rbadge')].map(function(b){return b.textContent}).join(',')"))
+        # Location row = kind='location' (erste .row der Locations-Gruppe).
+        await js("var loc=document.querySelector('.row[data-kind=\"location\"]'); "
+                 "if(!loc){var rows=document.querySelectorAll('.row');loc=[...rows].find(function(r){return r.textContent.includes('Checkmate Station')&&![...r.classList].includes('kind-terminal')});} "
+                 "if(loc)loc.click();")
+        await asyncio.sleep(1.0)
+        print("  [7] open location groups=", await js("document.querySelectorAll('.rwrap.is-open').length"),
+              "price rows=", await js("document.querySelectorAll('.ptab .pr').length"))
+        print("  [7] IPC calls for checkmate=", await js("JSON.stringify(window.__calls||[])"))
+        await shot("07-checkmate-location")
 
     proc.terminate()
 
