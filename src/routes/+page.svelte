@@ -227,7 +227,7 @@
 			if (tok === ':c') cats.push('commodity');
 			else if (tok === ':i') cats.push('item');
 			else if (tok === ':l') cats.push('location');
-			else if (tok.startsWith(':')) continue; // unbekannter Präfix ignorieren
+			else if (tok.startsWith(':')) terms.push(tok); // unbekanntes Präfix → Fuzzy-Term (Spec §2)
 			else terms.push(tok);
 		}
 		return { text: terms.join(' '), cats: [...new Set(cats)], isCalc: false };
@@ -345,6 +345,7 @@
 		// Preise lazy laden — reaktiv in `xpan` (Svelte-5-sicher).
 		xpan = { busy: true, detail: null, error: null };
 		void loadDetail(flat[idx]);
+		focusRow(idx);
 	}
 
 	// Alt+Zahl nur fokussieren: Badge ausgegraut, aber NICHT aufklappen.
@@ -354,6 +355,14 @@
 			xpan = { busy: true, detail: null, error: null };
 			void loadDetail(flat[idx]);
 		}
+		focusRow(idx);
+	}
+
+	// Echten DOM-Fokus auf die Ergebniszeile legen (Spec §4 „Alt+Zahl fokussiert
+	// das Ergebnis") — der Fokus-Zustand darf nicht nur CSS sein. `.row` ist über
+	// `tabindex="-1"` fokussierbar, aber nicht im Tab-Order (kein Formular-Tab).
+	function focusRow(idx: number) {
+		document.querySelectorAll<HTMLElement>('.row')[idx]?.focus();
 	}
 
 	function clampIdx() {
@@ -396,10 +405,17 @@
 	}
 
 	// ---- Esc-Toggle (Kernfeature) --------------------------------------------
-	// Esc → wenn das Suchfeld Fokus hat ⇒ Overlay ausblenden (hide); wenn das
-	// Suchfeld NICHT den Fokus hat ⇒ Fokus zurück ins Suchfeld (Select-All).
+	// Esc-Zustände (Spec §3/§4): 1) Ergebnis fokussiert (Alt+Zahl) oder eine
+	// Expansion offen → erst zuklappen + Fokus zurück ins Suchfeld; der nächste
+	// Esc blendet aus. 2) Suchfeld fokussiert → Overlay ausblenden (hide) bzw.
+	// leeren. 3) Fokus woanders → Fokus zurück ins Suchfeld (Select-All).
 	// Nie ausblenden, wenn der Fokus woanders liegt (Arkanis-Verhalten).
 	function escSearch() {
+		if (focusIdx !== null || expanded !== null) {
+			clampIdx();
+			focusSearch(true);
+			return;
+		}
 		const inSearch = searchEl ? document.activeElement === searchEl : phase !== 'typing';
 		if (inSearch) {
 			// Suchfeld fokussiert → Overlay ausblenden (Spotlight) bzw. leeren.
@@ -713,6 +729,8 @@
 			<span><kbd>:l</kbd> locations</span>
 			<span class="sep">·</span>
 			<span><kbd>=</kbd> math</span>
+			<span class="sep">·</span>
+			<span><kbd>%</kbd> ÷100</span>
 		</div>
 
 		<!-- Inhalt je Zustand -->
@@ -910,6 +928,7 @@
 									<div class="rwrap" class:is-open={expanded === idx}>
 										<div
 											class="row"
+											tabindex="-1"
 											class:is-sel={idx === sel}
 											class:is-focus={focusIdx === idx}
 											role="option"
