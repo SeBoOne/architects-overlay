@@ -5,7 +5,10 @@
    - Nur die unten deklarierten CSS-Variablen; KEIN Literalfarbwert im Komponenten-CSS.
    - Palettenwechsel ist eine Ein-Zeilen-Änderung `data-palette` auf <html>.
    - Opak (kein backdrop-filter) ⇒ konstanter Kontrast über jedem Spielgrund.
-   - Layout-Metriken folgen der Layout-Spezifikation (660 px, Cut-Corners, …).
+   - Layout: Hauptfenster 660 px; Spotlight-Fenster (Vollbild, transparent) in
+     Arkanis-Skalierung — Palette min 60 vw / fit-content / max 90 vw, 7.5 vh
+     Abstand oben, Zeilenhöhe 66 px, Suchschrift max(2.5vh, 1.5rem), Inline-
+     Expansion = 3 Zeilenhöhen, Badge 1..0 oben links, zweispaltige Preis-Tabelle.
    =========================================================================== */
 
 /* --------------------------- Paletten (Token-Vertrag) -------------------- */
@@ -26,6 +29,8 @@ html[data-palette="amber"] {
 	--accent: #f2a33c;
 	--accent-h: #ffc46e;
 	--accent-d: #7d5220;
+	/* Text/Icon auf Akzentfläche (Chip „is-on", Gruppenband, Button) */
+	--on-accent: #0b0b0b;
 	/* Datenfarben: Kauf / Verkauf / Status */
 	--buy: #6bd694;
 	--sell: #ffcb63;
@@ -46,6 +51,7 @@ html[data-palette="mfcd"] {
 	--accent: #4be08a;
 	--accent-h: #95f7bd;
 	--accent-d: #1f6a42;
+	--on-accent: #04140c;
 	--buy: #95f7bd;
 	--sell: #ffcb63;
 	--ok: #95f7bd;
@@ -65,6 +71,7 @@ html[data-palette="bloom"] {
 	--accent: #a98bf5;
 	--accent-h: #cfbcff;
 	--accent-d: #4d3a86;
+	--on-accent: #0a0714;
 	--buy: #6bd694;
 	--sell: #ffcb63;
 	--ok: #6bd694;
@@ -74,9 +81,18 @@ html[data-palette="bloom"] {
 
 /* --------------------------- Layout-Tokens ------------------------------- */
 :root {
-	--w: 660px;             /* Zielbreite: min(660px, 94vw) */
-	--row-h: 54px;         /* Variante C */
+	/* Breite/Maße: Hauptfenster fest, Spotlight-Fenster Arkanis-Skalierung. */
+	--w: 660px;             /* Zielbreite Hauptfenster: min(660px, 94vw) */
+	--w-min: 60vw;         /* Spotlight: Mindestbreite (Arkanis SearchBox) */
+	--w-max: 90vw;         /* Spotlight: Höchstbreite */
+	--pad-top: 7.5vh;      /* Spotlight: Abstand Oberkante → Palette (Arkanis) */
+	--row-h: 66px;         /* Ergebniszeile (Arkanis ItemSize = 66) */
+	--xpan-h: calc(3 * var(--row-h) + 24px); /* Aufklappfläche ≈ 3 Zeilenhöhen */
+	--fs-input: max(2.5vh, 1.5rem);          /* Suchfeld-Schrift (Arkanis) */
+	--pad-x: max(1.6vh, 18px);               /* Innenpolster skaliert mit Fensterhöhe */
 	--radius: 0;           /* Variante C nutzt clip-path statt Radius */
+	--shadow-shell: 0 20px 52px rgba(0, 0, 0, 0.78);
+	--app-bg: #04060a;     /* opaker Grund — nur im Hauptfenster gesetzt */
 	--font-ui: 'Inter', 'Liberation Sans', system-ui, sans-serif;
 	--font-mono: 'JetBrainsMono NF', 'JetBrainsMono Nerd Font', 'Liberation Mono', monospace;
 	color-scheme: dark;
@@ -104,7 +120,7 @@ body {
 }
 
 html[data-window="main"] body {
-	background: #04060a;
+	background: var(--app-bg);
 }
 
 ::selection {
@@ -118,11 +134,21 @@ html[data-window="main"] body {
 	position: relative;
 }
 
+/* Hauptfenster: feste 660 px. Spotlight: Arkanis-Skala (60vw..90vw), zentriert,
+   7.5 vh Abstand von oben, Rest des Vollbild-Fensters bleibt transparent. */
+html[data-window="spotlight"] .pal-root {
+	width: fit-content;
+	min-width: min(var(--w-min), 94vw);
+	max-width: var(--w-max);
+	padding: var(--pad-top) 0 2vh;
+}
+
 /* Vollbild-Overlay (Arkanis-Style): das Fenster umspannt den ganzen Monitor,
    die Palette schwebt im oberen Drittel darüber — Hintergrund transparent,
    nur die Shell selbst ist opak. */
-html[data-window="spotlight"] .pal-root {
-	margin-top: clamp(48px, 14vh, 160px);
+/* Oberer Rand wird vom padding-top der Palette geleistet (7.5 vh). */
+html[data-window="spotlight"] .shell {
+	margin: 0;
 }
 
 /* Shell: opak, Cut-Corners 16px, Akzentkante links, Schlagschatten als
@@ -135,7 +161,7 @@ html[data-window="spotlight"] .pal-root {
 	border-left: 3px solid var(--accent);
 	border-radius: 0;
 	clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
-	box-shadow: 0 20px 52px rgba(0, 0, 0, 0.78);
+	box-shadow: var(--shadow-shell);
 }
 
 .deco {
@@ -159,17 +185,17 @@ html[data-window="spotlight"] .pal-root {
 .srow {
 	display: flex;
 	align-items: center;
-	gap: 12px;
-	height: 60px;
-	padding: 0 16px;
+	gap: var(--pad-x);
+	min-height: max(8vh, 72px);
+	padding: 0 var(--pad-x);
 	background: var(--panel2);
 	border-bottom: 2px solid var(--accent);
 }
 
 .srow .ico {
-	width: 17px;
-	height: 17px;
-	flex: 0 0 17px;
+	width: max(2.6vh, 22px);
+	height: max(2.6vh, 22px);
+	flex: 0 0 max(2.6vh, 22px);
 	color: var(--accent);
 }
 
@@ -185,7 +211,7 @@ html[data-window="spotlight"] .pal-root {
 	border: 0;
 	outline: 0;
 	color: var(--fg);
-	font: 500 20px/1 var(--font-ui);
+	font: 500 var(--fs-input)/1.15 var(--font-ui);
 	letter-spacing: 0.005em;
 }
 
@@ -199,7 +225,7 @@ html[data-window="spotlight"] .pal-root {
 
 .caret {
 	width: 2px;
-	height: 20px;
+	height: var(--fs-input);
 	background: var(--accent);
 	display: inline-block;
 	animation: bl 1.05s steps(1, end) infinite;
@@ -218,7 +244,7 @@ html[data-window="spotlight"] .pal-root {
 }
 
 .smode {
-	font: 700 10px/1 var(--font-mono);
+	font: 700 max(1.15vh, 10px)/1 var(--font-mono);
 	letter-spacing: 0.16em;
 	text-transform: uppercase;
 	color: var(--accent);
@@ -226,12 +252,47 @@ html[data-window="spotlight"] .pal-root {
 }
 
 .esc {
-	font: 600 10px/1 var(--font-mono);
+	font: 600 max(1.15vh, 10px)/1 var(--font-mono);
 	letter-spacing: 0.1em;
 	color: var(--fgfaint);
 	border: 1px solid var(--lineb);
-	padding: 3px 6px;
+	padding: 0.45vh 0.6em;
 	border-radius: 3px;
+}
+
+/* Helper-Zeile direkt unter dem Suchfeld (Arkanis: Typo overline / secondary):
+   Sekundärfarbe, listet die Präfix-Shortcuts. */
+.helper {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.9em;
+	padding: 0.7vh var(--pad-x) 1vh;
+	background: var(--panel2);
+	border-bottom: 1px solid var(--lineb);
+	font: 700 max(1.15vh, 10.5px)/1.8 var(--font-mono);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.helper span {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.45em;
+	white-space: nowrap;
+}
+
+.helper .sep {
+	color: var(--lineb);
+}
+
+.helper kbd {
+	font: inherit;
+	letter-spacing: 0.06em;
+	color: var(--accent);
+	border: 1px solid var(--lineb);
+	padding: 0.3em 0.5em;
 }
 
 /* --------------------------- Filterleiste --------------------------------- */
@@ -239,7 +300,7 @@ html[data-window="spotlight"] .pal-root {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	padding: 8px 12px;
+	padding: 0.8vh var(--pad-x);
 	border-top: 0;
 	border-bottom: 1px solid var(--lineb);
 	background: var(--panel3);
@@ -253,9 +314,9 @@ html[data-window="spotlight"] .pal-root {
 	display: inline-flex;
 	align-items: center;
 	gap: 5px;
-	padding: 4px 9px;
+	padding: 0.5vh 0.85em;
 	white-space: nowrap;
-	font: 700 10px/1.7 var(--font-mono);
+	font: 700 max(1.1vh, 10px)/1.7 var(--font-mono);
 	letter-spacing: 0.1em;
 	text-transform: uppercase;
 	color: var(--fgdim);
@@ -266,13 +327,13 @@ html[data-window="spotlight"] .pal-root {
 }
 
 .chip.is-on {
-	color: #0b0b0b;
+	color: var(--on-accent);
 	background: var(--accent);
 	border-color: var(--accent);
 }
 
 .chip.is-on .dot {
-	background: #0b0b0b;
+	background: var(--on-accent);
 }
 
 .chip .dot {
@@ -288,9 +349,38 @@ html[data-window="spotlight"] .pal-root {
 	border-color: var(--warn);
 }
 
+/* Ergebnis-Zähler über der Liste (Arkanis-Chip „Found N results in X ms"). */
+.found {
+	display: flex;
+	justify-content: center;
+	padding: 1.1vh var(--pad-x) 0.9vh;
+	background: var(--panel3);
+	border-bottom: 1px solid var(--line);
+}
+
+.found .c {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5em;
+	padding: 0.4vh 0.9em;
+	border: 1px solid var(--lineb);
+	background: var(--panel);
+	color: var(--fgdim);
+	font: 700 max(1.1vh, 10px)/1.7 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.found .c b {
+	color: var(--accent);
+	font-weight: 700;
+}
+
 /* --------------------------- Ergebnisliste --------------------------------- */
 .list {
-	max-height: min(60vh, 452px);
+	/* Höhen-Budget im Vollbild: 7.5vh Rand + Suchzeile 8vh + Helper/Filter/Chip/Fuß
+	   ≈ 42vh ⇒ Liste max. 58vh, damit die Palette nie unten aus dem Fenster läuft. */
+	max-height: min(58vh, 640px);
 	overflow: auto;
 	scrollbar-width: thin;
 }
@@ -316,30 +406,59 @@ html[data-window="spotlight"] .pal-root {
 	align-items: center;
 	gap: 8px;
 	background: var(--accent);
-	color: #0b0b0b;
-	padding: 6px 14px;
+	color: var(--on-accent);
+	padding: 0.8vh var(--pad-x);
 	border-top: 0;
 	margin: 0;
-	font: 700 10px/1 var(--font-mono);
+	font: 700 max(1.15vh, 10.5px)/1 var(--font-mono);
 	letter-spacing: 0.2em;
 	text-transform: uppercase;
 }
 
 .vgroup .n {
-	color: #0b0b0b;
+	color: var(--on-accent);
 	opacity: 0.75;
 }
 
+/* Ergebniszeile (Arkanis ItemSize = 66 px):
+   Badge oben links (Alt+Zahl) | Icon | Name fett | Inline-Detail-Felder | Controls. */
 .row {
 	display: grid;
-	grid-template-columns: 26px 1fr auto;
-	gap: 12px;
+	grid-template-columns: 26px max(2.6vh, 26px) minmax(160px, 1fr) auto auto;
+	gap: var(--pad-x);
 	align-items: center;
-	padding: 7px 16px;
+	padding: 0 var(--pad-x);
 	min-height: var(--row-h);
 	border-left: 0;
 	border-bottom: 1px solid var(--line);
 	cursor: default;
+}
+
+/* Shortcut-Badge 1..0 — sitzt oben links in der Zeile. */
+.row .rbadge {
+	align-self: start;
+	margin-top: 0.9vh;
+	width: 22px;
+	height: 20px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--lineb);
+	color: var(--fgfaint);
+	font: 700 10px/1 var(--font-mono);
+	letter-spacing: 0;
+}
+
+.row.is-sel .rbadge {
+	color: var(--on-accent);
+	background: var(--accent);
+	border-color: var(--accent);
+}
+
+/* Ergebnis hat selbst den Fokus (Alt+Zahl erneut → zurück ins Suchfeld) */
+.row.is-focus .rbadge {
+	opacity: 0.35;
+	border-color: var(--line);
 }
 
 .row.is-sel {
@@ -348,15 +467,15 @@ html[data-window="spotlight"] .pal-root {
 }
 
 .row .ic {
-	width: 26px;
-	height: 26px;
+	width: max(2.6vh, 26px);
+	height: max(2.6vh, 26px);
 	border-radius: 0;
 	border: 1px solid var(--lineb);
 	background: var(--panel3);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	font: 700 10px/1 var(--font-mono);
+	font: 700 max(1.15vh, 10px)/1 var(--font-mono);
 	color: var(--fgdim);
 }
 
@@ -366,32 +485,209 @@ html[data-window="spotlight"] .pal-root {
 }
 
 .row .name {
-	font-size: 14.5px;
-	font-weight: 500;
+	font-size: max(1.95vh, 15px);
+	font-weight: 600;
 	color: var(--fg);
+	letter-spacing: -0.01em;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 .row .sub {
-	font-size: 11.5px;
+	font-size: max(1.4vh, 11.5px);
 	color: var(--fgdim);
-	margin-top: 2px;
+	margin-top: 0.35vh;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
-.row .right {
+/* Inline-Detail-Felder (Arkanis GameEntitySearchDetails: Mikro-Label über Wert). */
+.row .meta {
+	display: flex;
+	align-items: center;
+	gap: calc(var(--pad-x) * 0.85);
+}
+
+.row .mf {
 	text-align: right;
-	font: 600 12.5px/1.35 var(--font-mono);
+	min-width: 0;
+}
+
+.row .mf .k {
+	display: block;
+	font: 700 max(1.05vh, 9.5px)/1 var(--font-mono);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.row .mf .v {
+	display: block;
+	margin-top: 0.5vh;
+	font: 600 max(1.55vh, 12.5px)/1.2 var(--font-mono);
 	color: var(--fgdim);
 	white-space: nowrap;
 }
 
-.row .right b {
-	color: var(--fg);
-	font-weight: 600;
+.row .mf .v.buy {
+	color: var(--buy);
 }
 
-.row .right .sub2 {
-	font-size: 10px;
+.row .mf .v.sell {
+	color: var(--sell);
+}
+
+/* Controls rechts (Arkanis GameEntitySearchControls). */
+.row .ctl {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.btn-x {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4em;
+	padding: 0.6vh 0.8em;
+	border: 1px solid var(--lineb);
+	background: transparent;
+	color: var(--fgdim);
+	font: 700 max(1.1vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	cursor: pointer;
+}
+
+.btn-x:hover {
+	border-color: var(--fgdim);
+}
+
+.btn-x.primary {
+	color: var(--accent);
+	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* --------------------------- Inline-Expansion ------------------------------
+   Klappt direkt unter der Zeile auf (Arkanis: height = 3 * Zeilenhöhe) und
+   zeigt dort die zweispaltige Preis-Tabelle (Kauf | Verkauf). */
+.rwrap {
+	border-bottom: 1px solid var(--line);
+}
+
+.rwrap .row {
+	border-bottom: 0;
+}
+
+.xpan {
+	overflow: hidden;
+	max-height: 0;
+	background: var(--panel2);
+	border-top: 1px solid transparent;
+	transition:
+		max-height 0.18s ease,
+		border-color 0.18s ease;
+}
+
+.rwrap.is-open .xpan {
+	max-height: var(--xpan-h);
+	border-top-color: var(--lineb);
+}
+
+.xpan .inner {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--pad-x);
+	/* feste Höhe ≈ 3 Zeilenhöhen wie Arkanis (focus-animate-height) — mehr Zeilen
+	   scrollen intern, weniger lassen die Fläche nicht schrumpfen. */
+	min-height: calc(var(--xpan-h) - 1px); /* -1px: box-sizing border-box, obere Hairline */
+	align-content: start;
+	overflow: auto;
+	padding: calc(var(--pad-x) * 0.6) var(--pad-x) calc(var(--pad-x) * 0.8);
+}
+
+/* Preis-Tabelle je Spalte: Caption (Kauf/Verkauf) + Zeilen mit Hairlines. */
+.ptab {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.ptab .cap {
+	padding-bottom: 0.6vh;
+	margin-bottom: 0.6vh;
+	border-bottom: 1px solid var(--lineb);
+	font: 700 max(1.05vh, 10px)/1.5 var(--font-mono);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
 	color: var(--fgfaint);
+}
+
+.ptab .cap b.buy {
+	color: var(--buy);
+}
+
+.ptab .cap b.sell {
+	color: var(--sell);
+}
+
+.ptab .ph,
+.ptab .pr {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto auto;
+	gap: 0.9em;
+	align-items: center;
+	padding: 0.5vh 0;
+	border-bottom: 1px solid var(--line);
+	font: 500 max(1.45vh, 11.5px)/1.35 var(--font-mono);
+	color: var(--fgdim);
+}
+
+.ptab .ph {
+	font: 700 max(1.05vh, 9.5px)/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+	border-bottom-color: var(--lineb);
+}
+
+.ptab .pr .loc {
+	color: var(--fg);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ptab .pr .val {
+	font-weight: 600;
+	color: var(--fg);
+	white-space: nowrap;
+}
+
+.ptab .pr .val.buy {
+	color: var(--buy);
+}
+
+.ptab .pr .val.sell {
+	color: var(--sell);
+}
+
+.ptab .pr .unit {
+	color: var(--fgfaint);
+	white-space: nowrap;
+}
+
+.ptab .pr.best {
+	padding-left: 0.6em;
+	background: var(--panel);
+	box-shadow: inset 3px 0 0 var(--accent-h);
+}
+
+.ptab .stale {
+	color: var(--warn);
 }
 
 .stale {
@@ -830,7 +1126,7 @@ html[data-window="spotlight"] .pal-root {
 	padding: 7px 13px;
 	border: 1px solid var(--accent);
 	background: var(--accent);
-	color: #0b0b0b;
+	color: var(--on-accent);
 	border-radius: 3px;
 	font: 700 11px/1 var(--font-mono);
 	letter-spacing: 0.1em;
@@ -1019,7 +1315,7 @@ html[data-window="spotlight"] .pal-root {
 }
 
 .foot button {
-	color: #0b0b0b;
+	color: var(--on-accent);
 	background: var(--accent);
 	border-radius: 3px;
 	padding: 3px 9px;

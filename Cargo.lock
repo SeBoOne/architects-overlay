@@ -66,12 +66,13 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "architects-overlay"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "cache",
  "game_detection",
  "log",
+ "math-eval",
  "provider",
  "serde",
  "serde_json",
@@ -2290,6 +2291,10 @@ dependencies = [
  "tendril",
  "web_atoms",
 ]
+
+[[package]]
+name = "math-eval"
+version = "0.1.0"
 
 [[package]]
 name = "memchr"

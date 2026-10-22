@@ -1,14 +1,18 @@
 <script lang="ts">
-	// SC Architects Overlay — Suchpalette (Phase 1).
+	// SC Architects Overlay — Suchpalette (Arkanis-UX-Rework, Phase t_1a0b0acb).
 	//
 	// Beide Tauri-Fenster rendern dieselbe Palette ("main" = Entwicklungs-Shell,
 	// "spotlight" = Overlay über Star Citizen). Der Spotlight ist click-through-
 	// fähig und zeigt den Spiel-/Fokus-Status; Esc blendet ihn aus.
 	//
-	// Zustände (Design t_06285098 · Variante C COCKPIT / HUD Amber):
-	//   idle · typing · detail · loading · error · offline · market
-	// Suche: 120 ms Debounce gegen den lokalen SQLite-Cache (`search`-IPC),
-	// gruppiert Commodities → Items → Locations, Tastatur ↑↓ ↵ Esc (M = Market).
+	// Bedienung orientiert an ArkanisOverlay:
+	//   - Kategorie-Präfixe  :c :i :l  filtern je Term der Suchzeile
+	//   - Inline-Rechner     =2*250+15%  → Ergebnis-Chip statt Ergebnisliste
+	//   - Zeile anklicken/Enter → Inline-Expansion mit Preis-Tabelle (Kauf/Verkauf)
+	//   - Alt+1..0 fokussiert den n-ten Treffer, erneut → zurück ins Suchfeld
+	//   - Esc: Suchfeld-Fokus ⇒ Overlay ausblenden; sonst Fokus ins Suchfeld
+	//
+	// Zustände: idle · typing · loading · error · offline · market
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -33,6 +37,7 @@
 		updated: number;
 	};
 	type PriceDetail = { commodity: string; source: string; fetched_at: number; prices: PricePoint[] };
+	type CalcResult = { value: string };
 	type DatasetStatus = { kind: string; label: string; fresh: boolean; age_secs: number | null; count: number };
 	type SyncStatus = {
 		provider: string;
@@ -76,20 +81,40 @@
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	const SYNC_EVENT = 'trade-sync';
 
-	type Phase = 'idle' | 'typing' | 'detail' | 'loading' | 'error' | 'offline' | 'market';
+	type Phase = 'idle' | 'typing' | 'loading' | 'error' | 'offline' | 'market';
 
 	// ---- Zustand -------------------------------------------------------------
 	let isSpotlight = $state(false);
 	let overlay = $state<OverlayState | null>(null);
 	let phase = $state<Phase>('loading');
 	let input = $state('');
-	let filter = $state('all'); // all | commodity | item | location
+	// Vom Präfix-Parser abgeleitete Kategorien (aus `:c :i :l`-Termen).
+	let filters = $state<string[]>([]);
 	let groups = $state<GroupHits[]>([]);
 	let sel = $state(0);
-	let detail = $state<PriceDetail | null>(null);
-	let detailBusy = $state(false);
 	let status = $state<SyncStatus | null>(null);
 	let errorMsg = $state<string | null>(null);
+
+	// Rechner-Modus (`=…`) + Found-Chip.
+	let calcResult = $state<CalcResult | null>(null);
+	let calcError = $state<string | null>(null);
+	let searchMs = $state(0);
+	let searchTotal = $state(0);
+
+	// Inline-Expansion: nur EINE Zeile ist gleichzeitig aufgeklappt, also reicht
+	// ein reaktives Skalar (Map-Mutationen würden Svelte 5 NICHT neu rendern —
+	// die X-Pan würde ewig „Lade Preise …" zeigen; ein reaktiver Vergleich
+	// `expanded === idx` plus dieses Skalar triggert jedes Mal).
+	type RowDetail = { busy: boolean; detail: PriceDetail | null; error: string | null };
+	let xpan = $state<RowDetail | null>(null);
+	// Stale-Response-Guard: eine spät eintreffende get_prices-Antwort darf eine
+	// neuer geöffnete Zeile (oder eine geleerte Liste) nicht überschreiben.
+	let xpanToken = 0;
+	// `expanded` = welche Zeile auf-/zugeklappt ist; `focusIdx` = per Alt+Zahl
+	// fokussierte Zeile (Badge ausgegraut).
+	let expanded = $state<number | null>(null);
+	let focusIdx = $state<number | null>(null);
+	let searchEl = $state<HTMLInputElement | null>(null);
 
 	// ---- Market-State (Phase 2) --------------------------------------------
 	let offers = $state<Offer[]>([]);
@@ -97,21 +122,17 @@
 	let mSource = $state<'cache' | 'live' | 'offline'>('live');
 	let mNote = $state<string | null>(null);
 	let mSel = $state(0);
-	// Selected offer → deep-link detail view.
 	let offerDetail = $state<Offer | null>(null);
-	// Client-side filter/order controls (all applied server-side by the provider).
 	let mSort = $state<OfferSort>('newest');
 	let mOp = $state<'all' | MarketOp>('all');
 	let mRegion = $state('all');
-	// Free-text filter (title/description/seller) — provider's `q`.
 	let mQuery = $state('');
-	// Ordered/filtered list for display (client mirrors of what the provider sent).
 	let marketRegions = $state<string[]>([]);
 	let mDebounce: ReturnType<typeof setTimeout> | null = null;
 
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
-	let flat: SearchHit[] = [];
-	let groupOffsets: number[] = [];
+	let flat = $state<SearchHit[]>([]);
+	let groupOffsets = $state<number[]>([]);
 	let debounce: ReturnType<typeof setTimeout> | null = null;
 
 	function hasData(s?: SyncStatus | null): boolean {
@@ -126,12 +147,7 @@
 			return;
 		}
 		try {
-				// Click-through ist bereits der Rust-seitige Default (OverlayState);
-				// wir überschreiben ihn bewusst NICHT, damit das Overlay beim Spielen
-				// standardmäßig durchklickbar bleibt und die Maus im Spiel ankommt.
-				// Der User schaltet in den Fokus-Modus über Hotkey (Strg+Shift+O),
-				// Socket-CLI (`arch-overlay clickthrough`) oder den Badge-Button.
-				const label = getCurrentWindow().label;
+			const label = getCurrentWindow().label;
 			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
 			if (label === 'spotlight') {
 				isSpotlight = true;
@@ -139,6 +155,11 @@
 				await listen<OverlayState>(OVERLAY_STATE_EVENT, (e) => {
 					overlay = e.payload;
 				});
+				// Arkanis: sobald das Overlay-Fenster Fokus bekommt, springt der
+				// Cursor ins Suchfeld (window-focus handler).
+				if (typeof window !== 'undefined') {
+					window.addEventListener('focus', onWindowFocus);
+				}
 			}
 		} catch {
 			// Ohne Tauri-Webview (plain vite dev) → unkritisch, Palette läuft.
@@ -166,9 +187,13 @@
 	}
 	void boot();
 
+	function onWindowFocus() {
+		if (isSpotlight) focusSearch(true);
+	}
+
 	function onSyncEvent(s: SyncStatus) {
 		status = s;
-		if (phase === 'typing' || phase === 'detail') return; // laufende Aktion nicht stören
+		if (phase === 'typing') return; // laufende Aktion nicht stören
 		if (!hasData(s)) {
 			phase = s.last_error ? 'error' : s.syncing ? 'loading' : phase;
 		} else {
@@ -176,15 +201,83 @@
 		}
 	}
 
-	// ---- Suche (debounced, cache-only, < 50 ms) ------------------------------
+	// ---- Fokus ins Suchfeld (Select-All) --------------------------------------
+	function focusSearch(selectAll: boolean) {
+		if (searchEl) {
+			searchEl.focus();
+			if (selectAll) {
+				searchEl.select();
+			}
+		}
+	}
+
+	// ---- Suchbegriff → (freie Terme, Kategorie-Filter, Rechner) ---------------
+	// Jeder Leerzeichen-getrennte Term einzeln: `:c/:i/:l` → Kategorie-Filter,
+	// `=…` (erster Term) → Rechnermodus, sonst Fuzzy-Suchtext. Freie Terme werden
+	// mit Leerzeichen wieder zu einem Suchtext verbunden.
+	function parseQuery(): { text: string; cats: string[]; isCalc: boolean } {
+		const raw = input.trim();
+		if (!raw) return { text: '', cats: [], isCalc: false };
+		if (raw.startsWith('=')) {
+			return { text: raw.slice(1).trim(), cats: [], isCalc: true };
+		}
+		const cats: string[] = [];
+		const terms: string[] = [];
+		for (const tok of raw.split(/\s+/)) {
+			if (tok === ':c') cats.push('commodity');
+			else if (tok === ':i') cats.push('item');
+			else if (tok === ':l') cats.push('location');
+			else if (tok.startsWith(':')) continue; // unbekannter Präfix ignorieren
+			else terms.push(tok);
+		}
+		return { text: terms.join(' '), cats: [...new Set(cats)], isCalc: false };
+	}
+
+	// ---- Suche (debounced 180 ms, cache-only) ---------------------------------
 	function onInput() {
 		if (debounce) clearTimeout(debounce);
-		debounce = setTimeout(() => runSearch(), 120);
+		debounce = setTimeout(() => void runSearch(), 180);
 	}
 
 	async function runSearch() {
-		const q = input.trim();
-		if (!q) {
+		const q = parseQuery();
+		calcResult = null;
+		calcError = null;
+		expanded = null;
+		focusIdx = null;
+		xpan = null;
+		xpanToken++;
+
+		if (q.isCalc) {
+			// Inline-Rechner: Ergebnis-Chip anstelle der Ergebnisliste.
+			if (!q.text) {
+				groups = [];
+				flat = [];
+				groupOffsets = [];
+				sel = 0;
+				phase = 'idle';
+				return;
+			}
+			const t0 = performance.now();
+			try {
+				const v = await invoke<string>('math_eval', { expr: q.text });
+				calcResult = { value: v };
+				calcError = null;
+				searchMs = Math.max(1, Math.round(performance.now() - t0));
+				searchTotal = 1;
+				groups = [];
+				flat = [];
+				groupOffsets = [];
+				phase = 'typing';
+			} catch (e) {
+				calcError = String(e);
+				calcResult = null;
+				phase = 'typing';
+			}
+			return;
+		}
+
+		if (!q.text && !q.cats.length) {
 			groups = [];
 			flat = [];
 			groupOffsets = [];
@@ -192,11 +285,18 @@
 			phase = 'idle';
 			return;
 		}
+		filters = q.cats;
+		// Präfix-only (z. B. `:c`) hat keinen Freitext → dann alle Treffer der
+		// Kategorie listen (Suchtext leer = Breitensuche).
+		const query = q.text;
+		const t0 = performance.now();
 		try {
 			const resp = await invoke<SearchResponse>('search', {
-				query: q,
-				filter: filter === 'all' ? null : filter
+				query,
+				filters: filters.length ? filters : null,
 			});
+			searchMs = Math.max(1, Math.round(performance.now() - t0));
+			searchTotal = resp.total;
 			groups = resp.groups;
 			rebuildFromGroups();
 			sel = 0;
@@ -212,6 +312,8 @@
 		const offs: number[] = [];
 		let acc = 0;
 		for (const g of groups) {
+			// Bei Kategorie-Filter nur die passende Gruppe zeigen.
+			if (filters.length && !filters.includes(g.kind)) continue;
 			offs.push(acc);
 			out.push(...g.hits);
 			acc += g.hits.length;
@@ -230,41 +332,94 @@
 		sel = Math.min(Math.max(sel + dir, 0), flat.length - 1);
 	}
 
-	function cycleFilter() {
-		const order = ['all', 'commodity', 'item', 'location'];
-		const i = order.indexOf(filter);
-		filter = order[(i + 1) % order.length];
-		if (input.trim()) void runSearch();
-	}
-
-	async function openSelected() {
-		if (!flat.length) return;
-		const row = flat[sel];
-		errorMsg = null;
-		detail = null;
-		detailBusy = true;
-		phase = 'detail';
-		try {
-			const d = await invoke<PriceDetail>('get_prices', { commodity: row.name });
-			detail = d;
-		} catch (e) {
-			errorMsg = String(e);
-			phase = 'error';
+	// ---- Inline-Expansion (Preis-Tabelle) statt separates Detail-Panel --------
+	function openRow(idx: number) {
+		if (!flat[idx]) return;
+		// Taggleiche Zeile → zuklappen.
+		if (expanded === idx) {
+			clampIdx();
+			return;
 		}
-		detailBusy = false;
+		sel = idx;
+		expanded = idx;
+		// Preise lazy laden — reaktiv in `xpan` (Svelte-5-sicher).
+		xpan = { busy: true, detail: null, error: null };
+		void loadDetail(flat[idx]);
 	}
 
-	function esc() {
-		if (phase === 'detail' || phase === 'market') {
-			phase = status?.online === false && status ? 'offline' : 'typing';
-		} else if (isSpotlight) {
-			void invoke<boolean>('overlay_set_visible', { visible: false });
+	// Alt+Zahl nur fokussieren: Badge ausgegraut, aber NICHT aufklappen.
+	function focusOnly(idx: number) {
+		if (expanded !== idx) {
+			expanded = idx;
+			xpan = { busy: true, detail: null, error: null };
+			void loadDetail(flat[idx]);
+		}
+	}
+
+	function clampIdx() {
+		expanded = null;
+		focusIdx = null;
+		xpan = null;
+		xpanToken++;
+	}
+
+	async function loadDetail(h: SearchHit) {
+		const myToken = ++xpanToken;
+		try {
+			const d = await invoke<PriceDetail>('get_prices', { commodity: h.name });
+			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
+		} catch (e) {
+			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
+		}
+	}
+
+	// ---- Alt+Zahl: Treffer fokussieren / zurück ins Suchfeld -----------------
+	function onAltNumber(digit: string) {
+		if (!flat.length) return;
+		const n = digit === '0' ? 9 : Number(digit) - 1;
+		if (n >= flat.length) return;
+		if (focusIdx === n) {
+			// erneut → Fokus zurück ins Suchfeld (Select-All).
+			focusIdx = null;
+			expanded = null;
+			xpan = null;
+			focusSearch(true);
+			return;
+		}
+		focusIdx = n;
+		focusOnly(n);
+	}
+
+	function badgeOf(idx: number): string {
+		if (idx >= 10) return '';
+		return idx < 9 ? String(idx + 1) : '0';
+	}
+
+	// ---- Esc-Toggle (Kernfeature) --------------------------------------------
+	// Esc → wenn das Suchfeld Fokus hat ⇒ Overlay ausblenden (hide); wenn das
+	// Suchfeld NICHT den Fokus hat ⇒ Fokus zurück ins Suchfeld (Select-All).
+	// Nie ausblenden, wenn der Fokus woanders liegt (Arkanis-Verhalten).
+	function escSearch() {
+		const inSearch = searchEl ? document.activeElement === searchEl : phase !== 'typing';
+		if (inSearch) {
+			// Suchfeld fokussiert → Overlay ausblenden (Spotlight) bzw. leeren.
+			if (isSpotlight) {
+				void invoke<boolean>('overlay_set_visible', { visible: false });
+			} else {
+				input = '';
+				groups = [];
+				flat = [];
+				groupOffsets = [];
+				expanded = null;
+				focusIdx = null;
+				xpan = null;
+				calcResult = null;
+				calcError = null;
+				phase = 'idle';
+			}
 		} else {
-			input = '';
-			groups = [];
-			flat = [];
-			groupOffsets = [];
-			phase = 'idle';
+			// Fokus woanders (Ergebnis/Expansion/…) → Suchfeld (Select-All).
+			focusSearch(true);
 		}
 	}
 
@@ -282,7 +437,7 @@
 	async function loadMarket() {
 		mLoading = true;
 		mNote = null;
-		const filters = {
+		const filterObj = {
 			location: '',
 			q: mQuery.trim(),
 			item_id: null,
@@ -292,14 +447,13 @@
 			limit: 100
 		};
 		try {
-			const resp = await invoke<MarketResponse>('get_marketplace', { filters });
+			const resp = await invoke<MarketResponse>('get_marketplace', { filters: filterObj });
 			offers = resp.offers;
 			mSource = resp.source;
 			mNote = resp.note;
 			mSel = Math.min(mSel, Math.max(offers.length - 1, 0));
 			marketRegions = [...new Set(resp.offers.map((o) => o.region).filter(Boolean))].sort();
 		} catch (e) {
-			// Live fetch failed with no offline snapshot → show the market error.
 			offers = [];
 			mNote = String(e);
 			mSource = 'offline';
@@ -343,7 +497,6 @@
 
 	function fmtPrice(p: number): string {
 		if (!p) return '—';
-		// Full unit price without decimals (aUEC), German grouping.
 		return new Intl.NumberFormat('de-DE', { maximumFractionDigits: 0 }).format(p);
 	}
 
@@ -365,10 +518,7 @@
 	}
 
 	// 'm' und 'o' sind druckbare Buchstaben — die Shortcuts dürfen sie NICHT
-	// schlucken, während der User in einem Eingabefeld tippt (Bug A1: das 'm'
-	// aus "titanium" verschwand, die Palette sprang in den Market-Pane).
-	// Regel: im Suchfeld toggelt nur noch Ctrl+M (Meta+ eine starke Modifier-
-	// Art); ohne fokussiertes Feld schaltet das bloße 'M' weiter.
+	// schlucken, während der User in einem Eingabefeld tippt.
 	function isFieldFocused(e: KeyboardEvent): boolean {
 		const t = e.target;
 		if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) {
@@ -382,10 +532,7 @@
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
-		// Market phase: offer list navigation + detail. Tab/→ öffnet das Detail
-		// (Task: "vom Spotlight navigierbar, z.B. Tab/'→' ins Detail"). In der
-		// Market-Ansicht greift der Filter-Cycle für Tab NICHT — dort navigiert
-		// Tab in die Detail-Ansicht des markierten Angebots.
+		// Market phase: offer list navigation + detail.
 		if (phase === 'market') {
 			if (k === 'ArrowDown' && !offerDetail) {
 				mSel = Math.min(offers.length - 1, mSel + 1);
@@ -398,7 +545,7 @@
 				return;
 			}
 			if (k === 'ArrowRight' || k === 'Tab') {
-				if (offerDetail) return; // Detail offen: nichts weiter
+				if (offerDetail) return;
 				openOfferDetail();
 				e.preventDefault();
 				return;
@@ -420,16 +567,23 @@
 			}
 			if (k === 'Escape') {
 				if (offerDetail) {
-					offerDetail = null; // erst Detail schließen
+					offerDetail = null;
 				} else {
-					toggleMarket(); // dann Markt verlassen
+					toggleMarket();
 				}
 				e.preventDefault();
 				return;
 			}
-			// andere Tasten in Market-Ansicht: normal durchlassen (Eingaben ins Feld ok)
 			return;
 		}
+
+		// Alt+Zahl: Treffer direkt fokussieren (Badges 1..0).
+		if (e.altKey && /^[0-9]$/.test(k)) {
+			onAltNumber(k);
+			e.preventDefault();
+			return;
+		}
+
 		if (k === 'ArrowDown') {
 			move(1);
 			e.preventDefault();
@@ -437,27 +591,21 @@
 			move(-1);
 			e.preventDefault();
 		} else if (k === 'Enter') {
-			void openSelected();
+			openRow(sel);
 			e.preventDefault();
 		} else if (k === 'Escape') {
-			esc();
+			escSearch();
 			e.preventDefault();
 		} else if (k === 'm' || k === 'M') {
-			// Im fokussierten Eingabefeld ist 'm' Dateninput → nur mit Modifier
-			// (Strg/Meta) den Market togglen, sonst den Buchstaben durchlassen.
 			if (isFieldFocused(e) && !e.ctrlKey && !e.metaKey) {
 				return;
 			}
 			toggleMarket();
 			e.preventDefault();
 		} else if (k === 'Tab') {
-			cycleFilter();
-			e.preventDefault();
-		} else if ((k === 'o' || k === 'O') && phase === 'error') {
-			// 'o' ist druckbar — nur als Offline-Shortcut, wenn kein Feld
-			// bearbeitet wird (der Klick-Button deckt den Feld-Fall ab).
-			if (isFieldFocused(e)) return;
-			phase = 'offline';
+			// Inline-Expansion ist der Hauptpfad; Tab navigiert weiterhin durch
+			// das Formular nativer — kein Filter-Cycle mehr (Arkanis nutzt Präfixe).
+			return;
 		}
 	}
 
@@ -495,38 +643,36 @@
 		return { text: `SYNC ${cacheAge(s)} · ${s.provider.toUpperCase()}`, cls: '' };
 	}
 
-	// ---- Detail-Zusammenfassung ----------------------------------------------
-	function stats() {
-		const ps = detail?.prices ?? [];
-		const sell = ps.map((p) => p.sell_price).filter((v) => v > 0);
-		const buy = ps.map((p) => p.buy_price).filter((v) => v > 0);
-		const bestSell = sell.length ? Math.max(...sell) : null;
-		const bestBuy = buy.length ? Math.max(...buy) : null;
-		const avg = sell.length ? sell.reduce((a, b) => a + b, 0) / sell.length : null;
-		const span = sell.length ? { lo: Math.min(...sell), hi: Math.max(...sell) } : null;
-		return { bestSell, bestBuy, avg, span };
+	// ---- Preis-Tabellen für die Inline-Expansion (Kauf | Verkauf) ------------
+	// Arkanis GameEntitySearchDetails/PriceTagTable: zwei Spalten nebeneinander.
+	function buyPoints(d: PriceDetail): PricePoint[] {
+		return (d.prices ?? [])
+			.filter((p) => p.buy_price > 0)
+			.sort((a, b) => b.buy_price - a.buy_price);
 	}
 
-	function barPct(price: number, lo: number, hi: number): number {
-		if (hi <= lo) return 100;
-		return Math.max(6, ((price - lo) / (hi - lo)) * 100);
+	function sellPoints(d: PriceDetail): PricePoint[] {
+		return (d.prices ?? [])
+			.filter((p) => p.sell_price > 0)
+			.sort((a, b) => b.sell_price - a.sell_price);
 	}
 
-	// Alterspanne der Preise in Minuten: `{ lo, hi }` in Minuten, `null` wenn keine.
-	function priceAgeRange(): { lo: number; hi: number } | null {
-		const mins = (detail?.prices ?? [])
-			.map((p) => Math.max(0, nowSec() - p.updated) / 60)
-			.filter((m) => Number.isFinite(m));
-		if (!mins.length) return null;
-		return { lo: Math.min(...mins), hi: Math.max(...mins) };
+	function fmtStock(p: PricePoint): string {
+		return fmtQty(Math.max(p.sell_stock, p.buy_stock));
 	}
 
-	const ICONS = { commodity: 'C', item: 'I', location: 'L' };
-
-	function setFilter(f: string) {
-		filter = f;
-		if (input.trim()) void runSearch();
+	// Beste Preise für die Inline-Meta-Felder (der Expansion entnommen).
+	function bestBuy(d: PriceDetail | null): number {
+		const xs = (d?.prices ?? []).map((p) => p.buy_price).filter((v) => v > 0);
+		return xs.length ? Math.max(...xs) : 0;
 	}
+
+	function bestSell(d: PriceDetail | null): number {
+		const xs = (d?.prices ?? []).map((p) => p.sell_price).filter((v) => v > 0);
+		return xs.length ? Math.max(...xs) : 0;
+	}
+
+	const ICONS: Record<string, string> = { commodity: 'C', item: 'I', location: 'L' };
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -547,6 +693,7 @@
 				class="q"
 				type="text"
 				autofocus
+				bind:this={searchEl}
 				bind:value={input}
 				oninput={onInput}
 				placeholder="Commodity, Item oder Terminal suchen …"
@@ -557,25 +704,16 @@
 			<span class="esc">ESC</span>
 		</div>
 
-		<!-- Filterleiste (verschwindet in Detail/Loading/Error/Market) -->
-		{#if phase === 'typing' || phase === 'offline' || phase === 'idle'}
-			<div class="fbar">
-				<span class="chip" class:is-on={filter === 'all'} onclick={() => setFilter('all')}>Alle</span>
-				<span class="chip" class:is-on={filter === 'commodity'} onclick={() => setFilter('commodity')}>
-					<span class="dot"></span>Commodities
-				</span>
-				<span class="chip" class:is-on={filter === 'item'} onclick={() => setFilter('item')}>
-					<span class="dot"></span>Items
-				</span>
-				<span class="chip" class:is-on={filter === 'location'} onclick={() => setFilter('location')}>
-					<span class="dot"></span>Locations
-				</span>
-				{#if status?.online === false}
-					<span class="spacer"></span>
-					<span class="chip warn"><span class="dot"></span>Cache · veraltet</span>
-				{/if}
-			</div>
-		{/if}
+		<!-- Helper-Zeile: Shortcuts (Arkanis - Overline/Typo secondary) -->
+		<div class="helper">
+			<span><kbd>:c</kbd> commodities</span>
+			<span class="sep">·</span>
+			<span><kbd>:i</kbd> items</span>
+			<span class="sep">·</span>
+			<span><kbd>:l</kbd> locations</span>
+			<span class="sep">·</span>
+			<span><kbd>=</kbd> math</span>
+		</div>
 
 		<!-- Inhalt je Zustand -->
 		{#if phase === 'loading'}
@@ -602,77 +740,9 @@
 				</div>
 			</div>
 
-		{:else if phase === 'detail'}
-			<div class="pane-detail">
-				{#if detailBusy || !detail}
-					<div class="center">
-						<span class="spin"></span>
-						<div class="big" style="margin-top: 12px">Lade Preise …</div>
-					</div>
-				{:else}
-					{@const s = stats()}
-					{@const ageRange = priceAgeRange()}
-					<div class="dhead">
-						<div class="t">
-							<h2>{detail.commodity}</h2>
-							<span class="tag" style="color: var(--fgdim)">UEX #{detail.prices[0]?.commodity_id ?? '—'}</span>
-						</div>
-						<div class="kpis">
-							<div class="kpi">
-								<div class="k">Bester Verkauf</div>
-								<div class="v sell">{s.bestSell != null ? fmt(s.bestSell) : '—'}</div>
-								<div class="u">aUEC/SCU</div>
-							</div>
-							<div class="kpi">
-								<div class="k">Bester Kauf</div>
-								<div class="v buy">{s.bestBuy != null ? fmt(s.bestBuy) : '—'}</div>
-								<div class="u">{s.bestBuy == null ? 'kein Terminal kauft' : 'aUEC/SCU'}</div>
-							</div>
-							<div class="kpi">
-								<div class="k">Ø UEX</div>
-								<div class="v">{s.avg != null ? fmt(s.avg) : '—'}</div>
-								<div class="u">{s.span ? `Spanne ${fmt(s.span.lo)}–${fmt(s.span.hi)}` : 'keine Kurse'}</div>
-							</div>
-						</div>
-					</div>
-					<table class="dtable">
-						<thead>
-							<tr>
-								<th>Terminal</th>
-								<th>Kauf</th>
-								<th>Verkauf</th>
-								<th>Bestand</th>
-								<th>Alter</th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each [...(detail.prices ?? [])].sort((a, b) => b.sell_price - a.sell_price) as p}
-								<tr class:best={p.sell_price === s.bestSell}>
-									<td>
-										{p.location}
-										{#if s.span}
-											<span class="bar"><i style="width: {barPct(p.sell_price, s.span.lo, s.span.hi)}%"></i></span>
-										{/if}
-									</td>
-									<td>{p.buy_price > 0 ? fmt(p.buy_price) : '—'}</td>
-									<td>{p.sell_price > 0 ? fmt(p.sell_price) : '—'}</td>
-									<td>{fmt(Math.max(p.sell_stock, p.buy_stock), 0)}</td>
-									<td>{rel(p.updated)}</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-					<div class="note">
-						Quelle: <span class="src">UEX Corp</span> · Preise
-						{ageRange ? `${fmt(ageRange.lo, 0)}–${fmt(ageRange.hi, 0)} min alt` : 'Alter unbekannt'}
-					</div>
-				{/if}
-			</div>
-
 		{:else if phase === 'market'}
 			<div class="pane-market">
 				{#if offerDetail}
-					<!-- Angebots-Detail + Deep-Link -->
 					<div class="mdetail">
 						<div class="md-head">
 							<div class="md-t">
@@ -725,7 +795,6 @@
 						</div>
 					</div>
 				{:else}
-					<!-- Filterzeile: Operation · Region · Sortierung · Text -->
 					<div class="mbar">
 						<span
 							class="chip"
@@ -815,35 +884,129 @@
 						<span class="dot"></span>Offline · Cache von {cacheAge()} · Preise ggf. veraltet
 					</div>
 				{/if}
-				{#if (input as string).trim() && phase !== 'idle'}
+
+				{#if calcResult}
+					<!-- Inline-Rechner-Ergebnis statt Ergebnisliste -->
+					<div class="found">
+						<span class="c">= {calcResult.value}</span>
+					</div>
+				{:else if calcError}
+					<div class="found">
+						<span class="c" style="color: var(--alert)">{calcError}</span>
+					</div>
+				{:else if (input as string).trim() && flat.length}
+					<!-- Found-Chip über der Liste -->
+					<div class="found">
+						<span class="c">Found <b>{searchTotal}</b> results in <b>{searchMs}</b> ms</span>
+					</div>
+
 					<div class="list">
 						{#each groups as g, gi}
-							{#if filter === 'all' || g.kind === filter}
+							{@const show = filters.length ? filters.includes(g.kind) : true}
+							{#if show && g.hits.length}
 								<div class="vgroup">{g.label} <span class="n">{g.hits.length}</span></div>
-								{#if g.hits.length}
-									{#each g.hits as h, hi}
-										{@const idx = groupOffset(gi) + hi}
+								{#each g.hits as h, hi}
+									{@const idx = groupOffset(gi) + hi}
+									<div class="rwrap" class:is-open={expanded === idx}>
 										<div
 											class="row"
 											class:is-sel={idx === sel}
+											class:is-focus={focusIdx === idx}
+											role="option"
+											aria-selected={idx === sel}
 											onclick={() => {
 												sel = idx;
-												void openSelected();
+												if (expanded === idx) {
+													clampIdx();
+												} else {
+													openRow(idx);
+												}
 											}}
 										>
-											<div class="ic">{ICONS[g.kind as keyof typeof ICONS] ?? '?'}</div>
+											<span class="rbadge">{badgeOf(idx)}</span>
+											<span class="ic">{ICONS[g.kind] ?? '?'}</span>
 											<div>
 												<div class="name">{h.name}</div>
 												<div class="sub">{h.subtitle}</div>
 											</div>
-											<div class="right">
-												{#if phase === 'offline'}<span class="stale">cache</span>{:else}<b>{h.code ?? ''}</b>{/if}
+											<div class="meta">
+												<div class="mf"><span class="k">UEX-ID</span><span class="v">{h.code ?? h.id}</span></div>
+												{#if expanded === idx && xpan?.detail}
+													<div class="mf">
+														<span class="k">Kauf ab</span>
+														<span class="v buy">{fmt(bestBuy(xpan.detail))} aUEC</span>
+													</div>
+													<div class="mf">
+														<span class="k">Verkauf bis</span>
+														<span class="v sell">{fmt(bestSell(xpan.detail))} aUEC</span>
+													</div>
+												{/if}
+											</div>
+											<div class="ctl">
+												{#if expanded === idx}
+													<span class="btn-x primary">{xpan?.busy ? '…' : '▼ PREISE'}</span>
+												{:else}
+													<span class="btn-x">↵ Preise</span>
+												{/if}
 											</div>
 										</div>
-									{/each}
-								{:else}
-									<div class="row-empty">Keine Treffer</div>
-								{/if}
+
+										{#if expanded === idx && xpan}
+											<div class="xpan is-open">
+												<div class="inner">
+													{#if xpan.busy && !xpan.detail}
+														<div class="ptab">
+															<div class="cap">Lade Preise …</div>
+														</div>
+													{:else if xpan.error}
+														<div class="ptab">
+															<div class="cap">Fehler</div>
+															<div class="ph"><span>Preise nicht geladen</span></div>
+														</div>
+													{:else if xpan.detail}
+														{@const buys = buyPoints(xpan.detail)}
+														{@const sells = sellPoints(xpan.detail)}
+														<div class="ptab">
+															<div class="cap">Alle verfügbaren <b class="buy">Kauf</b>-Preise</div>
+															<div class="ph"><span>Terminal</span><span>Preis</span><span>SCU</span></div>
+															{#if buys.length}
+																{#each buys as p, bi}
+																	<div class="pr" class:best={bi === 0}>
+																		<span class="loc">{p.location}</span>
+																		<span class="val buy">{fmt(p.buy_price)}</span><span class="unit">aUEC</span>
+																	</div>
+																{/each}
+															{:else}
+																<div class="pr"><span class="loc" style="color: var(--fgfaint)">Kein Terminal kauft</span></div>
+															{/if}
+														</div>
+														<div class="ptab">
+															<div class="cap">Alle verfügbaren <b class="sell">Verkauf</b>-Preise</div>
+															<div class="ph"><span>Terminal</span><span>Preis</span><span>SCU</span></div>
+															{#if sells.length}
+																{#each sells as p, si}
+																	<div class="pr" class:best={si === 0}>
+																		<span class="loc">{p.location}</span>
+																		<span class="val sell">{fmt(p.sell_price)}</span><span class="unit">aUEC</span>
+																	</div>
+																{/each}
+															{:else}
+																<div class="pr"><span class="loc" style="color: var(--fgfaint)">Kein Terminal verkauft</span></div>
+															{/if}
+														</div>
+													{:else}
+														<div class="ptab">
+															<div class="cap">Lade Preise …</div>
+														</div>
+													{/if}
+												</div>
+											</div>
+										{/if}
+									</div>
+								{/each}
+							{:else if show && !g.hits.length}
+								<div class="vgroup">{g.label} <span class="n">0</span></div>
+								<div class="row-empty">Keine Treffer</div>
 							{/if}
 						{/each}
 					</div>
@@ -855,7 +1018,8 @@
 						<div class="sect"><div class="h">Schnellzugriff</div></div>
 						<div class="recent">
 							<span class="r"><b>Marketplace</b> · Ctrl+M</span>
-							<span class="r"><b>Vollständiger Sync</b></span>
+							<span class="r"><b>Rechner</b> · =2*250+15%</span>
+							<span class="r"><b>Kategorie</b> · :c gold</span>
 						</div>
 					</div>
 				{/if}
@@ -874,7 +1038,8 @@
 					<span><kbd>Esc</kbd> zurück</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
-					<span><kbd>↵</kbd> öffnen</span>
+					<span><kbd>Alt+1..0</kbd> Treffer</span>
+					<span><kbd>↵</kbd> aufklappen</span>
 					<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
 					<span><kbd>Ctrl+M</kbd> Market</span>
 				{/if}

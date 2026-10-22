@@ -1,0 +1,20 @@
+# Math crate — Architects Overlay / math-eval
+#
+# Tiny, dependency-free expression evaluator for the palette's inline
+# calculator (`=2*250+15%`). Phase 1 scope per the UX spec:
+#
+#   - binary `+ - * /`
+#   - postfix percent `N%` → N / 100
+#   - parentheses `( … )`
+#   - unary `-`
+#
+# No external crates on purpose (keep the supply chain minimal). It is a
+# pure Rust module: the parser + evaluator live here so they are unit-tested
+# without touching Tauri, and the overlay calls it through a thin IPC command.
+
+[package]
+name = "math-eval"
+version = "0.1.0"
+description = "Dependency-free expression evaluator for the overlay inline calculator"
+edition = "2024"
+rust-version = "1.90"

@@ -144,27 +144,33 @@ pub struct MarketResponse {
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Instant, cache-only search. `filter`: "all" (default) | "commodity" |
-/// "item" | "location" — the palette's category chips.
+/// Instant, cache-only search. `filters`: subset of ["commodity"|"item"|
+/// "location"] — the palette's category chips AND `:c`/`:i`/`:l` prefix terms
+/// (Arkanis-style). Empty = all categories.
 #[tauri::command]
 pub fn search(
     state: State<'_, TradeState>,
     query: String,
-    filter: Option<String>,
+    filters: Option<Vec<String>>,
 ) -> Result<SearchResponse, String> {
     let query = query.trim();
-    if query.is_empty() {
+    let filter_set = filters
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<std::collections::HashSet<String>>();
+    // Empty query without category filters = nothing to show. With filters
+    // (bare `:c`/`:i`/`:l`) the cache browse-mode lists the category instead.
+    if query.is_empty() && filter_set.is_empty() {
         return Ok(SearchResponse {
             groups: Vec::new(),
             total: 0,
         });
     }
-    let filter = filter.as_deref().unwrap_or("all");
 
     let mut groups = Vec::new();
     let mut total = 0usize;
     for (kind, label, entity_kind) in GROUPS {
-        if filter != "all" && filter != *kind {
+        if !filter_set.is_empty() && !filter_set.contains(*kind) {
             continue;
         }
         let hits = state
@@ -180,6 +186,35 @@ pub fn search(
     }
 
     Ok(SearchResponse { groups, total })
+}
+
+/// Evaluate a math expression for the inline calculator (`=2*250+15%`).
+/// Returns the computed value as a human-readable German string (never an
+/// exception — malformed input becomes an error string the UI can show).
+#[tauri::command]
+pub fn math_eval(expr: String) -> Result<String, String> {
+    let expr = expr.trim_start_matches('=').trim();
+    match math_eval::evaluate(&expr) {
+        Ok(v) if v.is_finite() => Ok(fmt_number(v)),
+        Ok(_) => Err("Ergebnis ist nicht endlich (Division durch 0?)".to_string()),
+        Err(e) => Err(e),
+    }
+}
+
+/// German number formatting for the calculator result (no trailing zeros).
+fn fmt_number(v: f64) -> String {
+    let mut s = format!("{v}");
+    // Collapse "0.30000000000000004"-style float noise to a clean short form.
+    if s.contains('.') {
+        let truncated = format!("{:.10}", v);
+        let mut t = truncated.trim_end_matches('0');
+        if t.ends_with('.') {
+            t = &t[..t.len() - 1];
+        }
+        // Prefer the short form only when it round-trips (avoids 14 → 13.99999).
+        s = t.to_string();
+    }
+    s
 }
 
 /// Current price list for one commodity (by name/code). May fetch live when
@@ -553,6 +588,103 @@ mod tests {
             assert_eq!(resp.total, 0);
         }
         let _ = app; // state borrow keeps app alive for the duration
+    }
+
+    /// `search` accepts a set of category filters (from `:c`/`:i`/`:l` prefix
+    /// terms) — an empty set means all categories come along.
+    #[test]
+    fn search_accepts_multiple_category_filters() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(StubProvider),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+        });
+        let state = app.state::<TradeState>();
+
+        // None → every group is requested (all three present).
+        let resp = search(state.clone(), "gold".into(), None).unwrap();
+        assert_eq!(resp.groups.len(), 3, "no filter ⇒ all groups");
+
+        // A single filter keeps one group.
+        let resp = search(
+            state.clone(),
+            "gold".into(),
+            Some(vec!["commodity".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(resp.groups.len(), 1);
+        assert_eq!(resp.groups[0].kind, "commodity");
+
+        // Two filters keep those two groups, in GROUPS order.
+        let resp = search(
+            state.clone(),
+            "gold".into(),
+            Some(vec!["item".to_string(), "location".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(resp.groups.len(), 2);
+        assert_eq!(resp.groups[0].kind, "item");
+        assert_eq!(resp.groups[1].kind, "location");
+
+        let _ = app;
+    }
+
+    /// A bare category prefix (`:c` without free text) must reach the cache's
+    /// browse path — the empty-query short-circuit only fires without filters.
+    #[test]
+    fn empty_query_with_category_filter_browses_not_shortcircuits() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(StubProvider),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+        });
+        let state = app.state::<TradeState>();
+
+        // No filter + empty query → nothing (old short-circuit preserved).
+        let resp = search(state.clone(), "".into(), None).unwrap();
+        assert_eq!(resp.total, 0);
+        assert!(resp.groups.is_empty());
+
+        // Filter + empty query → the filtered group is served (browse mode;
+        // empty in-memory cache yields 0 hits, but the group must exist).
+        let resp = search(
+            state.clone(),
+            "".into(),
+            Some(vec!["commodity".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(resp.groups.len(), 1);
+        assert_eq!(resp.groups[0].kind, "commodity");
+        assert_eq!(resp.total, 0);
+
+        // Filter + empty query + another category → both groups, GROUPS order.
+        let resp = search(
+            state.clone(),
+            "".into(),
+            Some(vec!["item".to_string(), "location".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(resp.groups.len(), 2);
+        assert_eq!(resp.groups[0].kind, "item");
+        assert_eq!(resp.groups[1].kind, "location");
+
+        let _ = app;
+    }
+
+    #[test]
+    fn math_eval_inline_calculator() {
+        // The UI strips the leading '=' before invoking; the command is
+        // tolerant of it anyway.
+        assert_eq!(math_eval("2*250+15%".into()).unwrap(), "500.15");
+        assert_eq!(math_eval("=2*250+15%".into()).unwrap(), "500.15");
+        assert_eq!(math_eval("(2+3)*4".into()).unwrap(), "20");
+        assert_eq!(math_eval(" 10/4 ".into()).unwrap(), "2.5");
+        // Malformed input → a German error string, never a panic.
+        assert!(math_eval("2+3x".into()).is_err());
+        assert!(math_eval("".into()).is_err());
+        assert!(math_eval("1/0".into()).is_err()); // non-finite
     }
 
     #[test]
