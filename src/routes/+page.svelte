@@ -220,19 +220,16 @@
 	let offerDetail = $state<Offer | null>(null);
 	let mSort = $state<OfferSort>('newest');
 	let mOp = $state<'all' | MarketOp>('all');
-	let mRegion = $state('all');
 	// Qualitäts-Filter (clientseitig — die UEX-API bietet keinen Qualitäts-
 	// Query-Parameter, s. uex-api-reference.md §4b; leerer Wert = keine Grenze).
 	let mqMin = $state('');
 	let mqMax = $state('');
-	let marketRegions = $state<string[]>([]);
 
-	// Progressive Market-Pagination: erst die in-Memory-Snapshot-Seite (15)
-	// zeigen, "Weitere laden" deckt Mehr aus dem Snapshot; ist auch das 100-
-	// Angebot-Limit des Snapshots erschöpft, wird progressiv nachgefetcht
-	// (Limit 200 → 400 → 800 → 1000) — bis das Backend nichts mehr liefert.
+	// Market-Pagination: der Provider liefert je Fetch sein komplettes
+	// abrufbares Fenster (serverseitig nach item/operation verengt, sonst
+	// Verkauf+Kauf-Fenster gemerged) — "Weitere laden" blättert nur noch im
+	// In-Memory-Snapshot (15 pro Seite), es gibt kein progressives Nachfetchen.
 	let mMshown = $state(M_PAGE);
-	let mLimit = $state(100);
 	let mAllLoaded = $state(false);
 	let mLoadingMore = $state(false);
 
@@ -666,17 +663,41 @@
 	}
 
 	function toggleMarket() {
-		phase = phase === 'market' ? 'typing' : 'market';
-		if (phase === 'market') void loadMarket();
-		else {
+		if (phase === 'market') {
+			// P5: Rückweg Market → Search hinterlässt NICHTS — das Eingabefeld
+			// wird geleert (im Market-Modus stand dort der Offer-Query) und
+			// Sortierung/Operation/Qualität fallen auf ihre Defaults zurück,
+			// damit der nächste Market-Besuch unbelastet startet.
+			phase = 'idle';
+			input = '';
 			offerDetail = null;
 			mSel = 0;
 			mMshown = M_PAGE;
 			mAllLoaded = false;
-			// Wieder im Such-Modus: Ergebnisliste an den Suchtext des HAUPT-
-			// Suchfelds angleichen (im Market-Modus wurde dort der Offer-Query
-			// getippt — keine veralteten Treffer stehen lassen).
-			void runSearch();
+			mSort = 'newest';
+			mOp = 'all';
+			mqMin = '';
+			mqMax = '';
+			offers = [];
+			mNote = null;
+			groups = [];
+			flat = [];
+			groupOffsets = [];
+			sel = 0;
+			expanded = null;
+			focusIdx = null;
+			xpan = null;
+			xpanToken++;
+			calcResult = null;
+			calcError = null;
+			inDetail = false;
+			detailHit = null;
+			dSel = 0;
+			dChosen = null;
+			dToast = '';
+		} else {
+			phase = 'market';
+			void loadMarket();
 		}
 	}
 
@@ -689,7 +710,7 @@
 			q: input.trim(),
 			item_id: null,
 			operation: mOp === 'all' ? null : mOp,
-			region: mRegion === 'all' ? '' : mRegion,
+			region: '',
 			sort: mSort,
 			limit
 		};
@@ -698,11 +719,10 @@
 			offers = resp.offers;
 			mSource = resp.source;
 			mNote = resp.note ?? null;
-			marketRegions = [...new Set(resp.offers.map((o) => o.region).filter(Boolean))].sort();
-			// Nach einem frischen Fetch: neue Seite 1, oder alles anzeigen (bei
-			// progressiver Nachladung) — bis das Snapshot-Limit erreicht ist.
+			// Der Provider liefert sein komplettes abrufbares Fenster — mehr
+			// als diesen Snapshot gibt es vom Backend nicht nachzuholen.
 			mMshown = showAll ? offers.length : Math.min(M_PAGE, offers.length);
-			mAllLoaded = offers.length < limit; // Backend lieferte weniger als gefordert
+			mAllLoaded = true;
 		} catch (e) {
 			offers = [];
 			mNote = String(e);
@@ -714,7 +734,6 @@
 	}
 
 	async function loadMarket() {
-		mLimit = 100;
 		mAllLoaded = false;
 		await fetchMarket(100, false);
 	}
@@ -726,16 +745,12 @@
 		scrollOfferIntoView(mSel);
 	}
 
-	// "Weitere laden": zuerst aus dem Snapshot nachladen, bei Bedarf progressiv
-	// (Limit 200/400/800/1000) nachfetchen — bis das Backend nichts mehr liefert.
+	// "Weitere laden": blättert im In-Memory-Snapshot (15 pro Seite) — der
+	// Provider liefert je Fetch sein komplettes abrufbares Fenster, es gibt
+	// nichts Progressives mehr nachzuholen.
 	function loadMore() {
 		if (mMshown < visOffers.length) {
 			mMshown = Math.min(mMshown + M_PAGE, visOffers.length);
-			return;
-		}
-		if (mLimit < 1000 && !mAllLoaded) {
-			mLimit = Math.min(mLimit * 2, 1000);
-			void fetchMarket(mLimit, true);
 		}
 	}
 
@@ -761,12 +776,6 @@
 
 	function setOp(o: 'all' | MarketOp) {
 		mOp = o;
-		mMshown = M_PAGE;
-		void loadMarket();
-	}
-
-	function setRegion(r: string) {
-		mRegion = r;
 		mMshown = M_PAGE;
 		void loadMarket();
 	}
@@ -929,14 +938,22 @@
 				e.preventDefault();
 				return;
 			}
-			if (k === 'Tab' && mMshown < visOffers.length && !offerDetail && !inStepper) {
-				// Tab erreicht den "Weitere laden"-Button (nächste Seite).
-				const btn = document.querySelector<HTMLButtonElement>('.btn-more');
-				if (btn) {
-					btn.focus();
-					e.preventDefault();
+			if (k === 'Tab' && !inStepper) {
+				// P5: Tab verlässt den Market-Modus zurück zur Suche (Feld wird
+				// im toggleMarket-Exit komplett zurückgesetzt).
+				toggleMarket();
+				e.preventDefault();
+				return;
+			}
+			if ((k === 'm' || k === 'M') && !inStepper) {
+				// P5: M (bzw. Strg+M) verlässt den Market-Modus symmetrisch zum
+				// Eintritt — 'm' im Suchfeld tippt weiterhin normal.
+				if (isFieldFocused(e) && !e.ctrlKey && !e.metaKey) {
 					return;
 				}
+				toggleMarket();
+				e.preventDefault();
+				return;
 			}
 			// Alt+Zahl-Badges wie im Such-Modus: ersten 10 Offers fokussieren.
 			if (e.altKey && !offerDetail && /^[0-9]$/.test(k)) {
@@ -1178,11 +1195,6 @@
 						<button type="button" class="chip" class:is-on={mOp === 'sell'} onclick={() => setOp('sell')}><span class="dot"></span>Verkauf</button>
 						<button type="button" class="chip" class:is-on={mOp === 'buy'} onclick={() => setOp('buy')}><span class="dot"></span>Kauf</button>
 						<span class="m-spacer"></span>
-						<span class="m-lbl">Region</span>
-						<button type="button" class="chip" class:is-on={mRegion === 'all'} onclick={() => setRegion('all')}>Alle</button>
-						{#each marketRegions as r}
-							<button type="button" class="chip" class:is-on={mRegion === r} onclick={() => setRegion(r)}>{r}</button>
-						{/each}
 					</div>
 					<div class="mbar2">
 						<span class="m-lbl">Qualität</span>

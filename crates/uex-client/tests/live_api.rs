@@ -259,3 +259,56 @@ async fn live_marketplace_filter_and_sort() {
         .unwrap();
     assert!(!filtered.is_empty());
 }
+
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored"]
+async fn live_market_wts_term_sorts_complete_item_set() {
+    // P1 acceptance probe (live): WTS + "Parallax" + price-desc must return
+    // ONLY WTS Parallax offers, sorted by price descending. The term resolves
+    // to item ids and the API filters server-side (id_item + operation),
+    // so the sort acts on the complete per-item set — not a newest window.
+    use provider::{MarketOperation, MarketplaceFilter, OfferSort};
+
+    let p = live_provider().await;
+
+    let offers = p
+        .marketplace_offers(MarketplaceFilter {
+            q: "Parallax".into(),
+            operation: Some(MarketOperation::Sell),
+            sort: Some(OfferSort::PriceDesc),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !offers.is_empty(),
+        "expected live WTS Parallax offers, got 0"
+    );
+    assert!(
+        offers.iter().all(|o| o.operation == MarketOperation::Sell),
+        "WTS filter leaked: {:?}",
+        offers.iter().map(|o| &o.operation).collect::<Vec<_>>()
+    );
+    assert!(
+        offers
+            .iter()
+            .all(|o| o.title.to_lowercase().contains("parallax")
+                || o.description.to_lowercase().contains("parallax")),
+        "term filter leaked: {:?}",
+        offers
+            .iter()
+            .map(|o| o.title.chars().take(50).collect::<String>())
+            .collect::<Vec<_>>()
+    );
+    let prices: Vec<f64> = offers.iter().map(|o| o.price).collect();
+    let mut sorted = prices.clone();
+    sorted.sort_by(|a, b| b.total_cmp(a));
+    assert_eq!(prices, sorted, "price descending sort failed");
+    // request pacing: at most 3 item-id fetches + this call's payload
+    eprintln!(
+        "live WTS Parallax offers: {} (first price {})",
+        offers.len(),
+        prices[0]
+    );
+}

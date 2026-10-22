@@ -543,7 +543,7 @@ pub async fn get_marketplace(
     // Was the snapshot already fresh before the call? Then the provider serves
     // it from cache (live only when item_id/operation filter forces a fetch).
     let cache_fresh = state.cache.marketplace_fresh().unwrap_or(false);
-    match state.provider.marketplace_offers(filters).await {
+    match state.provider.marketplace_offers(filters.clone()).await {
         Ok(offers) => Ok(MarketResponse {
             source: if cache_fresh {
                 "cache".to_string()
@@ -561,7 +561,11 @@ pub async fn get_marketplace(
                 Ok(snapshot) if !snapshot.is_empty() => Ok(MarketResponse {
                     source: "offline".into(),
                     fetched_at: now_unix(),
-                    offers: snapshot,
+                    // The offline fallback must obey the same filter + sort
+                    // contract as every live/cache path (apply_local lives
+                    // behind the provider seam) — a raw snapshot here looked
+                    // like "filters ignored" whenever a live fetch failed.
+                    offers: provider::apply_marketplace_filters(snapshot, &filters),
                     note: Some(friendly(e)),
                 }),
                 _ => Err(friendly(e)),

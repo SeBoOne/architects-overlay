@@ -71,6 +71,52 @@ impl std::error::Error for ProviderError {}
 /// Shortcut `Result<T>` = `Result<T, ProviderError>` used across the seam.
 pub type Result<T> = std::result::Result<T, ProviderError>;
 
+/// Client-side marketplace filter + sort, shared by every path that hands
+/// offers to the UI (provider live/cache reads AND the offline-snapshot
+/// fallback in `trade::get_marketplace`) so all views behave identically.
+///
+/// The UEX API exposes no text/sort/location parameters (only `id`, `slug`,
+/// `username`, `id_item`, `operation`) — everything else is applied here.
+///
+/// `q` is the market's free-text search: every whitespace-separated term must
+/// hit at least one offer field — Name (title), Typ (listing type +
+/// operation), Terminal (location) or Verkäufer (seller); description
+/// completes the haystack. Terms are AND-ed, fields OR-ed per term,
+/// case-insensitive. Sort defaults to newest when unset.
+pub fn apply_marketplace_filters(
+    mut offers: Vec<Offer>,
+    filters: &MarketplaceFilter,
+) -> Vec<Offer> {
+    let terms: Vec<String> = filters
+        .q
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .collect();
+    let location = filters.location.to_lowercase();
+    let region = filters.region.to_lowercase();
+    offers.retain(|o| {
+        let title = o.title.to_lowercase();
+        let desc = o.description.to_lowercase();
+        let seller = o.seller.to_lowercase();
+        let loc = o.location.to_lowercase();
+        let kind = o.listing_type.as_str().to_string();
+        let op = o.operation.as_str().to_string();
+        let hay = [&title, &desc, &seller, &loc, &kind, &op];
+        (terms.is_empty()
+            || terms
+                .iter()
+                .all(|term| hay.iter().any(|h| h.contains(term))))
+            && (location.is_empty() || loc.contains(&location))
+            && (region.is_empty() || o.region.to_lowercase().contains(&region))
+    });
+    match filters.sort.unwrap_or(OfferSort::Newest) {
+        OfferSort::Newest => offers.sort_by(|a, b| b.updated.cmp(&a.updated).then(b.id.cmp(&a.id))),
+        OfferSort::PriceAsc => offers.sort_by(|a, b| a.price.total_cmp(&b.price)),
+        OfferSort::PriceDesc => offers.sort_by(|a, b| b.price.total_cmp(&a.price)),
+    }
+    offers
+}
+
 /// Implementations of a trade-data source (UEX today, more later).
 ///
 /// Async via `#[async_trait]` (boxed `Send` futures): dyn-compatible AND
@@ -227,6 +273,82 @@ mod tests {
             &[EntityKind::Commodities]
         );
         assert_eq!(SearchEntities::Items.kinds(), &[EntityKind::Items]);
+    }
+
+    #[test]
+    fn apply_marketplace_filters_sorts_all_three_ways() {
+        // P1 gate: the shared filter+sort helper must order price asc, price
+        // desc and newest — on the SAME input set (all three filter modes
+        // WTB/WTS/all run through this one function).
+        let mk = |id: u64, price: f64, updated: u64, op: MarketOperation| Offer {
+            id,
+            title: format!("offer {id}"),
+            description: String::new(),
+            item_id: 0,
+            category_id: 0,
+            operation: op,
+            listing_type: ListingType::Item,
+            price,
+            currency: "UEC".into(),
+            unit: "unit".into(),
+            quantity: 1,
+            location: "Levski".into(),
+            region: "Nyx".into(),
+            seller: "s".into(),
+            quality: 0,
+            updated,
+            expires: None,
+            slug: "slug".into(),
+        };
+        let offers = vec![
+            mk(1, 300.0, 100, MarketOperation::Sell),
+            mk(2, 100.0, 300, MarketOperation::Buy),
+            mk(3, 200.0, 200, MarketOperation::Sell),
+        ];
+        let ids = |o: &[Offer]| -> Vec<u64> { o.iter().map(|o| o.id).collect() };
+
+        let f = |q: &str, sort: Option<OfferSort>| MarketplaceFilter {
+            q: q.into(),
+            sort,
+            ..Default::default()
+        };
+
+        // price asc / desc across the whole set
+        assert_eq!(
+            ids(&apply_marketplace_filters(
+                offers.clone(),
+                &f("", Some(OfferSort::PriceAsc))
+            )),
+            vec![2, 3, 1]
+        );
+        assert_eq!(
+            ids(&apply_marketplace_filters(
+                offers.clone(),
+                &f("", Some(OfferSort::PriceDesc))
+            )),
+            vec![1, 3, 2]
+        );
+        // newest, tie-break by id
+        assert_eq!(
+            ids(&apply_marketplace_filters(
+                offers.clone(),
+                &f("", Some(OfferSort::Newest))
+            )),
+            vec![2, 3, 1]
+        );
+        // q terms AND-ed over title/operation; operation term narrows to buys
+        assert_eq!(
+            ids(&apply_marketplace_filters(offers.clone(), &f("buy", None))),
+            vec![2]
+        );
+        // a term hitting nothing empties the list (AND semantics)
+        assert!(apply_marketplace_filters(offers.clone(), &f("zzz", None)).is_empty());
+        // region filter (system filter is UI-removed but the field stays honest)
+        let region = MarketplaceFilter {
+            region: "nyx".into(),
+            ..Default::default()
+        };
+        assert_eq!(apply_marketplace_filters(offers, &region).len(), 3);
     }
 
     #[test]
