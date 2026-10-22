@@ -141,6 +141,102 @@
 	// `dSel` = fokussierte Detail-Zeile, `dChosen` = per Enter ausgewählt.
 	let dSel = $state(0);
 	let dChosen = $state<number | null>(null);
+
+	// ---- Config-View (t_163074f3) --------------------------------------------
+	// Eigenes View in der Palette (wie die Detail-"Seite"): Esc/Zurück-Pfeil,
+	// kein neues Fenster. Einstellungen wirken SOFORT + persistieren im Backend.
+	type SettingsSnapshot = {
+		palette: string;
+		detail_variant: string;
+		uex_api_key_set: boolean;
+	};
+	let inConfig = $state(false);
+	let cfg = $state<SettingsSnapshot | null>(null);
+	let apiKeyInput = $state('');
+	let apiKeyNote = $state('');
+
+	// data-palette + data-detail-variant am html — CSS-Scoping-Kontaktstelle
+	// zum parallelen Frontend-Task (t_733aa11d).
+	function applySettings(snapshot: SettingsSnapshot | null) {
+		if (typeof document === 'undefined' || !snapshot) return;
+		document.documentElement.dataset.palette = snapshot.palette;
+		document.documentElement.dataset.detailVariant = snapshot.detail_variant;
+	}
+
+	async function loadSettings() {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_get');
+			applySettings(cfg);
+		} catch {
+			// Ohne Tauri (SSR/vite-dev) → Palette bleibt am app.html-Default.
+		}
+	}
+
+	function openConfig() {
+		// Kein Enter-Filter-Zustand darf bestehen, während der Config-View offen
+		// ist: Detail + In-Context-Filter + Auswahl werden vorab geräumt.
+		inDetail = false;
+		detailHit = null;
+		expanded = null;
+		focusIdx = null;
+		xpan = null;
+		xpanToken++;
+		dSel = 0;
+		dChosen = null;
+		dToast = '';
+		apiKeyInput = '';
+		apiKeyNote = '';
+		inConfig = true;
+		if (searchEl) searchEl.blur();
+	}
+
+	function closeConfig() {
+		inConfig = false;
+		apiKeyInput = '';
+		apiKeyNote = '';
+		if (searchEl) searchEl.focus();
+	}
+
+	async function choosePalette(name: string) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_palette', { name });
+			applySettings(cfg);
+		} catch (e) {
+			apiKeyNote = String(e);
+		}
+	}
+
+	async function chooseVariant(name: string) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_detail_variant', { name });
+			applySettings(cfg);
+		} catch (e) {
+			apiKeyNote = String(e);
+		}
+	}
+
+	async function saveApiKey() {
+		const key = apiKeyInput.trim();
+		if (!key) return;
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_api_key', { key });
+			apiKeyInput = '';
+			apiKeyNote = 'API-Key gespeichert (lokal, 0600).';
+		} catch (e) {
+			apiKeyNote = String(e);
+		}
+	}
+
+	async function removeApiKey() {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_api_key', { key: null });
+			apiKeyInput = '';
+			apiKeyNote = 'API-Key entfernt.';
+		} catch (e) {
+			apiKeyNote = String(e);
+		}
+	}
+
 	// Scroll-Position der Ergebnisliste für den Zurück-Blick.
 	let listScroll = $state(0);
 	// Status-Toast nach Auswahl einer Detail-Zeile.
@@ -272,6 +368,9 @@
 		try {
 			const label = getCurrentWindow().label;
 			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
+			// Persistierte Einstellungen (Palette + Detail-Variante) vor dem
+			// ersten Paint anwenden — verhindert einen Palette-Flash.
+			await loadSettings();
 			if (label === 'spotlight') {
 				isSpotlight = true;
 				overlay = await invoke<OverlayState>('overlay_get_state');
@@ -883,6 +982,16 @@
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
+		// Config-View: Esc → zurück zur Suche (NICHT Overlay-hide). Alle anderen
+		// Shortcuts (Nav/Alt-Zahlen/Ctrl+M) sind in dieser Ansicht gesperrt —
+		// Eingabe im API-Key-Feld bleibt natürlich erlaubt.
+		if (inConfig) {
+			if (k === 'Escape') {
+				closeConfig();
+				e.preventDefault();
+			}
+			return;
+		}
 		// Marktplatz-Modus: Angebot-Navigation + Detail.
 		if (phase === 'market') {
 			const t = e.target;
@@ -1094,7 +1203,98 @@
 		</div>
 
 		<!-- Inhalt je Zustand -->
-		{#if phase === 'loading'}
+		{#if inConfig}
+			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").
+			     Esc/zurück-Pfeil → zurück zur Suche; kein neues Fenster. -->
+			<div class="pane-config" role="dialog" aria-label="Konfiguration">
+				<div class="cfg-head">
+					<button
+						type="button"
+						class="cfg-back"
+						onclick={closeConfig}
+						title="Zurück zur Suche (Esc)"
+						aria-label="Zurück zur Suche"
+					>←</button>
+					<div class="cfg-title">KONFIGURATION</div>
+					<span class="cfg-live">wirkt sofort</span>
+				</div>
+				<div class="cfg-body">
+					<section class="cfg-sect">
+						<div class="h">Farbpalette</div>
+						<div class="cfg-chips">
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.palette === 'amber'}
+								onclick={() => choosePalette('amber')}
+							>Amber</button>
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.palette === 'mfcd'}
+								onclick={() => choosePalette('mfcd')}
+							>MFCD</button>
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.palette === 'bloom'}
+								onclick={() => choosePalette('bloom')}
+							>Bloom</button>
+						</div>
+					</section>
+					<section class="cfg-sect">
+						<div class="h">Preis-Detail-Variante</div>
+						<div class="cfg-chips">
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.detail_variant === 'c'}
+								onclick={() => chooseVariant('c')}
+							>C · Standard</button>
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.detail_variant === 'a'}
+								onclick={() => chooseVariant('a')}
+							>A</button>
+						</div>
+					</section>
+					<section class="cfg-sect">
+						<div class="h">Account-Verknüpfung (bald)</div>
+						<div class="cfg-locked" aria-disabled="true">
+							Kommt später — UEX-Account-Verknüpfung ist noch nicht verfügbar.
+						</div>
+					</section>
+					<section class="cfg-sect">
+						<div class="h">UEX API-Key</div>
+						<div class="cfg-key-status">
+							Status:
+							<b class:ok={cfg?.uex_api_key_set} class:off={!cfg?.uex_api_key_set}>
+								{cfg?.uex_api_key_set ? 'gesetzt' : 'nicht gesetzt'}
+							</b>
+						</div>
+						<div class="cfg-key-row">
+							<input
+								type="password"
+								autocomplete="off"
+								placeholder="Key einfügen … (maskiert)"
+								bind:value={apiKeyInput}
+								onkeydown={(e) => e.stopPropagation()}
+							/>
+							<button type="button" class="btn" onclick={saveApiKey} disabled={!apiKeyInput.trim()}>
+								Setzen
+							</button>
+							{#if cfg?.uex_api_key_set}
+								<button type="button" class="btn-ghost" onclick={removeApiKey}>Entfernen</button>
+							{/if}
+						</div>
+						{#if apiKeyNote}
+							<div class="cfg-note">{apiKeyNote}</div>
+						{/if}
+					</section>
+				</div>
+			</div>
+		{:else if phase === 'loading'}
 			<div class="pane-loading" role="status">
 				<div class="center">
 					<span class="spin"></span>
@@ -1474,6 +1674,29 @@
 				{/if}
 			</div>
 			<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
+			<button
+				type="button"
+				class="gear"
+				onclick={openConfig}
+				title="Konfiguration öffnen"
+				aria-label="Konfiguration öffnen"
+			>
+				<svg
+					width="13"
+					height="13"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<circle cx="12" cy="12" r="3"></circle>
+					<path
+						d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+					></path>
+				</svg>
+			</button>
 			{#if isSpotlight}
 				<div class="spot-status">
 					<span class="dot" class:live={overlay?.game_running}></span>

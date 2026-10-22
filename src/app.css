@@ -1682,3 +1682,147 @@ html[data-window="spotlight"] .shell {
 	font-size: 10px;
 	letter-spacing: 0.06em;
 }
+
+/* Zahnrad in der Statuszeile: klein, Amber-Outline, reine Mausbedienung */
+.gear {
+	margin-left: 6px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border: 1px solid var(--line);
+	border-radius: 3px;
+	background: transparent;
+	color: var(--accent);
+	cursor: pointer;
+	transition: border-color 0.15s ease, background 0.15s ease;
+}
+.gear:hover {
+	border-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.gear:focus-visible {
+	outline: 1px solid var(--accent);
+	outline-offset: 1px;
+}
+.gear svg {
+	display: block;
+}
+
+/* Config-View: eigenes Pane wie die Detail-Seite (kein Modal, kein neues Fenster) */
+.pane-config {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	padding: 16px 18px 18px;
+	overflow-y: auto;
+	flex: 1;
+	min-height: 0;
+}
+.cfg-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid var(--line);
+}
+.cfg-back {
+	width: 26px;
+	height: 26px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border: 1px solid var(--line);
+	border-radius: 3px;
+	background: transparent;
+	color: var(--accent);
+	font-size: 14px;
+	cursor: pointer;
+	transition: border-color 0.15s ease;
+}
+.cfg-back:hover {
+	border-color: var(--accent);
+}
+.cfg-title {
+	font-size: 13px;
+	font-weight: 600;
+	letter-spacing: 0.12em;
+	color: var(--accent);
+	flex: 1;
+}
+.cfg-live {
+	font-size: 10px;
+	letter-spacing: 0.08em;
+	color: var(--dim);
+}
+.cfg-body {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+.cfg-sect {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--panel) 60%, transparent);
+}
+.cfg-sect .h {
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--dim);
+}
+.cfg-chips {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+}
+.cfg-locked {
+	font-size: 12px;
+	color: var(--dim);
+	font-style: italic;
+	padding: 6px 0;
+}
+.cfg-key-status {
+	font-size: 11px;
+	color: var(--dim);
+}
+.cfg-key-status b.ok {
+	color: var(--ok);
+}
+.cfg-key-status b.off {
+	color: var(--warn);
+}
+.cfg-key-row {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+.cfg-key-row input {
+	flex: 1;
+	min-width: 160px;
+	background: var(--panel);
+	border: 1px solid var(--line);
+	border-radius: 3px;
+	color: var(--fg);
+	font-size: 12px;
+	padding: 6px 8px;
+}
+.cfg-key-row input:focus {
+	outline: 1px solid var(--accent);
+	outline-offset: -1px;
+}
+.cfg-key-row input::placeholder {
+	color: var(--dim);
+}
+.cfg-note {
+	font-size: 11px;
+	color: var(--accent);
+	margin-top: 4px;
+}
