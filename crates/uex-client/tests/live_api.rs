@@ -140,6 +140,43 @@ async fn live_location_aggregate_checkmate() {
 
 #[tokio::test]
 #[ignore = "network test — run with -- --ignored"]
+async fn live_terminal_prices_are_row_specific() {
+    // Location-Expansion-Fix (t_d87ca3a4): JEDES Terminal liefert EIGENE
+    // Preise ueber die neue DataProvider::terminal_prices(terminal_id) —
+    // Landing Services (428) != Guns (437) != Commodity (436). Das
+    // Trait-Kontrakt traegt id in den Provider; der Cache ist 30min-TTL.
+    let p = live_provider().await;
+    let landing = p.terminal_prices(428).await.unwrap();
+    let guns = p.terminal_prices(437).await.unwrap();
+    let admin = p.terminal_prices(436).await.unwrap();
+
+    // Zwei verschiedene Lokations-Terminals: nicht identische Warenlisten.
+    // (Exakter Inhalt haengt von UEX ab — die entscheidende Assertion ist,
+    // dass der Provider pro id eigene Zeilen zurueckgibt und kein Fehler
+    // auftritt. Ein leeres Ergebnis ist GUELTIG fuer Nicht-Handels-Terminals
+    // (Fuel-/Landing-/Refinery-Docks), nicht Unsupported.)
+    assert!(
+        admin.len() >= 5,
+        "admin commodity terminal must carry its price table ({} rows)",
+        admin.len()
+    );
+    eprintln!(
+        "LANDING@428={} GUNS@437={} ADMIN@436={}",
+        landing.len(),
+        guns.len(),
+        admin.len()
+    );
+    // Wenn ein Terminal Daten traegt, gehoeren sie zu seiner id — die drei
+    // ids muessen ohne Fehler durchgehen (kein Unsupported-Fallback).
+    for (tid, rows) in [(428u64, &landing), (437, &guns), (436, &admin)] {
+        if let Some(first) = rows.first() {
+            assert_eq!(first.terminal_id, tid);
+        }
+    }
+}
+
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored"]
 async fn live_item_without_prices_and_dedupe() {
     let p = live_provider().await;
 

@@ -608,12 +608,21 @@ html[data-window="spotlight"] .shell {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: var(--pad-x);
-	/* feste Höhe ≈ 3 Zeilenhöhen wie Arkanis (focus-animate-height) — mehr Zeilen
-	   scrollen intern, weniger lassen die Fläche nicht schrumpfen. */
-	min-height: calc(var(--xpan-h) - 1px); /* -1px: box-sizing border-box, obere Hairline */
+	/* Fix (Location-Expansion, t_d87ca3a4): statt FIXER Höhe — max-height +
+	   overflow-y:auto. Wenige Zeilen lassen die Fläche auf Inhaltshöhe
+	   schrumpfen (kein min-height mehr); langer Inhalt (Checkmate-Aggregat
+	   18 Gruppen/43 Preise, Terminal mit vielen Commodities) scrollt INNEN
+	   statt vom äußeren `.xpan` (overflow:hidden) abgeschnitten zu werden. */
+	max-height: calc(var(--xpan-h) - 1px); /* -1px: box-sizing border-box, obere Hairline */
 	align-content: start;
-	overflow: auto;
+	overflow-y: auto;
+	scrollbar-width: thin;
 	padding: calc(var(--pad-x) * 0.6) var(--pad-x) calc(var(--pad-x) * 0.8);
+}
+
+.xpan.xpan-loc .inner {
+	/* Standort-Aggregat: höhere Scroll-Fläche passend zur open-Höhe. */
+	max-height: calc(min(44vh, 560px) - 1px);
 }
 
 /* Preis-Tabelle je Spalte: Caption (Kauf/Verkauf) + Zeilen mit Hairlines. */

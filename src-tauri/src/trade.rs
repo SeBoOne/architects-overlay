@@ -32,7 +32,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use cache::Cache;
+use cache::{Cache, CacheError};
 use provider::{DataProvider, EntityKind, ProviderError, SearchHit};
 use tauri::{AppHandle, Emitter, State};
 
@@ -181,10 +181,23 @@ pub fn search(
         if !filter_set.is_empty() && !filter_set.contains(*kind) {
             continue;
         }
-        let hits = state
+        let mut hits = state
             .cache
             .search(&[*entity_kind], query, PER_GROUP_LIMIT)
             .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        // Location-Gruppe (Kriterium 2 / QA-Auflage A): die Standort-ENTITY
+        // selbst ist kein eigenes Dataset — `/terminals` liefert nur Terminal-
+        // Reihen (EntityKind::Terminals). Damit der Standort-Klick das Aggregat
+        // (je Terminal eine Gruppe) öffnen kann, synthetisieren wir je Standort-
+        // Kette (subtitle, "… > Checkmate Station") EINE klickbare Standort-
+        // Zeile mit kind='location' + id des Monetär-/Handels-Terminals der
+        // Kette. Die Terminal-Zeilen bleiben kind='terminal' (eigene Preise,
+        // Kriterium 1). Ohne diese Zeile wäre `kind='location'` im Frontend
+        // toter Code (Reviewer t_9608f33c, Auflage 1).
+        if *kind == "location" {
+            hits =
+                with_location_rows(&state.cache, hits).map_err(|e| format!("Cache-Fehler: {e}"))?;
+        }
         total += hits.len();
         groups.push(GroupHits {
             kind: (*kind).to_string(),
@@ -194,6 +207,131 @@ pub fn search(
     }
 
     Ok(SearchResponse { groups, total })
+}
+
+/// Standort-Synthese (Kriterium 2 / QA-Auflage A): liefert je Standort-Kette
+/// eine zusätzliche `kind='location'`-Trefferzeile. Der Cache-Datensatz kennt
+/// nur Terminals (EntityKind::Terminals), keine Standort-Entity; damit der
+/// Standort-Klick das Aggregat (je Terminal eine Gruppe) öffnen kann, gruppiert
+/// diese Funktion die Terminal-Treffer nach ihrer Kette (subtitle,
+/// „… > Checkmate Station") und stellt pro Kette EINE `kind='location'`-Zeile
+/// voran, deren `id` ein Terminal der Kette ist (das Monetär-/Handels-Terminal
+/// der Kette, so es erkennbar ist; sonst das erste der Kette). Die Terminal-
+/// Zeilen bleiben unangetastet (`kind='terminal'`, Kriterium 1).
+fn with_location_rows(
+    cache: &Cache,
+    hits: Vec<provider::SearchHit>,
+) -> Result<Vec<provider::SearchHit>, CacheError> {
+    if hits.is_empty() {
+        return Ok(hits);
+    }
+    // Kette (subtitle) → Terminals der Kette, in Treffer-Reihenfolge zuerst.
+    let mut by_chain: std::collections::BTreeMap<String, Vec<provider::SearchHit>> =
+        std::collections::BTreeMap::new();
+    for h in &hits {
+        let chain = h.subtitle.trim();
+        if chain.is_empty() {
+            continue;
+        }
+        by_chain
+            .entry(chain.to_string())
+            .or_default()
+            .push(h.clone());
+    }
+    // Pro Kette eine Standort-Zeile. `id` = Monetär-/Handels-Terminal der Kette
+    // (Namen mit Handels-Hinweis bevorzugt; Fallback: erster Treffer der Kette).
+    // Der Name der Standort-Entity ist das letzte Kettenglied (z. B.
+    // "Checkmate Station") — nicht der Terminal-Name —, damit er klar von den
+    // Terminal-Zeilen (Kriterium 1) unterschieden wird.
+    let mut locations: Vec<provider::SearchHit> = Vec::new();
+    for (chain, members) in &by_chain {
+        let (chain_lookup, first) = chain_lookup(cache, chain)?;
+        let repr = members
+            .iter()
+            .chain(chain_lookup.iter())
+            .find(|t| is_money_terminal(&t.name))
+            .or_else(|| members.first());
+        let id = match repr {
+            Some(t) => t.id,
+            None => first.id,
+        };
+        locations.push(provider::SearchHit {
+            id,
+            name: location_name(chain),
+            kind: "location".to_string(),
+            subtitle: chain.clone(),
+            code: None,
+        });
+    }
+    // Standort-Zeilen voranstellen — das Aggregat ist der präferierte Einstieg.
+    let mut out = locations;
+    out.extend(hits);
+    Ok(out)
+}
+
+/// Anzeigename der Location-Entity = letzter Pfad-Teil der Kette
+/// ("Pyro > … > Checkmate Station" → "Checkmate Station"). Fällt die Kette nur
+/// aus einem Segment, wird sie unverändert als Name verwendet.
+fn location_name(chain: &str) -> String {
+    chain
+        .rsplit(" > ")
+        .next()
+        .unwrap_or(chain)
+        .trim()
+        .to_string()
+}
+
+/// Bestes Monetär-/Handels-Terminal einer Kette. Bevorzugt einen Treffer der
+/// Live-Suche (FTS-Rank); fehlt dort ein Handels-Hinweis, wird die volle
+/// Terminal-Menge der Kette aus dem Cache herangezogen, damit die repräsentative
+/// id nie außerhalb liegt (Checkmate: 436 „Commodity Shop - Admin").
+fn chain_lookup(
+    cache: &Cache,
+    chain: &str,
+) -> Result<(Vec<provider::SearchHit>, provider::SearchHit), CacheError> {
+    let entities = cache.entities_of(EntityKind::Terminals)?;
+    let mut members: Vec<provider::SearchHit> = Vec::new();
+    for e in entities {
+        if e.subtitle == chain {
+            members.push(provider::SearchHit {
+                id: e.id,
+                name: e.name,
+                kind: "terminal".to_string(),
+                subtitle: e.subtitle,
+                code: e.code,
+            });
+        }
+    }
+    members.sort_by_key(|m| m.id);
+    let first = members
+        .first()
+        .cloned()
+        .unwrap_or_else(|| provider::SearchHit {
+            id: 0,
+            name: chain.to_string(),
+            kind: "location".to_string(),
+            subtitle: chain.to_string(),
+            code: None,
+        });
+    Ok((members, first))
+}
+
+/// Heuristik für „Handels-/Monetär-Terminal": Name enthält einen Handels-,
+/// Shop-, Verwaltungs- oder Konsolen-Hinweis. Docks (Fuel/Refinery) fallen
+/// durch — reine Fracht-Terminals sollen das Aggregat nicht anführen.
+fn is_money_terminal(name: &str) -> bool {
+    let n = name.to_lowercase();
+    [
+        "commodity",
+        "admin",
+        "trading",
+        "shop",
+        "console",
+        "store",
+        "terminal",
+    ]
+    .iter()
+    .any(|k| n.contains(k))
 }
 
 /// Evaluate a math expression for the inline calculator (`=2*250+15%`).
@@ -228,9 +366,12 @@ fn fmt_number(v: f64) -> String {
 /// Price details behind one expanded search row. The frontend routes by the
 /// hit's `kind`:
 ///
-/// * `kind = "location"` (+ `id` = terminal id): returns the location
-///   aggregate — every terminal of the location chain with its own buy/sell
-///   table, in `location.groups` (feedback fix "Preise nicht geladen").
+/// * `kind = "terminal"` (+ `id` = terminal id): prices of THIS terminal
+///   (buy/sell per commodity) — the row-specific detail, NOT the location
+///   chain aggregate.
+/// * `kind = "location"` (+ `id` = terminal id): the location aggregate —
+///   every terminal of the location chain with its own buy/sell table, in
+///   `location.groups` (feedback fix "Preise nicht geladen").
 /// * `kind = "item"` (+ `id` = item id): items carry no commodity price
 ///   table unless they are commodities (those were deduped into the
 ///   commodity dataset at import). The detail comes back with an empty
@@ -247,6 +388,26 @@ pub async fn get_prices(
 ) -> Result<PriceDetail, String> {
     let fetched_at = now_unix();
     match kind.as_deref() {
+        Some("terminal") => {
+            // One terminal's OWN price table (run: prices of THIS terminal,
+            // not the shared location chain aggregate). Resolve the display
+            // name by id; the provider caches per-terminal (30 min).
+            let terminal_id =
+                id.ok_or_else(|| "Terminal öffnen: fehlende Terminal-ID".to_string())?;
+            let name = terminal_name(&state, terminal_id, &commodity).await?;
+            let prices = state
+                .provider
+                .terminal_prices(terminal_id)
+                .await
+                .map_err(friendly)?;
+            Ok(PriceDetail {
+                commodity: name,
+                source: state.provider.name(),
+                fetched_at,
+                prices,
+                location: None,
+            })
+        }
         Some("location") => {
             let terminal_id =
                 id.ok_or_else(|| "Location öffnen: fehlende Terminal-ID".to_string())?;
@@ -308,6 +469,19 @@ async fn item_name(state: &TradeState, id: Option<u64>, raw: &str) -> Result<Str
     Ok(entities
         .iter()
         .find(|e| e.id == item_id)
+        .map(|e| e.name.clone())
+        .unwrap_or_else(|| raw.to_string()))
+}
+
+/// Resolve a terminal's display name (by id, falling back to the raw query).
+async fn terminal_name(state: &TradeState, id: u64, raw: &str) -> Result<String, String> {
+    let entities = state
+        .cache
+        .entities_of(EntityKind::Terminals)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    Ok(entities
+        .iter()
+        .find(|e| e.id == id)
         .map(|e| e.name.clone())
         .unwrap_or_else(|| raw.to_string()))
 }
@@ -747,6 +921,106 @@ mod tests {
         let _ = app;
     }
 
+    /// Kriterium 2 (echte Suchkette): `search` synthetisiert für jede
+    /// Standort-Kette eine `kind='location'`-Zeile mit der id des
+    /// Handels-Terminals — nicht nur `with_location_rows` isoliert.
+    #[test]
+    fn search_synthesizes_location_row_from_terminal_chain() {
+        let chain = "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station";
+        let app = mock_app();
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[
+                    provider::Entity {
+                        id: 428,
+                        kind: EntityKind::Terminals,
+                        name: "Landing Services - Checkmate".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                    provider::Entity {
+                        id: 436,
+                        kind: EntityKind::Terminals,
+                        name: "Commodity Shop - Admin - Checkmate".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                    provider::Entity {
+                        id: 437,
+                        kind: EntityKind::Terminals,
+                        name: "Guns - Checkmate".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                ],
+            )
+            .unwrap();
+        app.manage(TradeState {
+            provider: Arc::new(StubProvider),
+            cache,
+            tracker: Arc::new(SyncTracker::default()),
+        });
+        let state = app.state::<TradeState>();
+
+        // `:l`-Filter → Location-Gruppe, Query trifft die Kette.
+        let resp = search(
+            state.clone(),
+            "checkmate".into(),
+            Some(vec!["location".to_string()]),
+        )
+        .unwrap();
+        assert_eq!(resp.groups.len(), 1, "only the location group is requested");
+        let loc_group = &resp.groups[0];
+        assert_eq!(loc_group.kind, "location");
+
+        // Kriterium 2: mindestens ein Treffer ist die Standort-Entity.
+        let location_hits = loc_group
+            .hits
+            .iter()
+            .filter(|h| h.kind == "location")
+            .count();
+        assert!(
+            location_hits >= 1,
+            "Kriterium 2 verletzt: keine kind='location' Zeile in der Location-Gruppe"
+        );
+
+        // Die Standort-Zeile referenziert das monetäre Terminal (436).
+        let loc_row = loc_group
+            .hits
+            .iter()
+            .find(|h| h.kind == "location")
+            .expect("location row must be present");
+        assert_eq!(
+            loc_row.id, 436,
+            "location row id must be the money terminal"
+        );
+        assert_eq!(loc_row.name, "Checkmate Station");
+
+        // Kriterium 1: die Terminal-Zeilen bleiben kind='terminal' mit echter id.
+        let term_hits = loc_group
+            .hits
+            .iter()
+            .filter(|h| h.kind == "terminal")
+            .count();
+        assert_eq!(term_hits, 3, "all 3 terminals stay kind='terminal'");
+        assert!(
+            loc_group
+                .hits
+                .iter()
+                .any(|h| h.kind == "terminal" && h.id == 428)
+        );
+        assert!(
+            loc_group
+                .hits
+                .iter()
+                .any(|h| h.kind == "terminal" && h.id == 437)
+        );
+
+        let _ = app;
+    }
+
     #[test]
     fn math_eval_inline_calculator() {
         // The UI strips the leading '=' before invoking; the command is
@@ -777,11 +1051,12 @@ mod tests {
         );
     }
 
-    /// get_prices routes by `kind`: location → aggregate groups, item →
-    /// empty table, default → commodity points. Verifies the backend contract
-    /// the frontend mirrors in +page.svelte.
+    /// get_prices routes by `kind`: terminal → own per-terminal prices with a
+    /// resolved display name, location → aggregate groups, item → empty
+    /// table, default → commodity points. Verifies the backend contract the
+    /// frontend mirrors in +page.svelte.
     #[tokio::test]
-    async fn get_prices_routes_location_and_item_kinds() {
+    async fn get_prices_routes_terminal_location_and_item_kinds() {
         use provider::{LocationPrices, TerminalPriceGroup};
 
         struct LocProvider;
@@ -834,6 +1109,31 @@ mod tests {
                     }],
                 })
             }
+            async fn terminal_prices(
+                &self,
+                terminal_id: u64,
+            ) -> provider::Result<Vec<provider::PricePoint>> {
+                // Pro Terminal EIGENE Daten: die Menge unterscheidet sich je id.
+                let commodity = if terminal_id == 429 {
+                    "Medmonitor - Checkmate eigene Ware"
+                } else {
+                    "Landing Services eigene Ware"
+                };
+                Ok(vec![provider::PricePoint {
+                    commodity: commodity.into(),
+                    commodity_id: 99,
+                    location: "Checkmate - eigener Stand".into(),
+                    terminal_id,
+                    sell_price: 0.0,
+                    buy_price: 700.0,
+                    sell_stock: 0.0,
+                    buy_stock: 0.0,
+                    sell_status: 0,
+                    buy_status: 7,
+                    quality: 0,
+                    updated: 1_792_355_842,
+                }])
+            }
             async fn marketplace_offers(
                 &self,
                 _f: provider::MarketplaceFilter,
@@ -852,12 +1152,57 @@ mod tests {
         }
 
         let app = mock_app();
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        // Seed one terminal so the `terminal`-Route den Anzeigenamen auflöst.
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[provider::Entity {
+                    id: 429,
+                    kind: EntityKind::Terminals,
+                    name: "Landing Services - Checkmate".into(),
+                    code: None,
+                    subtitle: "Pyro > Monox > Checkmate Station".into(),
+                }],
+            )
+            .unwrap();
         app.manage(TradeState {
             provider: Arc::new(LocProvider),
-            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            cache: cache.clone(),
             tracker: Arc::new(SyncTracker::default()),
         });
         let state = app.state::<TradeState>();
+
+        // terminal route → prices of THIS terminal, no location aggregate.
+        let d = get_prices(
+            state.clone(),
+            "Landing Services - Checkmate".into(),
+            Some(429),
+            Some("terminal".into()),
+        )
+        .await
+        .unwrap();
+        assert!(
+            d.location.is_none(),
+            "terminal route must NOT fill `location`"
+        );
+        assert_eq!(d.commodity, "Landing Services - Checkmate");
+        assert_eq!(d.prices.len(), 1);
+        assert_eq!(d.prices[0].terminal_id, 429);
+        assert_eq!(d.prices[0].buy_price, 700.0);
+        assert_eq!(d.prices[0].commodity, "Medmonitor - Checkmate eigene Ware");
+
+        // terminal route: andere id → andere (eigene) Daten.
+        let d = get_prices(
+            state.clone(),
+            "Guns - Checkmate".into(),
+            Some(437),
+            Some("terminal".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(d.prices[0].terminal_id, 437);
+        assert_eq!(d.prices[0].commodity, "Landing Services eigene Ware");
 
         // location route
         let d = get_prices(
@@ -1005,5 +1350,83 @@ mod tests {
         fn name(&self) -> String {
             "stub".into()
         }
+    }
+
+    /// Standort-Synthese (Kriterium 2): pro Kette erscheint eine Zeile mit
+    /// `kind='location'` und der id des Handels-Terminals (436 = Admin), die
+    /// Terminal-Zeilen bleiben `kind='terminal'`.
+    #[test]
+    fn location_synthesis_emits_location_hit_with_money_terminal() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let chain = "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station";
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[
+                    provider::Entity {
+                        id: 428,
+                        kind: EntityKind::Terminals,
+                        name: "Landing Services - Checkmate".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                    provider::Entity {
+                        id: 436,
+                        kind: EntityKind::Terminals,
+                        name: "Commodity Shop - Admin - Checkmate".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                    provider::Entity {
+                        id: 437,
+                        kind: EntityKind::Terminals,
+                        name: "Guns - Checkmate".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                ],
+            )
+            .unwrap();
+
+        // Nur die Terminal-Hits, die ein (limitierter) FTS-Treffer liefern würde.
+        let hits = vec![
+            provider::SearchHit {
+                id: 437,
+                name: "Guns - Checkmate".into(),
+                kind: "terminal".into(),
+                subtitle: chain.into(),
+                code: None,
+            },
+            provider::SearchHit {
+                id: 428,
+                name: "Landing Services - Checkmate".into(),
+                kind: "terminal".into(),
+                subtitle: chain.into(),
+                code: None,
+            },
+        ];
+        let out = with_location_rows(&cache, hits).unwrap();
+
+        // Location-Zeile zuerst, id des Handels-Terminals (436) — auch wenn 436
+        // nicht selbst unter den FTS-Treffern war (Kette aus dem Cache erschlossen).
+        assert_eq!(out[0].kind, "location");
+        assert_eq!(out[0].id, 436, "location row id must be the money terminal");
+        assert_eq!(
+            out[0].name, "Checkmate Station",
+            "name is the station, not the terminal"
+        );
+        assert_eq!(out[0].subtitle, chain);
+        // code None (kein UEX-Terminal-Code, sondern eine Standort-Entity).
+        assert_eq!(out[0].code, None);
+        // Terminal-Zeilen unverändert, danach.
+        assert_eq!(out[1..].iter().filter(|h| h.kind == "terminal").count(), 2);
+        assert!(out[1..].iter().any(|h| h.kind == "terminal" && h.id == 428));
+        assert!(out[1..].iter().any(|h| h.kind == "terminal" && h.id == 437));
+    }
+
+    #[test]
+    fn location_synthesis_empty_hits_is_noop() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        assert!(with_location_rows(&cache, vec![]).unwrap().is_empty());
     }
 }

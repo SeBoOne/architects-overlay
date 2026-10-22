@@ -208,6 +208,10 @@ impl DataProvider for UexProvider {
         self.location_prices_impl(terminal_id).await
     }
 
+    async fn terminal_prices(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
+        self.terminal_prices_impl(terminal_id).await
+    }
+
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>> {
         // Short-TTL cache (Phase 2): API-parameter-free reads are served from
         // the last snapshot while it is < TTL_MARKETPLACE old, keeping the
@@ -426,7 +430,7 @@ impl UexProvider {
     /// Price points of ONE terminal (buy/sell per commodity). Cached 30 min,
     /// else fetched live via `/commodities_prices?id_terminal=…` (the
     /// terminal-scoped variant of the same endpoint used for commodities).
-    async fn terminal_prices(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
+    async fn terminal_prices_impl(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
         // Fresh marker = "this terminal was checked recently" — an EMPTY
         // cached table is a valid state (fuel/refinery docks trade nothing)
         // and must be served, not refetched every open.
@@ -487,7 +491,7 @@ impl UexProvider {
         // terminal is always included, so its own prices are never lost.
         let mut groups = Vec::new();
         for terminal in terminals.iter().filter(|e| e.subtitle == chain) {
-            let points = self.terminal_prices(terminal.id).await?;
+            let points = self.terminal_prices_impl(terminal.id).await?;
             groups.push(TerminalPriceGroup {
                 terminal_id: terminal.id,
                 terminal_name: terminal.name.clone(),

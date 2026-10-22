@@ -428,17 +428,20 @@ type TerminalPriceGroup = { terminal_id: number; terminal_name: string; prices: 
 
 	async function loadDetail(h: SearchHit) {
 		const myToken = ++xpanToken;
-		// QA-Auflage A/B (t_cbd58b00): get_prices nach `h.kind` routen.
-		// - location (FTS-Hit-Kind ist "terminal", Gruppen-Kind "location"): das
-		//   Terminal-Aggregat in `location.groups` (je Terminal eine Gruppe).
+		// get_prices nach `h.kind` routen (Backend-Kontrakt trade.rs):
+		// - terminal (FTS-Hit im Location-Gruppen-Kind): Preise DIESES Terminals
+		//   (eigener Datenbestand — Fix: NICHT das Standort-Aggregat).
+		// - location (die Standort-Entity selbst): das Terminal-Aggregat in
+		//   `location.groups` (je Terminal eine Gruppe).
 		// - item: nie Preise, leere Tabelle → "nicht kaufbar"-Zustand unten.
 		// - commodity/Default: unverändert wie bisher (nur der Name).
-		const isLocation = h.kind === 'location' || h.kind === 'terminal';
-		const kindArg = isLocation ? 'location' : h.kind === 'item' ? 'item' : null;
+		// id gehört nur an die kind-Abhängigen Pfade (Reviewer NB-1).
+		const kindArg =
+			h.kind === 'terminal' ? 'terminal' : h.kind === 'location' ? 'location' : h.kind === 'item' ? 'item' : null;
 		try {
 			const d = await invoke<PriceDetail>('get_prices', {
 				commodity: h.name,
-				...(h.id ? { id: h.id } : {}),
+				...(kindArg && h.id ? { id: h.id } : {}),
 				...(kindArg ? { kind: kindArg } : {})
 			});
 			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };

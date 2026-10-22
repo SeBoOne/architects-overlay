@@ -288,28 +288,95 @@ async def main():
         check("market-esc-back-to-search", smode2.strip() == "SUCHE", smode2)
         check("market-esc-no-overlay-hide", hides == 0, "hide-calls=" + str(hides))
 
-        # ---- 5. QA-Auflagen A/B: Location-Aggregat + Item-"nicht kaufbar" --
-        # (t_cbd58b00): loadDetail() muss get_prices um id+kind erweitern.
-        # Location-Call trägt kind:'location' + Panel zeigt Terminal-Gruppen;
-        # Item-Call trägt kind:'item' + Panel zeigt "nicht kaufbar".
+        # ---- 5. QA-Auflagen A/B + Location-Expansion-Fix (t_d87ca3a4) --------
+        # loadDetail() routet get_prices nach h.kind:
+        # - location (die Standort-Entity selbst) -> kind:'location' + Aggregat
+        # - terminal (jedes Terminal der Kette)   -> kind:'terminal' + EIGENE Preise
+        #   (Landing Services != Guns != Standort-Aggregat)
+        # - item -> kind:'item' + Panel "nicht kaufbar"
         async def last_price_call():
             calls = await js("window.__calls ? window.__calls.filter(function(c){return c.indexOf('get_prices:')>=0}) : []")
             return calls[-1] if calls else None
 
-        # A: :l Checkmate öffnen → Location-Aggregat
+        async def click_row_by_text(name_fragment):
+            ok2 = await js("(function(){" +
+                "var rows=[...document.querySelectorAll('.row .name')];" +
+                "var r=rows.find(function(n){return n.textContent.indexOf(" + json.dumps(name_fragment) + ")>=0});" +
+                "if(!r) return false; var wrap=r.closest('.rwrap'); if(!wrap) return false;" +
+                "var row=wrap.querySelector('.row, [role=option]'); (row||wrap).click(); return true;})()")
+            return ok2
+
+        # A1: Standort-Entity (kind='location') -> Aggregat je Terminal gruppiert
         await js("(function(){var i=document.querySelector('input.q'); if(i) i.focus();})()")
         await typeQuery(":l Checkmate")
         names = await js("[...document.querySelectorAll('.row .name')].map(function(n){return n.textContent})")
-        check("loc-part5-search-shows-checkmate", any("Checkmate" in (n or "") for n in (names or [])), str(names)[:120])
-        await js("document.querySelector('.row').click()")
+        check("loc-search-shows-checkmate", any("Checkmate" in (n or "") for n in (names or [])), str(names)[:140])
+        clicked = await click_row_by_text("Checkmate Station")
         await asyncio.sleep(1.0)
         lp = await last_price_call()
-        check("loc-part5-call-carries-kind-location", (lp or "").startswith('get_prices:{"commodity":"Commodity Shop - Admin - Checkmate"') and '"kind":"location"' in (lp or ""), str(lp)[:200])
+        check("loc-hit-clicked", clicked is True, str(names)[:140])
+        check("loc-hit-call-carries-kind-location",
+              (lp or "").startswith('get_prices:{"commodity":"Checkmate Station"') and '"kind":"location"' in (lp or ""), str(lp)[:200])
         xpanA = await js("document.querySelector('.xpan') ? document.querySelector('.xpan').innerText.replace(/\\s+/g,' ').trim() : 'NONE'")
         print("    xpan-location:", xpanA[:200])
-        check("loc-part5-panel-shows-terminal-group", "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station" in (xpanA or ""), xpanA[:180])
-        check("loc-part5-shows-per-terminal-rows", ("Admin - Checkmate" in (xpanA or "") or "keine Preisdaten" in (xpanA or "")), xpanA[:180])
+        check("loc-hit-panel-shows-chain", "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station" in (xpanA or ""), xpanA[:180])
+        check("loc-hit-panel-shows-terminal-groups", ("Admin - Checkmate" in (xpanA or "") or "keine Preisdaten" in (xpanA or "")), xpanA[:180])
         await shot("11-location-aggregate-checkmate.png")
+
+        # A2: Terminal-Hit 'Landing Services - Checkmate' -> kind:'terminal' + EIGENE Preise
+        await js("(function(){var i=document.querySelector('input.q'); if(i) i.focus();})()")
+        await typeQuery(":l Checkmate")
+        clicked = await click_row_by_text("Landing Services - Checkmate")
+        await asyncio.sleep(1.0)
+        lp = await last_price_call()
+        check("term-hit-clicked", clicked is True)
+        check("term-hit-call-carries-kind-terminal",
+              (lp or "").startswith('get_prices:{"commodity":"Landing Services - Checkmate"') and '"kind":"terminal"' in (lp or ""), str(lp)[:200])
+        check("term-hit-call-carries-id",
+              '"id":5001' in (lp or ""), str(lp)[:200])
+        xpanT = await js("document.querySelector('.xpan') ? document.querySelector('.xpan').innerText.replace(/\\s+/g,' ').trim() : 'NONE'")
+        print("    xpan-terminal-landing:", xpanT[:200])
+        check("term-hit-panel-own-data-kauf", "1.108" in (xpanT or ""), xpanT[:180])
+        check("term-hit-panel-not-aggregate", "Pyro > Monox" not in (xpanT or ""), xpanT[:180])
+        await shot("12-terminal-landing-services.png")
+
+        # A3: Anderes Terminal 'Guns - Checkmate' -> ANDERE eigene Preise
+        await js("(function(){var i=document.querySelector('input.q'); if(i) i.focus();})()")
+        await typeQuery(":l Checkmate")
+        clicked = await click_row_by_text("Guns - Checkmate")
+        await asyncio.sleep(1.0)
+        lp = await last_price_call()
+        check("term2-hit-clicked", clicked is True)
+        check("term2-hit-call-carries-kind-terminal",
+              (lp or "").startswith('get_prices:{"commodity":"Guns - Checkmate"') and '"kind":"terminal"' in (lp or ""), str(lp)[:200])
+        xpanG = await js("document.querySelector('.xpan') ? document.querySelector('.xpan').innerText.replace(/\\s+/g,' ').trim() : 'NONE'")
+        print("    xpan-terminal-guns:", xpanG[:200])
+        check("term2-hit-panel-own-data-sell", "2.320" in (xpanG or ""), xpanG[:180])
+        check("term2-differs-from-term1", "Agricultural Supplies" not in (xpanG or ""), xpanG[:180])
+        await shot("13-terminal-guns.png")
+
+        # A4: Langer Terminal-Inhalt scrollbar (inner .xpan .inner max-height +
+        # overflow-y:auto) und Flaeche schrumpft bei kurzem Inhalt (kein min-height).
+        geom = json.loads(str(await js("""(function(){
+            var inner=document.querySelector('.xpan .inner'); if(!inner) return '{"none":true}';
+            return JSON.stringify({
+                scrollH: inner.scrollHeight, clientH: inner.clientHeight,
+                minH: getComputedStyle(inner).minHeight,
+                overflowY: getComputedStyle(inner).overflowY });
+        })()""")))
+        print("    term2-geometry:", geom)
+        check("term2-inner-scrollable", bool(geom) and geom["overflowY"] == "auto" and geom["scrollH"] > geom["clientH"], str(geom))
+        check("term2-inner-capped-not-forced", bool(geom) and geom["minH"] == "0px", str(geom))
+        # Scroll-TEV: scrollTop setzen — die innere Flaeche muss sich
+        # bewegen (Maus-/Tastatur-Scroll-Ziel), nichts bleibt abgeschnitten.
+        scrolled = json.loads(str(await js("""(function(){
+            var inner=document.querySelector('.xpan .inner'); if(!inner) return '{"none":true}';
+            var before=inner.scrollTop; inner.scrollTop=240;
+            return JSON.stringify({before: before, after: inner.scrollTop, max: inner.scrollHeight - inner.clientHeight});
+        })()""")))
+        print("    term2-scrolltest:", scrolled)
+        check("term2-scrolltop-moves", bool(scrolled) and scrolled.get("after") > scrolled.get("before") and scrolled["after"] <= scrolled["max"] + 1, str(scrolled))
+        await shot("13b-terminal-guns-scrolled.png")
 
         # B: :i CSP-68H öffnen → nicht kaufbar (keine Terminal-Tabellen)
         await typeQuery(":i CSP-68H")
@@ -320,7 +387,7 @@ async def main():
         xpanB = await js("document.querySelector('.xpan') ? document.querySelector('.xpan').innerText.replace(/\\s+/g,' ').trim() : 'NONE'")
         print("    xpan-item:", xpanB[:200])
         check("item-part5-panel-not-purchasable", "nicht kaufbar" in (xpanB or ""), xpanB[:180])
-        await shot("12-item-not-purchasable.png")
+        await shot("14-item-not-purchasable.png")
 
         console_events = console_events[:8]
         check("no-console-exceptions", len(console_events) == 0, str(console_events))
