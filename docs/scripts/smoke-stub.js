@@ -37,8 +37,8 @@ window.__TAURI_INTERNALS__ = {
 			case 'get_prices': {
 				const name = String(a.commodity || '');
 				const now = Math.floor(Date.now() / 1000);
-				const price = (loc, tid, buy, sell, q, extra) => Object.assign({
-					commodity: name, commodity_id: 1, location: loc, terminal_id: tid,
+				const price = (loc, tid, buy, sell, q, extra, cname) => Object.assign({
+					commodity: cname || name, commodity_id: 1, location: loc, terminal_id: tid,
 					sell_price: sell, buy_price: buy, sell_stock: 0, buy_stock: 0,
 					sell_status: sell > 0 ? 1 : 0, buy_status: buy > 0 ? 1 : 0,
 					quality: q, updated: now - 240
@@ -50,6 +50,17 @@ window.__TAURI_INTERNALS__ = {
 				if (a.kind === 'terminal') {
 					const tid = Number(a.id || 436);
 					const byTerminal = {
+						428: [
+							{ commodity: 'Agricultural Supplies', buy: 1108, sell: 0, q: 0, code: 'AGRS', commodity_id: 3 },
+							{ commodity: 'Distilled Spirits', buy: 1427, sell: 0, q: 0, code: 'DIST', commodity_id: 27 },
+							{ commodity: 'DynaFlex', buy: 1235, sell: 0, q: 0, code: 'DYNF', commodity_id: 93 },
+							{ commodity: 'Helium', buy: 727, sell: 0, q: 0, code: 'HELI', commodity_id: 38 }
+						],
+						437: [
+							{ commodity: 'Ship Ammunition - Size 1', buy: 0, sell: 2320, q: 0, code: 'SHPA1', commodity_id: 201 },
+							{ commodity: 'Ship Ammunition - Size 2', buy: 0, sell: 2420, q: 0, code: 'SHPA2', commodity_id: 202 },
+							{ commodity: 'Ship Decoy Countermeasures', buy: 0, sell: 4293, q: 0, code: 'SHPDC', commodity_id: 208 }
+						],
 						436: [
 							{ commodity: 'Agricultural Supplies', buy: 1108, sell: 0, q: 0, code: 'AGRS', commodity_id: 3 },
 							{ commodity: 'Carbon', buy: 235, sell: 0, q: 0, code: 'CARB', commodity_id: 102 },
@@ -93,9 +104,14 @@ window.__TAURI_INTERNALS__ = {
 							{ commodity: 'Ship Decoy Countermeasures', buy: 4293, sell: 0, q: 0, code: 'SHPDC', commodity_id: 208 },
 							{ commodity: 'Hydrogen Fuel', buy: 782, sell: 0, q: 0, code: 'HYDF', commodity_id: 104 },
 							{ commodity: 'Quantum Fuel', buy: 1760, sell: 0, q: 0, code: 'QFUE', commodity_id: 87 },
-							{ commodity: 'Ship Noise Countermeasures', buy: 8585, sell: 0, q: 0, code: 'SHPNC', commodity_id: 209 }
-						]
-					};
+													{ commodity: 'Ship Noise Countermeasures', buy: 8585, sell: 0, q: 0, code: 'SHPNC', commodity_id: 209 }
+											],
+											435: [
+												{ commodity: 'MedPen (Hemozal)', buy: 295, sell: 0, q: 0, code: 'MEDH', commodity_id: 77 },
+												{ commodity: 'MedPen (Roxzadolith)', buy: 120, sell: 0, q: 0, code: 'MEDR', commodity_id: 78 },
+												{ commodity: 'MedPen (Demicide)', buy: 55, sell: 0, q: 0, code: 'MEDI', commodity_id: 79 }
+											]
+											};
 					const rows = byTerminal[tid] || [];
 					const prices = rows.map((r) => ({
 						commodity: r.commodity, commodity_id: r.commodity_id || 1, location: 'Checkmate — ' + tid,
@@ -123,7 +139,11 @@ window.__TAURI_INTERNALS__ = {
 						{
 							terminal_id: 435,
 							terminal_name: 'Medical Shop - Checkmate',
-							prices: []
+							prices: [
+								price('Checkmate — Medical', 435, 295, 0, 0, { code: 'MEDH', commodity_id: 77 }, 'MedPen (Hemozal)'),
+								price('Checkmate — Medical', 435, 120, 0, 0, { code: 'MEDR', commodity_id: 78 }, 'MedPen (Roxzadolith)'),
+								price('Checkmate — Medical', 435, 55, 0, 0, { code: 'MEDI', commodity_id: 79 }, 'MedPen (Demicide)')
+							]
 						},
 						{
 							terminal_id: 436,
@@ -255,21 +275,44 @@ window.__TAURI_INTERNALS__ = {
 					};
 				}
 				if (a.kind === 'item') {
-					return { commodity: name, source: 'uex', fetched_at: now, location: null, prices: [] };
+					// Point 8: Item detail returns real shop prices from /items_prices,
+					// not an empty table. (Stub: CSP-68H backpack @ CenterMass.)
+					const itemRows = {
+						465: [
+
+								{ commodity: 'CSP-68H Backpack', buy: 295, sell: 0, q: 0, code: null, commodity_id: 465, loc: 'CenterMass - ArcCorp', tid: 107, term: 'CenterMass - ArcCorp' },
+								{ commodity: 'CSP-68H Backpack', buy: 295, sell: 0, q: 0, code: null, commodity_id: 465, loc: 'CenterMass - Hurston', tid: 108, term: 'CenterMass - Hurston' }
+						]
+					};
+					const iid = Number(a.id || 0);
+					const rows = itemRows[iid] || [];
+					const prices = rows.map((r) => ({
+						commodity: r.commodity, commodity_id: r.commodity_id, location: r.loc, terminal_id: r.tid,
+						sell_price: r.sell, buy_price: r.buy, sell_stock: 0, buy_stock: 0,
+						sell_status: r.sell > 0 ? 1 : 0, buy_status: r.buy > 0 ? 1 : 0,
+						quality: r.q, updated: now - 240
+					}));
+					return { commodity: name, source: 'uex', fetched_at: now, location: null, prices };
 				}
+				// Commodity default: 43 price rows (30 @ Checkmate Admin 436 + 13 across
+				// ARC-L1/Area18/Orison/Levski/Lorille) — reicht für "43 Preiszeilen" Smoke
+				// und lässt sich per Ortssperre (436) auf 30 Zeilen eingrenzen.
+				const adminBuy = [1108,235,1427,1235,727,715,229,7587,8671,6868,7126,7384,7641,7985,8328,4293,782,1760,8585,9200,12000,8600,27000,19000,3500,4600,1100,17000,8300,4300];
+				const oT=[11,12,13,14,15], oL=['ARC-L1 Wide Forest Station','Area18 — TDD','Orison — Providence','Levski — Grand Barter','Lorille — Tammany & Sons'];
+				const prices = Array.from({ length: 43 }, (_, i) => {
+					if (i < 30) return price('Checkmate — Admin Terminal', 436, adminBuy[i], 0, 0, { code: 'AGRI' + (i % 9), commodity_id: i + 1 });
+					const t = oT[i % 5], loc = oL[i % 5];
+					const buy = (i % 2 === 0) ? 800 + i * 20 : 0;
+					const sell = (i % 2 === 0) ? 0 : 2000 + i * 20;
+					return price(loc, t, buy, sell, 0, { code: 'OT' + (i - 30), commodity_id: i + 300 });
+				});
 				return {
 					commodity: name,
 					source: 'uex',
 					fetched_at: now,
 					location: null,
-					prices: [
-												{ commodity: name, commodity_id: 1, location: 'ARC-L1 Wide Forest Station', terminal_id: 11, sell_price: 0, buy_price: 4812, sell_stock: 0, buy_stock: 1200, sell_status: 1, buy_status: 1, quality: 3, updated: now - 240 },
-						{ commodity: name, commodity_id: 1, location: 'Area18 — TDD', terminal_id: 12, sell_price: 0, buy_price: 4930, sell_stock: 0, buy_stock: 900, sell_status: 1, buy_status: 1, quality: 3, updated: now - 300 },
-						{ commodity: name, commodity_id: 1, location: 'Orison — Providence', terminal_id: 13, sell_price: 6305, buy_price: 0, sell_stock: 2200, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 180 },
-						{ commodity: name, commodity_id: 1, location: 'Levski — Grand Barter', terminal_id: 14, sell_price: 6118, buy_price: 0, sell_stock: 1800, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 360 },
-						{ commodity: name, commodity_id: 1, location: 'Lorville — Tammany & Sons', terminal_id: 15, sell_price: 5980, buy_price: 0, sell_stock: 1500, buy_stock: 0, sell_status: 1, buy_status: 1, quality: 3, updated: now - 540 }
-					]
-			};
+					prices
+				};
 			}
 			case 'search': {
 				const q = String(a.query || '').toLowerCase();
@@ -388,6 +431,11 @@ window.__TAURI_INTERNALS__ = {
 					O(13, 'Laranite (Ankauf)', 'Port Tressler', 'BuyWant', 450, 7100, { operation: 'buy' }),
 					O(14, 'Artifex Ore', 'Levski — Grand Barter', 'NyxMiner', 800, 880, { region: 'Nyx' })
 				];
+				// 30 Parallax-Angebote (Qualität 900–1000, ausschließlich Port Tressler) —
+				// reicht für "≥15 anzeigen + Weitere-laden"-Smoke (erste Seite 15, dann 30).
+				const plocations = ['Port Tressler','Everus Harbor','ARC-L1 Wide Forest Station','Area18 — TDD','Orison — Providence'];
+				const ppool = Array.from({ length: 30 }, (_, i) => O(100 + i, 'Parallax ' + (i + 1), plocations[i % 5], 'ParallaxCo', 900 + (i % 11) * 10, 1000 + i * 50));
+				pool.push(...ppool);
 				// Provider-Mirror: q = jeder Term trifft mindestens ein Feld
 				// (Name/Typ/Terminal/Verkäufer/Beschreibung); operation-Regel;
 				// Sortierung; dann Limit.

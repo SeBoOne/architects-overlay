@@ -100,6 +100,33 @@ impl MockedApi {
                 .await;
         }
 
+        // Terminal-scoped item prices: the Guns terminal (435) sells items;
+        // commodity/fuel/refinery terminals return empty.
+        Mock::given(method("GET"))
+            .and(path("/items_prices"))
+            .and(query_param("id_terminal", "435"))
+            .respond_with(json_response(&fixture("item_prices_terminal_435.json")))
+            .mount(&server)
+            .await;
+        for other in ["428", "431", "436"] {
+            Mock::given(method("GET"))
+                .and(path("/items_prices"))
+                .and(query_param("id_terminal", other))
+                .respond_with(json_response(
+                    r#"{"status":"ok","http_code":200,"data":[]}"#,
+                ))
+                .mount(&server)
+                .await;
+        }
+
+        // Item-scoped prices: /items_prices?id_item=465 → backpack prices
+        Mock::given(method("GET"))
+            .and(path("/items_prices"))
+            .and(query_param("id_item", "465"))
+            .respond_with(json_response(&fixture("item_prices_465.json")))
+            .mount(&server)
+            .await;
+
         Mock::given(method("GET"))
             .and(path("/marketplace_listings"))
             .respond_with(json_response(&fixture("marketplace_listings.json")))
@@ -248,12 +275,25 @@ async fn location_prices_aggregates_all_terminals_of_the_chain() {
             .any(|pt| pt.commodity == "Agricultural Supplies"),
         "fixture rows must be mapped with names"
     );
+    // Guns terminal (435) carries item prices; fuel/refinery (428, 431) trade nothing
+    let guns = agg.groups.iter().find(|g| g.terminal_id == 435).unwrap();
+    assert!(
+        !guns.prices.is_empty(),
+        "Guns terminal must show merged item prices"
+    );
+    assert!(
+        guns.prices
+            .iter()
+            .any(|pt| pt.commodity == "CSP-68H Backpack"),
+        "item price row must carry the item name"
+    );
+    assert_eq!(guns.prices[0].buy_price, 295.0);
     assert!(
         agg.groups
             .iter()
-            .filter(|g| g.terminal_id != 436)
+            .filter(|g| g.terminal_id != 436 && g.terminal_id != 435)
             .all(|g| g.prices.is_empty()),
-        "non-commodity terminals must show an empty table, not an error"
+        "fuel/refinery terminals must show an empty table, not an error"
     );
 
     // Cached second open must not hit the API again.
@@ -266,6 +306,60 @@ async fn location_prices_aggregates_all_terminals_of_the_chain() {
     assert_eq!(
         after, before,
         "aggregate must be served from the terminal-prices cache while fresh"
+    );
+}
+
+#[tokio::test]
+async fn terminal_prices_merges_item_prices_for_shop_terminals() {
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    // Guns terminal (435) trades no commodities but sells items — the terminal
+    // price table must include those item rows (Point 3: shops show item prices).
+    let prices = p.terminal_prices(435).await.unwrap();
+    assert!(
+        prices.iter().any(|pt| pt.commodity == "CSP-68H Backpack"),
+        "Guns terminal must surface item prices: {prices:?}"
+    );
+    let backpack = prices
+        .iter()
+        .find(|pt| pt.commodity == "CSP-68H Backpack")
+        .unwrap();
+    assert_eq!(backpack.buy_price, 295.0);
+    assert_eq!(backpack.terminal_id, 435);
+
+    // Commodity terminal (436) still returns commodity prices only.
+    let comm_prices = p.terminal_prices(436).await.unwrap();
+    assert!(
+        comm_prices
+            .iter()
+            .any(|pt| pt.commodity == "Agricultural Supplies")
+    );
+}
+
+#[tokio::test]
+async fn item_prices_fetches_live_then_serves_cache() {
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    // First call: live fetch from /items_prices?id_item=465
+    let points = p.item_prices(465).await.unwrap();
+    assert_eq!(points.len(), 1, "fixture has one price row for item 465");
+    assert_eq!(points[0].commodity, "CSP-68H Backpack");
+    assert_eq!(points[0].buy_price, 295.0);
+    assert_eq!(points[0].terminal_id, 107);
+
+    let before = api.server.received_requests().await.unwrap().len();
+    let again = p.item_prices(465).await.unwrap();
+    assert_eq!(
+        again.len(),
+        1,
+        "cached second call must return the same rows"
+    );
+    let after = api.server.received_requests().await.unwrap().len();
+    assert_eq!(
+        after, before,
+        "item prices must be served from cache while fresh"
     );
 }
 

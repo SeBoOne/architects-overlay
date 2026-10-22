@@ -180,6 +180,29 @@ pub struct ListingRow {
     pub slug: String,
 }
 
+/// `/items_prices` row (per terminal or per item). Only `price_buy` carries
+/// the terminal's purchase price (what the player pays); `price_sell` is 0
+/// for items (shops don't buy items back). The `min/max/avg` variants and
+/// durability/faction fields are omitted — they mirror the buy price.
+#[derive(Debug, Deserialize)]
+pub struct ItemPriceRow {
+    pub id: u64,
+    pub id_item: u64,
+    pub id_terminal: u64,
+    #[serde(default)]
+    pub price_buy: f64,
+    #[serde(default)]
+    pub price_sell: f64,
+    #[serde(default)]
+    pub item_name: String,
+    #[serde(default)]
+    pub terminal_name: String,
+    #[serde(default)]
+    pub terminal_code: Option<String>,
+    #[serde(default)]
+    pub date_modified: u64,
+}
+
 /// `/star_systems` row — few rows, used to resolve listing regions.
 #[derive(Debug, Deserialize)]
 pub struct StarSystemRow {

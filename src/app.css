@@ -777,6 +777,241 @@ html[data-window="spotlight"] .shell {
 	padding: 12px 16px;
 }
 
+/* --------------------------- Detail-Seite (Overlay) ---------------------
+   Ersetzt die Inline-Expansion (.xpan): das Detail-Paneel schwebt als Modal
+   über der Ergebnisliste. In `in-detail` wird `.list` versteckt; `.pane-detail`
+   rutscht in deren Platz und übernimmt das Höhenbudget. Wiederverwendet die
+   bestehenden Preis-Tabellen-Styles (.ptab/.ph/.cap/.pr/.psub/.best). */
+.pane-list {
+	position: relative;
+}
+
+.pane-list.in-detail .list {
+	display: none;
+}
+
+.pane-detail {
+	display: block;
+	max-height: min(58vh, 640px);
+	overflow: auto;
+	scrollbar-width: thin;
+	background: var(--panel);
+	border-top: 1px solid var(--lineb);
+}
+
+.pane-detail::-webkit-scrollbar {
+	width: 8px;
+}
+
+.pane-detail::-webkit-scrollbar-thumb {
+	background: var(--lineb);
+	border-radius: 4px;
+}
+
+.pane-detail::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* Kopfzeile: ← Zurück | Titel | Bestpreis-Chip | Ortssperre-Hinweis */
+.d-head {
+	display: flex;
+	align-items: center;
+	gap: var(--pad-x);
+	padding: calc(var(--pad-x) * 0.6) var(--pad-x);
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel2);
+	min-height: var(--row-h);
+}
+
+.d-head .d-back {
+	flex: 0 0 auto;
+	background: var(--panel3);
+	border: 1px solid var(--lineb);
+	color: var(--accent);
+	font: 700 max(1.05vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	padding: 0.6vh 0.8em;
+	cursor: pointer;
+}
+
+.d-head .d-back:hover {
+	border-color: var(--fgdim);
+	color: var(--fg);
+}
+
+.d-head .d-title {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.d-head .d-title h2 {
+	font: 600 max(1.7vh, 15px)/1.15 var(--font-ui);
+	letter-spacing: -0.01em;
+	color: var(--fg);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.d-head .d-title .c {
+	display: block;
+	margin-top: 0.2vh;
+	font: 500 max(1.05vh, 10px)/1 var(--font-mono);
+	color: var(--fgdim);
+}
+
+.d-head .d-price {
+	flex: 0 0 auto;
+	display: flex;
+	gap: calc(var(--pad-x) * 0.8);
+}
+
+.d-head .d-price .buy,
+.d-head .d-price .sell {
+	font: 600 max(1.4vh, 12.5px)/1.2 var(--font-mono);
+	white-space: nowrap;
+}
+
+.d-head .d-price .buy {
+	color: var(--buy);
+}
+
+.d-head .d-price .sell {
+	color: var(--sell);
+}
+
+/* Auswahl-Toast nach ↵ einer Detail-Zeile */
+.d-toast {
+	padding: 0.6vh var(--pad-x);
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel2);
+	font: 600 max(1.05vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--accent);
+}
+
+.d-toast b {
+	color: var(--fgdim);
+	font-weight: 600;
+}
+
+/* Skelett / Fehler beim Laden der Preise */
+.d-ghost {
+	padding: calc(var(--xpan-h) * 0.6) var(--pad-x);
+	text-align: center;
+}
+
+.d-ghost .cap {
+	font: 600 max(1.1vh, 10.5px)/1.5 var(--font-mono);
+	color: var(--fgdim);
+}
+
+.d-ghost .sm {
+	margin-top: 0.6vh;
+	color: var(--fgfaint);
+}
+
+/* Body: Preis-Tabellen (Kauf | Verkauf) — wiederverwendet .ptab/.pr/.ph/.cap */
+.d-body {
+	padding: calc(var(--pad-x) * 0.6) var(--pad-x) calc(var(--pad-x) * 0.8);
+}
+
+/* Fußzeile: Tasten-Hinweise der Detail-Ansicht */
+.d-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.8em;
+	padding: 0.8vh var(--pad-x);
+	border-top: 1px solid var(--lineb);
+	background: var(--panel3);
+	font: 600 max(1.05vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--fgdim);
+}
+
+.d-foot kbd {
+	color: var(--accent);
+	border: 1px solid var(--lineb);
+	padding: 0.25vh 0.5em;
+}
+
+.d-foot .sep {
+	color: var(--lineb);
+}
+
+.sep {
+	color: var(--lineb);
+}
+
+/* --------------------------- Ortssperre (Lock) ---------------------------- */
+.found .lock-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4em;
+	padding: 0.3vh 0.85em;
+	border: 1px solid var(--accent);
+	background: color-mix(in srgb, var(--accent) 18%, transparent);
+	font: 700 max(1.05vh, 10.5px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--on-accent);
+	white-space: nowrap;
+}
+
+.found .lock-badge .lock-x {
+	margin-left: 0.3em;
+	background: none;
+	border: 0;
+	color: var(--on-accent);
+	opacity: 0.8;
+	font-size: 1em;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.found .lock-badge .lock-x:hover {
+	opacity: 1;
+}
+
+.found .lock-btn {
+	margin-left: 0.6em;
+	background: var(--panel3);
+	border: 1px solid var(--accent);
+	color: var(--accent);
+	font: 700 max(1.05vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	padding: 0.3vh 0.7em;
+	cursor: pointer;
+}
+
+.found .lock-btn:hover {
+	background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+/* Ortssperre-Hinweis unterhalb des Found-Chips bzw. im Detail-Kopf */
+.lock-hint {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.45em;
+	padding: 0.5vh var(--pad-x) 0.4vh;
+	font: 600 max(1.05vh, 10.5px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--fgdim);
+	background: var(--panel2);
+	border-bottom: 1px solid var(--line);
+}
+
+.lock-hint .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+}
+
+.lock-hint .sm {
+	opacity: 0.8;
+}
+
 /* --------------------------- Detail --------------------------------------- */
 .dhead {
 	padding: 14px 16px 12px;
