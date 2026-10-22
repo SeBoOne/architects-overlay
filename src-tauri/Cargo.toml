@@ -1,6 +1,6 @@
 [package]
 name = "architects-overlay"
-version = "0.1.2"
+version = "0.1.3"
 description = "SC Architects Overlay — Tauri v2 + SvelteKit desktop overlay"
 authors = ["SeBo"]
 license = "MIT"
