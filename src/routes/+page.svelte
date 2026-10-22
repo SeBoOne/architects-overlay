@@ -330,6 +330,9 @@
 	function move(dir: number) {
 		if (!flat.length) return;
 		sel = Math.min(Math.max(sel + dir, 0), flat.length - 1);
+		// Pfeil-Navigation übernimmt die Fokus-Zeile — sonst bliebe ein per
+		// Alt+Zahl gesetzter Fokus als Enter-Ziel stehen (NB-2).
+		focusIdx = sel;
 	}
 
 	// ---- Inline-Expansion (Preis-Tabelle) statt separates Detail-Panel --------
@@ -349,12 +352,9 @@
 	}
 
 	// Alt+Zahl nur fokussieren: Badge ausgegraut, aber NICHT aufklappen.
+	// (NB-1: Verhalten entspricht jetzt dem Kommentar/Spec §4 — das Aufklappen
+	// übernimmt Enter auf der fokussierten Zeile.)
 	function focusOnly(idx: number) {
-		if (expanded !== idx) {
-			expanded = idx;
-			xpan = { busy: true, detail: null, error: null };
-			void loadDetail(flat[idx]);
-		}
 		focusRow(idx);
 	}
 
@@ -607,7 +607,9 @@
 			move(-1);
 			e.preventDefault();
 		} else if (k === 'Enter') {
-			openRow(sel);
+			// NB-2: Enter trifft die fokussierte Zeile (Alt+Zahl), sonst die
+			// per Pfeil selektierte.
+			openRow(focusIdx ?? sel);
 			e.preventDefault();
 		} else if (k === 'Escape') {
 			escSearch();
