@@ -43,7 +43,7 @@ fn terminals_fixture_maps_to_entities_with_hierarchy() {
     for r in &rows {
         assert!(r.id > 0);
         assert!(
-            r.displayname.is_some() || r.fullname.is_some(),
+            r.displayname.is_some() || r.fullname.is_some() || r.name.is_some(),
             "terminal {} has no name fields",
             r.id
         );
@@ -51,6 +51,35 @@ fn terminals_fixture_maps_to_entities_with_hierarchy() {
     // first fixture row is ARC-L1 with full hierarchy
     let first = &rows[0];
     assert!(first.star_system_name.is_some());
+}
+
+#[test]
+fn terminals_carry_all_name_fields() {
+    let rows: Vec<TerminalRow> = envelope_data("terminals.json");
+    // the Checkmate commodity terminal: name ("Admin - Checkmate") AND
+    // fullname ("Commodity Shop - Admin - Checkmate") are both present — the
+    // display mapping must prefer fullname, never the bare displayname.
+    let commodity = rows.iter().find(|r| r.id == 436).unwrap();
+    assert_eq!(commodity.name.as_deref(), Some("Admin - Checkmate"));
+    assert_eq!(
+        commodity.fullname.as_deref(),
+        Some("Commodity Shop - Admin - Checkmate")
+    );
+    assert_eq!(commodity.displayname.as_deref(), Some("Checkmate"));
+}
+
+#[test]
+fn items_fixture_carries_is_commodity_flag() {
+    let rows: Vec<uex_client::private::ItemRow> = envelope_data("items.json");
+    let quant = rows.iter().find(|r| r.id == 4745).unwrap();
+    assert_eq!(quant.name, "Quantainium");
+    assert_eq!(quant.is_commodity, 1, "commodity items must be flagged");
+    let backpack = rows.iter().find(|r| r.id == 174).unwrap();
+    assert_eq!(backpack.is_commodity, 0);
+    // missing flag → default 0 (legacy/partial rows must not fail)
+    let parsed: uex_client::private::ItemRow =
+        serde_json::from_str(r#"{"id": 1, "name": "x"}"#).unwrap();
+    assert_eq!(parsed.is_commodity, 0);
 }
 
 #[test]

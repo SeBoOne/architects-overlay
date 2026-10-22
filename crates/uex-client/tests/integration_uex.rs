@@ -80,6 +80,26 @@ impl MockedApi {
             .mount(&server)
             .await;
 
+        // Terminal-scoped prices (location aggregate): only the Checkmate
+        // commodity terminal (436) trades; the fuel/refinery/item terminals
+        // of the location return empty tables.
+        Mock::given(method("GET"))
+            .and(path("/commodities_prices"))
+            .and(query_param("id_terminal", "436"))
+            .respond_with(json_response(&fixture("terminal_prices_checkmate.json")))
+            .mount(&server)
+            .await;
+        for other in ["428", "431", "435"] {
+            Mock::given(method("GET"))
+                .and(path("/commodities_prices"))
+                .and(query_param("id_terminal", other))
+                .respond_with(json_response(
+                    r#"{"status":"ok","http_code":200,"data":[]}"#,
+                ))
+                .mount(&server)
+                .await;
+        }
+
         Mock::given(method("GET"))
             .and(path("/marketplace_listings"))
             .respond_with(json_response(&fixture("marketplace_listings.json")))
@@ -150,6 +170,114 @@ async fn fetch_entities_items_enumerates_categories() {
     );
     assert!(items.iter().all(|e| e.kind == EntityKind::Items));
     assert!(items.iter().all(|e| e.id > 0));
+
+    // Dedup (feedback 4): the items fixture also carries Quantainium with
+    // is_commodity=1 — it must be filtered at import (it is represented by
+    // the commodities dataset), never surface as a separate item.
+    assert!(
+        items.iter().all(|e| e.id != 4745),
+        "is_commodity=1 items must be deduped at import: {items:?}"
+    );
+    assert!(items.iter().any(|e| e.id == 174));
+    assert!(items.iter().any(|e| e.id == 465));
+}
+
+#[tokio::test]
+async fn terminal_search_shows_fullname_instead_of_displayname() {
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    let t = p.search(SearchEntities::Terminals, "arc").await.unwrap();
+    assert!(!t.is_empty());
+    // Feedback 2: the result name must be the complete terminal name
+    // (fullname), not the bare displayname ("ARC-L1 Wide Forest Station"),
+    // so the user recognizes the stand without guessing IDs.
+    assert_eq!(
+        t[0].name, "Commodity Shop - Admin - ARC-L1",
+        "terminal hit must carry the full trade name, got {:?}",
+        t[0].name
+    );
+    assert_eq!(t[0].kind, "terminal");
+    assert!(
+        t[0].subtitle.contains("ArcCorp"),
+        "hierarchy must stay in the subtitle: {:?}",
+        t[0].subtitle
+    );
+
+    // the Checkmate commodity terminal: fullname > name > displayname
+    let checkmate = p
+        .search(SearchEntities::Terminals, "checkmate")
+        .await
+        .unwrap();
+    assert!(
+        checkmate
+            .iter()
+            .any(|h| h.name == "Commodity Shop - Admin - Checkmate"),
+        "Checkmate terminal must show the full commodity-shop name: {checkmate:?}"
+    );
+}
+
+#[tokio::test]
+async fn location_prices_aggregates_all_terminals_of_the_chain() {
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    // Open "Admin - Checkmate" (terminal 436): the aggregate must cover every
+    // terminal of the location chain (428 fuel, 431 refinery, 435 item,
+    // 436 commodity), each with its own buy/sell table.
+    let agg = p.location_prices(436).await.unwrap();
+    assert_eq!(
+        agg.location, "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station",
+        "location header must be the full chain"
+    );
+    assert_eq!(agg.terminal, "Commodity Shop - Admin - Checkmate");
+    let ids: Vec<u64> = agg.groups.iter().map(|g| g.terminal_id).collect();
+    assert_eq!(ids, [428, 431, 435, 436], "groups sorted by terminal id");
+
+    // commodity terminal carries its price table; the others trade nothing
+    let commodity = agg.groups.iter().find(|g| g.terminal_id == 436).unwrap();
+    assert_eq!(
+        commodity.terminal_name,
+        "Commodity Shop - Admin - Checkmate"
+    );
+    assert!(commodity.prices.len() >= 4, "got {:?}", commodity.prices);
+    assert!(
+        commodity
+            .prices
+            .iter()
+            .any(|pt| pt.commodity == "Agricultural Supplies"),
+        "fixture rows must be mapped with names"
+    );
+    assert!(
+        agg.groups
+            .iter()
+            .filter(|g| g.terminal_id != 436)
+            .all(|g| g.prices.is_empty()),
+        "non-commodity terminals must show an empty table, not an error"
+    );
+
+    // Cached second open must not hit the API again.
+    let before = api.server.received_requests().await.unwrap().len();
+
+    // Cached second open must not hit the API again.    let before = api.server.received_requests().await.unwrap().len();
+    let again = p.location_prices(436).await.unwrap();
+    assert_eq!(again.groups.len(), 4);
+    let after = api.server.received_requests().await.unwrap().len();
+    assert_eq!(
+        after, before,
+        "aggregate must be served from the terminal-prices cache while fresh"
+    );
+}
+
+#[tokio::test]
+async fn prices_of_known_item_return_empty_not_error() {
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    // An armor item has no commodity price table — the detail must come back
+    // EMPTY (UI: "nicht kaufbar / keine Preisdaten") instead of a NotFound.
+    let points = p.prices("CSP-68H Backpack").await.unwrap();
+    assert!(points.is_empty(), "items are no commodities: {points:?}");
 }
 
 #[tokio::test]

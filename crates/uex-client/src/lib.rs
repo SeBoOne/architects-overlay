@@ -28,8 +28,9 @@ use std::sync::Arc;
 use cache::{Cache, CacheError};
 use http::{DEFAULT_BASE_URL, DEFAULT_MIN_INTERVAL, UexHttpClient};
 use provider::{
-    DataProvider, Entity, EntityKind, ListingType, MarketOperation, MarketplaceFilter, Offer,
-    OfferSort, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
+    DataProvider, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
+    MarketplaceFilter, Offer, OfferSort, PricePoint, ProviderError, Result, SearchEntities,
+    SearchHit, TerminalPriceGroup,
 };
 
 use dto::{CategoryRow, CommodityRow, ItemRow, ListingRow, PriceRow, StarSystemRow, TerminalRow};
@@ -150,7 +151,18 @@ impl DataProvider for UexProvider {
     }
 
     async fn prices(&self, commodity: &str) -> Result<Vec<PricePoint>> {
-        let (id, name) = self.resolve_commodity(commodity).await?;
+        let (id, name) = match self.resolve_commodity(commodity).await {
+            Ok(found) => found,
+            Err(ProviderError::NotFound(_)) => {
+                // Not a trade commodity — check whether the query is a known
+                // item (or terminal) instead. Such rows carry no commodity
+                // price table; an empty result is the honest answer and lets
+                // the UI render the "nicht kaufbar / keine Preisdaten" state
+                // instead of a hard error.
+                return Ok(self.empty_prices_for_other(commodity).await?);
+            }
+            Err(other) => return Err(other),
+        };
 
         // Serve cached prices while fresh (≤ 30 min).
         if self.cache.prices_fresh(id).map_err(map_cache_err)? {
@@ -169,31 +181,14 @@ impl DataProvider for UexProvider {
             .await?;
         let points = rows
             .into_iter()
-            .map(|r| PricePoint {
-                commodity: if r.commodity_name.is_empty() {
-                    name.clone()
-                } else {
-                    r.commodity_name
-                },
-                commodity_id: r.id_commodity,
-                location: if r.terminal_name.is_empty() {
-                    format!("terminal {}", r.id_terminal)
-                } else {
-                    r.terminal_name
-                },
-                terminal_id: r.id_terminal,
-                sell_price: r.price_sell,
-                buy_price: r.price_buy,
-                sell_stock: r.scu_sell_avg,
-                buy_stock: r.scu_buy_avg,
-                sell_status: r.status_sell,
-                buy_status: r.status_buy,
-                quality: r.quality,
-                updated: r.date_modified,
-            })
+            .map(|r| map_price_point(r, &name))
             .collect::<Vec<_>>();
         self.cache.store_prices(&points).map_err(map_cache_err)?;
         Ok(points)
+    }
+
+    async fn location_prices(&self, terminal_id: u64) -> Result<LocationPrices> {
+        self.location_prices_impl(terminal_id).await
     }
 
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>> {
@@ -315,7 +310,13 @@ impl DataProvider for UexProvider {
                         Entity {
                             id: r.id,
                             kind: EntityKind::Terminals,
-                            name: r.displayname.or(r.fullname).unwrap_or_default(),
+                            // Live feedback: search results must show the
+                            // complete terminal name so the user recognizes
+                            // the stand ("Commodity Shop - Admin - Checkmate")
+                            // without guessing IDs — fullname is the most
+                            // complete field, then name, then the bare
+                            // displayname. The hierarchy stays in `subtitle`.
+                            name: r.fullname.or(r.name).or(r.displayname).unwrap_or_default(),
                             code: r.code,
                             subtitle: parts.join(" > "),
                         }
@@ -337,6 +338,15 @@ impl DataProvider for UexProvider {
                         .await?;
                     for r in rows.unwrap_or_default() {
                         if !seen.insert(r.id) {
+                            continue;
+                        }
+                        // Dedup (live feedback): commodities also surface in
+                        // /items with is_commodity=1 (empty url_store/uuid).
+                        // They are represented by the commodities dataset —
+                        // importing them as items would duplicate every trade
+                        // good in search. Filter at the source, never in the
+                        // UI (rule of this task).
+                        if r.is_commodity == 1 {
                             continue;
                         }
                         let mut subtitle = Vec::new();
@@ -378,8 +388,140 @@ impl DataProvider for UexProvider {
     }
 }
 
+impl UexProvider {
+    /// Look `query` up in the locally cached non-commodity reference rows
+    /// (items, then terminals). An exact match means "exists here, but has no
+    /// commodity prices" → `Ok(vec![])`; no match stays a NotFound.
+    async fn empty_prices_for_other(&self, query: &str) -> Result<Vec<PricePoint>> {
+        let q = query.trim();
+        for kind in [EntityKind::Items, EntityKind::Terminals] {
+            self.ensure_fresh(kind).await?;
+            let hits = self.cache.search(&[kind], q, 10).map_err(map_cache_err)?;
+            if hits.iter().any(|h| h.name.eq_ignore_ascii_case(q)) {
+                return Ok(Vec::new());
+            }
+        }
+        Err(ProviderError::NotFound(format!(
+            "commodity '{query}' not found in reference data"
+        )))
+    }
+
+    /// Price points of ONE terminal (buy/sell per commodity). Cached 30 min,
+    /// else fetched live via `/commodities_prices?id_terminal=…` (the
+    /// terminal-scoped variant of the same endpoint used for commodities).
+    async fn terminal_prices(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
+        // Fresh marker = "this terminal was checked recently" — an EMPTY
+        // cached table is a valid state (fuel/refinery docks trade nothing)
+        // and must be served, not refetched every open.
+        if self
+            .cache
+            .terminal_prices_fresh(terminal_id)
+            .map_err(map_cache_err)?
+        {
+            return self
+                .cache
+                .terminal_prices_for(terminal_id)
+                .map_err(map_cache_err);
+        }
+        let rows: Vec<PriceRow> = self
+            .http
+            .get(
+                "/commodities_prices",
+                &[("id_terminal".to_string(), terminal_id.to_string())],
+            )
+            .await?;
+        let points = rows
+            .into_iter()
+            .map(|r| map_price_point(r, ""))
+            .collect::<Vec<_>>();
+        self.cache
+            .store_terminal_prices(terminal_id, &points)
+            .map_err(map_cache_err)?;
+        Ok(points)
+    }
+
+    /// Aggregate the prices of a location: resolve the clicked terminal from
+    /// the reference cache, find every terminal that shares its location
+    /// chain (UEX prices are terminal-scoped; one location = all terminals
+    /// under one chain, e.g. the four Checkmate terminals of one station),
+    /// then fetch each terminal's commodity table.
+    async fn location_prices_impl(&self, terminal_id: u64) -> Result<LocationPrices> {
+        self.ensure_fresh(EntityKind::Terminals).await?;
+        let terminals = self
+            .cache
+            .entities_of(EntityKind::Terminals)
+            .map_err(map_cache_err)?;
+        let target = terminals
+            .iter()
+            .find(|e| e.id == terminal_id)
+            .ok_or_else(|| {
+                ProviderError::NotFound(format!(
+                    "terminal {terminal_id} not found in reference data"
+                ))
+            })?;
+        let chain = target.subtitle.clone();
+        if chain.is_empty() {
+            return Err(ProviderError::NotFound(format!(
+                "terminal {terminal_id} has no location chain"
+            )));
+        }
+
+        // Sibling terminals of the same location (same chain). The clicked
+        // terminal is always included, so its own prices are never lost.
+        let mut groups = Vec::new();
+        for terminal in terminals.iter().filter(|e| e.subtitle == chain) {
+            let points = self.terminal_prices(terminal.id).await?;
+            groups.push(TerminalPriceGroup {
+                terminal_id: terminal.id,
+                terminal_name: terminal.name.clone(),
+                prices: points,
+            });
+        }
+        groups.sort_by_key(|g| g.terminal_id);
+
+        Ok(LocationPrices {
+            location: chain,
+            terminal: target.name.clone(),
+            groups,
+        })
+    }
+}
+
 fn map_cache_err(e: CacheError) -> ProviderError {
     ProviderError::Cache(e.to_string())
+}
+
+/// Map a `/commodities_prices` row (commodity- OR terminal-scoped — same wire
+/// shape) onto the seam [`PricePoint`]. `fallback_commodity` is used when the
+/// row omits the name (ageing API rows); the terminal name falls back to a
+/// readable id form.
+fn map_price_point(r: PriceRow, fallback_commodity: &str) -> PricePoint {
+    PricePoint {
+        commodity: if r.commodity_name.is_empty() {
+            if fallback_commodity.is_empty() {
+                format!("commodity {}", r.id_commodity)
+            } else {
+                fallback_commodity.to_string()
+            }
+        } else {
+            r.commodity_name
+        },
+        commodity_id: r.id_commodity,
+        location: if r.terminal_name.is_empty() {
+            format!("terminal {}", r.id_terminal)
+        } else {
+            r.terminal_name
+        },
+        terminal_id: r.id_terminal,
+        sell_price: r.price_sell,
+        buy_price: r.price_buy,
+        sell_stock: r.scu_sell_avg,
+        buy_stock: r.scu_buy_avg,
+        sell_status: r.status_sell,
+        buy_status: r.status_buy,
+        quality: r.quality,
+        updated: r.date_modified,
+    }
 }
 
 /// Re-export of wire DTOs for integration tests only. Not part of the API.

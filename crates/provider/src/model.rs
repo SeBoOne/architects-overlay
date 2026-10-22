@@ -83,6 +83,30 @@ pub struct SearchHit {
     pub code: Option<String>,
 }
 
+/// One terminal's price table inside a location aggregate (see
+/// [`LocationPrices`]). `prices` may be empty when the terminal trades no
+/// commodities (fuel/refinery docks, empty shops) — the UI renders that as
+/// "keine Preisdaten" rather than an error.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TerminalPriceGroup {
+    pub terminal_id: u64,
+    /// Trade-display name of the terminal (provider maps it to the most
+    /// complete source field, e.g. "Commodity Shop - Admin - Checkmate").
+    pub terminal_name: String,
+    pub prices: Vec<PricePoint>,
+}
+
+/// Location price aggregate: all terminals of one location (grouped by the
+/// cached location chain) with their commodity prices. `location` is the
+/// human-readable chain ("Pyro > Monox > … > Checkmate Station"),
+/// `terminal` the display name of the terminal the user opened.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LocationPrices {
+    pub location: String,
+    pub terminal: String,
+    pub groups: Vec<TerminalPriceGroup>,
+}
+
 /// A price observation (buy/sell) for a commodity at a terminal.
 ///
 /// UEX semantics: `buy_price`/`sell_price` are the last reported per-SCU

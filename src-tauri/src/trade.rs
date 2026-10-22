@@ -7,8 +7,12 @@
 //!   overlay stays instant (< 50 ms is the goal; FTS5 prefix search is
 //!   typically sub-ms). Freshness of the underlying reference data is the
 //!   background sync task's job, not the keystroke path's.
-//! - `get_prices(commodity)` — live/cached price points for one commodity
-//!   (provider policy: serve cache while ≤ 30 min old, otherwise fetch).
+//! - `get_prices(commodity, id?, kind?)` — price detail behind one expanded
+//!   search row. `kind: "location"` (+ terminal id) returns the location
+//!   aggregate grouped per terminal; `kind: "item"` (+ item id) returns an
+//!   empty table (items are no commodities); otherwise per-commodity price
+//!   points (provider policy: serve cache while ≤ 30 min old, otherwise
+//!   fetch).
 //! - `sync_status()` / `sync_now()` — reference-data freshness, entity
 //!   counts, sync-in-progress and last error; `sync_now` triggers the
 //!   on-demand sweep the UI needs for the first sync and the "Erneut
@@ -103,6 +107,10 @@ pub struct PriceDetail {
     /// unix seconds when the response was assembled.
     pub fetched_at: u64,
     pub prices: Vec<provider::PricePoint>,
+    /// Set (and `prices` flattened from it) when `kind: "location"` was
+    /// requested: the location aggregate grouped by terminal. Null on the
+    /// commodity/item path.
+    pub location: Option<provider::LocationPrices>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -217,25 +225,91 @@ fn fmt_number(v: f64) -> String {
     s
 }
 
-/// Current price list for one commodity (by name/code). May fetch live when
-/// the local copy is older than the price TTL — the UI shows the loader during
-/// that window.
+/// Price details behind one expanded search row. The frontend routes by the
+/// hit's `kind`:
+///
+/// * `kind = "location"` (+ `id` = terminal id): returns the location
+///   aggregate — every terminal of the location chain with its own buy/sell
+///   table, in `location.groups` (feedback fix "Preise nicht geladen").
+/// * `kind = "item"` (+ `id` = item id): items carry no commodity price
+///   table unless they are commodities (those were deduped into the
+///   commodity dataset at import). The detail comes back with an empty
+///   `prices` list so the UI renders "nicht kaufbar / keine Preisdaten".
+/// * default (or `kind = "commodity"`): per-commodity price points, cached
+///   30 min, refetched live when stale. May also resolve to `Ok(empty)` for
+///   a known item/terminal passed by name (defensive fallback).
 #[tauri::command]
 pub async fn get_prices(
     state: State<'_, TradeState>,
     commodity: String,
+    id: Option<u64>,
+    kind: Option<String>,
 ) -> Result<PriceDetail, String> {
-    let prices = state.provider.prices(&commodity).await.map_err(friendly)?;
     let fetched_at = now_unix();
-    Ok(PriceDetail {
-        commodity: prices
-            .first()
-            .map(|p| p.commodity.clone())
-            .unwrap_or(commodity),
-        source: state.provider.name(),
-        fetched_at,
-        prices,
-    })
+    match kind.as_deref() {
+        Some("location") => {
+            let terminal_id =
+                id.ok_or_else(|| "Location öffnen: fehlende Terminal-ID".to_string())?;
+            let location = state
+                .provider
+                .location_prices(terminal_id)
+                .await
+                .map_err(friendly)?;
+            let mut prices = Vec::new();
+            for group in &location.groups {
+                prices.extend(group.prices.iter().cloned());
+            }
+            Ok(PriceDetail {
+                commodity: location.terminal.clone(),
+                source: state.provider.name(),
+                fetched_at,
+                prices,
+                location: Some(location),
+            })
+        }
+        Some("item") => {
+            // Items are no commodities: validate the id exists in the item
+            // dataset and hand back an empty table (UI shows the
+            // "nicht kaufbar" state instead of an error).
+            let item_name = item_name(&state, id, &commodity).await?;
+            Ok(PriceDetail {
+                commodity: item_name,
+                source: state.provider.name(),
+                fetched_at,
+                prices: Vec::new(),
+                location: None,
+            })
+        }
+        _ => {
+            let prices = state.provider.prices(&commodity).await.map_err(friendly)?;
+            Ok(PriceDetail {
+                commodity: prices
+                    .first()
+                    .map(|p| p.commodity.clone())
+                    .unwrap_or(commodity),
+                source: state.provider.name(),
+                fetched_at,
+                prices,
+                location: None,
+            })
+        }
+    }
+}
+
+/// Resolve an item's display name (by id, falling back to the raw query).
+async fn item_name(state: &TradeState, id: Option<u64>, raw: &str) -> Result<String, String> {
+    let Some(item_id) = id else {
+        return Ok(raw.to_string());
+    };
+    let entities = state
+        .cache
+        .entities_of(EntityKind::Items)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    Ok(entities
+        .iter()
+        .find(|e| e.id == item_id)
+        .map(|e| e.name.clone())
+        .unwrap_or_else(|| raw.to_string()))
 }
 
 /// Snapshot of cache freshness / sync state for the footer status line.
@@ -701,6 +775,125 @@ mod tests {
             listing_deep_link("   "),
             "https://uexcorp.space/marketplace/"
         );
+    }
+
+    /// get_prices routes by `kind`: location → aggregate groups, item →
+    /// empty table, default → commodity points. Verifies the backend contract
+    /// the frontend mirrors in +page.svelte.
+    #[tokio::test]
+    async fn get_prices_routes_location_and_item_kinds() {
+        use provider::{LocationPrices, TerminalPriceGroup};
+
+        struct LocProvider;
+        #[async_trait::async_trait]
+        impl DataProvider for LocProvider {
+            async fn search(
+                &self,
+                _e: provider::SearchEntities,
+                _q: &str,
+            ) -> provider::Result<Vec<SearchHit>> {
+                Ok(vec![])
+            }
+            async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
+                Ok(vec![provider::PricePoint {
+                    commodity: "Agricium".into(),
+                    commodity_id: 1,
+                    terminal_id: 12,
+                    location: "TDD Area 18".into(),
+                    sell_price: 10_000.0,
+                    buy_price: 0.0,
+                    sell_stock: 301.0,
+                    buy_stock: 0.0,
+                    sell_status: 1,
+                    buy_status: 0,
+                    quality: 0,
+                    updated: 1_792_341_485,
+                }])
+            }
+            async fn location_prices(&self, _terminal_id: u64) -> provider::Result<LocationPrices> {
+                Ok(LocationPrices {
+                    location: "Pyro > Monox > Checkmate Station".into(),
+                    terminal: "Commodity Shop - Admin - Checkmate".into(),
+                    groups: vec![TerminalPriceGroup {
+                        terminal_id: 436,
+                        terminal_name: "Commodity Shop - Admin - Checkmate".into(),
+                        prices: vec![provider::PricePoint {
+                            commodity: "Agricultural Supplies".into(),
+                            commodity_id: 3,
+                            location: "Admin - Checkmate".into(),
+                            terminal_id: 436,
+                            sell_price: 0.0,
+                            buy_price: 1108.0,
+                            sell_stock: 0.0,
+                            buy_stock: 0.0,
+                            sell_status: 0,
+                            buy_status: 7,
+                            quality: 0,
+                            updated: 1_792_355_842,
+                        }],
+                    }],
+                })
+            }
+            async fn marketplace_offers(
+                &self,
+                _f: provider::MarketplaceFilter,
+            ) -> provider::Result<Vec<provider::Offer>> {
+                Ok(vec![])
+            }
+            async fn fetch_entities(
+                &self,
+                _k: EntityKind,
+            ) -> provider::Result<Vec<provider::Entity>> {
+                Ok(vec![])
+            }
+            fn name(&self) -> String {
+                "loc".into()
+            }
+        }
+
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(LocProvider),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+        });
+        let state = app.state::<TradeState>();
+
+        // location route
+        let d = get_prices(
+            state.clone(),
+            "Checkmate".into(),
+            Some(436),
+            Some("location".into()),
+        )
+        .await
+        .unwrap();
+        let loc = d.location.expect("location route must fill `location`");
+        assert_eq!(loc.groups.len(), 1);
+        assert_eq!(loc.groups[0].prices[0].buy_price, 1108.0);
+        assert_eq!(d.prices.len(), 1, "flattened prices mirror the groups");
+
+        // item route → empty table, no location
+        let d = get_prices(
+            state.clone(),
+            "CSP-68H Backpack".into(),
+            Some(465),
+            Some("item".into()),
+        )
+        .await
+        .unwrap();
+        assert!(d.prices.is_empty());
+        assert!(d.location.is_none());
+
+        // default route → commodity provider path
+        let d = get_prices(state.clone(), "agricium".into(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(d.prices.len(), 1);
+        assert_eq!(d.prices[0].sell_price, 10_000.0);
+        assert!(d.location.is_none());
+
+        let _ = app;
     }
 
     /// get_marketplace: no snapshot → provider error surfaces as a command

@@ -1,0 +1,81 @@
+{
+ "status": "ok",
+ "http_code": 200,
+ "data": [
+  {
+   "id": 1851,
+   "id_commodity": 3,
+   "id_terminal": 436,
+   "price_buy": 1108,
+   "price_sell": 0,
+   "scu_buy_avg": 6000,
+   "scu_sell_avg": 0,
+   "status_buy": 7,
+   "status_sell": 0,
+   "quality": 0,
+   "date_modified": 1792355842,
+   "commodity_name": "Agricultural Supplies",
+   "terminal_name": "Admin - Checkmate"
+  },
+  {
+   "id": 1852,
+   "id_commodity": 102,
+   "id_terminal": 436,
+   "price_buy": 235,
+   "price_sell": 0,
+   "scu_buy_avg": 24000,
+   "scu_sell_avg": 0,
+   "status_buy": 7,
+   "status_sell": 0,
+   "quality": 0,
+   "date_modified": 1792355842,
+   "commodity_name": "Carbon",
+   "terminal_name": "Admin - Checkmate"
+  },
+  {
+   "id": 1853,
+   "id_commodity": 27,
+   "id_terminal": 436,
+   "price_buy": 1427,
+   "price_sell": 0,
+   "scu_buy_avg": 4246,
+   "scu_sell_avg": 0,
+   "status_buy": 5,
+   "status_sell": 0,
+   "quality": 0,
+   "date_modified": 1792355842,
+   "commodity_name": "Distilled Spirits",
+   "terminal_name": "Admin - Checkmate"
+  },
+  {
+   "id": 1854,
+   "id_commodity": 93,
+   "id_terminal": 436,
+   "price_buy": 1235,
+   "price_sell": 0,
+   "scu_buy_avg": 2036,
+   "scu_sell_avg": 0,
+   "status_buy": 4,
+   "status_sell": 0,
+   "quality": 0,
+   "date_modified": 1792355842,
+   "commodity_name": "DynaFlex",
+   "terminal_name": "Admin - Checkmate"
+  },
+  {
+   "id": 1855,
+   "id_commodity": 38,
+   "id_terminal": 436,
+   "price_buy": 727,
+   "price_sell": 0,
+   "scu_buy_avg": 1127,
+   "scu_sell_avg": 0,
+   "status_buy": 7,
+   "status_sell": 0,
+   "quality": 0,
+   "date_modified": 1792228223,
+   "commodity_name": "Helium",
+   "terminal_name": "Admin - Checkmate"
+  }
+ ]
+}
