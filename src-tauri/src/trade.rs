@@ -228,9 +228,12 @@ fn fmt_number(v: f64) -> String {
 /// Price details behind one expanded search row. The frontend routes by the
 /// hit's `kind`:
 ///
-/// * `kind = "location"` (+ `id` = terminal id): returns the location
-///   aggregate — every terminal of the location chain with its own buy/sell
-///   table, in `location.groups` (feedback fix "Preise nicht geladen").
+/// * `kind = "terminal"` (+ `id` = terminal id): prices of THIS terminal
+///   (buy/sell per commodity) — the row-specific detail, NOT the location
+///   chain aggregate.
+/// * `kind = "location"` (+ `id` = terminal id): the location aggregate —
+///   every terminal of the location chain with its own buy/sell table, in
+///   `location.groups` (feedback fix "Preise nicht geladen").
 /// * `kind = "item"` (+ `id` = item id): items carry no commodity price
 ///   table unless they are commodities (those were deduped into the
 ///   commodity dataset at import). The detail comes back with an empty
@@ -247,6 +250,26 @@ pub async fn get_prices(
 ) -> Result<PriceDetail, String> {
     let fetched_at = now_unix();
     match kind.as_deref() {
+        Some("terminal") => {
+            // One terminal's OWN price table (run: prices of THIS terminal,
+            // not the shared location chain aggregate). Resolve the display
+            // name by id; the provider caches per-terminal (30 min).
+            let terminal_id =
+                id.ok_or_else(|| "Terminal öffnen: fehlende Terminal-ID".to_string())?;
+            let name = terminal_name(&state, terminal_id, &commodity).await?;
+            let prices = state
+                .provider
+                .terminal_prices(terminal_id)
+                .await
+                .map_err(friendly)?;
+            Ok(PriceDetail {
+                commodity: name,
+                source: state.provider.name(),
+                fetched_at,
+                prices,
+                location: None,
+            })
+        }
         Some("location") => {
             let terminal_id =
                 id.ok_or_else(|| "Location öffnen: fehlende Terminal-ID".to_string())?;
@@ -308,6 +331,19 @@ async fn item_name(state: &TradeState, id: Option<u64>, raw: &str) -> Result<Str
     Ok(entities
         .iter()
         .find(|e| e.id == item_id)
+        .map(|e| e.name.clone())
+        .unwrap_or_else(|| raw.to_string()))
+}
+
+/// Resolve a terminal's display name (by id, falling back to the raw query).
+async fn terminal_name(state: &TradeState, id: u64, raw: &str) -> Result<String, String> {
+    let entities = state
+        .cache
+        .entities_of(EntityKind::Terminals)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    Ok(entities
+        .iter()
+        .find(|e| e.id == id)
         .map(|e| e.name.clone())
         .unwrap_or_else(|| raw.to_string()))
 }
@@ -777,11 +813,12 @@ mod tests {
         );
     }
 
-    /// get_prices routes by `kind`: location → aggregate groups, item →
-    /// empty table, default → commodity points. Verifies the backend contract
-    /// the frontend mirrors in +page.svelte.
+    /// get_prices routes by `kind`: terminal → own per-terminal prices with a
+    /// resolved display name, location → aggregate groups, item → empty
+    /// table, default → commodity points. Verifies the backend contract the
+    /// frontend mirrors in +page.svelte.
     #[tokio::test]
-    async fn get_prices_routes_location_and_item_kinds() {
+    async fn get_prices_routes_terminal_location_and_item_kinds() {
         use provider::{LocationPrices, TerminalPriceGroup};
 
         struct LocProvider;
@@ -834,6 +871,31 @@ mod tests {
                     }],
                 })
             }
+            async fn terminal_prices(
+                &self,
+                terminal_id: u64,
+            ) -> provider::Result<Vec<provider::PricePoint>> {
+                // Pro Terminal EIGENE Daten: die Menge unterscheidet sich je id.
+                let commodity = if terminal_id == 429 {
+                    "Medmonitor - Checkmate eigene Ware"
+                } else {
+                    "Landing Services eigene Ware"
+                };
+                Ok(vec![provider::PricePoint {
+                    commodity: commodity.into(),
+                    commodity_id: 99,
+                    location: "Checkmate - eigener Stand".into(),
+                    terminal_id,
+                    sell_price: 0.0,
+                    buy_price: 700.0,
+                    sell_stock: 0.0,
+                    buy_stock: 0.0,
+                    sell_status: 0,
+                    buy_status: 7,
+                    quality: 0,
+                    updated: 1_792_355_842,
+                }])
+            }
             async fn marketplace_offers(
                 &self,
                 _f: provider::MarketplaceFilter,
@@ -852,12 +914,57 @@ mod tests {
         }
 
         let app = mock_app();
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        // Seed one terminal so the `terminal`-Route den Anzeigenamen auflöst.
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[provider::Entity {
+                    id: 429,
+                    kind: EntityKind::Terminals,
+                    name: "Landing Services - Checkmate".into(),
+                    code: None,
+                    subtitle: "Pyro > Monox > Checkmate Station".into(),
+                }],
+            )
+            .unwrap();
         app.manage(TradeState {
             provider: Arc::new(LocProvider),
-            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            cache: cache.clone(),
             tracker: Arc::new(SyncTracker::default()),
         });
         let state = app.state::<TradeState>();
+
+        // terminal route → prices of THIS terminal, no location aggregate.
+        let d = get_prices(
+            state.clone(),
+            "Landing Services - Checkmate".into(),
+            Some(429),
+            Some("terminal".into()),
+        )
+        .await
+        .unwrap();
+        assert!(
+            d.location.is_none(),
+            "terminal route must NOT fill `location`"
+        );
+        assert_eq!(d.commodity, "Landing Services - Checkmate");
+        assert_eq!(d.prices.len(), 1);
+        assert_eq!(d.prices[0].terminal_id, 429);
+        assert_eq!(d.prices[0].buy_price, 700.0);
+        assert_eq!(d.prices[0].commodity, "Medmonitor - Checkmate eigene Ware");
+
+        // terminal route: andere id → andere (eigene) Daten.
+        let d = get_prices(
+            state.clone(),
+            "Guns - Checkmate".into(),
+            Some(437),
+            Some("terminal".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(d.prices[0].terminal_id, 437);
+        assert_eq!(d.prices[0].commodity, "Landing Services eigene Ware");
 
         // location route
         let d = get_prices(

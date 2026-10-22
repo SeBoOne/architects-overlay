@@ -45,7 +45,41 @@ window.__TAURI_INTERNALS__ = {
 				}, extra || {});
 				// QA-Auflage C: Kontrakt-treuer Mirror — Location → `location.groups`
 				// (je Terminal eine Gruppe, leere Gruppe = "keine Preisdaten"),
-				// Item → `prices: []` (nie ein Fehler), sonst Commodity wie bisher.
+				// Item → `prices: []` (nie ein Fehler), Terminal → EIGENE Preise
+				// dieses Terminals, sonst Commodity wie bisher.
+				if (a.kind === 'terminal') {
+					// Location-Expansion-Fix (t_d87ca3a4): pro Terminal eigene
+					// Daten — Landing Services ≠ Guns ≠ Aggregate.
+					const tid = Number(a.id || 5001);
+					const byTerminal = {
+						5001: [
+							{ commodity: 'Agricultural Supplies', buy: 1108, sell: 0, q: 680 },
+							{ commodity: 'Distilled Water', buy: 320, sell: 0, q: 540 }
+						],
+						// 25 Warengruppen: Inhalt HOEHER als die max-height-Kappung
+						// (222px) → .inner muss innen scrollen statt abgeschnitten
+						// zu werden (Location-Expansion-Fix t_d87ca3a4).
+						5002: (function () {
+							const names = ['Karna', 'P4-AR', 'FS-9', 'Sledge Mass Driver', 'LH86 Pistol',
+								'Arrowhead Sniper', 'Salvo Frag Pistol', 'Coda Pistol', 'Gallant Rifle',
+								'Demeco LMG', 'F55 LMG', 'P8-SC', 'P6-LR', 'Atzkav', 'Scalpel Sniper',
+								'Custodian SMG', 'PDW-1 SMG', 'S71 Rifle', 'BR-2 Shotgun', 'R97 Shotgun',
+								'Devastator Shotgun', 'Fon Tang', 'A03', 'F55', 'Karna Heavy'];
+							return names.map((c, i) => ({ commodity: c, buy: 0, sell: 2320 - i * 40, q: 340 - i * 10 }));
+						})()
+					};
+					const rows = byTerminal[tid] || [{ commodity: name, buy: 500, sell: 0, q: 100 }];
+					const prices = rows.map((r) => ({
+						commodity: r.commodity, commodity_id: 1, location: 'Checkmate — ' + tid,
+						terminal_id: tid, sell_price: r.sell, buy_price: r.buy,
+						sell_stock: 0, buy_stock: 0, sell_status: r.sell > 0 ? 1 : 0,
+						buy_status: r.buy > 0 ? 1 : 0, quality: r.q, updated: now - 240
+					}));
+					return {
+						commodity: name, source: 'uex', fetched_at: now,
+						location: null, prices
+					};
+				}
 				if (a.kind === 'location') {
 					const groups = [
 						{
@@ -116,8 +150,9 @@ window.__TAURI_INTERNALS__ = {
 						{ id: 465, name: 'CSP-68H Backpack', kind: 'item', subtitle: 'Item · Rucksack', code: null }
 					],
 					location: [
-						{ id: 5001, name: 'Commodity Shop - Admin - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
-						{ id: 5002, name: 'Orison — Providence', kind: 'terminal', subtitle: 'Terminal · Kauf/Verkauf', code: 'ORS' }
+						{ id: 5010, name: 'Checkmate Station', kind: 'location', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
+						{ id: 5001, name: 'Landing Services - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
+						{ id: 5002, name: 'Guns - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null }
 					]
 				};
 				const want = f && f.length ? f : Object.keys(pool);
