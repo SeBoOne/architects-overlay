@@ -9,6 +9,8 @@
 use std::sync::Arc;
 
 #[cfg(desktop)]
+mod app_settings;
+#[cfg(desktop)]
 mod ipc_socket;
 #[cfg(desktop)]
 mod overlay;
@@ -32,6 +34,10 @@ pub fn run() {
             trade::sync_now,
             trade::get_marketplace,
             trade::open_marketplace_listing,
+            app_settings::settings_get,
+            app_settings::settings_set_palette,
+            app_settings::settings_set_detail_variant,
+            app_settings::settings_set_uex_api_key,
         ]);
     }
 
@@ -48,6 +54,10 @@ pub fn run() {
 
             #[cfg(desktop)]
             {
+                // Settings first — the frontend reads its snapshot at boot to
+                // apply data-palette / data-detail-variant.
+                tauri::Manager::manage(app, app_settings::SettingsState::load());
+
                 setup_trade(app)?;
 
                 // Create the spotlight window, register its global shortcuts and start
@@ -90,11 +100,14 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     );
 
     let tracker = Arc::new(trade::SyncTracker::default());
-    app.manage(trade::TradeState {
-        provider: provider.clone(),
-        cache: cache.clone(),
-        tracker: tracker.clone(),
-    });
+    tauri::Manager::manage(
+        app,
+        trade::TradeState {
+            provider: provider.clone(),
+            cache: cache.clone(),
+            tracker: tracker.clone(),
+        },
+    );
 
     // Start the background freshness/health loop once at boot (see
     // trade::start_background_refresh). Independent of any on-demand command so
