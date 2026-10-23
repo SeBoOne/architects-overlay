@@ -173,8 +173,14 @@ async def main():
 
         # State 7: Checkmate search -> Location-Entity (kind='location', id=436)
         # und Expansion des Standort-aggregats. Screenshot der Location-Entity.
+        # ESC first: after the Alt+3 focus the palette keeps a mode where
+        # synthetic input events no longer flush Svelte's bind:value — Escape
+        # resets it (verified: without ESC the checkmate search never fires).
+        await js("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))")
+        await asyncio.sleep(0.3)
         await typeQuery("checkmate")
-        await asyncio.sleep(0.8)
+        await typeQuery("checkmate")  # first synthetic input sometimes doesn't flush Svelte render (see State 2 note)
+        await asyncio.sleep(1.5)
         print("search 'checkmate' groups=", await js("document.querySelectorAll('.vgroup').length"),
               "rows=", await js("document.querySelectorAll('.row').length"),
               "badges=", await js("[...document.querySelectorAll('.rbadge')].map(function(b){return b.textContent}).join(',')"))
