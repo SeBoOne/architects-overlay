@@ -98,6 +98,18 @@ search 'gold': 10 Treffer — "Gold" item, "Gold" commodity, "Gold (Ore)" commod
 
 Alle Zahlen decken sich mit der R1-Review-Messung (205/7.767/826 Entities, Laranite 26 Preiszeilen) — echter Rust-Pfad, echte UEX-Cache-Daten.
 
+## Smoke-Screenshots — Wiki-Provider, echte Daten (Task t_7423fa73)
+
+Visueller Nachweis zu Abnahmekriterium 5 (Wiki-Provider, Branch `feature/wiki-chain-fix2` @ `a1a31b0`,
+echter App-Lauf mit `ARCH_OVERLAY_SMOKE=1`, echter SQLite-Cache, Quelle WIKI+UEX — **kein Stub**):
+
+| Datei | Inhalt | Belegzahlen |
+|---|---|---|
+| `docs/screenshots/wiki-provider/levski-location-detail.png` | Levski-Location-Detail: Breadcrumb `Nyx > Levski` (Wiki-Location), Terminal-Aggregat gruppiert (`Conscientious Objects - Levski`, KAUF-Unterbereich mit 7 Preiszeilen), Best Kauf 2 / Best Verkauf 1.300.000, Footer `ZEILE (1/895)` | 895 Preiszeilen über die Levski-Terminals |
+| `docs/screenshots/wiki-provider/laranite-detail.png` | Laranite-Commodity-Detail: Bestpreis-Chips BEST KAUF 7.047 / BEST VERKAUF 9.700, Summary-Boxen (Kauf 7.047 @ ArcCorp Mining Area 056 · 806 SCU, Verkauf 9.700 @ Admin - Dudley & Daughters, Marge 2.653/SCU), Kauf-/Verkaufstabelle | `ZEILE (1/26)` — exakt Review-Baseline: 26 Preiszeilen, 6 Kauf-Terminals (7.047–7.541), 20 Verkaufs-Terminals (6.500–9.700) |
+
+Aufnahme: Monitor-Crop auf die Palette (Hyprland/`grim`), bewusst ohne umliegende Desktop-Fenster.
+
 ## Offen / Hinweise
 
 - Rechner-Grammatik Phase 1 (kein `**`, keine Funktionen) — bewusst klein gehalten; `%` = `/100` (in Helper-Zeile dokumentiert), Aufschlag via `×1.15` eingeben
