@@ -69,6 +69,9 @@ impl SourceSwitch {
     }
 }
 
+/// Search result page size served from the cache (mirrors the UEX provider).
+const SEARCH_LIMIT: u32 = 25;
+
 /// Composite provider: wiki locations + wiki commodity prices, UEX for
 /// everything else. See the module docs for the fallback policy.
 pub struct CompositeProvider {
@@ -221,11 +224,27 @@ fn is_money_terminal(name: &str) -> bool {
 #[async_trait::async_trait]
 impl DataProvider for CompositeProvider {
     async fn search(&self, entities: SearchEntities, query: &str) -> Result<Vec<SearchHit>> {
-        // Locations searches BOTH datasets (wiki hierarchy first); the wiki
-        // dataset is ensured here so a search after a TTL expiry still finds
-        // rows without waiting for the background sweep.
+        // Locations searches BOTH datasets (wiki hierarchy + UEX terminals);
+        // the wiki dataset is ensured here so a search after a TTL expiry
+        // still finds rows without waiting for the background sweep. UEX
+        // terminals are ensured via the uex provider's own search path —
+        // queried through the cache directly so BOTH sources' rows come
+        // back (the uex provider filters to its own rows by design).
         if entities == SearchEntities::Locations {
             self.wiki.ensure_locations().await?;
+            // Ensure the UEX terminal dataset is fresh (reuse the provider's
+            // ensure logic via a throwaway search; the result is discarded).
+            let _ = self.uex.search(SearchEntities::Terminals, "").await?;
+            let hits = self
+                .cache
+                .search_sourced(
+                    &[EntityKind::Locations, EntityKind::Terminals],
+                    &[],
+                    query,
+                    SEARCH_LIMIT,
+                )
+                .map_err(|e| ProviderError::Cache(e.to_string()))?;
+            return Ok(hits);
         }
         self.uex.search(entities, query).await
     }
@@ -515,5 +534,79 @@ mod tests {
             ),
             "got {err:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// End-to-end live smoke against BOTH production APIs (opt-in via
+    /// `cargo test -p architects-overlay -- --ignored`): wiki commodity
+    /// prices (primary), UEX fallback path and the merged location search.
+    #[tokio::test]
+    #[ignore = "hits the live UEX + wiki APIs"]
+    async fn live_composite_prices_and_location_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Arc::new(Cache::open(&dir.path().join("smoke.sqlite3")).expect("cache"));
+        let uex = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            uex_client::private::DEFAULT_BASE_URL,
+            Duration::ZERO,
+        )
+        .expect("uex");
+        let wiki = WikiProvider::new(cache.clone()).expect("wiki");
+        let provider =
+            CompositeProvider::new(uex, wiki, SourceSwitch::new(CommoditySource::Wiki), cache);
+
+        // 1. Commodity prices via the wiki detail endpoint (primary source).
+        let points = provider.prices("Agricium").await.expect("prices");
+        assert!(!points.is_empty(), "Agricium must have terminal prices");
+        let buy = points
+            .iter()
+            .find(|p| p.buy_price > 0.0)
+            .expect("buy terminal");
+        let sell = points
+            .iter()
+            .find(|p| p.sell_price > 0.0)
+            .expect("sell terminal");
+        eprintln!(
+            "prices(Agricium): {} points; buy {:.0} @ {} (terminal {}), sell {:.0} @ {} (terminal {})",
+            points.len(),
+            buy.buy_price,
+            buy.location,
+            buy.terminal_id,
+            sell.sell_price,
+            sell.location,
+            sell.terminal_id
+        );
+
+        // 2. Location search serves BOTH datasets (wiki rows kind=location,
+        //    UEX rows kind=terminal).
+        let hits = provider
+            .search(SearchEntities::Locations, "Levski")
+            .await
+            .expect("location search");
+        let wiki_hits = hits.iter().filter(|h| h.kind == "location").count();
+        let uex_hits = hits.iter().filter(|h| h.kind == "terminal").count();
+        eprintln!("search(Locations, Levski): {wiki_hits} wiki rows, {uex_hits} UEX terminal rows");
+        assert!(wiki_hits >= 1, "wiki location rows must appear");
+        assert!(uex_hits >= 1, "UEX terminal rows must appear");
+
+        // 3. Location→Terminal: a wiki location id resolves to the UEX
+        //    aggregate of the same place.
+        let wiki_hit = hits.iter().find(|h| h.kind == "location").unwrap();
+        let agg = provider
+            .location_prices(wiki_hit.id)
+            .await
+            .expect("aggregate via wiki location id");
+        eprintln!(
+            "location_prices(via wiki id): {} groups @ {}",
+            agg.groups.len(),
+            agg.location
+        );
+        assert_eq!(provider.name(), "wiki+uex (wiki)");
     }
 }

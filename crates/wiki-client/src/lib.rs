@@ -196,6 +196,7 @@ impl WikiProvider {
     /// layers can map back without collisions against UEX ids.
     pub fn map_commodities(&self, rows: Vec<CommodityRow>) -> Vec<Entity> {
         rows.into_iter()
+            .filter(|r| !r.uuid.is_empty())
             .map(|r| Entity {
                 id: dto::stable_id(&r.uuid),
                 kind: EntityKind::Commodities,
@@ -215,6 +216,7 @@ impl WikiProvider {
 
     pub fn map_items(&self, rows: Vec<ItemRow>) -> Vec<Entity> {
         rows.into_iter()
+            .filter(|r| !r.uuid.is_empty())
             .map(|r| Entity {
                 id: dto::stable_id(&r.uuid),
                 kind: EntityKind::Items,
@@ -241,6 +243,7 @@ impl WikiProvider {
     /// terminals of the same place (Location→Terminal-Konsistenz).
     pub fn map_locations(&self, rows: Vec<LocationRow>) -> Vec<Entity> {
         rows.into_iter()
+            .filter(|r| !r.uuid.is_empty())
             .map(|r| {
                 let name = r.name.clone();
                 let mut chain: Vec<String> = Vec::new();

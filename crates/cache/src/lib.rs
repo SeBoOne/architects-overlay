@@ -389,6 +389,14 @@ impl Cache {
         entities: &[Entity],
     ) -> Result<()> {
         let kind_str = kind.as_str();
+        // Dedupe by id within the batch (keep first): two source rows with
+        // the same id would violate the (kind, id) primary key and sink the
+        // whole dataset (e.g. wiki rows with an empty uuid all hash to one
+        // id).
+        let mut seen_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let entities: Vec<&Entity> = entities.iter().filter(|e| seen_ids.insert(e.id)).collect();
+        let entities: Vec<Entity> = entities.into_iter().cloned().collect();
+        let entities = &entities;
         self.with(|conn| {
             let tx = conn.transaction()?;
             // FTS first: the entity_id subquery must see the rows being

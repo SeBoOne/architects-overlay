@@ -687,6 +687,7 @@ pub mod private {
         CategoryRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow, StarSystemRow,
         TerminalRow,
     };
+    pub use crate::http::DEFAULT_BASE_URL;
 }
 
 #[cfg(test)]

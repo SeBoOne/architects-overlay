@@ -38,6 +38,7 @@ log = "0.4"
 tauri = { version = "2.12.4", features = [] }
 tauri-plugin-log = "2"
 async-trait = "0.1"
+tempfile = "3"
 # Deep links: open uexcorp.space listing pages in the system default browser.
 tauri-plugin-opener = "2"
 # Background freshness/health loop (see trade::start_background_refresh): the
@@ -63,3 +64,4 @@ tauri = { version = "2.12.4", features = ["test"] }
 # The trade-module tests implement the async DataProvider trait (async_trait
 # macro) with a stub provider.
 async-trait = "0.1"
+tempfile = "3"
