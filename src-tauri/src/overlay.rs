@@ -61,6 +61,11 @@ pub struct OverlayState {
     pub user_visible: AtomicBool,
     /// Whether Star Citizen is currently running (fed by the poller).
     pub game_running: AtomicBool,
+    /// Whether the config view was opened from the tray ("Config öffnen").
+    /// Keeps the window visible even without a running game — the config must
+    /// be reachable at any time, independent of `game_running`. Cleared when
+    /// the frontend reports the config view closed (`overlay_config_closed`).
+    pub config_open: AtomicBool,
     /// Whether the window ignores cursor events (click-through). `true` =
     /// the game keeps the mouse; `false` = focus mode (the overlay is clickable).
     pub click_through: AtomicBool,
@@ -71,6 +76,7 @@ impl OverlayState {
         Self {
             user_visible: AtomicBool::new(true),
             game_running: AtomicBool::new(false),
+            config_open: AtomicBool::new(false),
             // Click-through by default: at startup it must not steal input from
             // the game until the user explicitly toggles into focus mode.
             click_through: AtomicBool::new(true),
@@ -270,6 +276,44 @@ fn emit_state<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// Tauri event the frontend listens to when the config view was requested
+/// from the tray ("Config öffnen") — the JS side opens the pane-config view
+/// in response, exactly like the in-overlay gear button.
+pub const TRAY_OPEN_CONFIG_EVENT: &str = "tray-open-config";
+
+/// Tray menu action "Config öffnen": show the overlay window (also without a
+/// running game — the config is reachable at any time) and ask the frontend
+/// to open the config view.
+pub fn open_config_from_tray<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(st) = app.try_state::<OverlayState>() {
+        st.config_open.store(true, Ordering::Release);
+        apply_visibility(app, effective_visible(st.inner()));
+        emit_state(app);
+        let _ = app.emit(TRAY_OPEN_CONFIG_EVENT, ());
+    }
+}
+
+/// IPC command called by the frontend when the config view closes (Esc,
+/// selection, close button). Only re-applies visibility when the window was
+/// shown *solely* for the config (no game running) — otherwise the normal
+/// `user_visible && game_running` semantics already apply and a hide here
+/// would fight the poller/hotkey state.
+pub fn close_config<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(st) = app.try_state::<OverlayState>() {
+        if st.config_open.swap(false, Ordering::AcqRel) {
+            apply_visibility(app, effective_visible(st.inner()));
+            emit_state(app);
+        }
+    }
+}
+
+/// Effective window visibility: the usual user intent × game condition, OR
+/// the tray-requested config view (independent of the game).
+fn effective_visible(st: &OverlayState) -> bool {
+    st.config_open.load(Ordering::SeqCst)
+        || (st.user_visible.load(Ordering::SeqCst) && st.game_running.load(Ordering::SeqCst))
+}
+
 /// Feed the current game-running status into the state and show/hide the
 /// window only when it actually changes.
 pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
@@ -283,7 +327,7 @@ pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
             if !running && std::env::var_os("ARCH_OVERLAY_SMOKE").is_some() {
                 return;
             }
-            apply_visibility(app, st.user_visible.load(Ordering::SeqCst) && running);
+            apply_visibility(app, effective_visible(st.inner()));
             emit_state(app);
         }
     }
@@ -292,10 +336,17 @@ pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
 /// Read a snapshot for the IPC state command.
 pub fn snapshot<R: Runtime>(app: &AppHandle<R>) -> Option<OverlaySnapshot> {
     app.try_state::<OverlayState>().map(|st| OverlaySnapshot {
-        visible: st.user_visible.load(Ordering::SeqCst) && st.game_running.load(Ordering::SeqCst),
+        visible: effective_visible(st.inner()),
         game_running: st.game_running.load(Ordering::SeqCst),
         click_through: st.click_through.load(Ordering::SeqCst),
     })
+}
+
+/// IPC command: the frontend closed the config view (see `close_config`).
+#[cfg(desktop)]
+#[tauri::command]
+pub fn overlay_config_closed<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    close_config(&app);
 }
 
 /// Apply the effective visibility to the actual window, on the main thread.

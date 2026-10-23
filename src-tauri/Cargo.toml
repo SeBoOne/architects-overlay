@@ -34,7 +34,7 @@ math_eval = { path = "../crates/math-eval", package = "math-eval" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 log = "0.4"
-tauri = { version = "2.12.4", features = [] }
+tauri = { version = "2.12.4", features = ["tray-icon", "image-png"] }
 tauri-plugin-log = "2"
 # Deep links: open uexcorp.space listing pages in the system default browser.
 tauri-plugin-opener = "2"
