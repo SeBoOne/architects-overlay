@@ -142,6 +142,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// `dSel` = fokussierte Detail-Zeile, `dChosen` = per Enter ausgewählt.
 	let dSel = $state(0);
 	let dChosen = $state<number | null>(null);
+	// P8: Preis-Detail-Darstellung — Variante C (Trader-Hero) ist Default,
+	// Variante A (Zeilenboxen) per Konfig umschaltbar (localStorage, überlebt
+	// App-Starts; kein Backend-Roundtrip nötig).
+	type P8Variant = 'A' | 'C';
+	const P8_VARIANT_KEY = 'architects-overlay.p8.variant';
+	function loadP8Variant(): P8Variant {
+		try {
+			const v = localStorage.getItem(P8_VARIANT_KEY);
+			return v === 'A' || v === 'C' ? v : 'C';
+		} catch {
+			return 'C';
+		}
+	}
+	let p8Variant = $state<P8Variant>(loadP8Variant());
+	function setP8Variant(v: P8Variant) {
+		p8Variant = v;
+		try {
+			localStorage.setItem(P8_VARIANT_KEY, v);
+		} catch {
+			/* localStorage unvollständig (private mode) — Variant bleibt nur für
+			   diese Sitzung aktiv, kein Fehlerfall für die UI. */
+		}
+	}
 	// Scroll-Position der Ergebnisliste für den Zurück-Blick.
 	let listScroll = $state(0);
 	// Status-Toast nach Auswahl einer Detail-Zeile.
@@ -165,7 +188,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return prices
 			.filter((p) => val(p) > 0)
 			.filter((p) => !dFilter || (byLoc ? p.location : p.commodity).toLowerCase().includes(dFilter))
-			.sort((a, b) => val(b) - val(a))
+			// P8-Sortierung: Kauf günstigster zuerst (aufsteigend), Verkauf
+			// höchster zuerst (absteigend) — "beste Gelegenheit" steht oben.
+			.sort((a, b) => (kind === 'buy' ? val(a) - val(b) : val(b) - val(a)))
 			.map((p) => ({ p, kind, fi: c.i++, name: byLoc ? p.location : p.commodity }));
 	}
 
@@ -206,11 +231,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const top = Math.max(dRows.length - 1, 0);
 		if (dSel > top) dSel = top;
 	});
-	// Beste Preise der (gefilterten) Detail-Menge für die Kopfzeile.
+	// Beste Preise der (gefilterten) Detail-Menge für die Kopfzeile (P8):
+	// Best Kauf = günstigster Kaufpreis (min), Best Verkauf = höchster
+	// Verkaufspreis (max). Leere Richtung → 0 (Chip zeigt „—").
 	let dBest = $derived({
-		buy: Math.max(0, ...dRows.filter((r) => r.kind === 'buy').map((r) => r.p.buy_price)),
+		buy: Math.min(Infinity, ...dRows.filter((r) => r.kind === 'buy').map((r) => r.p.buy_price)),
 		sell: Math.max(0, ...dRows.filter((r) => r.kind === 'sell').map((r) => r.p.sell_price))
 	});
+
+	// Marge (Best Kauf → Best Verkauf) für den P8-Hero; nur bei beiden Seiten
+	// vorhanden, sonst 0 (Karte zeigt „—"). Folgt dem Filter (dBest aus dRows).
+	let dMargin = $derived(dBest.buy !== Infinity && dBest.sell > 0 ? dBest.sell - dBest.buy : 0);
+
+	// Bestands-/Nachfrage-Unterzeile (P8-Entscheid): 0 heißt bei UEX „keine
+	// Meldung", nicht „0 SCU" — deshalb Klartext statt eines Strichs.
+	function stockTxt(p: PricePoint, kind: 'buy' | 'sell'): string {
+		const n = Math.round(kind === 'buy' ? p.buy_stock : p.sell_stock);
+		if (kind === 'buy') return n > 0 ? `Bestand ${fmt(n)} SCU` : 'kein Bestand gemeldet';
+		return n > 0 ? `Nachfrage ${fmt(n)} SCU` : 'keine Nachfrage gemeldet';
+	}
 
 	// ---- Market-State (Phase 2) --------------------------------------------
 	let offers = $state<Offer[]>([]);
@@ -1358,8 +1397,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<span class="c">{detailHit?.subtitle ?? ''}</span>
 									</div>
 									<div class="d-price">
-										<span class="buy">↗ {fmt(dBest.buy)}</span>
-										<span class="sell">↘ {fmt(dBest.sell)}</span>
+										<span class="buy"><i>Best Kauf</i>{dBest.buy === Infinity ? '—' : fmt(dBest.buy)}</span>
+										<span class="sell"><i>Best Verkauf</i>{dBest.sell > 0 ? fmt(dBest.sell) : '—'}</span>
+									</div>
+									<div class="d-variant" role="group" aria-label="Preis-Detail-Darstellung">
+										<button class:active={p8Variant === 'A'} onclick={() => setP8Variant('A')} title="Variante A — Zeilenboxen">A</button>
+										<button class:active={p8Variant === 'C'} onclick={() => setP8Variant('C')} title="Variante C — Trader-Hero (Default)">C</button>
 									</div>
 								</div>
 
@@ -1379,30 +1422,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												<div class="cap">{grp.terminal_name}</div>
 												{#if grp.buys.length || grp.sells.length}
 													<div class="ph"><span>Item</span><span>Preis</span><span>SCU</span></div>
-													{#if grp.buys.length}
-														<div class="psub buy">Kauf</div>
-														{#each grp.buys as r}
-															<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-																<span class="loc">{r.name}</span>
-																<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
-															</div>
-														{/each}
-													{:else}
-														<div class="psub buy empty">Kauf — kein Terminal</div>
-													{/if}
-													{#if grp.sells.length}
-														<div class="psub sell">Verkauf</div>
-														{#each grp.sells as r}
-															<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-																<span class="loc">{r.name}</span>
-																<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
-															</div>
-														{/each}
-													{:else}
-														<div class="psub sell empty">Verkauf — kein Terminal</div>
-													{/if}
+												<!-- P8: leere Richtungs-Sektionen entfallen — nur vorhandene Richtungen bekommen Sektionen. -->
+												{#if grp.buys.length}
+													<div class="psub buy">Kauf</div>
+													{#each grp.buys as r}
+														<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
+															<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
+												{/if}
+												{#if grp.sells.length}
+													<div class="psub sell">Verkauf</div>
+													{#each grp.sells as r}
+														<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
+															<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
+												{/if}
 												{:else}
-													<div class="pr"><span class="loc" style="color: var(--fgfaint)">keine Preisdaten</span></div>
+													<div class="pr"><span class="loc muted">keine Preisdaten</span></div>
 												{/if}
 											</div>
 										{/each}
@@ -1413,39 +1453,84 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<!-- QA-Auflage B: Item ohne Preise → "nicht kaufbar" -->
 										<div class="np-state">nicht kaufbar · keine Preisdaten</div>
 									{:else}
-										<!-- Commodity / Terminal mit Preisen (N2: über dRows gefiltert) -->
+										<!-- P8: Commodity / Terminal mit Preisen (N2: über dRows gefiltert). -->
+										<!-- Variante C (Default): Bestpreis-Hero + kompakte Terminal-Liste; -->
+										<!-- Variante A: gruppierte Kauf-/Verkauf-Boxen. Leere Richtungen werden -->
+										<!-- in BEIDEN Varianten durch EINE Statuszeile ersetzt (kein Spaltenkopf). -->
 										{@const dIsTerminal = detailHit?.kind === 'terminal'}
 										{@const buys = dRows.filter((r) => r.kind === 'buy')}
 										{@const sells = dRows.filter((r) => r.kind === 'sell')}
-										<div class="ptab">
-											<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} Terminal</div>
-											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+										{@const bb = buys[0]}
+										{@const bs = sells[0]}
+										{@const margin = bb && bs ? bs.p.sell_price - bb.p.buy_price : 0}
+										{#if p8Variant === 'C'}
+											<div class="vC-hero">
+												<div class="vC-kpi buy">
+													<span class="k">Günstigster Kauf</span>
+													<span class="v">{bb ? fmt(bb.p.buy_price) : '—'}</span>
+													{#if bb}<span class="u">aUEC / SCU</span>{/if}
+													<span class="w">{bb ? `${bb.name} · ${stockTxt(bb.p, 'buy')}` : 'kein Kauf-Angebot'}</span>
+												</div>
+												<div class="vC-kpi sell">
+													<span class="k">Höchster Verkauf</span>
+													<span class="v">{bs ? fmt(bs.p.sell_price) : '—'}</span>
+													{#if bs}<span class="u">aUEC / SCU</span>{/if}
+													<span class="w">{bs ? `${bs.name} · ${stockTxt(bs.p, 'sell')}` : 'kein Verkauf-Angebot'}</span>
+												</div>
+												<div class="vC-kpi margin">
+													<span class="k">Marge / SCU</span>
+													<span class="v">{bb && bs ? fmt(margin) : '—'}</span>
+													{#if bb && bs}<span class="u">aUEC / SCU · {fmt(margin * 100)} je 100 SCU</span>{/if}
+													<span class="w">{bb && bs ? `${bb.name} → ${bs.name}` : 'nur eine Seite vorhanden — kein Rundlauf möglich'}</span>
+												</div>
+											</div>
+											<div class="vC-listhead"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Kauf</span><span>Verkauf</span></div>
+											{#each dRows as r}
+												<div class="pr vC-r" class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+													<span class="vC-t">{r.name}<small>{stockTxt(r.p, r.kind)}</small></span>
+													{#if r.kind === 'buy'}
+														<span class="vC-c buy">{fmt(r.p.buy_price)}</span>
+														<span class="vC-c nil">–</span>
+													{:else}
+														<span class="vC-c nil">–</span>
+														<span class="vC-c sell">{fmt(r.p.sell_price)}</span>
+													{/if}
+												</div>
+											{/each}
+											{#if !dRows.length}
+												<div class="np-state">Keine Preise passen zum Filter</div>
+											{/if}
+										{:else}
 											{#if buys.length}
-												{#each buys as r, bi}
-													<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-													<span class="loc">{r.name}</span>
-													<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
+												<div class="ptab">
+													<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
+													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+													{#each buys as r, bi}
+														<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
+															<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
 												</div>
-												{/each}
 											{:else}
-												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Kauf' : 'Kein Terminal kauft'}</span></div>
+												<div class="np-state">{dIsTerminal ? 'Kein Artikel zum Kauf' : 'Kein Terminal kauft diese Ware'}</div>
 											{/if}
-										</div>
-										<div class="ptab">
-											<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} Terminal</div>
-											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 											{#if sells.length}
-												{#each sells as r, si}
-													<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-													<span class="loc">{r.name}</span>
-													<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
+												<div class="ptab">
+													<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
+													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+													{#each sells as r, si}
+														<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
+															<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
 												</div>
-												{/each}
 											{:else}
-												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Verkauf' : 'Kein Terminal verkauft'}</span></div>
+												<div class="np-state">{dIsTerminal ? 'Kein Artikel zum Verkauf' : 'Kein Terminal verkauft diese Ware'}</div>
 											{/if}
-										</div>
-									{/if}
+										{/if}
+								{/if}
 								</div>
 
 								<!-- P6: keine Extra-Hinweiszeile über der Fußzeile — die
