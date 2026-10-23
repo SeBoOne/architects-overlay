@@ -104,8 +104,10 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
 
     // The settings state owns the LIVE commodity-source switch (the config
     // view flips it); the composite provider reads it on every price fetch.
+    // CLONE — do not construct a second switch here, or the runtime flip in
+    // `settings_set_commodity_source` would only apply after a restart.
     let settings_state = app.state::<app_settings::SettingsState>();
-    let source = providers::SourceSwitch::new(settings_state.commodity_source());
+    let source = settings_state.source_switch.clone();
 
     let composite = Arc::new(providers::CompositeProvider::new(
         uex,

@@ -504,6 +504,20 @@ mod tests {
         assert_eq!(s.get(), CommoditySource::Wiki);
     }
 
+    /// Regression (t_c3d46cff): the composite provider must read the SAME
+    /// switch instance the settings state flips — a CLONE shares the inner
+    /// Arc, a freshly constructed switch would freeze the boot value and a
+    /// runtime flip would only apply after a restart.
+    #[test]
+    fn source_switch_clone_shares_live_state() {
+        let setter = SourceSwitch::new(CommoditySource::Wiki);
+        let reader = setter.clone();
+        setter.set(CommoditySource::Uex);
+        assert_eq!(reader.get(), CommoditySource::Uex);
+        setter.set(CommoditySource::Wiki);
+        assert_eq!(reader.get(), CommoditySource::Wiki);
+    }
+
     /// Offline wiring test: both clients point at unreachable hosts. Wiki
     /// prices fail → empty → composite must fall back to UEX. With UEX also
     /// failing, `prices` propagates the UEX error (the UI's OFFLINE path).

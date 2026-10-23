@@ -8,11 +8,12 @@
    Mirror dient nur der Svelte-Logik-Verifikation (Live-Feedback, t_594c213c). */
 window.isTauri = true;
 window.__TAURI__ = {};
+const stubState = {
+	palette: 'amber', detail_variant: 'c',
+	uex_api_key_set: false, commodity_source: 'wiki'
+};
 function stubSettings() {
-	return {
-		palette: 'amber', detail_variant: 'c',
-		uex_api_key_set: false, commodity_source: 'wiki'
-	};
+	return { ...stubState };
 }
 window.__TAURI_INTERNALS__ = {
 	transformCallback: (cb) => cb,
@@ -32,6 +33,7 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_set_detail_variant':
 			case 'settings_set_uex_api_key':
 			case 'settings_set_commodity_source':
+				if (cmd === 'settings_set_commodity_source') stubState.commodity_source = a.name || stubState.commodity_source;
 				return stubSettings();
 			case 'sync_status':
 				return {

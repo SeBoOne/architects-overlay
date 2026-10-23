@@ -36,12 +36,6 @@ impl SettingsState {
         }
     }
 
-    /// Current commodity price source (for the composite provider's boot
-    /// switch; live flips go through `source_switch`).
-    pub fn commodity_source(&self) -> CommoditySource {
-        self.inner.lock().expect("settings lock").commodity_source()
-    }
-
     fn persist(&self, settings: &Settings) {
         if let Err(e) = settings.save() {
             log::warn!("settings: persist failed: {e}");
@@ -135,4 +129,24 @@ pub fn settings_set_commodity_source(
     state.persist(&s);
     state.source_switch.set(source);
     Ok(SettingsSnapshot::from_settings(&s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression (t_c3d46cff): the switch handed to the composite provider
+    /// (lib.rs clones `state.source_switch`) MUST be the same instance the
+    /// setter flips — a clone shares the inner Arc, a fresh switch would
+    /// freeze the boot value until the next app restart.
+    #[test]
+    fn live_source_switch_flips_without_restart() {
+        let state = SettingsState::load();
+        let reader = state.source_switch.clone();
+        // what settings_set_commodity_source does on a live flip:
+        state.source_switch.set(CommoditySource::Uex);
+        assert_eq!(reader.get(), CommoditySource::Uex);
+        state.source_switch.set(CommoditySource::Wiki);
+        assert_eq!(reader.get(), CommoditySource::Wiki);
+    }
 }
