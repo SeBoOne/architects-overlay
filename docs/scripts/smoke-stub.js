@@ -454,9 +454,14 @@ window.__TAURI_INTERNALS__ = {
 				const plocations = ['Port Tressler','Everus Harbor','ARC-L1 Wide Forest Station','Area18 — TDD','Orison — Providence'];
 				const ppool = Array.from({ length: 30 }, (_, i) => O(100 + i, 'Parallax ' + (i + 1), plocations[i % 5], 'ParallaxCo', 900 + (i % 11) * 10, 1000 + i * 50));
 				pool.push(...ppool);
-				// Provider-Mirror: q = jeder Term trifft mindestens ein Feld
-				// (Name/Typ/Terminal/Verkäufer/Beschreibung); operation-Regel;
-				// Sortierung; dann Limit.
+				// Provider-Mirror (Market-Fixes-Kontrakt, t_3402ae7e): der echte
+				// Provider verengt serverseitig (id_item für bekannte Items,
+				// sonst Verkauf+Kauf-Fenster gemerged) und wendet DANACH
+				// q/Region-Filter + Sortierung auf das komplette Fenster an
+				// (provider::apply_marketplace_filters — cargo-test-belegt).
+				// Der `limit`-Parameter wird von der API ignoriert und hier
+				// ebenfalls nicht mehr angewendet; die Seiten blättert die
+				// Svelte-Pagination im Snapshot.
 				const terms = (filter.q || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
 				let out = pool.filter((o) => {
 					if (filter.operation && o.operation !== filter.operation) return false;
@@ -472,7 +477,6 @@ window.__TAURI_INTERNALS__ = {
 				if (sort === 'price_asc') out.sort((x, y) => x.price - y.price);
 				else if (sort === 'price_desc') out.sort((x, y) => y.price - x.price);
 				else out.sort((x, y) => y.updated - x.updated);
-				out = out.slice(0, filter.limit || 100);
 				globalThis.__lastMarket = { filters: filter, returned: out.length };
 				return { source: 'cache', fetched_at: now, offers: out, note: null };
 			}

@@ -11,10 +11,15 @@
 //!   lazily if stale, or by the background sync task ([`cache::sync`]);
 //! * **prices** — cached up to 30 min, then live fetch
 //!   `/commodities_prices?id_commodity=…`;
-//! * **marketplace** — served from the short-TTL snapshot (5 min) for
-//!   API-parameter-free reads; `id_item`/`operation` filters always fetch live
-//!   `/marketplace_listings`; the snapshot is replaced on unfiltered fetches
-//!   only, so the cache always holds the general market view;
+//! * **marketplace** — the UEX API accepts only `id`/`slug`/`username`/
+//!   `id_item`/`operation` here (no text search, no sort, no pagination) and
+//!   caps each response (1,000 rows only when `id_item`+`operation` combine).
+//!   The fetch plan therefore narrows server-side wherever possible (q terms
+//!   that name a known item → `id_item` fetches; otherwise the `sell` and
+//!   `buy` windows are merged) and ALWAYS applies q/region filter + sort
+//!   locally via [`provider::apply_marketplace_filters`]. Unfiltered reads
+//!   serve/refresh the short-TTL snapshot (5 min); the snapshot is replaced
+//!   only by general fetches, so the cache always holds the general view;
 //! * **entities** — full reference datasets: `/commodities`, `/terminals`,
 //!   `/items` (per category, items require `id_category`), `/star_systems`
 //!   (region names for marketplace listings).
@@ -29,8 +34,8 @@ use cache::{Cache, CacheError};
 use http::{DEFAULT_BASE_URL, DEFAULT_MIN_INTERVAL, UexHttpClient};
 use provider::{
     DataProvider, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
-    MarketplaceFilter, Offer, OfferSort, PricePoint, ProviderError, Result, SearchEntities,
-    SearchHit, TerminalPriceGroup,
+    MarketplaceFilter, Offer, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
+    TerminalPriceGroup,
 };
 
 use dto::{
@@ -40,9 +45,9 @@ use dto::{
 
 /// Search result page size served from the cache.
 const SEARCH_LIMIT: u32 = 25;
-/// Marketplace page size (API default 100; up to 1000 when item+operation set).
-const MARKETPLACE_DEFAULT_LIMIT: u32 = 100;
-const MARKETPLACE_MAX_LIMIT: u32 = 1000;
+/// Marketplace item-id resolution cap: at most this many `id_item` fetches
+/// per market query (bounds request rate + IPC payload on multi-term input).
+const MARKET_ITEM_ID_CAP: usize = 3;
 
 /// Concrete provider for the UEX source.
 pub struct UexProvider {
@@ -116,45 +121,43 @@ impl UexProvider {
     }
 
     /// Client-side filter + sort, shared by the live and cache paths so both
-    /// views behave identically. All filters except item_id/operation are
-    /// applied here (the API exposes no text/sort parameters).
-    ///
-    /// `q` is the market's free-text search (fed from the palette's MAIN search
-    /// field in market mode): every whitespace-separated term must hit at least
-    /// one offer field — Name (title), Typ (listing type + operation), Terminal
-    /// (location) or Verkäufer (seller); description completes the haystack.
-    /// Terms are AND-ed, fields OR-ed per term, case-insensitive.
-    fn apply_local(mut offers: Vec<Offer>, filters: &MarketplaceFilter) -> Vec<Offer> {
-        let terms: Vec<String> = filters
-            .q
-            .split_whitespace()
-            .map(str::to_lowercase)
-            .collect();
-        let location = filters.location.to_lowercase();
-        let region = filters.region.to_lowercase();
-        offers.retain(|o| {
-            let title = o.title.to_lowercase();
-            let desc = o.description.to_lowercase();
-            let seller = o.seller.to_lowercase();
-            let loc = o.location.to_lowercase();
-            let kind = o.listing_type.as_str().to_string();
-            let op = o.operation.as_str().to_string();
-            let hay = [&title, &desc, &seller, &loc, &kind, &op];
-            (terms.is_empty()
-                || terms
-                    .iter()
-                    .all(|term| hay.iter().any(|h| h.contains(term))))
-                && (location.is_empty() || loc.contains(&location))
-                && (region.is_empty() || o.region.to_lowercase().contains(&region))
-        });
-        match filters.sort.unwrap_or(OfferSort::Newest) {
-            OfferSort::Newest => {
-                offers.sort_by(|a, b| b.updated.cmp(&a.updated).then(b.id.cmp(&a.id)))
-            }
-            OfferSort::PriceAsc => offers.sort_by(|a, b| a.price.total_cmp(&b.price)),
-            OfferSort::PriceDesc => offers.sort_by(|a, b| b.price.total_cmp(&a.price)),
+    /// views behave identically. Delegates to
+    /// [`provider::apply_marketplace_filters`] — the same helper also filters
+    /// the offline-snapshot fallback in `trade::get_marketplace`, so no path
+    /// can hand the UI an unfiltered/unsorted list.
+    fn apply_local(offers: Vec<Offer>, filters: &MarketplaceFilter) -> Vec<Offer> {
+        provider::apply_marketplace_filters(offers, filters)
+    }
+
+    /// Resolve the free-text market query terms to item ids from the local
+    /// reference cache. When a term names an item, the API can filter
+    /// server-side (`id_item`) — that path returns the COMPLETE set of
+    /// listings for the item (up to the 1,000-row cap unlocked by
+    /// `id_item`+`operation`), instead of the newest-window slice every
+    /// unfiltered fetch is limited to. Terms that match no item are ignored
+    /// here and stay in the local q filter afterwards.
+    async fn resolve_market_item_ids(&self, q: &str) -> Result<Vec<u64>> {
+        let terms: Vec<&str> = q.split_whitespace().collect();
+        if terms.is_empty() {
+            return Ok(Vec::new());
         }
-        offers
+        self.ensure_fresh(EntityKind::Items).await?;
+        let mut ids: Vec<u64> = Vec::new();
+        for term in terms {
+            let hits = self
+                .cache
+                .search(&[EntityKind::Items], term, 3)
+                .map_err(map_cache_err)?;
+            for hit in hits {
+                if !ids.contains(&hit.id) {
+                    ids.push(hit.id);
+                }
+                if ids.len() >= MARKET_ITEM_ID_CAP {
+                    return Ok(ids);
+                }
+            }
+        }
+        Ok(ids)
     }
 }
 
@@ -220,45 +223,78 @@ impl DataProvider for UexProvider {
     }
 
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>> {
-        // Short-TTL cache (Phase 2): API-parameter-free reads are served from
-        // the last snapshot while it is < TTL_MARKETPLACE old, keeping the
-        // offers view instant and rate-limit-schonend. item_id/operation are
-        // API params — they always fetch live (cache would be filter-specific).
-        let cacheable = filters.item_id.is_none() && filters.operation.is_none();
+        // ------------------------------------------------------------------
+        // Fetch plan — the UEX API accepts only id/slug/username/id_item/
+        // operation on this endpoint (no text search, no sort, no pagination)
+        // and caps the response at a hard row limit (1,000 only when id_item
+        // AND operation are combined). A single unfiltered call therefore only
+        // ever sees the newest window of the market — q terms and price sort
+        // over that slice looked "ignored" whenever the real matches lay
+        // outside it (the entire WTS / all market, vs. the small WTB set).
+        //
+        // The plan narrows server-side wherever the API allows:
+        // * explicit `item_id` → one `id_item` fetch (+ `operation`),
+        // * q terms that name a known item → `id_item` fetches (complete per-
+        //   item sets, `operation` unlocks the 1,000-row cap),
+        // * otherwise → merge the `operation=sell` and `operation=buy`
+        //   windows (double the coverage of the old single fetch), then
+        //   filter + sort everything locally via `apply_marketplace_filters`.
+        // ------------------------------------------------------------------
+        let resolved_ids = if filters.item_id.is_some() {
+            Vec::new()
+        } else {
+            self.resolve_market_item_ids(&filters.q).await?
+        };
+        // Item-scoped reads are filter-specific — never cached or used to
+        // replace the general snapshot.
+        let cacheable =
+            filters.item_id.is_none() && resolved_ids.is_empty() && filters.operation.is_none();
         if cacheable && self.cache.marketplace_fresh().map_err(map_cache_err)? {
             let snapshot = self.cache.marketplace_snapshot().map_err(map_cache_err)?;
             return Ok(Self::apply_local(snapshot, &filters));
         }
 
-        let mut params: Vec<(String, String)> = Vec::new();
+        let mut plans: Vec<Vec<(String, String)>> = Vec::new();
         if let Some(item_id) = filters.item_id {
-            params.push(("id_item".to_string(), item_id.to_string()));
-        }
-        if let Some(op) = filters.operation {
-            params.push(("operation".to_string(), op.as_str().to_string()));
-        }
-        let limit = if filters.limit == 0 {
-            MARKETPLACE_DEFAULT_LIMIT
+            let mut params = vec![("id_item".to_string(), item_id.to_string())];
+            if let Some(op) = filters.operation {
+                params.push(("operation".to_string(), op.as_str().to_string()));
+            }
+            plans.push(params);
+        } else if !resolved_ids.is_empty() {
+            for id in &resolved_ids {
+                let mut params = vec![("id_item".to_string(), id.to_string())];
+                if let Some(op) = filters.operation {
+                    params.push(("operation".to_string(), op.as_str().to_string()));
+                }
+                plans.push(params);
+            }
+        } else if let Some(op) = filters.operation {
+            plans.push(vec![("operation".to_string(), op.as_str().to_string())]);
         } else {
-            filters.limit.clamp(1, MARKETPLACE_MAX_LIMIT)
-        };
-        params.push(("limit".to_string(), limit.to_string()));
-
-        let rows: Vec<ListingRow> = self.http.get("/marketplace_listings", &params).await?;
+            for op in [MarketOperation::Sell, MarketOperation::Buy] {
+                plans.push(vec![("operation".to_string(), op.as_str().to_string())]);
+            }
+        }
 
         // Region names: resolve id_star_system → name via the star-systems
         // dataset (lazily fetched once, then 12h TTL in the cache).
         let regions = self.star_system_names().await?;
 
-        let offers: Vec<Offer> = rows
-            .into_iter()
-            .map(|r| {
+        let mut offers: Vec<Offer> = Vec::new();
+        let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        for params in &plans {
+            let rows: Vec<ListingRow> = self.http.get("/marketplace_listings", params).await?;
+            for r in rows {
+                if !seen.insert(r.id) {
+                    continue;
+                }
                 let region = if r.id_star_system != 0 {
                     regions.get(&r.id_star_system).cloned().unwrap_or_default()
                 } else {
                     String::new()
                 };
-                Offer {
+                offers.push(Offer {
                     id: r.id,
                     title: r.title,
                     description: r.description,
@@ -281,12 +317,13 @@ impl DataProvider for UexProvider {
                     updated: r.date_added,
                     expires: r.date_expiration,
                     slug: r.slug,
-                }
-            })
-            .collect();
+                });
+            }
+        }
 
-        // Keep the snapshot for cache/offline display. Only API-parameter-free
-        // fetches replace it — a filter-specific fetch would poison the cache.
+        // Keep the snapshot for cache/offline display. Only the general
+        // (unfiltered) fetch plan replaces it — a filter-specific fetch would
+        // poison the cache.
         if cacheable {
             self.cache
                 .store_marketplace(&offers)
