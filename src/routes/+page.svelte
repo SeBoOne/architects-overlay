@@ -30,7 +30,9 @@
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
-	type SearchHit = { id: number; name: string; kind: string; subtitle: string; code: string | null };
+	// t_925a577a: id kommt als STRING (Wiki-IDs > 2^53 runden als JS-Number
+// still — 404707429735935130 → …35100 — und brechen den Detail-Fetch).
+type SearchHit = { id: string; name: string; kind: string; subtitle: string; code: string | null };
 	type GroupHits = { kind: string; label: string; hits: SearchHit[] };
 	type SearchResponse = { groups: GroupHits[]; total: number };
 	type PricePoint = {

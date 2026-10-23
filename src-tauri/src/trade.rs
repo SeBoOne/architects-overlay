@@ -414,10 +414,11 @@ fn fmt_number(v: f64) -> String {
 pub async fn get_prices(
     state: State<'_, TradeState>,
     commodity: String,
-    id: Option<u64>,
+    id: Option<IdArg>,
     kind: Option<String>,
 ) -> Result<PriceDetail, String> {
     let fetched_at = now_unix();
+    let id: Option<u64> = id.and_then(IdArg::into_u64);
     match kind.as_deref() {
         Some("terminal") => {
             // One terminal's OWN price table (run: prices of THIS terminal,
@@ -491,6 +492,25 @@ pub async fn get_prices(
                 prices,
                 location: None,
             })
+        }
+    }
+}
+
+/// t_925a577a: RPC-ID-Argument, das sowohl die bisherigen JSON-Numbers als
+/// auch Strings akzeptiert (Wiki-Entity-IDs > 2^53 müssen als String durch
+/// die JS-WebView, sonst runden sie still).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub enum IdArg {
+    Num(u64),
+    Str(String),
+}
+
+impl IdArg {
+    fn into_u64(self) -> Option<u64> {
+        match self {
+            IdArg::Num(v) => Some(v),
+            IdArg::Str(s) => s.parse().ok(),
         }
     }
 }
@@ -869,6 +889,19 @@ fn now_unix() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    /// Regression (t_925a577a): get_prices nimmt die Row-ID als String ODER
+    /// Number — Wiki-Location-IDs (> 2^53) müssen als String durch die
+    /// JS-WebView, sonst rundet JS still (…35130 → …35100) und der
+    /// Location→Terminal-Resolve bricht mit "not in reference data".
+    #[test]
+    fn id_arg_accepts_string_and_number() {
+        let s: IdArg = serde_json::from_str("\"404707429735935130\"").unwrap();
+        let n: IdArg = serde_json::from_str("778").unwrap();
+        assert_eq!(s.into_u64(), Some(404707429735935130));
+        assert_eq!(n.into_u64(), Some(778));
+        let junk: Result<IdArg, _> = serde_json::from_str("\"not-an-id\"");
+        assert!(junk.is_ok() && junk.unwrap().into_u64().is_none());
+    }
     use super::*;
     use tauri::Manager;
     use tauri::test::mock_app;
@@ -1292,7 +1325,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "Landing Services - Checkmate".into(),
-            Some(429),
+            Some(IdArg::Num(429)),
             Some("terminal".into()),
         )
         .await
@@ -1311,7 +1344,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "Guns - Checkmate".into(),
-            Some(437),
+            Some(IdArg::Num(437)),
             Some("terminal".into()),
         )
         .await
@@ -1323,7 +1356,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "Checkmate".into(),
-            Some(436),
+            Some(IdArg::Num(436)),
             Some("location".into()),
         )
         .await
@@ -1337,7 +1370,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "CSP-68H Backpack".into(),
-            Some(465),
+            Some(IdArg::Num(465)),
             Some("item".into()),
         )
         .await
