@@ -238,7 +238,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
->>>>>>> origin/feature/config-view
 	// Scroll-Position der Ergebnisliste für den Zurück-Blick.
 	let listScroll = $state(0);
 	// Status-Toast nach Auswahl einer Detail-Zeile.
@@ -883,7 +882,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	async function loadMarket(mode: 'normal' | 'bg' = 'normal') {
-		mLimit = 100;
 		mAllLoaded = false;
 		await fetchMarket(100, false, mode === 'bg');
 	}
