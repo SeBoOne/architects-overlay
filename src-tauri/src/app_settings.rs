@@ -36,6 +36,19 @@ impl SettingsState {
         }
     }
 
+    /// The LIVE part of `settings_set_commodity_source`: mutate the settings
+    /// snapshot AND flip the live source switch the composite provider reads
+    /// on every price fetch. The tauri command adds only the disk persist on
+    /// top — one shared code path so the regression wiring test
+    /// (lib.rs `wiring_tests`) exercises exactly the setter's flip sequence.
+    pub(crate) fn set_commodity_source_live(&self, source: CommoditySource) {
+        self.inner
+            .lock()
+            .expect("settings lock")
+            .set_commodity_source(source);
+        self.source_switch.set(source);
+    }
+
     fn persist(&self, settings: &Settings) {
         if let Err(e) = settings.save() {
             log::warn!("settings: persist failed: {e}");
@@ -124,10 +137,9 @@ pub fn settings_set_commodity_source(
 ) -> Result<SettingsSnapshot, String> {
     let source = CommoditySource::from_name(&name)
         .ok_or_else(|| format!("unknown commodity source: {name}"))?;
-    let mut s = state.inner.lock().expect("settings lock");
-    s.set_commodity_source(source);
+    state.set_commodity_source_live(source);
+    let s = state.inner.lock().expect("settings lock");
     state.persist(&s);
-    state.source_switch.set(source);
     Ok(SettingsSnapshot::from_settings(&s))
 }
 
