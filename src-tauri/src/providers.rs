@@ -518,6 +518,134 @@ mod tests {
         assert_eq!(reader.get(), CommoditySource::Wiki);
     }
 
+    /// Regression (t_925a577a): eine Wiki-Location, deren Kette ein
+    /// doppelt geliefertes Segment trägt („Nyx > Nyx > Levski“), muss über
+    /// die tolerante Segment-Matchung auf die UEX-Terminals desselben
+    /// Ortes auflösen („Nyx > Delamar > Levski“) — die exakte Ketten-Matchung
+    /// scheitert dort, das Location-Detail wäre sonst „keine Preise“.
+    #[tokio::test]
+    async fn wiki_location_with_duplicated_chain_resolves_uex_terminals() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let uex = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let wiki = WikiProvider::with_base_url(
+            "http://127.0.0.1:2",
+            std::time::Duration::ZERO,
+            cache.clone(),
+        )
+        .unwrap();
+        let provider =
+            CompositeProvider::new(uex, wiki, SourceSwitch::new(CommoditySource::Wiki), cache);
+
+        // UEX-Terminals der Levski-Kette (Live-Form) + die Wiki-Location-Zeile
+        // mit dem doppelten Segment (Cache-Befund aus dem Live-Lauf).
+        let terminals = vec![
+            Entity {
+                id: 778,
+                kind: EntityKind::Terminals,
+                name: "Commodity Shop - Levski".into(),
+                code: Some("LEVSKI".into()),
+                subtitle: "Nyx > Delamar > Levski".into(),
+            },
+            Entity {
+                id: 393,
+                kind: EntityKind::Terminals,
+                name: "Landing Services - Levski".into(),
+                code: Some("LSLEV".into()),
+                subtitle: "Nyx > Delamar > Levski".into(),
+            },
+            // Störer: gleicher Segment-Name an anderem Ort darf nicht matchen.
+            Entity {
+                id: 12,
+                kind: EntityKind::Terminals,
+                name: "Commodity Shop - Admin - Checkmate".into(),
+                code: Some("CHECK".into()),
+                subtitle: "Pyro > Monox > Checkmate Station".into(),
+            },
+        ];
+        provider
+            .cache
+            .store_entities(EntityKind::Terminals, &terminals)
+            .unwrap();
+        let wiki_row = vec![Entity {
+            id: 4_047_074_297_359_351_300,
+            kind: EntityKind::Locations,
+            name: "Levski".into(),
+            code: Some("levski".into()),
+            subtitle: "Nyx > Nyx > Levski".into(),
+        }];
+        provider
+            .cache
+            .store_entities_sourced(EntityKind::Locations, SOURCE_WIKI, &wiki_row)
+            .unwrap();
+
+        let resolved = provider
+            .uex_terminal_for_wiki_location(4_047_074_297_359_351_300)
+            .await
+            .expect("duplicated wiki chain must resolve to the Levski terminals");
+        // Der Monetär-Terminal-Heuristik-Kandidat ist der Commodity Shop.
+        assert_eq!(resolved, 778);
+    }
+
+    /// Der Störer-Check (gleicher Segment-Name an anderem Ort): eine Location
+    /// ohne jeglichen Segment-/Namens-Match bleibt NotFound.
+    #[tokio::test]
+    async fn wiki_location_without_segment_match_stays_not_found() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let uex = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let wiki = WikiProvider::with_base_url(
+            "http://127.0.0.1:2",
+            std::time::Duration::ZERO,
+            cache.clone(),
+        )
+        .unwrap();
+        let provider =
+            CompositeProvider::new(uex, wiki, SourceSwitch::new(CommoditySource::Wiki), cache);
+        provider
+            .cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[Entity {
+                    id: 12,
+                    kind: EntityKind::Terminals,
+                    name: "Commodity Shop - Admin - Checkmate".into(),
+                    code: None,
+                    subtitle: "Pyro > Monox > Checkmate Station".into(),
+                }],
+            )
+            .unwrap();
+        provider
+            .cache
+            .store_entities_sourced(
+                EntityKind::Locations,
+                SOURCE_WIKI,
+                &[Entity {
+                    id: 9_001,
+                    kind: EntityKind::Locations,
+                    name: "Orbituary".into(),
+                    code: Some("orbituary".into()),
+                    subtitle: "Pyro > Pyro > Orbituary".into(),
+                }],
+            )
+            .unwrap();
+        let err = provider
+            .uex_terminal_for_wiki_location(9_001)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ProviderError::NotFound(_)), "got {err:?}");
+    }
+
     /// Offline wiring test: both clients point at unreachable hosts. Wiki
     /// prices fail → empty → composite must fall back to UEX. With UEX also
     /// failing, `prices` propagates the UEX error (the UI's OFFLINE path).

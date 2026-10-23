@@ -270,7 +270,7 @@ impl WikiProvider {
                         if !chain.iter().any(|c| c == &r.name) {
                             chain.push(r.name.clone());
                         }
-                        chain.join(" > ")
+                        normalize_chain(chain).join(" > ")
                     },
                 }
             })
@@ -339,6 +339,28 @@ impl WikiProvider {
         }
         out
     }
+}
+
+/// Ketten-Normalisierung (t_925a577a): die Wiki-API doppelte Segmente in der
+/// Hierarchie-Kette — z. B. meldet sie für Levski „Nyx > Nyx > Levski“
+/// (System + Planet tragen denselben Namen). Aufeinanderfolgende Duplikate
+/// (und leere Segmente) kollabieren: „Nyx > Nyx > Levski“ → „Nyx > Levski“.
+/// Der Composite-Provider matcht die Kette zusätzlich tolerant je Segment
+/// (`chain_has`), so dass auch gegen die UEX-Kette „Nyx > Delamar > Levski“
+/// eine Auflösung gelingt.
+fn normalize_chain(chain: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for seg in chain {
+        let seg = seg.trim();
+        if seg.is_empty() {
+            continue;
+        }
+        if out.last().map(|last| last == seg).unwrap_or(false) {
+            continue;
+        }
+        out.push(seg.to_string());
+    }
+    out
 }
 
 fn map_cache_err(e: CacheError) -> ProviderError {
@@ -468,6 +490,44 @@ mod tests {
         assert_eq!(entities[0].subtitle, "Stanton > Hurston > Aberdeen");
         assert_eq!(entities[0].name, "Aberdeen");
         assert_ne!(entities[0].id, 0);
+    }
+
+    /// Regression (t_925a577a): die Wiki-API doppelte Segmente in der Kette —
+    /// Levski meldet sie als „Nyx > Nyx > Levski“ (System Nyx + Planet Nyx).
+    /// Aufeinanderfolgende Duplikate müssen beim Import kollabieren, sonst
+    /// scheitert die exakte Ketten-Matchung gegen die UEX-Terminal-Untertitel
+    /// („Nyx > Delamar > Levski“) im Location-Detail.
+    #[test]
+    fn map_locations_collapses_consecutive_duplicate_segments() {
+        let p = provider();
+        let rows = vec![
+            dto::LocationRow {
+                uuid: "40470742-9359-3513-0000-000000000001".into(),
+                name: "Levski".into(),
+                slug: "levski".into(),
+                system: Some("Nyx System".into()),
+                parent: Some(dto::EntityNameRef {
+                    name: "Nyx".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            // Gebiet-Kette des Live-Befunds: „Stanton > Stanton > HUR-L3 …“
+            dto::LocationRow {
+                uuid: "40470742-9359-3513-0000-000000000002".into(),
+                name: "HUR L3".into(),
+                slug: "hur-l3".into(),
+                system: Some("Stanton System".into()),
+                parent: Some(dto::EntityNameRef {
+                    name: "Stanton".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        ];
+        let entities = p.map_locations(rows);
+        assert_eq!(entities[0].subtitle, "Nyx > Levski");
+        assert_eq!(entities[1].subtitle, "Stanton > HUR L3");
     }
 
     #[test]
