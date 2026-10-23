@@ -266,7 +266,7 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   legacy data stays valid and is NOT invalidated — only wiki rows carry
 ///   `source = 'wiki'`. Freshness is tracked per (kind, source), so the first
 ///   wiki sync is triggered by the wiki dataset simply being absent.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -312,8 +312,30 @@ fn migrate_source_columns(conn: &Connection) -> Result<()> {
                 .map_err(|e| CacheError::Open(format!("migration {alter}: {e}")))?;
         }
     }
+    // v3: einmaliger Terminal-Purge (Service-Terminals vor dem Typ-Filter).
+    purge_service_terminals(conn)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;
+    Ok(())
+}
+
+/// v2 → v3 data cleanup (Feedback-Runde 4 / P2): terminals imported BEFORE
+/// the trade-type filter existed still sit in the cache — Landing Services,
+/// Refinement Centers, rentals & co. would keep polluting search and the
+/// location aggregates until their (long) TTL expired. The version-gated
+/// migration (runs exactly once, when user_version < 3) drops the whole UEX
+/// terminal dataset (FTS rows included) and clears its freshness marker, so
+/// the next ensure/search re-imports with the filter applied.
+fn purge_service_terminals(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM entities_fts WHERE kind = 'terminal'", [])
+        .map_err(|e| CacheError::Open(format!("v3 terminal purge (fts): {e}")))?;
+    conn.execute("DELETE FROM entities WHERE kind = 'terminal'", [])
+        .map_err(|e| CacheError::Open(format!("v3 terminal purge: {e}")))?;
+    conn.execute(
+        "DELETE FROM meta WHERE key = ?1",
+        [meta_key(EntityKind::Terminals)],
+    )
+    .map_err(|e| CacheError::Open(format!("v3 terminal purge (meta): {e}")))?;
     Ok(())
 }
 
@@ -456,7 +478,7 @@ impl Cache {
     /// Empty query → browse mode: the first `limit` rows of the requested kinds
     /// (Arkanis: a bare `:c`/`:i`/`:l` prefix lists that category).
     pub fn search(&self, kinds: &[EntityKind], query: &str, limit: u32) -> Result<Vec<SearchHit>> {
-        self.search_sourced(kinds, &[], query, limit)
+        self.search_sourced(kinds, &[], query, &[], limit)
     }
 
     /// [`Cache::search`] with a source filter: `sources` empty = any source
@@ -464,11 +486,19 @@ impl Cache {
     /// Used by the composite provider to keep the commodity search on the UEX
     /// id space (wiki commodity rows are internal resolution data) while the
     /// location group serves BOTH datasets.
+    ///
+    /// `name_only_kinds`: for these kinds ONLY `name`/`code` participate in
+    /// the FTS match — `subtitle` is ignored. Feedback-Runde 4 (P1): a wiki
+    /// location matches its NAME, not its chain ("Mercy Hospital" must NOT
+    /// surface for `levski` just because its subtitle reads
+    /// "Nyx > Levski > Mercy Hospital"). Terminals keep the full-text match
+    /// (name + code + subtitle).
     pub fn search_sourced(
         &self,
         kinds: &[EntityKind],
         sources: &[&str],
         query: &str,
+        name_only_kinds: &[EntityKind],
         limit: u32,
     ) -> Result<Vec<SearchHit>> {
         let query = query.trim();
@@ -541,32 +571,83 @@ impl Cache {
             });
         }
         let escaped = query.replace('"', "\"\"");
-        let match_expr = format!("\"{escaped}\"*");
-        let sql = format!(
-            "SELECT kind, entity_id, name, code, subtitle
-             FROM entities_fts
-             WHERE kind IN ({placeholders}){source_filter} AND entities_fts MATCH ?{limit_idx}
-             ORDER BY rank LIMIT ?{}",
-            limit_idx + 1
-        );
-        self.with(|conn| {
-            let mut stmt = conn.prepare(&sql)?;
-            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
-            for p in &kind_params {
-                params.push(p);
+        let base = format!("\"{escaped}\"*");
+        // Name-only kinds match against name/code ONLY (P1): the FTS
+        // column-filter syntax (`name:"q"*`) restricts the match to the name
+        // and code columns. `kind` itself is UNINDEXED in the FTS table, so
+        // the kind split happens in the WHERE clause — the search runs as
+        // TWO queries (name-only kinds first, then the full-text kinds) and
+        // the results are concatenated in that order.
+        let name_only_cols = format!("name:\"{escaped}\"* OR code:\"{escaped}\"*");
+        let run_query = |kinds: &[EntityKind], match_expr: &str| -> Result<Vec<SearchHit>> {
+            if kinds.is_empty() {
+                return Ok(Vec::new());
             }
-            for p in &source_params {
-                params.push(p);
-            }
-            params.push(&match_expr);
-            params.push(&limit);
-            let rows = stmt.query_map(rusqlite::params_from_iter(params), map_row)?;
-            let mut out = Vec::new();
-            for r in rows {
-                out.push(r?);
-            }
-            Ok(out)
-        })
+            let placeholders = (1..=kinds.len())
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let kind_params: Vec<String> = kinds.iter().map(|k| k.as_str().to_string()).collect();
+            let (source_clause, source_params): (String, Vec<String>) = if sources.is_empty() {
+                (String::new(), Vec::new())
+            } else {
+                let n = kinds.len();
+                let ph = (0..sources.len())
+                    .map(|i| format!("?{}", n + 1 + i))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                (
+                    format!(" AND source IN ({ph})"),
+                    sources.iter().map(|s| (*s).to_string()).collect(),
+                )
+            };
+            let source_filter = if sources.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " AND entity_id IN (SELECT id FROM entities WHERE kind IN ({placeholders}){source_clause})"
+                )
+            };
+            let limit_idx = kinds.len() + source_params.len() + 1;
+            let sql = format!(
+                "SELECT kind, entity_id, name, code, subtitle
+                 FROM entities_fts
+                 WHERE kind IN ({placeholders}){source_filter} AND entities_fts MATCH ?{limit_idx}
+                 ORDER BY rank LIMIT ?{}",
+                limit_idx + 1
+            );
+            self.with(|conn| {
+                let mut stmt = conn.prepare(&sql)?;
+                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+                for p in &kind_params {
+                    params.push(p);
+                }
+                for p in &source_params {
+                    params.push(p);
+                }
+                params.push(&match_expr);
+                params.push(&limit);
+                let rows = stmt.query_map(rusqlite::params_from_iter(params), map_row)?;
+                let mut out = Vec::new();
+                for r in rows {
+                    out.push(r?);
+                }
+                Ok(out)
+            })
+        };
+        let name_only: Vec<EntityKind> = kinds
+            .iter()
+            .filter(|k| name_only_kinds.contains(k))
+            .copied()
+            .collect();
+        let full_text: Vec<EntityKind> = kinds
+            .iter()
+            .filter(|k| !name_only_kinds.contains(k))
+            .copied()
+            .collect();
+        let mut out = run_query(&name_only, &name_only_cols)?;
+        out.extend(run_query(&full_text, &base)?);
+        Ok(out)
     }
 
     // ---------- bookkeeping ----------
@@ -1776,5 +1857,152 @@ mod tests {
         assert_eq!(snap[0].slug, "s");
         let _ = path;
         drop(dir);
+    }
+
+    /// P1 (Feedback-Runde 4): in der Location-Gruppe zählt nur der NAME der
+    /// Location-Entity — die Kette (subtitle) matcht nicht mehr
+    /// ("Nyx > Levski > Mercy Hospital" taucht bei `levski` NICHT auf).
+    /// Terminals im selben Query behalten den vollen Match.
+    #[test]
+    fn location_search_matches_name_only() {
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .store_entities(
+                EntityKind::Locations,
+                &[
+                    entity(
+                        900,
+                        EntityKind::Locations,
+                        "Mercy Hospital",
+                        "MERCY",
+                        "Nyx > Levski > Mercy Hospital",
+                    ),
+                    entity(901, EntityKind::Locations, "Levski", "LEVS", "Nyx > Levski"),
+                ],
+            )
+            .unwrap();
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[
+                    entity(
+                        777,
+                        EntityKind::Terminals,
+                        "Pharmacy - Levski",
+                        "",
+                        "Stanton > Nyx > Levski",
+                    ),
+                    entity(
+                        778,
+                        EntityKind::Terminals,
+                        "Commodity Shop - Levski",
+                        "",
+                        "Stanton > Nyx > Levski",
+                    ),
+                ],
+            )
+            .unwrap();
+
+        // Name-only: Mercy (subtitle match) ist weg, Levski (Name) da,
+        // Terminals matchen weiter über den vollen Text.
+        let hits = cache
+            .search_sourced(
+                &[EntityKind::Locations, EntityKind::Terminals],
+                &[],
+                "levski",
+                &[EntityKind::Locations],
+                25,
+            )
+            .unwrap();
+        let names: Vec<&str> = hits.iter().map(|h| h.name.as_str()).collect();
+        assert!(
+            names.contains(&"Levski"),
+            "location name must match: {names:?}"
+        );
+        assert!(
+            names.contains(&"Pharmacy - Levski"),
+            "terminal full-text match must be kept: {names:?}"
+        );
+        assert!(
+            !names.contains(&"Mercy Hospital"),
+            "location subtitle must NOT match: {names:?}"
+        );
+
+        // Ohne name_only bleibt das alte Verhalten (Regression-Anker).
+        let hits = cache
+            .search_sourced(&[EntityKind::Locations], &[], "levski", &[], 25)
+            .unwrap();
+        assert!(hits.iter().any(|h| h.name == "Mercy Hospital"));
+
+        // Browse-Modus (leere Query) ist von name_only unberührt.
+        let hits = cache
+            .search_sourced(
+                &[EntityKind::Locations],
+                &[],
+                "",
+                &[EntityKind::Locations],
+                25,
+            )
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    /// P2-Begleiter: die v3-Migration räumt die Alt-Bestände (Terminals VOR
+    /// dem Typ-Filter) weg und setzt die Freshness-Marker zurück — nur beim
+    /// Versionssprung (user_version < 3), danach nie wieder.
+    #[test]
+    fn service_terminal_purge_runs_once_and_resets_freshness() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.db");
+        {
+            let cache = Cache::open(&path).unwrap();
+            cache
+                .store_entities(
+                    EntityKind::Terminals,
+                    &[entity(
+                        393,
+                        EntityKind::Terminals,
+                        "Landing Services - Levski",
+                        "",
+                        "Stanton > Nyx > Levski",
+                    )],
+                )
+                .unwrap();
+            assert!(cache.is_fresh(EntityKind::Terminals).unwrap());
+            // Simuliere einen v2-Cache (vor dem Feature): der nächste Open
+            // muss die Terminal-Daten wegwerfen.
+            cache
+                .with(|conn| conn.pragma_update(None, "user_version", 2))
+                .unwrap();
+        }
+        {
+            let cache = Cache::open(&path).unwrap();
+            assert!(
+                !cache.is_fresh(EntityKind::Terminals).unwrap(),
+                "the v3 migration must drop the stale terminal dataset"
+            );
+            assert_eq!(
+                cache.count_entities(EntityKind::Terminals).unwrap(),
+                0,
+                "purged rows must be gone"
+            );
+            // Ein frischer Import überlebt das nächste Öffnen (Purge läuft
+            // nicht erneut — Versionssprung ist vorbei).
+            cache
+                .store_entities(
+                    EntityKind::Terminals,
+                    &[entity(
+                        777,
+                        EntityKind::Terminals,
+                        "Pharmacy - Levski",
+                        "",
+                        "Stanton > Nyx > Levski",
+                    )],
+                )
+                .unwrap();
+        }
+        let cache = Cache::open(&path).unwrap();
+        assert!(cache.is_fresh(EntityKind::Terminals).unwrap());
+        assert_eq!(cache.count_entities(EntityKind::Terminals).unwrap(), 1);
     }
 }

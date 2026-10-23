@@ -201,9 +201,19 @@ pub fn search(
         } else {
             &[cache::SOURCE_UEX]
         };
+        // P1 (Feedback-Runde 4): in der Location-Gruppe zählt für die
+        // Location-ENTITY nur der NAME (Subtitle/Kette matcht nicht mehr —
+        // Mercy Hospital taucht bei `levski` nicht mehr auf). Terminals
+        // behalten den vollen FTS-Match (Name-Suffix "- Levski" folgt dem
+        // Ort).
+        let name_only: &[EntityKind] = if *kind == "location" {
+            &[EntityKind::Locations]
+        } else {
+            &[]
+        };
         let mut hits = state
             .cache
-            .search_sourced(entity_kind, sources, query, PER_GROUP_LIMIT)
+            .search_sourced(entity_kind, sources, query, name_only, PER_GROUP_LIMIT)
             .map_err(|e| format!("Cache-Fehler: {e}"))?;
         // Location-Gruppe (Kriterium 2 / QA-Auflage A): die Standort-ENTITY
         // selbst ist kein eigenes Dataset — `/terminals` liefert nur Terminal-
@@ -245,10 +255,48 @@ fn with_location_rows(
     if hits.is_empty() {
         return Ok(hits);
     }
+    // P1.2 (Feedback-Runde 4): ein getroffener Standort listet seine
+    // Station-Shops als eigene Terminal-Zeilen — auch wenn das Terminal
+    // selbst nicht per FTS matcht. Membership generisch: die Ortsname ist
+    // ein Segment der Terminal-Kette ("Pharmacy - Levski" ↔ "Nyx > Levski").
+    let wiki_locations: Vec<provider::SearchHit> = hits
+        .iter()
+        .filter(|h| h.kind == "location")
+        .cloned()
+        .collect();
+    let mut shops: Vec<provider::SearchHit> = Vec::new();
+    if !wiki_locations.is_empty() {
+        let terminals: Vec<provider::SearchHit> = cache
+            .entities_of(EntityKind::Terminals)?
+            .into_iter()
+            .map(|e| provider::SearchHit {
+                id: e.id,
+                name: e.name,
+                kind: "terminal".to_string(),
+                subtitle: e.subtitle,
+                code: e.code,
+            })
+            .collect();
+        let present: std::collections::HashSet<u64> = hits.iter().map(|h| h.id).collect();
+        for loc in &wiki_locations {
+            for t in &terminals {
+                if present.contains(&t.id) || shops.iter().any(|s| s.id == t.id) {
+                    continue;
+                }
+                if chain_has_location(&t.subtitle, &loc.name) {
+                    shops.push(t.clone());
+                }
+            }
+        }
+    }
     // Kette (subtitle) → Terminals der Kette, in Treffer-Reihenfolge zuerst.
     // Wiki-Location-Zeilen (kind='location', source=wiki) sind bereits
     // Standort-Zeilen und werden nicht noch einmal synthetisiert — sie
     // bleiben unangetastet in der Trefferliste.
+    let wiki_names: Vec<String> = wiki_locations
+        .iter()
+        .map(|h| h.name.to_lowercase())
+        .collect();
     let mut by_chain: std::collections::BTreeMap<String, Vec<provider::SearchHit>> =
         std::collections::BTreeMap::new();
     for h in hits.iter().filter(|h| h.kind == "terminal") {
@@ -266,8 +314,15 @@ fn with_location_rows(
     // Der Name der Standort-Entity ist das letzte Kettenglied (z. B.
     // "Checkmate Station") — nicht der Terminal-Name —, damit er klar von den
     // Terminal-Zeilen (Kriterium 1) unterschieden wird.
+    //
+    // P1: matcht die Wiki-Location bereits per Name, wird die synthetische
+    // Zeile nicht DUPLIZIERT (gleicher Ortsname → Wiki-Treffer reicht).
     let mut locations: Vec<provider::SearchHit> = Vec::new();
     for (chain, members) in &by_chain {
+        let display = location_name(chain);
+        if wiki_names.iter().any(|n| *n == display.to_lowercase()) {
+            continue;
+        }
         let (chain_lookup, first) = chain_lookup(cache, chain)?;
         let repr = members
             .iter()
@@ -280,16 +335,48 @@ fn with_location_rows(
         };
         locations.push(provider::SearchHit {
             id,
-            name: location_name(chain),
+            name: display,
             kind: "location".to_string(),
             subtitle: chain.clone(),
             code: None,
         });
     }
-    // Standort-Zeilen voranstellen — das Aggregat ist der präferierte Einstieg.
-    let mut out = locations;
-    out.extend(hits);
+    // Reihenfolge: Wiki-Location-Treffer mit ihren Station-Shops zuerst
+    // (das Aggregat ist der präferierte Einstieg, die Shops folgen direkt),
+    // dann die synthetischen Ketten-Standorte, dann die restlichen
+    // Terminal-Treffer (die als Shop-Zeile ergänzten wurden nicht doppelt
+    // geführt).
+    let shop_ids: std::collections::HashSet<u64> = shops.iter().map(|s| s.id).collect();
+    let mut out: Vec<provider::SearchHit> = Vec::new();
+    for loc in &wiki_locations {
+        out.push(loc.clone());
+        out.extend(
+            shops
+                .iter()
+                .filter(|s| chain_has_location(&s.subtitle, &loc.name))
+                .cloned(),
+        );
+    }
+    out.extend(locations);
+    out.extend(hits.into_iter().filter(|h| match h.kind.as_str() {
+        "terminal" => !shop_ids.contains(&h.id),
+        // Wiki-Location-Zeilen sind oben schon eingereiht.
+        "location" => false,
+        _ => true,
+    }));
     Ok(out)
+}
+
+/// Ist `location_name` ein Segment der Terminal-Kette `chain`
+/// ("Stanton > Nyx > Levski" enthält "Levski")? Generische Orts-Mitgliedschaft
+/// für die Station-Shop-Erweiterung (P1.2) — kein Namens-Blacklist.
+fn chain_has_location(chain: &str, location_name: &str) -> bool {
+    let name = location_name.trim();
+    !name.is_empty()
+        && chain
+            .split('>')
+            .map(str::trim)
+            .any(|seg| seg.eq_ignore_ascii_case(name))
 }
 
 /// Anzeigename der Location-Entity. Pro Standort-Kette steht der Name der
@@ -1582,5 +1669,137 @@ mod tests {
     fn location_synthesis_empty_hits_is_noop() {
         let cache = Arc::new(Cache::open_in_memory().unwrap());
         assert!(with_location_rows(&cache, vec![]).unwrap().is_empty());
+    }
+
+    /// P1.2 (Feedback-Runde 4): ein Wiki-Location-Treffer listet die Shops
+    /// seiner Station als eigene Terminal-Zeilen — auch Terminals, die NICHT
+    /// selbst im FTS-Treffer waren. Die synthetische Ketten-Location wird
+    /// NICHT doppelt erzeugt, wenn die Wiki-Location den Namen schon trägt.
+    #[test]
+    fn wiki_location_hit_lists_station_shops_and_dedupes_synthesis() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let chain = "Stanton > Nyx > Levski";
+        cache
+            .store_entities(
+                EntityKind::Locations,
+                &[
+                    provider::Entity {
+                        id: 900,
+                        kind: EntityKind::Locations,
+                        name: "Levski".into(),
+                        code: None,
+                        subtitle: "Nyx > Levski".into(),
+                    },
+                    // FALSCH-Positiv-Kandidat: Subtitle enthält Levski,
+                    // Name aber nicht (Name-only-Regel — hier nur als
+                    // Nicht-Treffer-Demo, der FTS-Treffer wird simuliert).
+                    provider::Entity {
+                        id: 901,
+                        kind: EntityKind::Locations,
+                        name: "Mercy Hospital".into(),
+                        code: None,
+                        subtitle: "Nyx > Levski > Mercy Hospital".into(),
+                    },
+                ],
+            )
+            .unwrap();
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[
+                    provider::Entity {
+                        id: 777,
+                        kind: EntityKind::Terminals,
+                        name: "Pharmacy - Levski".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                    provider::Entity {
+                        id: 778,
+                        kind: EntityKind::Terminals,
+                        name: "Commodity Shop - Levski".into(),
+                        code: None,
+                        subtitle: chain.into(),
+                    },
+                    // Anderer Ort — darf NICHT als Levski-Shop auftauchen.
+                    provider::Entity {
+                        id: 500,
+                        kind: EntityKind::Terminals,
+                        name: "Commodity Shop - Admin - Checkmate".into(),
+                        code: None,
+                        subtitle: "Stanton > Crusader > Checkmate Station".into(),
+                    },
+                ],
+            )
+            .unwrap();
+
+        // FTS-Treffer-Simulation: Wiki-Location „Levski" (Name-only-Regel),
+        // kein Mercy, kein Terminal selbst getroffen.
+        let hits = vec![provider::SearchHit {
+            id: 900,
+            name: "Levski".into(),
+            kind: "location".into(),
+            subtitle: "Nyx > Levski".into(),
+            code: None,
+        }];
+        let out = with_location_rows(&cache, hits).unwrap();
+
+        // Location-Zeile bleibt; ihre Shops (777, 778) kommen als
+        // Terminal-Zeilen dazu; Checkmate (500) NICHT.
+        assert_eq!(out[0].kind, "location");
+        assert_eq!(out[0].id, 900);
+        let terminal_ids: Vec<u64> = out[1..]
+            .iter()
+            .filter(|h| h.kind == "terminal")
+            .map(|h| h.id)
+            .collect();
+        assert_eq!(
+            terminal_ids,
+            vec![777, 778],
+            "both station shops must be listed: {terminal_ids:?}"
+        );
+        assert!(
+            !out.iter().any(|h| h.name == "Mercy Hospital"),
+            "subtitle-only location match must not leak back in"
+        );
+        // Keine doppelte synthetische „Levski"-Location.
+        assert_eq!(
+            out.iter().filter(|h| h.kind == "location").count(),
+            1,
+            "synthesis must not duplicate the wiki location"
+        );
+    }
+
+    /// P1.2: Terminal-Treffer OHNE Wiki-Location-Treffer behalten die alte
+    /// Synthese (Kette → eine location-Zeile) — Regressions-Anker.
+    #[test]
+    fn terminal_only_hits_still_synththesize_location_row() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let chain = "Stanton > Crusader > Checkmate Station";
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[provider::Entity {
+                    id: 436,
+                    kind: EntityKind::Terminals,
+                    name: "Commodity Shop - Admin - Checkmate".into(),
+                    code: None,
+                    subtitle: chain.into(),
+                }],
+            )
+            .unwrap();
+        let hits = vec![provider::SearchHit {
+            id: 436,
+            name: "Commodity Shop - Admin - Checkmate".into(),
+            kind: "terminal".into(),
+            subtitle: chain.into(),
+            code: None,
+        }];
+        let out = with_location_rows(&cache, hits).unwrap();
+        assert_eq!(out[0].kind, "location");
+        assert_eq!(out[0].id, 436, "money terminal of the chain");
+        assert_eq!(out[0].name, "Checkmate Station");
+        assert_eq!(out[1].kind, "terminal");
+        assert_eq!(out[1].id, 436);
     }
 }

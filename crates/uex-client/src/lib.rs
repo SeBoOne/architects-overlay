@@ -49,6 +49,18 @@ const SEARCH_LIMIT: u32 = 25;
 /// per market query (bounds request rate + IPC payload on multi-term input).
 const MARKET_ITEM_ID_CAP: usize = 3;
 
+/// UEX `/terminals` `type` values that carry player-facing buy/sell data and
+/// therefore belong in search + location aggregates (Feedback-Runde 4 / P2).
+/// Everything else (fuel docks incl. Landing/Cargo Services, refinery
+/// processing, ship shops, rentals) is filtered out AT IMPORT — no UI-side
+/// hiding, the dataset itself stays clean. Generic over the type field, no
+/// name blacklist: today `commodity` (trade consoles), `commodity_raw`
+/// (Refinery Ore Sales — players SELL ore there) and `item` (shops with
+/// /items_prices rows).
+pub fn is_trade_terminal_type(t: Option<&str>) -> bool {
+    matches!(t, Some("commodity") | Some("commodity_raw") | Some("item"))
+}
+
 /// Concrete provider for the UEX source.
 pub struct UexProvider {
     http: UexHttpClient,
@@ -176,7 +188,7 @@ impl DataProvider for UexProvider {
         // the wiki provider and must not leak through this seam
         // implementation.
         self.cache
-            .search_sourced(kinds, &[cache::SOURCE_UEX], query, SEARCH_LIMIT)
+            .search_sourced(kinds, &[cache::SOURCE_UEX], query, &[], SEARCH_LIMIT)
             .map_err(map_cache_err)
     }
 
@@ -261,28 +273,7 @@ impl DataProvider for UexProvider {
             return Ok(Self::apply_local(snapshot, &filters));
         }
 
-        let mut plans: Vec<Vec<(String, String)>> = Vec::new();
-        if let Some(item_id) = filters.item_id {
-            let mut params = vec![("id_item".to_string(), item_id.to_string())];
-            if let Some(op) = filters.operation {
-                params.push(("operation".to_string(), op.as_str().to_string()));
-            }
-            plans.push(params);
-        } else if !resolved_ids.is_empty() {
-            for id in &resolved_ids {
-                let mut params = vec![("id_item".to_string(), id.to_string())];
-                if let Some(op) = filters.operation {
-                    params.push(("operation".to_string(), op.as_str().to_string()));
-                }
-                plans.push(params);
-            }
-        } else if let Some(op) = filters.operation {
-            plans.push(vec![("operation".to_string(), op.as_str().to_string())]);
-        } else {
-            for op in [MarketOperation::Sell, MarketOperation::Buy] {
-                plans.push(vec![("operation".to_string(), op.as_str().to_string())]);
-            }
-        }
+        let plans = self.build_market_plans(&filters, &resolved_ids);
 
         // Region names: resolve id_star_system → name via the star-systems
         // dataset (lazily fetched once, then 12h TTL in the cache).
@@ -358,6 +349,12 @@ impl DataProvider for UexProvider {
                 let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
                 Ok(rows
                     .into_iter()
+                    // P2 (Feedback-Runde 4): only terminals whose UEX type
+                    // carries buy/sell data enter the cache. Service
+                    // terminals (fuel/landing, refinery, rentals, ship
+                    // shops) are dropped at import — the dataset itself is
+                    // clean, no UI-side filtering.
+                    .filter(|r| is_trade_terminal_type(r.r#type.as_deref()))
                     .map(|r| {
                         let mut parts = Vec::new();
                         for field in [
@@ -467,6 +464,72 @@ impl DataProvider for UexProvider {
 }
 
 impl UexProvider {
+    /// Fetch plan for one market query (P3, Feedback-Runde 4 — hybrid):
+    ///
+    /// * explicit `item_id` → ONE `id_item` fetch (+ `operation`),
+    /// * free-text q → `id_item` fetches for every term that names a known
+    ///   item (complete per-item sets), PLUS the full offer window
+    ///   (`operation=sell` + `operation=buy`, or only the selected
+    ///   operation) — q may also match titles/sellers/locations the item
+    ///   resolution never sees, so the id-only slice under-reported. Both
+    ///   plan families are MERGED client-side (`seen`-dedupe) and the
+    ///   COMPLETE set is then filtered + sorted by
+    ///   `apply_marketplace_filters`, so "Parallax + Min-Q 900" lists every
+    ///   matching offer instead of a newest-window slice.
+    /// * no q and no ids → the general sell+buy windows (snapshot path).
+    ///
+    /// The extra full windows only run when the query is non-empty; the
+    /// empty-q fast path (cacheable snapshot) stays untouched (rate limit).
+    fn build_market_plans(
+        &self,
+        filters: &MarketplaceFilter,
+        resolved_ids: &[u64],
+    ) -> Vec<Vec<(String, String)>> {
+        let mut plans: Vec<Vec<(String, String)>> = Vec::new();
+        if let Some(item_id) = filters.item_id {
+            let mut params = vec![("id_item".to_string(), item_id.to_string())];
+            if let Some(op) = filters.operation {
+                params.push(("operation".to_string(), op.as_str().to_string()));
+            }
+            plans.push(params);
+        } else {
+            for id in resolved_ids {
+                let mut params = vec![("id_item".to_string(), id.to_string())];
+                if let Some(op) = filters.operation {
+                    params.push(("operation".to_string(), op.as_str().to_string()));
+                }
+                plans.push(params);
+            }
+            if !filters.q.trim().is_empty() {
+                // Hybrid: add the FULL offer window(s) on top of the
+                // id_item fetches so the local q/quality/sort filter runs
+                // over the complete market, not just the resolved slice.
+                match filters.operation {
+                    Some(op) => {
+                        plans.push(vec![("operation".to_string(), op.as_str().to_string())])
+                    }
+                    None => {
+                        for op in [MarketOperation::Sell, MarketOperation::Buy] {
+                            plans.push(vec![("operation".to_string(), op.as_str().to_string())]);
+                        }
+                    }
+                }
+            } else if resolved_ids.is_empty() {
+                // Empty q, nothing resolved → the general windows (only
+                // reachable when `operation` is set, else the snapshot
+                // fast path already returned).
+                if let Some(op) = filters.operation {
+                    plans.push(vec![("operation".to_string(), op.as_str().to_string())]);
+                } else {
+                    for op in [MarketOperation::Sell, MarketOperation::Buy] {
+                        plans.push(vec![("operation".to_string(), op.as_str().to_string())]);
+                    }
+                }
+            }
+        }
+        plans
+    }
+
     /// Look `query` up in the locally cached non-commodity reference rows
     /// (items, then terminals). An exact match means "exists here, but has no
     /// commodity prices" → `Ok(vec![])`; no match stays a NotFound.
@@ -843,5 +906,75 @@ mod tests {
         };
         let hits = UexProvider::apply_local(vec![dear, cheap], &f);
         assert_eq!(hits[0].price, 50.0, "sort must combine with q");
+    }
+
+    /// P2 (Feedback-Runde 4): der Typ-Filter lässt nur Kauf/Verkauf-Terminals
+    /// durch — generisch über das UEX `type`-Feld, keine Namens-Blacklist.
+    #[test]
+    fn trade_terminal_type_filter_is_generic() {
+        assert!(super::is_trade_terminal_type(Some("commodity")));
+        assert!(super::is_trade_terminal_type(Some("item")));
+        // Refinery Ore Sales: Spieler VERKAUFEN Erz hier → bleibt.
+        assert!(super::is_trade_terminal_type(Some("commodity_raw")));
+        assert!(!super::is_trade_terminal_type(Some("fuel")));
+        assert!(!super::is_trade_terminal_type(Some("refinery")));
+        assert!(!super::is_trade_terminal_type(Some("vehicle_rent")));
+        assert!(!super::is_trade_terminal_type(Some("vehicle_buy")));
+        assert!(!super::is_trade_terminal_type(None));
+    }
+
+    /// P3 (Feedback-Runde 4): hybrid-Fetch-Plan — bei Freitext-q laufen die
+    /// id_item-Fetches UND das volle Offer-Fenster (beide Operationen),
+    /// damit apply_marketplace_filters über das KOMPLETTE Set filtert. Leere
+    /// q ohne ids bleibt beim General-Fetch (Snapshot-Pfad, Rate-Limit).
+    #[test]
+    fn market_plan_is_hybrid_for_free_text_queries() {
+        let provider = UexProvider::with_base_url(
+            Arc::new(Cache::open_in_memory().unwrap()),
+            None,
+            "http://localhost:1",
+            std::time::Duration::from_secs(0),
+        )
+        .unwrap();
+
+        // Freitext mit aufgelösten ids: id_item-Plans + sell- und buy-Fenster.
+        let plans = provider.build_market_plans(&filter("parallax"), &[11, 22]);
+        assert_eq!(plans.len(), 4, "2 id_item + sell + buy: {plans:?}");
+        assert!(plans[0].contains(&("id_item".to_string(), "11".to_string())));
+        assert!(plans[1].contains(&("id_item".to_string(), "22".to_string())));
+        assert!(
+            plans
+                .iter()
+                .any(|p| p.contains(&("operation".to_string(), "sell".to_string()))),
+            "full sell window required: {plans:?}"
+        );
+        assert!(
+            plans
+                .iter()
+                .any(|p| p.contains(&("operation".to_string(), "buy".to_string()))),
+            "full buy window required: {plans:?}"
+        );
+
+        // Freitext OHNE ids: trotzdem hybrid (q matcht Titel/Verkäufer/Ort).
+        let plans = provider.build_market_plans(&filter("parallax"), &[]);
+        assert_eq!(plans.len(), 2, "sell + buy windows only: {plans:?}");
+
+        // Freitext + Operation-Filter: ein Fenster, mit der Operation.
+        let mut f = filter("parallax");
+        f.operation = Some(MarketOperation::Buy);
+        let plans = provider.build_market_plans(&f, &[11]);
+        assert_eq!(plans.len(), 2, "id_item + buy window: {plans:?}");
+        assert!(plans[1].contains(&("operation".to_string(), "buy".to_string())));
+
+        // Leere q ohne ids/operation: General-Fetch (sell + buy), wie bisher.
+        let plans = provider.build_market_plans(&filter(""), &[]);
+        assert_eq!(plans.len(), 2, "general windows unchanged: {plans:?}");
+
+        // Explizite item_id: UNVERÄNDERT genau ein Plan (kein Voll-Fetch).
+        let mut f = filter("");
+        f.item_id = Some(7);
+        let plans = provider.build_market_plans(&f, &[]);
+        assert_eq!(plans.len(), 1);
+        assert!(plans[0].contains(&("id_item".to_string(), "7".to_string())));
     }
 }
