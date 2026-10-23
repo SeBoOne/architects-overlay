@@ -140,4 +140,4 @@ mod imp {
 pub use imp::init;
 
 #[cfg(not(unix))]
-pub fn init(_app: &AppHandle) {}
+pub fn init(_app: &tauri::AppHandle) {}
