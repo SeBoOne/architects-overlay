@@ -530,6 +530,46 @@ mod tests {
         assert_eq!(entities[1].subtitle, "Stanton > HUR L3");
     }
 
+    /// Live-Verifikation (t_925a577a): die echte Wiki-API meldet Levski mit
+    /// System Nyx + Star „Nyx“ als Parent — die Kette muss normalisiert
+    /// „Nyx > Levski“ liefern (opt-in: `cargo test -p wiki_client -- --ignored`).
+    #[tokio::test]
+    #[ignore = "hits the live Star Citizen Wiki API"]
+    async fn live_locations_levski_chain_is_normalized() {
+        let dir = std::env::temp_dir().join(format!(
+            "wiki-live-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = Arc::new(cache::Cache::open(&dir.join("live.sqlite3")).unwrap());
+        let p = WikiProvider::new(cache).unwrap();
+        let rows = p.fetch_locations().await.expect("live locations");
+        let entities = p.map_locations(rows);
+        let levski: Vec<_> = entities
+            .iter()
+            .filter(|e| e.name == "Levski")
+            .map(|e| (e.name.clone(), e.subtitle.clone()))
+            .collect();
+        eprintln!("levski rows: {levski:?}");
+        assert!(
+            levski.iter().any(|(_, sub)| sub == "Nyx > Levski"),
+            "Levski-Kette muss normalisiert sein, got {levski:?}"
+        );
+        // Keine Zeile darf aufeinanderfolgende Duplikate tragen.
+        for (name, sub) in &levski {
+            let segs: Vec<&str> = sub.split(" > ").map(str::trim).collect();
+            for w in segs.windows(2) {
+                assert!(
+                    !w[0].eq_ignore_ascii_case(w[1]),
+                    "row {name}: consecutive duplicate in {sub}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn map_price_entries_maps_buy_sell_and_dedupes_terminals() {
         let entries = vec![
