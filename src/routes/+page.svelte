@@ -156,6 +156,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let apiKeyInput = $state('');
 	let apiKeyNote = $state('');
 
+	// P8-Detail-Variante: Backend-Wert ist Quelle der Wahrheit, aber die Umschal-
+	// tung wirkt SOFORT auch ohne Backend (statischer Build/Probe) über einen
+	// lokalen Fallback, bis settings_set_detail_variant antwortet.
+	let localVariant = $state<'a' | 'c' | null>(null);
+	let detailVariant = $derived<'a' | 'c'>((cfg?.detail_variant ?? localVariant ?? 'c') === 'a' ? 'a' : 'c');
+
 	// data-palette + data-detail-variant am html — CSS-Scoping-Kontaktstelle
 	// zum parallelen Frontend-Task (t_733aa11d).
 	function applySettings(snapshot: SettingsSnapshot | null) {
@@ -1612,8 +1618,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<span class="sell"><i>Best Verkauf</i>{dBest.sell > 0 ? fmt(dBest.sell) : '—'}</span>
 									</div>
 									<div class="d-variant" role="group" aria-label="Preis-Detail-Darstellung">
-										<button class:active={cfg?.detail_variant === 'a'} onclick={() => chooseVariant('a')} title="Variante A — Zeilenboxen">A</button>
-											<button class:active={cfg?.detail_variant !== 'a'} onclick={() => chooseVariant('c')} title="Variante C — Trader-Hero (Default)">C</button>
+										<button class:active={detailVariant === 'a'} onclick={() => { localVariant = 'a'; void chooseVariant('a'); }} title="Variante A — Zeilenboxen">A</button>
+											<button class:active={detailVariant === 'c'} onclick={() => { localVariant = 'c'; void chooseVariant('c'); }} title="Variante C — Trader-Hero (Default)">C</button>
 									</div>
 								</div>
 
@@ -1674,7 +1680,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										{@const bb = buys[0]}
 										{@const bs = sells[0]}
 										{@const margin = bb && bs ? bs.p.sell_price - bb.p.buy_price : 0}
-										{#if cfg?.detail_variant !== 'a'}
+										{#if detailVariant !== 'a'}
 											<div class="vC-hero">
 												<div class="vC-kpi buy">
 													<span class="k">Günstigster Kauf</span>
