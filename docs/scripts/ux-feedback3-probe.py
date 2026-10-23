@@ -355,8 +355,12 @@ async def main():
         np = await js("[...document.querySelectorAll('.pane-detail .np-state')].map(function(x){return x.textContent.trim()})")
         check("p8: variant A renders grouped sections (1 ptab for buy)", (tabs or 0) == 1, f"ptabs={tabs}")
         check("p8: variant A empty direction → ONE status line", len(np or []) == 1 and 'verkauf' in np[0].lower(), str(np))
-        check("p8: variant A stored in localStorage",
-              await js("localStorage.getItem('architects-overlay.p8.variant')") == 'A', "ls=A")
+        # Persistenz liegt seit dem Integrat (t_0fb56efd) beim Backend-Settings
+        # (t_163074f3, settings_set_detail_variant) — localStorage ist bewusst
+        # NICHT mehr der Store. Statischer Build kann das Backend nicht
+        # aufrufen, also darf hier kein localStorage-Key mehr entstehen.
+        check("p8: variant NOT in localStorage (Store = Backend-Settings)",
+              await js("localStorage.getItem('architects-overlay.p8.variant')") is None, "ls=None")
         await shot("03-p8-variantA-csp68h")
         # Toggle zurück auf C
         await js("document.querySelector('.d-head .d-variant button:nth-child(2)').click()")
