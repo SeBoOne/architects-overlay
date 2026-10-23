@@ -102,6 +102,7 @@
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	const SYNC_EVENT = 'trade-sync';
 	const M_PAGE = 15; // Min. 15 Offers pro Seite (statt 1)
+const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergrund-Refresh
 
 	type Phase = 'idle' | 'typing' | 'loading' | 'error' | 'offline' | 'market';
 
@@ -141,6 +142,29 @@
 	// `dSel` = fokussierte Detail-Zeile, `dChosen` = per Enter ausgewählt.
 	let dSel = $state(0);
 	let dChosen = $state<number | null>(null);
+	// P8: Preis-Detail-Darstellung — Variante C (Trader-Hero) ist Default,
+	// Variante A (Zeilenboxen) per Konfig umschaltbar (localStorage, überlebt
+	// App-Starts; kein Backend-Roundtrip nötig).
+	type P8Variant = 'A' | 'C';
+	const P8_VARIANT_KEY = 'architects-overlay.p8.variant';
+	function loadP8Variant(): P8Variant {
+		try {
+			const v = localStorage.getItem(P8_VARIANT_KEY);
+			return v === 'A' || v === 'C' ? v : 'C';
+		} catch {
+			return 'C';
+		}
+	}
+	let p8Variant = $state<P8Variant>(loadP8Variant());
+	function setP8Variant(v: P8Variant) {
+		p8Variant = v;
+		try {
+			localStorage.setItem(P8_VARIANT_KEY, v);
+		} catch {
+			/* localStorage unvollständig (private mode) — Variant bleibt nur für
+			   diese Sitzung aktiv, kein Fehlerfall für die UI. */
+		}
+	}
 	// Scroll-Position der Ergebnisliste für den Zurück-Blick.
 	let listScroll = $state(0);
 	// Status-Toast nach Auswahl einer Detail-Zeile.
@@ -164,7 +188,9 @@
 		return prices
 			.filter((p) => val(p) > 0)
 			.filter((p) => !dFilter || (byLoc ? p.location : p.commodity).toLowerCase().includes(dFilter))
-			.sort((a, b) => val(b) - val(a))
+			// P8-Sortierung: Kauf günstigster zuerst (aufsteigend), Verkauf
+			// höchster zuerst (absteigend) — "beste Gelegenheit" steht oben.
+			.sort((a, b) => (kind === 'buy' ? val(a) - val(b) : val(b) - val(a)))
 			.map((p) => ({ p, kind, fi: c.i++, name: byLoc ? p.location : p.commodity }));
 	}
 
@@ -205,11 +231,25 @@
 		const top = Math.max(dRows.length - 1, 0);
 		if (dSel > top) dSel = top;
 	});
-	// Beste Preise der (gefilterten) Detail-Menge für die Kopfzeile.
+	// Beste Preise der (gefilterten) Detail-Menge für die Kopfzeile (P8):
+	// Best Kauf = günstigster Kaufpreis (min), Best Verkauf = höchster
+	// Verkaufspreis (max). Leere Richtung → 0 (Chip zeigt „—").
 	let dBest = $derived({
-		buy: Math.max(0, ...dRows.filter((r) => r.kind === 'buy').map((r) => r.p.buy_price)),
+		buy: Math.min(Infinity, ...dRows.filter((r) => r.kind === 'buy').map((r) => r.p.buy_price)),
 		sell: Math.max(0, ...dRows.filter((r) => r.kind === 'sell').map((r) => r.p.sell_price))
 	});
+
+	// Marge (Best Kauf → Best Verkauf) für den P8-Hero; nur bei beiden Seiten
+	// vorhanden, sonst 0 (Karte zeigt „—"). Folgt dem Filter (dBest aus dRows).
+	let dMargin = $derived(dBest.buy !== Infinity && dBest.sell > 0 ? dBest.sell - dBest.buy : 0);
+
+	// Bestands-/Nachfrage-Unterzeile (P8-Entscheid): 0 heißt bei UEX „keine
+	// Meldung", nicht „0 SCU" — deshalb Klartext statt eines Strichs.
+	function stockTxt(p: PricePoint, kind: 'buy' | 'sell'): string {
+		const n = Math.round(kind === 'buy' ? p.buy_stock : p.sell_stock);
+		if (kind === 'buy') return n > 0 ? `Bestand ${fmt(n)} SCU` : 'kein Bestand gemeldet';
+		return n > 0 ? `Nachfrage ${fmt(n)} SCU` : 'keine Nachfrage gemeldet';
+	}
 
 	// ---- Market-State (Phase 2) --------------------------------------------
 	let offers = $state<Offer[]>([]);
@@ -232,6 +272,10 @@
 	let mMshown = $state(M_PAGE);
 	let mAllLoaded = $state(false);
 	let mLoadingMore = $state(false);
+	// P3/P4: Frische-Tracking + app-lokales F5-Feedback (Statuszeile, nicht modal).
+	let mFetchedAt = $state(0); // fetched_at des letzten erfolgreichen Market-Fetch
+	let f5Msg = $state(''); // kurzer Status-Text aus dem F5-Sync
+	let f5Clear: ReturnType<typeof setTimeout> | null = null;
 
 	// Sichtbare Offers = API-/Provider-Antwort + clientseitiger Qualitätsfilter
 	// (mit Sortierung kombinierbar — die Sortierung passiert im Provider, der
@@ -665,10 +709,10 @@
 	function toggleMarket() {
 		if (phase === 'market') {
 			// P5: Rückweg Market → Search hinterlässt NICHTS — das Eingabefeld
-			// wird geleert (im Market-Modus stand dort der Offer-Query) und
+			// wird geleert (im Market-Modus stand dort der Offer-Query), die
 			// Sortierung/Operation/Qualität fallen auf ihre Defaults zurück,
 			// damit der nächste Market-Besuch unbelastet startet.
-			phase = 'idle';
+			phase = 'typing';
 			input = '';
 			offerDetail = null;
 			mSel = 0;
@@ -695,15 +739,23 @@
 			dSel = 0;
 			dChosen = null;
 			dToast = '';
+			// Wieder im Such-Modus: Ergebnisliste an den Suchtext des HAUPT-
+			// Suchfelds angleichen (im Market-Modus wurde dort der Offer-Query
+			// getippt — keine veralteten Treffer stehen lassen).
+			void runSearch();
 		} else {
 			phase = 'market';
-			void loadMarket();
+			// P3: beim Wechsel in den Market-Modus — wenn die Market-Daten älter
+			// als 5 Minuten sind, sofortiger Sync im Hintergrund (kein Blocken).
+			const stale = mFetchedAt > 0 && nowSec() - mFetchedAt > MARKET_STALE_SECS;
+			void loadMarket(stale ? 'bg' : 'normal');
 		}
 	}
 
 	// Kern-Loader für den Marketplace (cache-first, progressive Limits).
-	async function fetchMarket(limit: number, showAll = false) {
-		if (showAll) mLoadingMore = true; else mLoading = true;
+	// `bg = true`: Hintergrund-Refresh (P3) — kein Spinner, UI bleibt bedienbar.
+	async function fetchMarket(limit: number, showAll = false, bg = false) {
+		if (showAll) mLoadingMore = true; else if (!bg) mLoading = true;
 		mNote = null;
 		const filterObj = {
 			location: '',
@@ -719,6 +771,7 @@
 			offers = resp.offers;
 			mSource = resp.source;
 			mNote = resp.note ?? null;
+			mFetchedAt = resp.fetched_at || nowSec();
 			// Der Provider liefert sein komplettes abrufbares Fenster — mehr
 			// als diesen Snapshot gibt es vom Backend nicht nachzuholen.
 			mMshown = showAll ? offers.length : Math.min(M_PAGE, offers.length);
@@ -733,9 +786,36 @@
 		mLoadingMore = false;
 	}
 
-	async function loadMarket() {
+	async function loadMarket(mode: 'normal' | 'bg' = 'normal') {
+		mLimit = 100;
 		mAllLoaded = false;
-		await fetchMarket(100, false);
+		await fetchMarket(100, false, mode === 'bg');
+	}
+
+	// P4: F5 (app-lokal) — kontextsensitiver Sync.
+	//   Market-Modus → Market-Daten manuell syncen (Normal-Load mit Spinner,
+	//   kein Hintergrund-Refresh — der User hat explizit angefragt).
+	//   Normal/Detail-Modus → Commodity-Preise syncen (Backend `sync_now`).
+	// Feedback NUR in der Statuszeile (f5Msg), nie modal.
+	async function onF5() {
+		flashStatus('Sync läuft …');
+		if (phase === 'market') {
+			await loadMarket();
+			flashStatus(mNote ? `Market-Sync fehlgeschlagen · ${mNote}` : `Aktualisiert vor ${rel(mFetchedAt || nowSec())}`);
+		} else {
+			try {
+				status = await invoke<SyncStatus>('sync_now');
+				flashStatus(`Preise aktualisiert · Cache ${cacheAge(status)}`);
+			} catch (e) {
+				flashStatus(`Sync fehlgeschlagen · ${String(e)}`);
+			}
+		}
+	}
+
+	function flashStatus(t: string) {
+		f5Msg = t;
+		if (f5Clear) clearTimeout(f5Clear);
+		f5Clear = setTimeout(() => (f5Msg = ''), 5000);
 	}
 
 	// Pfeil-Navigation durch die Offers (sichtbare = qualitätsgefilterte Liste).
@@ -892,6 +972,13 @@
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
+		// P4: F5 ist app-lokal — nie Browser-Reload. Kontextsensitiv: Market-Modus
+		// syncen Market-Daten, sonst Commodity-Preise (Feedback in der Fußzeile).
+		if (k === 'F5') {
+			void onF5();
+			e.preventDefault();
+			return;
+		}
 		// Marktplatz-Modus: Angebot-Navigation + Detail.
 		if (phase === 'market') {
 			const t = e.target;
@@ -1079,21 +1166,10 @@
 			<span class="esc">ESC</span>
 		</div>
 
-		<!-- Helper-Zeile: Shortcuts -->
-		<div class="helper">
-			{#if phase === 'market'}
-				<span><kbd>↑↓</kbd> offers</span>
-				<span class="sep">·</span>
-				<span><kbd>Alt+1..0</kbd> offer</span>
-				<span class="sep">·</span>
-				<span><kbd>↵</kbd> detail</span>
-				<span class="sep">·</span>
-				<span><kbd>Tab</kbd> → Weitere laden</span>
-				<span class="sep">·</span>
-				<span><kbd>Esc</kbd> zurück zur Suche</span>
-				<span class="sep">·</span>
-				<span>Haupt-Suchfeld = Offer-Suche</span>
-			{:else}
+		<!-- Helper-Zeile (P7): nur Kategorie-Präfixe + math kurz. Alles andere
+		     (Navigation, Filter, Refresh) lebt in der dynamischen Fußzeile (P6). -->
+		{#if phase !== 'market' && !inDetail}
+			<div class="helper">
 				<span><kbd>:c</kbd> commodities</span>
 				<span class="sep">·</span>
 				<span><kbd>:i</kbd> items</span>
@@ -1101,14 +1177,8 @@
 				<span><kbd>:l</kbd> locations</span>
 				<span class="sep">·</span>
 				<span><kbd>=</kbd> math</span>
-				<span class="sep">·</span>
-				<span><kbd>%</kbd> ÷100</span>
-				<span class="sep">·</span>
-				<span><kbd>↵</kbd> öffnet Detail</span>
-				<span class="sep">·</span>
-				<span><kbd>Suchfeld</kbd> filtert im Detail</span>
-			{/if}
-		</div>
+			</div>
+		{/if}
 
 		<!-- Inhalt je Zustand -->
 		{#if phase === 'loading'}
@@ -1343,8 +1413,12 @@
 										<span class="c">{detailHit?.subtitle ?? ''}</span>
 									</div>
 									<div class="d-price">
-										<span class="buy">↗ {fmt(dBest.buy)}</span>
-										<span class="sell">↘ {fmt(dBest.sell)}</span>
+										<span class="buy"><i>Best Kauf</i>{dBest.buy === Infinity ? '—' : fmt(dBest.buy)}</span>
+										<span class="sell"><i>Best Verkauf</i>{dBest.sell > 0 ? fmt(dBest.sell) : '—'}</span>
+									</div>
+									<div class="d-variant" role="group" aria-label="Preis-Detail-Darstellung">
+										<button class:active={p8Variant === 'A'} onclick={() => setP8Variant('A')} title="Variante A — Zeilenboxen">A</button>
+										<button class:active={p8Variant === 'C'} onclick={() => setP8Variant('C')} title="Variante C — Trader-Hero (Default)">C</button>
 									</div>
 								</div>
 
@@ -1364,30 +1438,27 @@
 												<div class="cap">{grp.terminal_name}</div>
 												{#if grp.buys.length || grp.sells.length}
 													<div class="ph"><span>Item</span><span>Preis</span><span>SCU</span></div>
-													{#if grp.buys.length}
-														<div class="psub buy">Kauf</div>
-														{#each grp.buys as r}
-															<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-																<span class="loc">{r.name}</span>
-																<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
-															</div>
-														{/each}
-													{:else}
-														<div class="psub buy empty">Kauf — kein Terminal</div>
-													{/if}
-													{#if grp.sells.length}
-														<div class="psub sell">Verkauf</div>
-														{#each grp.sells as r}
-															<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-																<span class="loc">{r.name}</span>
-																<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
-															</div>
-														{/each}
-													{:else}
-														<div class="psub sell empty">Verkauf — kein Terminal</div>
-													{/if}
+												<!-- P8: leere Richtungs-Sektionen entfallen — nur vorhandene Richtungen bekommen Sektionen. -->
+												{#if grp.buys.length}
+													<div class="psub buy">Kauf</div>
+													{#each grp.buys as r}
+														<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
+															<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
+												{/if}
+												{#if grp.sells.length}
+													<div class="psub sell">Verkauf</div>
+													{#each grp.sells as r}
+														<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
+															<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
+												{/if}
 												{:else}
-													<div class="pr"><span class="loc" style="color: var(--fgfaint)">keine Preisdaten</span></div>
+													<div class="pr"><span class="loc muted">keine Preisdaten</span></div>
 												{/if}
 											</div>
 										{/each}
@@ -1398,54 +1469,88 @@
 										<!-- QA-Auflage B: Item ohne Preise → "nicht kaufbar" -->
 										<div class="np-state">nicht kaufbar · keine Preisdaten</div>
 									{:else}
-										<!-- Commodity / Terminal mit Preisen (N2: über dRows gefiltert) -->
+										<!-- P8: Commodity / Terminal mit Preisen (N2: über dRows gefiltert). -->
+										<!-- Variante C (Default): Bestpreis-Hero + kompakte Terminal-Liste; -->
+										<!-- Variante A: gruppierte Kauf-/Verkauf-Boxen. Leere Richtungen werden -->
+										<!-- in BEIDEN Varianten durch EINE Statuszeile ersetzt (kein Spaltenkopf). -->
 										{@const dIsTerminal = detailHit?.kind === 'terminal'}
 										{@const buys = dRows.filter((r) => r.kind === 'buy')}
 										{@const sells = dRows.filter((r) => r.kind === 'sell')}
-										<div class="ptab">
-											<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} Terminal</div>
-											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+										{@const bb = buys[0]}
+										{@const bs = sells[0]}
+										{@const margin = bb && bs ? bs.p.sell_price - bb.p.buy_price : 0}
+										{#if p8Variant === 'C'}
+											<div class="vC-hero">
+												<div class="vC-kpi buy">
+													<span class="k">Günstigster Kauf</span>
+													<span class="v">{bb ? fmt(bb.p.buy_price) : '—'}</span>
+													{#if bb}<span class="u">aUEC / SCU</span>{/if}
+													<span class="w">{bb ? `${bb.name} · ${stockTxt(bb.p, 'buy')}` : 'kein Kauf-Angebot'}</span>
+												</div>
+												<div class="vC-kpi sell">
+													<span class="k">Höchster Verkauf</span>
+													<span class="v">{bs ? fmt(bs.p.sell_price) : '—'}</span>
+													{#if bs}<span class="u">aUEC / SCU</span>{/if}
+													<span class="w">{bs ? `${bs.name} · ${stockTxt(bs.p, 'sell')}` : 'kein Verkauf-Angebot'}</span>
+												</div>
+												<div class="vC-kpi margin">
+													<span class="k">Marge / SCU</span>
+													<span class="v">{bb && bs ? fmt(margin) : '—'}</span>
+													{#if bb && bs}<span class="u">aUEC / SCU · {fmt(margin * 100)} je 100 SCU</span>{/if}
+													<span class="w">{bb && bs ? `${bb.name} → ${bs.name}` : 'nur eine Seite vorhanden — kein Rundlauf möglich'}</span>
+												</div>
+											</div>
+											<div class="vC-listhead"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Kauf</span><span>Verkauf</span></div>
+											{#each dRows as r}
+												<div class="pr vC-r" class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+													<span class="vC-t">{r.name}<small>{stockTxt(r.p, r.kind)}</small></span>
+													{#if r.kind === 'buy'}
+														<span class="vC-c buy">{fmt(r.p.buy_price)}</span>
+														<span class="vC-c nil">–</span>
+													{:else}
+														<span class="vC-c nil">–</span>
+														<span class="vC-c sell">{fmt(r.p.sell_price)}</span>
+													{/if}
+												</div>
+											{/each}
+											{#if !dRows.length}
+												<div class="np-state">Keine Preise passen zum Filter</div>
+											{/if}
+										{:else}
 											{#if buys.length}
-												{#each buys as r, bi}
-													<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-													<span class="loc">{r.name}</span>
-													<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
+												<div class="ptab">
+													<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
+													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+													{#each buys as r, bi}
+														<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
+															<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
 												</div>
-												{/each}
 											{:else}
-												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Kauf' : 'Kein Terminal kauft'}</span></div>
+												<div class="np-state">{dIsTerminal ? 'Kein Artikel zum Kauf' : 'Kein Terminal kauft diese Ware'}</div>
 											{/if}
-										</div>
-										<div class="ptab">
-											<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} Terminal</div>
-											<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 											{#if sells.length}
-												{#each sells as r, si}
-													<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
-													<span class="loc">{r.name}</span>
-													<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
+												<div class="ptab">
+													<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
+													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+													{#each sells as r, si}
+														<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
+															<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
+														</div>
+													{/each}
 												</div>
-												{/each}
 											{:else}
-												<div class="pr"><span class="loc" style="color: var(--fgfaint)">{dIsTerminal ? 'Kein Artikel zum Verkauf' : 'Kein Terminal verkauft'}</span></div>
+												<div class="np-state">{dIsTerminal ? 'Kein Artikel zum Verkauf' : 'Kein Terminal verkauft diese Ware'}</div>
 											{/if}
-										</div>
-									{/if}
+										{/if}
+								{/if}
 								</div>
 
-								<div class="d-foot">
-									{#if dRows.length}
-										<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
-										<span class="sep">·</span>
-										<span><kbd>↵</kbd> Auswahl</span>
-										<span class="sep">·</span>
-										<span><kbd>Esc</kbd> zurück</span>
-										<span class="sep">·</span>
-										<span>Suchfeld = Filter</span>
-									{:else}
-										<span><kbd>Esc</kbd> zurück</span>
-									{/if}
-								</div>
+								<!-- P6: keine Extra-Hinweiszeile über der Fußzeile — die
+								     dynamische Fußzeile unten ist die einzige Hint-Zeile. -->
 							{/if}
 						</div>
 					{/if}
@@ -1465,26 +1570,43 @@
 			</div>
 		{/if}
 
-		<!-- Fußzeile (bleibt in allen Zuständen stehen → kein Layoutsprung) -->
+		<!-- Fußzeile (bleibt in allen Zuständen stehen → kein Layoutsprung) —
+		     EINZIGE dynamische Hint-Zeile (P6): Inhalt wechselt je Ansicht
+		     (Search / Detail / Market) und trägt das F5-Sync-Feedback (P4). -->
 		<div class="foot">
 			<div class="hints">
 				{#if phase === 'market'}
-					<span><kbd>↑↓</kbd> Angebote</span>
-					<span><kbd>Alt+1..0</kbd> Offer</span>
-					<span><kbd>↵</kbd> Detail</span>
-					<span><kbd>Tab</kbd> Filter</span>
 					{#if offerDetail}
+						<span><kbd>Esc</kbd> zurück zur Liste</span>
 						<span><kbd>↵</kbd> im Browser öffnen</span>
+					{:else}
+						<span><kbd>↑↓</kbd> Angebote</span>
+						<span><kbd>Alt+1..0</kbd> Offer</span>
+						<span><kbd>↵</kbd> Detail</span>
+						<span><kbd>Tab</kbd> Weitere laden</span>
+						<span><kbd>F5</kbd> Market syncen</span>
+						<span><kbd>Esc</kbd> zurück zur Suche</span>
 					{/if}
-					<span><kbd>Esc</kbd> zurück zur Suche</span>
+				{:else if inDetail}
+					{#if dRows.length}
+						<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
+						<span><kbd>↵</kbd> Auswahl</span>
+					{/if}
+					<span>Suchfeld = Filter</span>
+					<span><kbd>F5</kbd> Preise syncen</span>
+					<span><kbd>Esc</kbd> zurück</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
 					<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
-					<span><kbd>Ctrl+M</kbd> Market</span>
+					<span><kbd>M</kbd> Market</span>
+					<span><kbd>F5</kbd> Preise syncen</span>
 				{/if}
 			</div>
+			{#if f5Msg}
+				<span class="f5-msg" role="status">{f5Msg}</span>
+			{/if}
 			<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
 			{#if isSpotlight}
 				<div class="spot-status">

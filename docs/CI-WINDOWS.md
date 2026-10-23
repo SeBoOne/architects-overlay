@@ -252,3 +252,21 @@ erneuern). Wert nie in Versionskontrolle ablegen.
 
 Aktivierung der Windows-Builds selbst erst, wenn sie gebraucht werden (siehe
 Aufgabe „Windows-Build aktivieren"); bis dahin bleibt alles auf Gitea/Linux.
+
+### 8.2 Stand 2026-10-23: GITEA_TOKEN-Secret ist gesetzt
+
+- **Secret:** `GITEA_TOKEN` im GitHub-Repo `SeBoOne/architects-overlay`
+  (Settings → Secrets and variables → Actions), gesetzt via
+  `gh secret set GITEA_TOKEN -R SeBoOne/architects-overlay` (gh 2.101.0,
+  auth als SeBoOne).
+- **Token dahinter:** Gitea-Access-Token `github-mirror-release`
+  (Admin-CLI: `gitea admin user generate-access-token --username sebo
+  --scopes write:repository`) — Scope minimal auf Repo-Write (Release-Upload).
+- **Verifiziert:** Token mit `Authorization: token …` gegen
+  `/api/v1/repos/sebo/architects-overlay/releases` → HTTP 200;
+  `gh secret list` zeigt das Secret.
+- **Rotation:** Gitea-UI → Settings → Applications → Token löschen/neu
+  generieren, dann `gh secret set` erneut. Tokens nie in Repo/Logs.
+- **gh-CLI-Hinweis:** `~/.local/bin/gh` ist ein mise-Wrapper und hängt bei
+  jedem Aufruf (Registry-Lookup). Direkt verwenden:
+  `~/.local/share/mise/installs/gh/2.101.0/gh_2.101.0_linux_amd64/bin/gh`.

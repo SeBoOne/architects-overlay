@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="de" data-palette="amber">
+<head>
+<meta charset="utf-8">
+<title>P8 · Variante C — Trader-Hero</title>
+<link rel="stylesheet" href="base.css">
+<style>
+/* ===== Variante C — Bestpreis-Hero + kompakte Terminal-Liste ============
+   Eigenstaendiger Vorschlag: die Handelsfrage ("wo kaufe ich guenstig, wo
+   verkaufe ich teuer, was bleibt haengen") steht als Hero oben. Darunter die
+   kompakte Terminal-Liste als ↑↓-Ziel.                                     */
+.vC-hero {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1px;
+	background: var(--lineb);
+	border: 1px solid var(--lineb);
+	margin-bottom: calc(var(--pad-x) * 0.8);
+}
+
+.vC-kpi {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5vh;
+	min-width: 0;
+	padding: 1.4vh calc(var(--pad-x) * 0.8);
+	background: var(--panel2);
+}
+
+.vC-kpi .k {
+	font: 700 max(1.05vh, 9.5px)/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.vC-kpi .v {
+	font: 600 max(3.2vh, 26px)/1.05 var(--font-mono);
+	color: var(--fg);
+}
+
+.vC-kpi.buy .v {
+	color: var(--buy);
+}
+
+.vC-kpi.sell .v {
+	color: var(--sell);
+}
+
+.vC-kpi.margin .v {
+	color: var(--accent-h);
+}
+
+.vC-kpi .u {
+	font: 500 max(1.15vh, 10.5px)/1 var(--font-mono);
+	color: var(--fgfaint);
+}
+
+.vC-kpi .w {
+	margin-top: 0.5vh;
+	font: 500 max(1.35vh, 11.5px)/1.3 var(--font-ui);
+	color: var(--fgdim);
+}
+
+.vC-listhead,
+.vC-r {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 122px 122px;
+	gap: var(--pad-x);
+	align-items: center;
+	padding: 0.8vh calc(var(--pad-x) * 0.7);
+}
+
+.vC-listhead {
+	border-bottom: 1px solid var(--lineb);
+	font: 700 max(1.05vh, 9.5px)/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.vC-listhead span:not(:first-child),
+.vC-c {
+	text-align: right;
+}
+
+.vC-r {
+	border-bottom: 1px solid var(--line);
+}
+
+.vC-r.is-sel {
+	background: var(--panel2);
+	box-shadow: inset 3px 0 0 var(--accent-h);
+}
+
+.vC-t {
+	min-width: 0;
+	font-size: max(1.6vh, 13px);
+	font-weight: 600;
+	color: var(--fg);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.vC-t small {
+	display: block;
+	margin-top: 0.3vh;
+	font: 500 max(1.2vh, 10px)/1.2 var(--font-mono);
+	color: var(--fgdim);
+}
+
+.vC-c {
+	font: 600 max(1.65vh, 13.5px)/1.15 var(--font-mono);
+	white-space: nowrap;
+	color: var(--fgdim);
+}
+
+.vC-c.buy {
+	color: var(--buy);
+}
+
+.vC-c.sell {
+	color: var(--sell);
+}
+
+.vC-c.nil {
+	color: var(--fgfaint);
+	font-weight: 500;
+	opacity: 0.6;
+	text-decoration: line-through;
+}
+
+</style>
+</head>
+<body data-variant="C" data-pane="real">
+
+	<div class="pal-root">
+		<div class="shell">
+
+			<!-- Suchzeile (unveraendert) -->
+			<div class="srow">
+				<span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+					stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></span>
+				<input id="q" class="q" value="" spellcheck="false" readonly>
+				<span class="smode">Suche</span>
+				<span class="esc">ESC</span>
+			</div>
+
+			<!-- Helper-Zeile: nach P7-Pruning (:c :i :l + = math) -->
+			<div class="helper">
+				<span><kbd>:c</kbd> Commodities</span><span class="sep">·</span>
+				<span><kbd>:i</kbd> Items</span><span class="sep">·</span>
+				<span><kbd>:l</kbd> Locations</span><span class="sep">·</span>
+				<span><kbd>=</kbd> Math</span>
+			</div>
+
+			<div class="found"><span class="c">Found <b>1</b> results in <b>1</b> ms</span></div>
+
+			<!-- Detail-Ansicht (pane-detail) -->
+			<div class="pane-detail">
+				<div id="dhead"></div>
+				<div id="dhint"></div>
+				<div id="dbody"></div>
+				<div id="dfoot"></div>
+			</div>
+
+			<div class="foot">
+				<div class="hints">↑↓ Nav · Alt+1..0 Treffer · ↵ Detail · Esc ausblenden · Ctrl+M Market</div>
+				<div class="sync"><span class="dot"></span>Sync vor 4 h · UEX</div>
+				<div class="spot-status"><span class="dot"></span>Klick</div>
+			</div>
+
+		</div>
+	</div>
+
+	<!-- Mockup-Dev-Leiste: Palette live, Datensatz, Pane-Hoehe, Variantenwechsel -->
+	<div class="devbar">
+		<span>Palette</span>
+		<div class="g">
+			<button data-pal="amber" class="on">Amber</button>
+			<button data-pal="mfcd">MFCD</button>
+			<button data-pal="bloom">Bloom</button>
+		</div>
+		<span>Datensatz (echte UEX-Cache-Daten)</span>
+		<div class="g">
+			<button data-set="levski">Levski · 1 K / 0 V</button>
+			<button data-set="laranite" class="on">Laranite · 6 K / 20 V</button>
+			<button data-set="cm">Constr. Materials · 6 K / 31 V</button>
+		</div>
+		<span>Pane</span>
+		<div class="g">
+			<button data-pane="real" class="on">Höhe real (640 px)</button>
+			<button data-pane="full">Höhe frei</button>
+		</div>
+		<span>Variante</span>
+		<div class="g">
+			<a href="A.html">A Zeilenbox</a>
+			<a href="B.html">B Matrix</a>
+			<a href="C.html" class="on">C Trader-Hero</a>
+		</div>
+		<span class="note">↑↓ / ↵ navigieren · Fußzeilen-Hinweise wandern per P6 in die eine dynamische Statuszeile (Layout unberührt)</span>
+	</div>
+
+	<script src="data.js"></script>
+	<script src="app.js"></script>
+</body>
+</html>
