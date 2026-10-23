@@ -84,6 +84,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "uex_client",
+ "wiki_client",
  "windows-sys 0.59.0",
  "x11rb",
 ]
@@ -4975,6 +4976,7 @@ name = "wiki_client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cache",
  "log",
  "provider",
  "reqwest 0.12.28",

@@ -59,6 +59,26 @@ impl WikiHttpClient {
         })
     }
 
+    /// Test/staging constructor with an explicit request timeout (the default
+    /// 30s is far too long for a unit test of the timeout path).
+    pub fn with_timeout(
+        base_url: &str,
+        min_interval: Duration,
+        timeout: Duration,
+    ) -> Result<WikiHttpClient> {
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .user_agent(concat!("architects-overlay/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| ProviderError::Config(format!("cannot build http client: {e}")))?;
+        Ok(WikiHttpClient {
+            client,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            last_request: std::sync::Mutex::new(Instant::now() - min_interval),
+            min_interval,
+        })
+    }
+
     /// GET `path` with query params, return the `data` array of the first
     /// page (single page read; no pagination walking).
     pub async fn get_page<T: serde::de::DeserializeOwned>(
@@ -67,6 +87,14 @@ impl WikiHttpClient {
         params: &[(String, String)],
     ) -> Result<Page<T>> {
         self.get_raw::<Page<T>>(path, params).await
+    }
+
+    /// GET a single-detail endpoint (`{ data: {...} }` envelope) — e.g.
+    /// `/api/commodities/{uuid}`, which (unlike the list endpoint) carries
+    /// the `uex_prices` block with terminal buy/sell prices.
+    pub async fn get_detail<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let detail: crate::dto::Detail<T> = self.get_raw(path, &[]).await?;
+        Ok(detail.data)
     }
 
     /// GET `path` with query params and walk every page, collecting all rows.
@@ -89,7 +117,9 @@ impl WikiHttpClient {
             // reqwest refuses bare paths with a "builder error".
             next = paged.links.next.map(|n| self.resolve_next_url(&n));
             page += 1;
-            if page >= MAX_PAGES {
+            // Guard BEFORE walking past the cap: page MAX_PAGES is the last
+            // one fetched; a further `links.next` means a broken loop.
+            if next.is_some() && page >= MAX_PAGES {
                 return Err(ProviderError::Other(format!(
                     "pagination loop guard hit after {MAX_PAGES} pages for {path}"
                 )));
@@ -194,7 +224,10 @@ fn map_http_status(status: u16, body: &str) -> ProviderError {
         429 => ProviderError::RateLimit { retry_after: None },
         403 => ProviderError::RateLimit { retry_after: None },
         404 => ProviderError::NotFound(detail),
-        _ => ProviderError::Http { status, body: detail },
+        _ => ProviderError::Http {
+            status,
+            body: detail,
+        },
     }
 }
 
@@ -270,7 +303,10 @@ mod tests {
     #[test]
     fn first_url_includes_pagination_params() {
         let c = WikiHttpClient::new("https://api.star-citizen.wiki", Duration::ZERO).expect("c");
-        let url = c.first_url("/api/commodities", &[("filter[query]".into(), "agri".into())]);
+        let url = c.first_url(
+            "/api/commodities",
+            &[("filter[query]".into(), "agri".into())],
+        );
         assert!(url.starts_with("https://api.star-citizen.wiki/api/commodities?"));
         assert!(url.contains("page%5Bnumber%5D=1"));
         assert!(url.contains("page%5Bsize%5D=200"));
@@ -373,28 +409,34 @@ mod tests {
             .get_page::<crate::dto::ItemRow>("/api/items", &[])
             .await
             .expect_err("403 must fail");
-        assert!(matches!(err, ProviderError::RateLimit { .. }), "got {err:?}");
+        assert!(
+            matches!(err, ProviderError::RateLimit { .. }),
+            "got {err:?}"
+        );
     }
 
     #[tokio::test]
     async fn timeout_maps_to_seam_timeout() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .and(query_param("page[number]", "1"))
+            .and(path("/api/items"))
             .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(5)))
             .mount(&server)
             .await;
-        // 5s server delay vs 30s client timeout is too long for a unit test —
-        // instead verify a refused connection maps to Other (transport error
-        // family); the timeout path shares map_reqwest_error with this branch.
-        let c = WikiHttpClient::new("http://127.0.0.1:1", Duration::ZERO).expect("c");
+        // A 300ms client timeout vs the 5s server delay MUST hit the timeout
+        // path — and it must be distinguishable from every other error branch
+        // (the old assertion accepted Other(_) too, which made the test blind
+        // to regressions in map_reqwest_error).
+        let c =
+            WikiHttpClient::with_timeout(&server.uri(), Duration::ZERO, Duration::from_millis(300))
+                .expect("c");
         let err = c
             .get_page::<crate::dto::ItemRow>("/api/items", &[])
             .await
-            .expect_err("refused must fail");
+            .expect_err("5s delay vs 300ms timeout must fail");
         assert!(
-            matches!(err, ProviderError::Other(_) | ProviderError::Timeout),
-            "got {err:?}"
+            matches!(err, ProviderError::Timeout),
+            "expected Timeout, got {err:?}"
         );
     }
 }
@@ -410,13 +452,22 @@ mod live_tests {
     #[ignore = "hits the live api.star-citizen.wiki"]
     async fn live_commodities_first_page_parses() {
         let c = WikiHttpClient::new(DEFAULT_BASE_URL, DEFAULT_MIN_INTERVAL).expect("client");
-        let page: Page<CommodityRow> =
-            c.get_page("/api/commodities", &[]).await.expect("live page");
-        assert!(!page.data.is_empty(), "commodities dataset must not be empty");
+        let page: Page<CommodityRow> = c
+            .get_page("/api/commodities", &[])
+            .await
+            .expect("live page");
+        assert!(
+            !page.data.is_empty(),
+            "commodities dataset must not be empty"
+        );
         let first = &page.data[0];
         assert!(!first.uuid.is_empty(), "uuid must be present");
         assert!(!first.name.is_empty(), "name must be present");
         assert!(page.meta.total > 0, "meta.total must be present");
-        eprintln!("live page: {} rows, total={}", page.data.len(), page.meta.total);
+        eprintln!(
+            "live page: {} rows, total={}",
+            page.data.len(),
+            page.meta.total
+        );
     }
 }

@@ -18,6 +18,11 @@ pub enum EntityKind {
     /// Star systems — only used to resolve a listing's `id_star_system` to a
     /// region name for the marketplace view; never a searchable dataset.
     StarSystems,
+    /// Wiki locations (api.star-citizen.wiki, `source: wiki`): rich parent-
+    /// child hierarchy (~2k rows). Searchable; NOT a UEX terminal — price
+    /// aggregates resolve through the UEX terminal dataset (see
+    /// `SearchEntities::Locations`).
+    Locations,
 }
 
 impl EntityKind {
@@ -28,6 +33,7 @@ impl EntityKind {
             EntityKind::Items => "item",
             EntityKind::Terminals => "terminal",
             EntityKind::StarSystems => "star_system",
+            EntityKind::Locations => "location",
         }
     }
 }
@@ -48,14 +54,17 @@ pub enum SearchEntities {
 }
 
 impl SearchEntities {
-    /// Reference datasets serving this search group. `Locations` maps to the
-    /// terminal dataset (trade locations carry the full system/planet/station
-    /// hierarchy).
+    /// Reference datasets serving this search group. `Locations` searches BOTH
+    /// datasets: the wiki location hierarchy (rich, `source: wiki`) AND the
+    /// UEX terminal rows (trade terminals, `source: uex`) — wiki first so the
+    /// richer structure ranks first; the price aggregate still opens through a
+    /// UEX terminal of the matched chain.
     pub fn kinds(&self) -> &'static [EntityKind] {
         match self {
             SearchEntities::Commodities => &[EntityKind::Commodities],
             SearchEntities::Items => &[EntityKind::Items],
-            SearchEntities::Locations | SearchEntities::Terminals => &[EntityKind::Terminals],
+            SearchEntities::Locations => &[EntityKind::Locations, EntityKind::Terminals],
+            SearchEntities::Terminals => &[EntityKind::Terminals],
         }
     }
 }

@@ -9,15 +9,22 @@
 //! Secrets: the UEX API key is never returned to the frontend, only its
 //! "set / not set" status.
 
-use std::sync::Mutex;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicU8, Ordering},
+};
 
 use serde::Serialize;
-use settings::{DetailVariant, Palette, Settings};
+use settings::{CommoditySource, DetailVariant, Palette, Settings};
 
 /// Shared settings handle. Loaded once at setup; every setter mutates and
 /// immediately persists the same instance (single source of truth).
 pub struct SettingsState {
     inner: Mutex<Settings>,
+    /// Live commodity-source switch (0 = wiki, 1 = uex) shared with the
+    /// composite provider — see `providers::SourceSwitch`. Kept in sync with
+    /// the persisted value by every setter.
+    pub source_switch: Arc<AtomicU8>,
 }
 
 impl SettingsState {
@@ -27,8 +34,18 @@ impl SettingsState {
     pub fn load() -> SettingsState {
         let settings = settings::Settings::load().unwrap_or_default();
         SettingsState {
+            source_switch: Arc::new(AtomicU8::new(match settings.commodity_source() {
+                CommoditySource::Wiki => 0,
+                CommoditySource::Uex => 1,
+            })),
             inner: Mutex::new(settings),
         }
+    }
+
+    /// Current commodity price source (for the composite provider's boot
+    /// switch; live flips go through `source_switch`).
+    pub fn commodity_source(&self) -> CommoditySource {
+        self.inner.lock().expect("settings lock").commodity_source()
     }
 
     fn persist(&self, settings: &Settings) {
@@ -46,6 +63,9 @@ pub struct SettingsSnapshot {
     pub palette: String,
     pub detail_variant: String,
     pub uex_api_key_set: bool,
+    /// Primary commodity price source ("wiki" | "uex"); wiki first, UEX
+    /// fallback. Exposed so the Config-View can A/B the sources.
+    pub commodity_source: String,
 }
 
 impl SettingsSnapshot {
@@ -54,6 +74,7 @@ impl SettingsSnapshot {
             palette: s.palette().as_str().to_owned(),
             detail_variant: s.detail_variant().as_str().to_owned(),
             uex_api_key_set: s.uex_api_key().is_some(),
+            commodity_source: s.commodity_source().as_str().to_owned(),
         }
     }
 }
@@ -103,4 +124,27 @@ pub fn settings_set_uex_api_key(
     s.set_uex_api_key(key.filter(|k| !k.trim().is_empty()));
     state.persist(&s);
     SettingsSnapshot::from_settings(&s)
+}
+
+/// Set the primary commodity price source (wiki | uex). Persists immediately
+/// AND flips the live source switch the composite provider reads on every
+/// price fetch — the next price request already uses the new source.
+#[tauri::command]
+pub fn settings_set_commodity_source(
+    state: tauri::State<SettingsState>,
+    name: String,
+) -> Result<SettingsSnapshot, String> {
+    let source = CommoditySource::from_name(&name)
+        .ok_or_else(|| format!("unknown commodity source: {name}"))?;
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_commodity_source(source);
+    state.persist(&s);
+    state.source_switch.store(
+        match source {
+            CommoditySource::Wiki => 0,
+            CommoditySource::Uex => 1,
+        },
+        Ordering::SeqCst,
+    );
+    Ok(SettingsSnapshot::from_settings(&s))
 }

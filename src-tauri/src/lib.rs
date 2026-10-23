@@ -15,6 +15,8 @@ mod ipc_socket;
 #[cfg(desktop)]
 mod overlay;
 #[cfg(desktop)]
+mod providers;
+#[cfg(desktop)]
 mod trade;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,6 +40,7 @@ pub fn run() {
             app_settings::settings_set_palette,
             app_settings::settings_set_detail_variant,
             app_settings::settings_set_uex_api_key,
+            app_settings::settings_set_commodity_source,
         ]);
     }
 
@@ -94,10 +97,26 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
         .ok()
         .and_then(|s| s.uex_api_key().map(str::to_owned));
 
-    let provider: Arc<dyn provider::DataProvider> = Arc::new(
-        uex_client::UexProvider::new(cache.clone(), api_key)
-            .map_err(|e| std::io::Error::other(format!("UEX provider init: {e}")))?,
-    );
+    let uex = uex_client::UexProvider::new(cache.clone(), api_key)
+        .map_err(|e| std::io::Error::other(format!("UEX provider init: {e}")))?;
+    let wiki = wiki_client::WikiProvider::new(cache.clone())
+        .map_err(|e| std::io::Error::other(format!("wiki provider init: {e}")))?;
+
+    // The settings state owns the LIVE commodity-source switch (the config
+    // view flips it); the composite provider reads it on every price fetch.
+    let settings_state = app.state::<app_settings::SettingsState>();
+    let source = providers::SourceSwitch::new(settings_state.commodity_source());
+
+    let composite = Arc::new(providers::CompositeProvider::new(
+        uex,
+        wiki,
+        source,
+        cache.clone(),
+    ));
+    let provider: Arc<dyn provider::DataProvider> = composite.clone();
+    // The composite IS the wiki sync (its ensure helpers carry the
+    // patch-driven TTLs).
+    let wiki_sync: Arc<dyn providers::WikiSync> = composite.clone() as Arc<dyn providers::WikiSync>;
 
     let tracker = Arc::new(trade::SyncTracker::default());
     tauri::Manager::manage(
@@ -106,6 +125,7 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
             provider: provider.clone(),
             cache: cache.clone(),
             tracker: tracker.clone(),
+            wiki_sync: Some(wiki_sync.clone()),
         },
     );
 
@@ -116,7 +136,7 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     // Runs on Tauri's async (Tokio) runtime, exactly the context the
     // tokio-based provider futures need.
     let handle = app.handle();
-    trade::start_background_refresh(handle, &provider, &cache, &tracker);
+    trade::start_background_refresh(handle, &provider, &cache, Some(&wiki_sync), &tracker);
 
     // Dev shell: a second, hidden window (label "main") showing the same
     // SvelteKit palette as the spotlight. Release builds must NOT create it —

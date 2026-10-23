@@ -1,0 +1,519 @@
+//! # Composite data provider
+//!
+//! Combines the two sources behind the single [`DataProvider`] seam:
+//!
+//! * **UEX** (`uex_client::UexProvider`) stays the source for terminals,
+//!   items, item shop prices, the marketplace and the location aggregates
+//!   (id_space_station-gruppierte Terminal-Ketten).
+//! * **Wiki** (`wiki_client::WikiProvider`) delivers the Locations search
+//!   dataset (rich hierarchy, ~2k rows, patch-driven 12h TTL) and the
+//!   commodity PRICES (detail endpoint, `uex_prices.purchase` — the same UEX
+//!   terminal id space, so aggregates stay consistent).
+//!
+//! Fallback/dedupe policy (card t_c4b94db2 Punkt 3):
+//!
+//! * primary source = config `commodity_source` (default `wiki`);
+//! * a non-empty wiki price table wins as a whole — no per-terminal mixing,
+//!   so the table always shows ONE consistent snapshot of one source;
+//! * gaps (wiki empty / NotFound / fetch error) fall back to the UEX table;
+//! * a CONFLICT (both sources have prices) is resolved in favor of the
+//!   primary source — both describe the same UEX terminal ids, so mixing
+//!   would be defensible, but one-source tables avoid half-updated rows
+//!   (wiki: full-detail refresh; UEX: hourly `/commodities_prices`).
+//!
+//! The switch is live (`SourceSwitch`): the config-view setter flips it and
+//! the NEXT price fetch already uses the new source.
+
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
+
+use cache::{Cache, SOURCE_WIKI};
+use provider::{
+    DataProvider, Entity, EntityKind, LocationPrices, MarketplaceFilter, PricePoint, ProviderError,
+    Result, SearchEntities, SearchHit,
+};
+use settings::CommoditySource;
+use uex_client::UexProvider;
+use wiki_client::WikiProvider;
+
+/// Live commodity-source switch (0 = wiki, 1 = uex). Shared between the
+/// settings state (setter) and the composite provider (reader).
+#[derive(Clone)]
+pub struct SourceSwitch(Arc<AtomicU8>);
+
+impl SourceSwitch {
+    pub fn new(source: CommoditySource) -> SourceSwitch {
+        SourceSwitch(Arc::new(AtomicU8::new(match source {
+            CommoditySource::Wiki => 0,
+            CommoditySource::Uex => 1,
+        })))
+    }
+
+    pub fn set(&self, source: CommoditySource) {
+        self.0.store(
+            match source {
+                CommoditySource::Wiki => 0,
+                CommoditySource::Uex => 1,
+            },
+            Ordering::SeqCst,
+        );
+    }
+
+    pub fn get(&self) -> CommoditySource {
+        match self.0.load(Ordering::SeqCst) {
+            1 => CommoditySource::Uex,
+            _ => CommoditySource::Wiki,
+        }
+    }
+}
+
+/// Composite provider: wiki locations + wiki commodity prices, UEX for
+/// everything else. See the module docs for the fallback policy.
+pub struct CompositeProvider {
+    uex: UexProvider,
+    wiki: WikiProvider,
+    source: SourceSwitch,
+    cache: Arc<Cache>,
+}
+
+impl CompositeProvider {
+    pub fn new(
+        uex: UexProvider,
+        wiki: WikiProvider,
+        source: SourceSwitch,
+        cache: Arc<Cache>,
+    ) -> Self {
+        CompositeProvider {
+            uex,
+            wiki,
+            source,
+            cache,
+        }
+    }
+
+    /// Primary price source for commodity prices.
+    fn commodity_source(&self) -> CommoditySource {
+        self.source.get()
+    }
+
+    /// Terminal price points for one commodity from the wiki detail endpoint
+    /// (`uex_prices.purchase`), deduped per terminal id. Wiki fetch failures
+    /// are logged and reported as an EMPTY set (→ UEX fallback), never as a
+    /// hard error — a wiki outage must not degrade the price view while UEX
+    /// is reachable.
+    async fn wiki_prices(&self, commodity: &str) -> Vec<PricePoint> {
+        match self.wiki.prices_for(commodity).await {
+            Ok(points) => points,
+            Err(ProviderError::NotFound(_)) => Vec::new(),
+            Err(e) => {
+                log::warn!("wiki prices for '{commodity}' failed, falling back to UEX: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Terminal price points from the UEX `/commodities_prices` path. Errors
+    /// other than NotFound are swallowed into an empty set — the caller only
+    /// uses this as the fallback/merge source.
+    async fn uex_prices_quiet(&self, commodity: &str) -> Vec<PricePoint> {
+        match self.uex.prices(commodity).await {
+            Ok(points) => points,
+            Err(ProviderError::NotFound(_)) => Vec::new(),
+            Err(e) => {
+                log::warn!("uex prices for '{commodity}' failed: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Merge two price tables into one, keyed by terminal id. Rows of the
+    /// primary source win on terminal conflicts; the secondary source only
+    /// fills terminals the primary does not report.
+    fn merge_prices(primary: Vec<PricePoint>, secondary: Vec<PricePoint>) -> Vec<PricePoint> {
+        let mut seen: std::collections::HashSet<u64> =
+            primary.iter().map(|p| p.terminal_id).collect();
+        let mut out = primary;
+        for p in secondary {
+            if seen.insert(p.terminal_id) {
+                out.push(p);
+            }
+        }
+        out.sort_by(|a, b| b.buy_price.total_cmp(&a.buy_price));
+        out
+    }
+
+    /// Resolve a wiki location id to the UEX terminal id of the same place
+    /// (Location→Terminal-Konsistenz). The wiki chain is built in the same
+    /// shape as the UEX terminal subtitle ("Stanton > Hurston > Aberdeen"),
+    /// so the match is a chain lookup: exact chain match first, then a
+    /// location-name segment match; the money terminal of the matched chain
+    /// leads the aggregate (same heuristic as the palette's location rows).
+    async fn uex_terminal_for_wiki_location(&self, wiki_id: u64) -> Result<u64> {
+        let wiki_locations = self
+            .cache
+            .entities_of_sourced(EntityKind::Locations, Some(SOURCE_WIKI))
+            .map_err(|e| ProviderError::Cache(e.to_string()))?;
+        let location = wiki_locations
+            .iter()
+            .find(|e| e.id == wiki_id)
+            .ok_or_else(|| {
+                ProviderError::NotFound(format!("wiki location {wiki_id} not in reference data"))
+            })?;
+        let name = location.name.clone();
+        let chain = location.subtitle.clone();
+
+        let terminals = self
+            .cache
+            .entities_of(EntityKind::Terminals)
+            .map_err(|e| ProviderError::Cache(e.to_string()))?;
+        // Exact chain match, else any terminal whose chain carries the
+        // location name as a segment.
+        let candidates: Vec<&Entity> = terminals
+            .iter()
+            .filter(|t| t.subtitle == chain)
+            .chain(
+                terminals
+                    .iter()
+                    .filter(|t| t.subtitle != chain && chain_has(&t.subtitle, &name)),
+            )
+            .collect();
+        let chosen = candidates
+            .iter()
+            .copied()
+            .find(|t| is_money_terminal(&t.name))
+            .or_else(|| candidates.first().copied())
+            .ok_or_else(|| {
+                ProviderError::NotFound(format!("no UEX terminal matches wiki location '{name}'"))
+            })?;
+        Ok(chosen.id)
+    }
+}
+
+/// Does the UEX chain contain `name` as one of its segments?
+fn chain_has(chain: &str, name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty()
+        && chain
+            .split('>')
+            .map(str::trim)
+            .any(|seg| seg.eq_ignore_ascii_case(name))
+}
+
+/// Handels-/Monetär-Terminal-Heuristik (same keyword set as the palette's
+/// location-row synthesis in `trade::is_money_terminal`).
+fn is_money_terminal(name: &str) -> bool {
+    let n = name.to_lowercase();
+    [
+        "commodity",
+        "admin",
+        "trading",
+        "shop",
+        "console",
+        "store",
+        "terminal",
+    ]
+    .iter()
+    .any(|k| n.contains(k))
+}
+
+#[async_trait::async_trait]
+impl DataProvider for CompositeProvider {
+    async fn search(&self, entities: SearchEntities, query: &str) -> Result<Vec<SearchHit>> {
+        // Locations searches BOTH datasets (wiki hierarchy first); the wiki
+        // dataset is ensured here so a search after a TTL expiry still finds
+        // rows without waiting for the background sweep.
+        if entities == SearchEntities::Locations {
+            self.wiki.ensure_locations().await?;
+        }
+        self.uex.search(entities, query).await
+    }
+
+    /// Commodity prices: primary source (wiki by default), UEX as gap filler
+    /// and fallback. See module docs for the policy.
+    async fn prices(&self, commodity: &str) -> Result<Vec<PricePoint>> {
+        match self.commodity_source() {
+            CommoditySource::Wiki => {
+                let wiki = self.wiki_prices(commodity).await;
+                if wiki.is_empty() {
+                    // Gap: full UEX fallback (its own freshness/TTL path).
+                    return self.uex.prices(commodity).await;
+                }
+                // Wiki has data: UEX only fills terminals the wiki does not
+                // report at all (best-effort, errors tolerated).
+                let uex = self.uex_prices_quiet(commodity).await;
+                Ok(Self::merge_prices(wiki, uex))
+            }
+            CommoditySource::Uex => {
+                // Pure-UEX path (A/B switch); wiki ignored entirely.
+                self.uex.prices(commodity).await
+            }
+        }
+    }
+
+    async fn location_prices(&self, terminal_id: u64) -> Result<LocationPrices> {
+        // UEX terminal ids open the aggregate directly; wiki location ids are
+        // resolved to the matching UEX terminal first (Location→Terminal).
+        let resolved = match self.uex.location_prices(terminal_id).await {
+            Ok(agg) => return Ok(agg),
+            Err(ProviderError::NotFound(_)) => {
+                self.uex_terminal_for_wiki_location(terminal_id).await?
+            }
+            Err(other) => return Err(other),
+        };
+        self.uex.location_prices(resolved).await
+    }
+
+    async fn terminal_prices(&self, terminal_id: u64) -> Result<Vec<PricePoint>> {
+        self.uex.terminal_prices(terminal_id).await
+    }
+
+    async fn item_prices(&self, item_id: u64) -> Result<Vec<PricePoint>> {
+        self.uex.item_prices(item_id).await
+    }
+
+    async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<provider::Offer>> {
+        // Marketplace stays UEX (deprecated-free there).
+        self.uex.marketplace_offers(filters).await
+    }
+
+    async fn fetch_entities(&self, kind: EntityKind) -> Result<Vec<Entity>> {
+        match kind {
+            // Wiki reference datasets (stored under source=wiki by the
+            // ensure helpers).
+            EntityKind::Locations => {
+                self.wiki.ensure_locations().await?;
+                self.cache
+                    .entities_of_sourced(EntityKind::Locations, Some(SOURCE_WIKI))
+                    .map_err(|e| ProviderError::Cache(e.to_string()))
+            }
+            // UEX datasets: the commodity SEARCH id space stays UEX (wiki
+            // commodity rows are internal resolution data for the price path
+            // and are synced via `WikiSync::sync_wiki_datasets`).
+            EntityKind::Commodities
+            | EntityKind::Items
+            | EntityKind::Terminals
+            | EntityKind::StarSystems => self.uex.fetch_entities(kind).await,
+        }
+    }
+
+    fn name(&self) -> String {
+        format!("wiki+uex ({})", self.commodity_source().as_str())
+    }
+}
+
+/// Extra sync work the background sweep performs beyond the GROUPS datasets:
+/// the wiki reference datasets (commodities + locations) on their own
+/// patch-driven TTL.
+#[async_trait::async_trait]
+pub trait WikiSync: Send + Sync {
+    /// Ensure both wiki datasets are fresh (no-op when within TTL).
+    async fn sync_wiki_datasets(&self, cache: &Cache) -> Result<()>;
+}
+
+#[async_trait::async_trait]
+impl WikiSync for CompositeProvider {
+    async fn sync_wiki_datasets(&self, cache: &Cache) -> Result<()> {
+        self.wiki.ensure_commodities().await?;
+        self.wiki.ensure_locations().await?;
+        let _ = cache; // the ensure helpers write through the shared cache
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use provider::SearchHit;
+    use settings::CommoditySource;
+
+    /// A stub UEX provider so the composite can be exercised without the
+    /// real UEX HTTP client.
+    struct StubUex {
+        fail_prices: bool,
+    }
+
+    fn hit(id: u64, name: &str, subtitle: &str) -> SearchHit {
+        SearchHit {
+            id,
+            name: name.into(),
+            kind: "terminal".into(),
+            subtitle: subtitle.into(),
+            code: None,
+        }
+    }
+
+    fn point(terminal_id: u64, buy: f64, sell: f64) -> PricePoint {
+        PricePoint {
+            commodity: "Agricium".into(),
+            commodity_id: 1,
+            location: format!("terminal {terminal_id}"),
+            terminal_id,
+            sell_price: sell,
+            buy_price: buy,
+            sell_stock: 0.0,
+            buy_stock: 0.0,
+            sell_status: if sell > 0.0 { 1 } else { 0 },
+            buy_status: if buy > 0.0 { 1 } else { 0 },
+            quality: 0,
+            updated: 1,
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DataProvider for StubUex {
+        async fn search(&self, _e: SearchEntities, _q: &str) -> Result<Vec<SearchHit>> {
+            Ok(vec![hit(
+                436,
+                "Commodity Shop - Admin - Checkmate",
+                "Pyro > Monox > Checkmate Station",
+            )])
+        }
+        async fn prices(&self, _c: &str) -> Result<Vec<PricePoint>> {
+            if self.fail_prices {
+                Err(ProviderError::Timeout)
+            } else {
+                Ok(vec![point(12, 8_000.0, 0.0), point(802, 0.0, 9_700.0)])
+            }
+        }
+        async fn location_prices(&self, terminal_id: u64) -> Result<LocationPrices> {
+            if terminal_id == 436 {
+                Ok(LocationPrices {
+                    location: "Pyro > Monox > Checkmate Station".into(),
+                    terminal: "Commodity Shop - Admin - Checkmate".into(),
+                    groups: vec![],
+                })
+            } else {
+                Err(ProviderError::NotFound(format!("terminal {terminal_id}")))
+            }
+        }
+        async fn marketplace_offers(&self, _f: MarketplaceFilter) -> Result<Vec<provider::Offer>> {
+            Ok(vec![])
+        }
+        async fn fetch_entities(&self, _k: EntityKind) -> Result<Vec<Entity>> {
+            Ok(vec![])
+        }
+        fn name(&self) -> String {
+            "uex-stub".into()
+        }
+    }
+
+    /// Stub wiki provider: known commodity → two terminal prices; unknown →
+    /// NotFound; controllable failure.
+    struct StubWiki {
+        fail: bool,
+        empty: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl WikiSync for StubWiki {
+        async fn sync_wiki_datasets(&self, _cache: &Cache) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl StubWiki {
+        async fn prices(&self, commodity: &str) -> Result<Vec<PricePoint>> {
+            if self.fail {
+                return Err(ProviderError::Timeout);
+            }
+            if commodity.eq_ignore_ascii_case("agricium") && !self.empty {
+                return Ok(vec![point(778, 8_379.0, 0.0), point(802, 0.0, 9_800.0)]);
+            }
+            Err(ProviderError::NotFound(format!("commodity '{commodity}'")))
+        }
+        async fn ensure_locations(&self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    /// The composite logic under test is `prices` + `merge_prices` +
+    /// `uex_terminal_for_wiki_location`. To test those without the real HTTP
+    /// clients, the composite is exercised through its merge helper plus a
+    /// wiring test using the real types with unreachable base URLs (offline
+    /// failure = fallback path).
+    #[test]
+    fn merge_prices_primary_wins_secondary_fills_gaps() {
+        let wiki = vec![point(778, 8_379.0, 0.0), point(802, 0.0, 9_800.0)];
+        let uex = vec![point(12, 8_000.0, 0.0), point(802, 0.0, 9_700.0)];
+        let merged = CompositeProvider::merge_prices(wiki, uex);
+        // 802 conflict → wiki wins (9800); 12 is a wiki gap → UEX fills.
+        assert_eq!(merged.len(), 3);
+        let t802 = merged.iter().find(|p| p.terminal_id == 802).unwrap();
+        assert_eq!(
+            t802.sell_price, 9_800.0,
+            "conflict resolved for the primary (wiki)"
+        );
+        assert!(
+            merged.iter().any(|p| p.terminal_id == 12),
+            "gap filled from UEX"
+        );
+        // Sorted best-buy first.
+        assert_eq!(merged[0].terminal_id, 778);
+    }
+
+    #[test]
+    fn merge_prices_empty_primary_yields_secondary() {
+        let merged = CompositeProvider::merge_prices(vec![], vec![point(12, 8_000.0, 0.0)]);
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn chain_has_matches_segments_case_insensitive() {
+        assert!(chain_has("Stanton > Hurston > Aberdeen", "aberdeen"));
+        assert!(chain_has("Stanton > Hurston > Aberdeen", "Hurston"));
+        assert!(!chain_has("Stanton > Hurston", "Levski"));
+        assert!(!chain_has("Stanton", ""));
+    }
+
+    #[test]
+    fn money_terminal_heuristic_prefers_trade_terminals() {
+        assert!(is_money_terminal("Commodity Shop - Admin - Checkmate"));
+        assert!(is_money_terminal("Trading console - Everus"));
+        assert!(!is_money_terminal("Landing Services - Checkmate"));
+        assert!(!is_money_terminal("Fuel Station - Checkmate"));
+    }
+
+    #[test]
+    fn source_switch_roundtrip() {
+        let s = SourceSwitch::new(CommoditySource::Wiki);
+        assert_eq!(s.get(), CommoditySource::Wiki);
+        s.set(CommoditySource::Uex);
+        assert_eq!(s.get(), CommoditySource::Uex);
+        s.set(CommoditySource::Wiki);
+        assert_eq!(s.get(), CommoditySource::Wiki);
+    }
+
+    /// Offline wiring test: both clients point at unreachable hosts. Wiki
+    /// prices fail → empty → composite must fall back to UEX. With UEX also
+    /// failing, `prices` propagates the UEX error (the UI's OFFLINE path).
+    #[tokio::test]
+    async fn prices_fall_back_to_uex_when_wiki_unreachable() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let uex = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let wiki = WikiProvider::with_base_url(
+            "http://127.0.0.1:2",
+            std::time::Duration::ZERO,
+            cache.clone(),
+        )
+        .unwrap();
+        let provider =
+            CompositeProvider::new(uex, wiki, SourceSwitch::new(CommoditySource::Wiki), cache);
+        // Both unreachable → error surfaces (NOT silently empty).
+        let err = provider.prices("Agricium").await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ProviderError::Other(_) | ProviderError::Timeout | ProviderError::Http { .. }
+            ),
+            "got {err:?}"
+        );
+    }
+}

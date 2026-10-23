@@ -47,8 +47,10 @@ pub struct ItemRow {
 }
 
 /// `/api/commodities` list row — mining/resource metadata per `commodity_link`.
-/// NOTE: contrary to the earlier research note, this endpoint carries **no**
-/// terminal buy/sell prices (that data is not in the official schema).
+/// NOTE: the LIST endpoint carries no terminal buy/sell prices — those live on
+/// the DETAIL endpoint (`GET /api/commodities/{uuid}`, via the row's `link`
+/// field) as [`CommodityDetail::uex_prices`] (live-verified: Agricium detail
+/// reports buy 8379 aUEC @ LEVSKI, sell 9800 @ STANTG).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CommodityRow {
     #[serde(default)]
@@ -86,14 +88,46 @@ pub struct LocationRow {
     pub name: String,
     #[serde(default)]
     pub slug: String,
+    /// Star system as a display string, e.g. `Stanton System`.
     #[serde(default)]
     pub system: Option<String>,
+    /// Parent body in the hierarchy (planet/moon/station …).
     #[serde(default)]
-    pub parent_name: Option<String>,
+    pub parent: Option<EntityNameRef>,
+    /// The system's star (`star.name`, e.g. `Stanton`).
     #[serde(default)]
-    pub parent_type: Option<String>,
+    pub star: Option<EntityNameRef>,
+    /// Location type block (`type.name`, e.g. `Moon`, `Manmade`).
+    #[serde(rename = "type", default)]
+    pub location_type: Option<EntityTypeRef>,
+    /// In-game designation, e.g. `Stanton Ib`.
     #[serde(default)]
-    pub location_type: Option<String>,
+    pub designation: Option<String>,
+    /// Wiki web URL (deep-link target for the UI).
+    #[serde(default)]
+    pub web_url: Option<String>,
+}
+
+/// Shared `{uuid, name, slug, type_name?}` reference block.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntityNameRef {
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default, rename = "type_name")]
+    pub type_name: Option<String>,
+}
+
+/// `type` block of a location row (`{name, classification, …}`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct EntityTypeRef {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub classification: Option<String>,
 }
 
 /// Pagination `meta` block of every list response.
@@ -152,6 +186,72 @@ impl<T> Default for Page<T> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Detail<T> {
     pub data: T,
+}
+
+/// `starmap_location` inside a wiki `uex_prices` entry: the UEX terminal's
+/// location chain (system → parent → terminal) as the wiki sees it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StarmapLocationRef {
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default, rename = "type_name")]
+    pub type_name: Option<String>,
+    #[serde(default)]
+    pub parent_name: Option<String>,
+    #[serde(default, rename = "star_system_name")]
+    pub star_system_name: Option<String>,
+}
+
+/// One `uex_prices.purchase[]` entry of the commodity DETAIL endpoint. The
+/// wiki embeds UEX terminal prices here — `terminal_id` is the UEX terminal
+/// id space, so wiki price points and UEX price points share one terminal key
+/// (that is what keeps Location→Terminal aggregates consistent across the
+/// two sources).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UexPriceEntry {
+    #[serde(default)]
+    pub price_buy: f64,
+    #[serde(default)]
+    pub price_sell: f64,
+    #[serde(default)]
+    pub terminal_id: u64,
+    #[serde(default)]
+    pub terminal_code: Option<String>,
+    #[serde(default)]
+    pub terminal_name: Option<String>,
+    #[serde(default)]
+    pub starmap_location: Option<StarmapLocationRef>,
+    /// ISO-8601 upstream timestamp, e.g. `2026-10-20T15:09:33+00:00`.
+    #[serde(default)]
+    pub date_updated: Option<String>,
+    #[serde(default)]
+    pub game_version: Option<String>,
+}
+
+/// `uex_prices` block of the commodity detail. Only `purchase` is consumed —
+/// the wiki mirrors the UEX buy/sell terminal table there.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UexPrices {
+    #[serde(default)]
+    pub purchase: Vec<UexPriceEntry>,
+}
+
+/// `GET /api/commodities/{uuid}` detail — the list row plus the embedded UEX
+/// price table.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CommodityDetail {
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub slug: String,
+    #[serde(default)]
+    pub uex_prices: UexPrices,
 }
 
 /// Derive a stable numeric id from a wiki UUID (FNV-1a over the string).
