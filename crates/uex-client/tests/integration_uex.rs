@@ -839,3 +839,42 @@ async fn api_error_status_maps_to_http_error_with_message() {
         other => panic!("expected Http error, got {other:?}"),
     }
 }
+
+// Regression (QA-Runde 3, Auflage B): die Live-API schickt bei
+// /marketplace_listings einzelne Zeilen mit `"location": null` — ein
+// `#[serde(default)]` alleine fängt das NICHT ab (null ≠ fehlendes Feld) und
+// der Fetch-Plan (Verkauf+Kauf-Fenster) scheiterte am realen Datenbestand
+// (`invalid type: null, expected a string`). Die String-Felder des
+// ListingRow sind jetzt null-tolerant (null → "").
+#[tokio::test]
+async fn marketplace_offers_null_location_tolerated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/star_systems"))
+        .respond_with(json_response(&fixture("star_systems.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/marketplace_listings"))
+        .respond_with(json_response(&fixture("marketplace_listings_null.json")))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let p = UexProvider::with_base_url(cache, None, &server.uri(), Duration::ZERO).unwrap();
+
+    let offers = p
+        .marketplace_offers(MarketplaceFilter {
+            operation: Some(provider::MarketOperation::Sell),
+            ..Default::default()
+        })
+        .await
+        .expect("rows with location: null must not fail the fetch");
+    assert!(!offers.is_empty(), "expected the null-fixture rows");
+    // Kontrolle: 2 der 3 Fixture-Zeilen schicken `"location": null` (→ ""),
+    // die dritte trägt eine echte Location — beide Formen müssen gleichzeitig
+    // durchkommen.
+    assert_eq!(offers.iter().filter(|o| o.location.is_empty()).count(), 2);
+    assert_eq!(offers.iter().filter(|o| !o.location.is_empty()).count(), 1);
+    assert!(offers.iter().all(|o| !o.slug.is_empty()));
+}
