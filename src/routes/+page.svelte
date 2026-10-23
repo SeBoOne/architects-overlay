@@ -347,7 +347,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let mAllLoaded = $state(false);
 	let mLoadingMore = $state(false);
 	// P3/P4: Frische-Tracking + app-lokales F5-Feedback (Statuszeile, nicht modal).
-	let mFetchedAt = $state(0); // fetched_at des letzten erfolgreichen Market-Fetch
+	// fetched_at des letzten erfolgreichen Market-Fetch — PERSISTIERT (localStorage),
+	// damit der Stale-Check beim Wiedereinstieg auch über App-Starts hinweg greift.
+	function loadMarketFetchedAt(): number {
+		try {
+			const v = localStorage.getItem('architects-overlay.market.fetchedAt');
+			const n = v === null ? 0 : Number(v);
+			return Number.isFinite(n) && n > 0 ? n : 0;
+		} catch {
+			return 0;
+		}
+	}
+	function persistMarketFetchedAt(v: number) {
+		try {
+			if (v > 0) localStorage.setItem('architects-overlay.market.fetchedAt', String(v));
+		} catch {
+			/* localStorage unvollständig — In-Memory-Tracking bleibt aktiv. */
+		}
+	}
+	let mFetchedAt = $state(loadMarketFetchedAt());
 	let f5Msg = $state(''); // kurzer Status-Text aus dem F5-Sync
 	let f5Clear: ReturnType<typeof setTimeout> | null = null;
 
@@ -849,6 +867,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			mSource = resp.source;
 			mNote = resp.note ?? null;
 			mFetchedAt = resp.fetched_at || nowSec();
+			persistMarketFetchedAt(mFetchedAt);
 			// Der Provider liefert sein komplettes abrufbares Fenster — mehr
 			// als diesen Snapshot gibt es vom Backend nicht nachzuholen.
 			mMshown = showAll ? offers.length : Math.min(M_PAGE, offers.length);
