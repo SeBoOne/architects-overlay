@@ -45,9 +45,14 @@ use dto::{
 
 /// Search result page size served from the cache.
 const SEARCH_LIMIT: u32 = 25;
-/// Marketplace item-id resolution cap: at most this many `id_item` fetches
-/// per market query (bounds request rate + IPC payload on multi-term input).
-const MARKET_ITEM_ID_CAP: usize = 3;
+// Marketplace item-id resolution: EVERY FTS hit of each query term is
+// resolved to an `id_item` fetch. Each per-item fetch returns the COMPLETE
+// listing set of that item (up to the 1,000-row cap), so widening the
+// resolution is what makes the "≥15 matching offers" gate reachable on
+// broad terms (e.g. "parallax" matched 10+ items; the old top-3 cap lost
+// UA-4433 with 32 offers). The term-match limit only bounds the FTS page
+// size per term — the item dataset is small, so 100 is effectively "all".
+const MARKET_ITEM_TERM_MATCH_LIMIT: u32 = 100;
 
 /// UEX `/terminals` `type` values that carry player-facing buy/sell data and
 /// therefore belong in search + location aggregates (Feedback-Runde 4 / P2).
@@ -156,16 +161,16 @@ impl UexProvider {
         self.ensure_fresh(EntityKind::Items).await?;
         let mut ids: Vec<u64> = Vec::new();
         for term in terms {
+            // ALL FTS hits of the term — no top-N cap. Each extra id is one
+            // `id_item` fetch that returns that item's COMPLETE listing set;
+            // dedupe below keeps the fetch count at one per distinct id.
             let hits = self
                 .cache
-                .search(&[EntityKind::Items], term, 3)
+                .search(&[EntityKind::Items], term, MARKET_ITEM_TERM_MATCH_LIMIT)
                 .map_err(map_cache_err)?;
             for hit in hits {
                 if !ids.contains(&hit.id) {
                     ids.push(hit.id);
-                }
-                if ids.len() >= MARKET_ITEM_ID_CAP {
-                    return Ok(ids);
                 }
             }
         }

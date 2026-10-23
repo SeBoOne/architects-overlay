@@ -304,8 +304,10 @@ async fn location_prices_aggregates_all_terminals_of_the_chain() {
     let (p, _cache) = provider(&api);
 
     // Open "Admin - Checkmate" (terminal 436): the aggregate must cover every
-    // terminal of the location chain (428 fuel, 431 refinery, 435 item,
-    // 436 commodity), each with its own buy/sell table.
+    // TRADE terminal of the location chain (435 item, 436 commodity). The
+    // service terminals (428 fuel, 431 refinery) are excluded by the
+    // terminal-type filter (Feedback-Runde 4 / P2): no buy/sell function →
+    // not searched, not aggregated.
     let agg = p.location_prices(436).await.unwrap();
     assert_eq!(
         agg.location, "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station",
@@ -313,9 +315,13 @@ async fn location_prices_aggregates_all_terminals_of_the_chain() {
     );
     assert_eq!(agg.terminal, "Commodity Shop - Admin - Checkmate");
     let ids: Vec<u64> = agg.groups.iter().map(|g| g.terminal_id).collect();
-    assert_eq!(ids, [428, 431, 435, 436], "groups sorted by terminal id");
+    assert_eq!(
+        ids,
+        [435, 436],
+        "only trade terminals are aggregated, sorted by terminal id"
+    );
 
-    // commodity terminal carries its price table; the others trade nothing
+    // commodity terminal carries its price table
     let commodity = agg.groups.iter().find(|g| g.terminal_id == 436).unwrap();
     assert_eq!(
         commodity.terminal_name,
@@ -329,7 +335,7 @@ async fn location_prices_aggregates_all_terminals_of_the_chain() {
             .any(|pt| pt.commodity == "Agricultural Supplies"),
         "fixture rows must be mapped with names"
     );
-    // Guns terminal (435) carries item prices; fuel/refinery (428, 431) trade nothing
+    // Guns terminal (435) carries item prices
     let guns = agg.groups.iter().find(|g| g.terminal_id == 435).unwrap();
     assert!(
         !guns.prices.is_empty(),
@@ -342,20 +348,11 @@ async fn location_prices_aggregates_all_terminals_of_the_chain() {
         "item price row must carry the item name"
     );
     assert_eq!(guns.prices[0].buy_price, 295.0);
-    assert!(
-        agg.groups
-            .iter()
-            .filter(|g| g.terminal_id != 436 && g.terminal_id != 435)
-            .all(|g| g.prices.is_empty()),
-        "fuel/refinery terminals must show an empty table, not an error"
-    );
 
     // Cached second open must not hit the API again.
     let before = api.server.received_requests().await.unwrap().len();
-
-    // Cached second open must not hit the API again.    let before = api.server.received_requests().await.unwrap().len();
     let again = p.location_prices(436).await.unwrap();
-    assert_eq!(again.groups.len(), 4);
+    assert_eq!(again.groups.len(), 2);
     let after = api.server.received_requests().await.unwrap().len();
     assert_eq!(
         after, before,
@@ -710,12 +707,18 @@ async fn market_wts_resolves_term_to_item_and_fetches_server_side() {
         })
         .count();
     assert_eq!(item_scoped, 1, "exactly one id_item fetch expected");
-    // no unscoped window fetch alongside the item-scoped one
-    assert!(
-        reqs.iter()
-            .filter(|r| r.url.path().contains("marketplace_listings"))
-            .all(|r| r.url.query_pairs().any(|(k, _)| k == "id_item")),
-        "q with an item match must not fall back to window fetches"
+    // P3 hybrid (Feedback-Runde 4): alongside the id_item fetch the FULL
+    // sell window is fetched too, so the local q/quality/sort filter runs
+    // over the complete market — the merge dedupes via `seen`.
+    let window_fetches = reqs
+        .iter()
+        .filter(|r| r.url.path().contains("marketplace_listings"))
+        .filter(|r| r.url.query_pairs().any(|(k, _)| k == "operation"))
+        .filter(|r| !r.url.query_pairs().any(|(k, _)| k == "id_item"))
+        .count();
+    assert_eq!(
+        window_fetches, 1,
+        "hybrid plan must add the full operation window fetch"
     );
 }
 
@@ -877,4 +880,85 @@ async fn marketplace_offers_null_location_tolerated() {
     assert_eq!(offers.iter().filter(|o| o.location.is_empty()).count(), 2);
     assert_eq!(offers.iter().filter(|o| !o.location.is_empty()).count(), 1);
     assert!(offers.iter().all(|o| !o.slug.is_empty()));
+}
+
+// Regression (t_790ef376): die id-Resolution löst ALLE FTS-Treffer eines
+// Begriffs auf — nicht mehr nur die Top-3 (MARKET_ITEM_ID_CAP). Ein Begriff,
+// der 5 Items matcht, muss 5 id_item-Fetches erzeugen (jeder liefert das
+// KOMPLETTE Offer-Set des Items), damit das ≥15-Offers-Kriterium bei breiten
+// Begriffen erreichbar ist (Live-Fall: "parallax" matched 10+ Items, UA-4433
+// mit 18 Q≥900-Offers lag außerhalb der Top-3).
+#[tokio::test]
+async fn market_resolves_every_fts_hit_of_a_term() {
+    let server = MockServer::start().await;
+
+    // 5 Items, alle matchen den Begriff "parallax".
+    let items: Vec<String> = (0..5)
+        .map(|i| {
+            format!(
+                r#"{{"id":{},"name":"Parallax Mk.{} Module","is_commodity":0}}"#,
+                9000 + i,
+                i
+            )
+        })
+        .collect();
+    let items_json = format!(
+        r#"{{"status":"ok","http_code":200,"data":[{}]}}"#,
+        items.join(",")
+    );
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .respond_with(json_response(&items_json))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/categories"))
+        .respond_with(json_response(&fixture("categories.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/star_systems"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+    // Listings-Antworten sind hier egal (leer) — gezählt wird nur, WIE VIELE
+    // DISTINCTE id_item-Fetches der Begriff erzeugt.
+    Mock::given(method("GET"))
+        .and(path("/marketplace_listings"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let p = UexProvider::with_base_url(cache, None, &server.uri(), Duration::ZERO).unwrap();
+
+    p.marketplace_offers(MarketplaceFilter {
+        q: "parallax".into(),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+
+    let reqs = server.received_requests().await.unwrap();
+    let mut ids: Vec<u64> = reqs
+        .iter()
+        .filter(|r| r.url.path().contains("marketplace_listings"))
+        .filter_map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(k, _)| k == "id_item")
+                .map(|(_, v)| v.parse::<u64>().unwrap())
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(
+        ids,
+        vec![9000, 9001, 9002, 9003, 9004],
+        "every FTS hit of the term must be resolved to an id_item fetch (old cap was 3)"
+    );
 }
