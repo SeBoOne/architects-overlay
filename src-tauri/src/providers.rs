@@ -1069,13 +1069,53 @@ mod live_tests {
             q900.len(),
             q900.iter().take(5).map(|o| o.price).collect::<Vec<_>>()
         );
+        // Kriterium (t_790ef376): Min-Q 900 → >=15 Offers. Der Qualitätsfilter
+        // sitzt UI-seitig (visOffers) — hier dieselbe Prüfung auf dem
+        // kompletten, jetzt id-vollständigen Set.
         assert!(
-            offers.len() >= 15,
-            "P3: 'Parallax + Min-Q 900' braucht >=15 Offers"
+            q900.len() >= 15,
+            "P3: 'Parallax + Min-Q 900' braucht >=15 Offers (got {})",
+            q900.len()
         );
         assert!(
             offers.windows(2).all(|w| w[0].price <= w[1].price),
             "price_asc sortiert"
         );
+    }
+}
+
+#[cfg(test)]
+mod live_dump {
+    use super::*;
+    #[tokio::test]
+    #[ignore = "live dump: needs ARCH_SMOKE_CACHE + network"]
+    async fn live_dump_market_offers() {
+        let Some(path) = std::env::var_os("ARCH_SMOKE_CACHE") else {
+            panic!("ARCH_SMOKE_CACHE not set");
+        };
+        let cache = Arc::new(Cache::open(std::path::Path::new(&path)).unwrap());
+        let uex = UexProvider::new(cache.clone(), None).unwrap();
+        let wiki = WikiProvider::new(cache.clone()).unwrap();
+        let provider = CompositeProvider::new(
+            uex,
+            wiki,
+            SourceSwitch::new(CommoditySource::Wiki),
+            cache.clone(),
+        );
+        let offers = provider
+            .marketplace_offers(MarketplaceFilter {
+                q: "parallax".into(),
+                sort: Some(provider::OfferSort::PriceAsc),
+                limit: 1000,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        std::fs::write(
+            "/tmp/t790-offers.json",
+            serde_json::to_string_pretty(&offers).unwrap(),
+        )
+        .unwrap();
+        println!("dumped {} offers", offers.len());
     }
 }
