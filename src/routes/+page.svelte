@@ -102,6 +102,8 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 	};
 
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
+	// Tray "Config öffnen" → Backend-Event (siehe overlay::TRAY_OPEN_CONFIG_EVENT).
+	const overlayTrayOpenConfig = 'tray-open-config';
 	const SYNC_EVENT = 'trade-sync';
 	const M_PAGE = 15; // Min. 15 Offers pro Seite (statt 1)
 const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergrund-Refresh
@@ -204,6 +206,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inConfig = false;
 		apiKeyInput = '';
 		apiKeyNote = '';
+		// Der Tray kann das Overlay (ohne laufendes Spiel) rein für die Config
+		// gezeigt haben — das Backend darf das Fenster dann wieder verbergen.
+		if (isTauri()) {
+			invoke('overlay_config_closed').catch(() => {});
+		}
 		if (searchEl) searchEl.focus();
 	}
 
@@ -433,6 +440,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				await listen<OverlayState>(OVERLAY_STATE_EVENT, (e) => {
 					overlay = e.payload;
 				});
+				// Tray "Config öffnen": Fenster zeigen macht das Backend — hier
+				// nur der Config-View (gleicher Pfad wie der Zahnrad-Button).
+				await listen(overlayTrayOpenConfig, () => openConfig());
 				// Arkanis: sobald das Overlay-Fenster Fokus bekommt, springt der
 				// Cursor ins Suchfeld (window-focus handler).
 				if (typeof window !== 'undefined') {

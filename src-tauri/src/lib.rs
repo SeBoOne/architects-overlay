@@ -18,6 +18,8 @@ mod overlay;
 mod providers;
 #[cfg(desktop)]
 mod trade;
+#[cfg(desktop)]
+mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,6 +43,7 @@ pub fn run() {
             app_settings::settings_set_detail_variant,
             app_settings::settings_set_uex_api_key,
             app_settings::settings_set_commodity_source,
+            overlay::overlay_config_closed,
         ]);
     }
 
@@ -71,6 +74,10 @@ pub fn run() {
                 // keybinds on Wayland, where global shortcuts are unreliable) drive
                 // the overlay. Best-effort — must not block startup.
                 ipc_socket::init(app.handle());
+
+                // System tray (Overlay-Toggle / Config öffnen / Beenden).
+                // Fails soft internally (see tray::init).
+                tray::init(app)?;
             }
 
             Ok(())
