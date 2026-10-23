@@ -265,8 +265,13 @@ mod tests {
 
     #[test]
     fn search_entities_maps_to_data_kinds() {
-        // Locations are served from the terminal dataset (trade locations).
-        assert_eq!(SearchEntities::Locations.kinds(), &[EntityKind::Terminals]);
+        // Locations search BOTH datasets: wiki locations first (richer
+        // hierarchy), then the UEX terminal dataset (price aggregates open
+        // through its terminals).
+        assert_eq!(
+            SearchEntities::Locations.kinds(),
+            &[EntityKind::Locations, EntityKind::Terminals]
+        );
         assert_eq!(SearchEntities::Terminals.kinds(), &[EntityKind::Terminals]);
         assert_eq!(
             SearchEntities::Commodities.kinds(),

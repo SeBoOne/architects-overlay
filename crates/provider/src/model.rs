@@ -18,6 +18,11 @@ pub enum EntityKind {
     /// Star systems — only used to resolve a listing's `id_star_system` to a
     /// region name for the marketplace view; never a searchable dataset.
     StarSystems,
+    /// Wiki locations (api.star-citizen.wiki, `source: wiki`): rich parent-
+    /// child hierarchy (~2k rows). Searchable; NOT a UEX terminal — price
+    /// aggregates resolve through the UEX terminal dataset (see
+    /// `SearchEntities::Locations`).
+    Locations,
 }
 
 impl EntityKind {
@@ -28,6 +33,7 @@ impl EntityKind {
             EntityKind::Items => "item",
             EntityKind::Terminals => "terminal",
             EntityKind::StarSystems => "star_system",
+            EntityKind::Locations => "location",
         }
     }
 }
@@ -48,14 +54,17 @@ pub enum SearchEntities {
 }
 
 impl SearchEntities {
-    /// Reference datasets serving this search group. `Locations` maps to the
-    /// terminal dataset (trade locations carry the full system/planet/station
-    /// hierarchy).
+    /// Reference datasets serving this search group. `Locations` searches BOTH
+    /// datasets: the wiki location hierarchy (rich, `source: wiki`) AND the
+    /// UEX terminal rows (trade terminals, `source: uex`) — wiki first so the
+    /// richer structure ranks first; the price aggregate still opens through a
+    /// UEX terminal of the matched chain.
     pub fn kinds(&self) -> &'static [EntityKind] {
         match self {
             SearchEntities::Commodities => &[EntityKind::Commodities],
             SearchEntities::Items => &[EntityKind::Items],
-            SearchEntities::Locations | SearchEntities::Terminals => &[EntityKind::Terminals],
+            SearchEntities::Locations => &[EntityKind::Locations, EntityKind::Terminals],
+            SearchEntities::Terminals => &[EntityKind::Terminals],
         }
     }
 }
@@ -75,12 +84,50 @@ pub struct Entity {
 /// One search match: an entity plus enough for the UI to show a row.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchHit {
+    /// Über IPC als STRING serialisiert: Wiki-Entity-IDs liegen über 2^53 und
+    /// ein JS `number` rundet sie still (404707429735935130 → …35100) — damit
+    /// brach der Location→Terminal-Resolve auf dem Rückweg in `get_prices`
+    /// (t_925a577a). Deserialize akzeptiert weiterhin auch bare JSON-Numbers.
+    #[serde(
+        serialize_with = "serialize_id_as_string",
+        deserialize_with = "deserialize_id_flexible"
+    )]
     pub id: u64,
     pub name: String,
     /// Entity group tag: "commodity" | "item" | "terminal".
     pub kind: String,
     pub subtitle: String,
     pub code: Option<String>,
+}
+
+/// t_925a577a: IDs überqueren die IPC-Grenze zu einer JS-WebView. Wiki-IDs
+/// (> 2^53) verlieren als JS-Number Präzision — deshalb als String
+/// serialisieren, beim Lesen beides (Number oder String) akzeptieren.
+fn serialize_id_as_string<S: serde::Serializer>(id: &u64, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&id.to_string())
+}
+
+fn deserialize_id_flexible<'de, D>(d: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct IdVisitor;
+    impl<'de> serde::de::Visitor<'de> for IdVisitor {
+        type Value = u64;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("entity id (number or numeric string)")
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<u64, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<u64, E> {
+            u64::try_from(v).map_err(serde::de::Error::custom)
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<u64, E> {
+            v.parse::<u64>().map_err(serde::de::Error::custom)
+        }
+    }
+    d.deserialize_any(IdVisitor)
 }
 
 /// One terminal's price table inside a location aggregate (see
@@ -271,4 +318,37 @@ pub struct Offer {
     pub expires: Option<u64>,
     /// Permalink slug on the source website (deep-link target).
     pub slug: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchHit;
+
+    /// Regression (t_925a577a): über IPC wird die SearchHit-ID als STRING
+    /// serialisiert (Wiki-IDs > 2^53 runden als JS-Number still —
+    /// 404707429735935130 → …35100); beim Lesen bleiben Number und String
+    /// beide akzeptiert.
+    #[test]
+    fn search_hit_id_roundtrips_large_ids_as_string() {
+        let hit = SearchHit {
+            id: 404707429735935130,
+            name: "Levski".into(),
+            kind: "location".into(),
+            subtitle: "Nyx > Levski".into(),
+            code: None,
+        };
+        let json = serde_json::to_string(&hit).unwrap();
+        assert!(
+            json.contains("\"404707429735935130\""),
+            "id muss als String serialisiert werden, got {json}"
+        );
+        let back: SearchHit = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.id, 404707429735935130);
+        // Backwards compatibility: bare Number deserialisiert weiterhin.
+        let num: SearchHit = serde_json::from_str(
+            r#"{"id":778,"name":"Levski","kind":"location","subtitle":"Nyx > Levski","code":null}"#,
+        )
+        .unwrap();
+        assert_eq!(num.id, 778);
+    }
 }

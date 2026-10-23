@@ -30,7 +30,9 @@
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
-	type SearchHit = { id: number; name: string; kind: string; subtitle: string; code: string | null };
+	// t_925a577a: id kommt als STRING (Wiki-IDs > 2^53 runden als JS-Number
+// still — 404707429735935130 → …35100 — und brechen den Detail-Fetch).
+type SearchHit = { id: string; name: string; kind: string; subtitle: string; code: string | null };
 	type GroupHits = { kind: string; label: string; hits: SearchHit[] };
 	type SearchResponse = { groups: GroupHits[]; total: number };
 	type PricePoint = {
@@ -150,6 +152,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		palette: string;
 		detail_variant: string;
 		uex_api_key_set: boolean;
+		commodity_source: string;
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -208,6 +211,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_palette', { name });
 			applySettings(cfg);
+		} catch (e) {
+			apiKeyNote = String(e);
+		}
+	}
+
+	// Commodity-Quelle (A/B): 'wiki' = Wiki-Detail-Preise primär, 'uex' =
+	// UEX-Preistabelle primär. Wirkt SOFORT (SourceSwitch wird live geflippt),
+	// ohne App-Neustart.
+	async function chooseSource(name: string) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_commodity_source', { name });
 		} catch (e) {
 			apiKeyNote = String(e);
 		}
@@ -1345,6 +1359,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								class:is-on={cfg?.detail_variant === 'a'}
 								onclick={() => chooseVariant('a')}
 							>A</button>
+						</div>
+					</section>
+					<section class="cfg-sect">
+						<div class="h">Preis-Quelle (A/B)</div>
+						<div class="cfg-chips">
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.commodity_source === 'wiki'}
+								onclick={() => chooseSource('wiki')}
+							>Wiki</button>
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.commodity_source === 'uex'}
+								onclick={() => chooseSource('uex')}
+							>UEX</button>
 						</div>
 					</section>
 					<section class="cfg-sect">

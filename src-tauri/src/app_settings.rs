@@ -12,12 +12,16 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use settings::{DetailVariant, Palette, Settings};
+use settings::{CommoditySource, DetailVariant, Palette, Settings};
 
 /// Shared settings handle. Loaded once at setup; every setter mutates and
 /// immediately persists the same instance (single source of truth).
 pub struct SettingsState {
     inner: Mutex<Settings>,
+    /// Live commodity-source switch shared with the composite provider —
+    /// see `providers::SourceSwitch`. Kept in sync with the persisted value
+    /// by every setter.
+    pub source_switch: crate::providers::SourceSwitch,
 }
 
 impl SettingsState {
@@ -27,8 +31,22 @@ impl SettingsState {
     pub fn load() -> SettingsState {
         let settings = settings::Settings::load().unwrap_or_default();
         SettingsState {
+            source_switch: crate::providers::SourceSwitch::new(settings.commodity_source()),
             inner: Mutex::new(settings),
         }
+    }
+
+    /// The LIVE part of `settings_set_commodity_source`: mutate the settings
+    /// snapshot AND flip the live source switch the composite provider reads
+    /// on every price fetch. The tauri command adds only the disk persist on
+    /// top — one shared code path so the regression wiring test
+    /// (lib.rs `wiring_tests`) exercises exactly the setter's flip sequence.
+    pub(crate) fn set_commodity_source_live(&self, source: CommoditySource) {
+        self.inner
+            .lock()
+            .expect("settings lock")
+            .set_commodity_source(source);
+        self.source_switch.set(source);
     }
 
     fn persist(&self, settings: &Settings) {
@@ -46,6 +64,9 @@ pub struct SettingsSnapshot {
     pub palette: String,
     pub detail_variant: String,
     pub uex_api_key_set: bool,
+    /// Primary commodity price source ("wiki" | "uex"); wiki first, UEX
+    /// fallback. Exposed so the Config-View can A/B the sources.
+    pub commodity_source: String,
 }
 
 impl SettingsSnapshot {
@@ -54,6 +75,7 @@ impl SettingsSnapshot {
             palette: s.palette().as_str().to_owned(),
             detail_variant: s.detail_variant().as_str().to_owned(),
             uex_api_key_set: s.uex_api_key().is_some(),
+            commodity_source: s.commodity_source().as_str().to_owned(),
         }
     }
 }
@@ -103,4 +125,40 @@ pub fn settings_set_uex_api_key(
     s.set_uex_api_key(key.filter(|k| !k.trim().is_empty()));
     state.persist(&s);
     SettingsSnapshot::from_settings(&s)
+}
+
+/// Set the primary commodity price source (wiki | uex). Persists immediately
+/// AND flips the live source switch the composite provider reads on every
+/// price fetch — the next price request already uses the new source.
+#[tauri::command]
+pub fn settings_set_commodity_source(
+    state: tauri::State<SettingsState>,
+    name: String,
+) -> Result<SettingsSnapshot, String> {
+    let source = CommoditySource::from_name(&name)
+        .ok_or_else(|| format!("unknown commodity source: {name}"))?;
+    state.set_commodity_source_live(source);
+    let s = state.inner.lock().expect("settings lock");
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(&s))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression (t_c3d46cff): the switch handed to the composite provider
+    /// (lib.rs clones `state.source_switch`) MUST be the same instance the
+    /// setter flips — a clone shares the inner Arc, a fresh switch would
+    /// freeze the boot value until the next app restart.
+    #[test]
+    fn live_source_switch_flips_without_restart() {
+        let state = SettingsState::load();
+        let reader = state.source_switch.clone();
+        // what settings_set_commodity_source does on a live flip:
+        state.source_switch.set(CommoditySource::Uex);
+        assert_eq!(reader.get(), CommoditySource::Uex);
+        state.source_switch.set(CommoditySource::Wiki);
+        assert_eq!(reader.get(), CommoditySource::Wiki);
+    }
 }

@@ -13,6 +13,10 @@
 //! [ui]
 //! palette = "amber"        # amber | mfcd | bloom
 //! detail_variant = "c"     # c | a
+//!
+//! [data]
+//! commodity_source = "wiki" # wiki | uex  (commodity PRICE source; wiki
+//!                           # first, UEX as fallback for gaps)
 //! ```
 
 use std::fmt;
@@ -93,18 +97,62 @@ impl fmt::Display for DetailVariant {
     }
 }
 
+/// Primary commodity PRICE source. `Wiki` (default): the wiki commodity
+/// detail endpoint embeds the UEX terminal price table (`uex_prices.purchase`)
+/// and is fetched first; UEX remains the fallback when the wiki row carries
+/// no prices or the fetch fails. `Uex` reverts to the pure-UEX path (A/B
+/// comparison switch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum CommoditySource {
+    #[default]
+    Wiki,
+    Uex,
+}
+
+impl CommoditySource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CommoditySource::Wiki => "wiki",
+            CommoditySource::Uex => "uex",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<CommoditySource> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "wiki" => Some(CommoditySource::Wiki),
+            "uex" => Some(CommoditySource::Uex),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for CommoditySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct RawConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     uex: Option<UexSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ui: Option<UiSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    data: Option<DataSection>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct UexSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct DataSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    commodity_source: Option<CommoditySource>,
 }
 
 /// UI preferences (palette, detail variant). Fields are optional in the file
@@ -149,6 +197,7 @@ pub struct Settings {
     uex_api_key: Option<String>,
     palette: Palette,
     detail_variant: DetailVariant,
+    commodity_source: CommoditySource,
 }
 
 impl Default for Settings {
@@ -158,6 +207,7 @@ impl Default for Settings {
             uex_api_key: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
+            commodity_source: CommoditySource::default(),
         }
     }
 }
@@ -193,6 +243,11 @@ impl Settings {
                 .as_ref()
                 .and_then(|u| u.detail_variant)
                 .unwrap_or_default(),
+            commodity_source: raw
+                .data
+                .as_ref()
+                .and_then(|d| d.commodity_source)
+                .unwrap_or_default(),
         })
     }
 
@@ -203,6 +258,7 @@ impl Settings {
             uex_api_key: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
+            commodity_source: CommoditySource::default(),
         }
     }
 
@@ -236,6 +292,17 @@ impl Settings {
         self.detail_variant = variant;
     }
 
+    /// Primary commodity price source (default: Wiki — UEX fallback keeps
+    /// gaps covered).
+    pub fn commodity_source(&self) -> CommoditySource {
+        self.commodity_source
+    }
+
+    /// Set the commodity price source in memory (persist via [`Settings::save`]).
+    pub fn set_commodity_source(&mut self, source: CommoditySource) {
+        self.commodity_source = source;
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -246,6 +313,9 @@ impl Settings {
             ui: Some(UiSection {
                 palette: Some(self.palette),
                 detail_variant: Some(self.detail_variant),
+            }),
+            data: Some(DataSection {
+                commodity_source: Some(self.commodity_source),
             }),
         };
         let content = toml::to_string_pretty(&raw)
@@ -340,6 +410,36 @@ mod tests {
         assert_eq!(loaded.uex_api_key(), Some("old-key"));
         assert_eq!(loaded.palette(), Palette::Amber);
         assert_eq!(loaded.detail_variant(), DetailVariant::C);
+        assert_eq!(loaded.commodity_source(), CommoditySource::Wiki);
+    }
+
+    #[test]
+    fn commodity_source_roundtrip_and_parsing() {
+        assert_eq!(
+            CommoditySource::from_name("wiki"),
+            Some(CommoditySource::Wiki)
+        );
+        assert_eq!(
+            CommoditySource::from_name("UEX"),
+            Some(CommoditySource::Uex)
+        );
+        assert_eq!(CommoditySource::from_name("both"), None);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        let mut s = Settings::with_path(path.clone());
+        s.set_commodity_source(CommoditySource::Uex);
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.commodity_source(), CommoditySource::Uex);
+        // Default stays wiki.
+        let mut s2 = Settings::with_path(path.clone());
+        s2.set_commodity_source(CommoditySource::Wiki);
+        s2.save().unwrap();
+        assert_eq!(
+            Settings::load_from(&path).unwrap().commodity_source(),
+            CommoditySource::Wiki
+        );
     }
 
     #[test]

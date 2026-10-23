@@ -32,21 +32,40 @@ pub const TTL_TERMINALS: Duration = Duration::from_secs(43_200); // 12h
 pub const TTL_ITEMS: Duration = Duration::from_secs(14_400); // 4h
 /// Prices are volatile (hourly updates upstream) — short TTL.
 pub const TTL_PRICES: Duration = Duration::from_secs(1_800); // 30min
+/// Wiki reference data changes on game-patch cadence, not hourly — the sync
+/// pulls it at most twice a day (research report: locations ~2k rows, static
+/// between patches; commodities likewise).
+pub const TTL_WIKI_REFERENCE: Duration = Duration::from_secs(43_200); // 12h
 /// Marketplace listings are realtime; Phase 2 caches the last snapshot for a
 /// short TTL (5 min) so the offers view opens instantly from cache while the
 /// background sync keeps it warm — rate-limit-schonend (one listing fetch per
 /// TTL window at most).
 pub const TTL_MARKETPLACE: Option<Duration> = Some(Duration::from_secs(300));
 
-/// TTL for one reference dataset.
-pub fn ttl_for(kind: EntityKind) -> Duration {
+/// Data-source tags stored per entity/price row (`entities.source`,
+/// `prices.source`, …). Legacy rows (pre-scheme v2) are all `uex`.
+pub const SOURCE_UEX: &str = "uex";
+pub const SOURCE_WIKI: &str = "wiki";
+
+/// TTL for one reference dataset. Wiki-sourced rows live on the patch-driven
+/// long TTL, UEX rows keep the research-doc values.
+pub fn ttl_for_source(kind: EntityKind, source: &str) -> Duration {
+    if source == SOURCE_WIKI {
+        return TTL_WIKI_REFERENCE;
+    }
     match kind {
         EntityKind::Commodities => TTL_COMMODITIES,
         EntityKind::Items => TTL_ITEMS,
         EntityKind::Terminals => TTL_TERMINALS,
+        EntityKind::Locations => TTL_TERMINALS,
         // Star systems change on game-patch cadence, like terminals.
         EntityKind::StarSystems => TTL_TERMINALS,
     }
+}
+
+/// TTL for one reference dataset (UEX rows — the historical default).
+pub fn ttl_for(kind: EntityKind) -> Duration {
+    ttl_for_source(kind, SOURCE_UEX)
 }
 
 /// Cache failures (SQLite I/O, schema, …).
@@ -83,6 +102,7 @@ CREATE TABLE IF NOT EXISTS entities (
   name       TEXT    NOT NULL,
   code       TEXT,
   subtitle   TEXT    NOT NULL DEFAULT '',
+  source     TEXT    NOT NULL DEFAULT 'uex',
   fetched_at INTEGER NOT NULL,
   PRIMARY KEY (kind, id)
 );
@@ -101,6 +121,7 @@ CREATE TABLE IF NOT EXISTS prices (
   buy_status   INTEGER NOT NULL DEFAULT 0,
   sell_status  INTEGER NOT NULL DEFAULT 0,
   quality      INTEGER NOT NULL DEFAULT 0,
+  source       TEXT    NOT NULL DEFAULT 'uex',
   updated      INTEGER NOT NULL,
   fetched_at   INTEGER NOT NULL,
   PRIMARY KEY (id_commodity, id_terminal)
@@ -119,6 +140,7 @@ CREATE TABLE IF NOT EXISTS terminal_prices (
   buy_status   INTEGER NOT NULL DEFAULT 0,
   sell_status  INTEGER NOT NULL DEFAULT 0,
   quality      INTEGER NOT NULL DEFAULT 0,
+  source       TEXT    NOT NULL DEFAULT 'uex',
   updated      INTEGER NOT NULL,
   fetched_at   INTEGER NOT NULL,
   PRIMARY KEY (id_terminal, id_commodity)
@@ -172,8 +194,26 @@ fn meta_key(kind: EntityKind) -> String {
     format!("fetched_at:{}", kind.as_str())
 }
 
+/// Freshness marker key per (kind, source). The plain UEX key stays in its
+/// historical form so pre-v2 caches keep their freshness markers.
+fn meta_key_sourced(kind: EntityKind, source: &str) -> String {
+    if source == SOURCE_UEX {
+        meta_key(kind)
+    } else {
+        format!("fetched_at:{}@{}", kind.as_str(), source)
+    }
+}
+
 fn prices_meta_key(commodity_id: u64) -> String {
     format!("fetched_at:prices:{}", commodity_id)
+}
+
+fn prices_meta_key_sourced(commodity_id: u64, source: &str) -> String {
+    if source == SOURCE_UEX {
+        prices_meta_key(commodity_id)
+    } else {
+        format!("fetched_at:prices:{}@{}", commodity_id, source)
+    }
 }
 
 /// Freshness marker for one terminal's price table (location aggregate).
@@ -217,6 +257,66 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Cache schema version (`PRAGMA user_version`).
+///
+/// * v1 (implicit legacy) — no `source` columns.
+/// * v2 — wiki-provider migration: `entities`, `prices`, `terminal_prices`,
+///   `item_prices` gain a `source TEXT NOT NULL DEFAULT 'uex'` column; every
+///   pre-existing row is attributed to UEX (the only source up to v1), so
+///   legacy data stays valid and is NOT invalidated — only wiki rows carry
+///   `source = 'wiki'`. Freshness is tracked per (kind, source), so the first
+///   wiki sync is triggered by the wiki dataset simply being absent.
+pub const SCHEMA_VERSION: i64 = 2;
+
+/// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
+/// alters an existing table, so older caches need the ALTERs here.
+const V2_SOURCE_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "entities",
+        "ALTER TABLE entities ADD COLUMN source TEXT NOT NULL DEFAULT 'uex'",
+    ),
+    (
+        "prices",
+        "ALTER TABLE prices ADD COLUMN source TEXT NOT NULL DEFAULT 'uex'",
+    ),
+    (
+        "terminal_prices",
+        "ALTER TABLE terminal_prices ADD COLUMN source TEXT NOT NULL DEFAULT 'uex'",
+    ),
+    (
+        "item_prices",
+        "ALTER TABLE item_prices ADD COLUMN source TEXT NOT NULL DEFAULT 'uex'",
+    ),
+];
+
+/// Bring a pre-v2 cache to the current schema version: add the missing
+/// `source` columns and stamp `PRAGMA user_version`. Legacy rows keep their
+/// data (attributed to `uex`).
+fn migrate_source_columns(conn: &Connection) -> Result<()> {
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .map_err(|e| CacheError::Open(format!("version probe: {e}")))?;
+    if version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+    for (table, alter) in V2_SOURCE_MIGRATIONS {
+        let has = conn
+            .prepare(&format!(
+                "SELECT 1 FROM pragma_table_info('{table}') WHERE name = 'source'"
+            ))
+            .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
+            .exists([])
+            .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?;
+        if !has {
+            conn.execute(alter, [])
+                .map_err(|e| CacheError::Open(format!("migration {alter}: {e}")))?;
+        }
+    }
+    conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+        .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;
+    Ok(())
+}
+
 /// The local SQLite cache. Share via `Arc<Cache>`.
 pub struct Cache {
     conn: Mutex<Connection>,
@@ -245,6 +345,7 @@ impl Cache {
         conn.execute_batch(SCHEMA)
             .map_err(|e| CacheError::Open(format!("schema: {e}")))?;
         migrate_columns(&conn)?;
+        migrate_source_columns(&conn)?;
         Ok(Cache {
             conn: Mutex::new(conn),
         })
@@ -259,9 +360,15 @@ impl Cache {
 
     /// Whether the reference dataset of `kind` is fresher than its TTL.
     pub fn is_fresh(&self, kind: EntityKind) -> Result<bool> {
-        let fetched = self.meta_get(&meta_key(kind))?;
+        self.is_fresh_sourced(kind, SOURCE_UEX)
+    }
+
+    /// Freshness per (kind, source) — wiki rows carry their own fetched-at
+    /// marker and the patch-driven TTL ([`ttl_for_source`]).
+    pub fn is_fresh_sourced(&self, kind: EntityKind, source: &str) -> Result<bool> {
+        let fetched = self.meta_get(&meta_key_sourced(kind, source))?;
         Ok(match fetched {
-            Some(ts) => now_unix().saturating_sub(ts) < ttl_for(kind).as_secs(),
+            Some(ts) => now_unix().saturating_sub(ts) < ttl_for_source(kind, source).as_secs(),
             None => false,
         })
     }
@@ -269,15 +376,44 @@ impl Cache {
     /// Replace the reference dataset of one kind (full refresh → DELETE +
     /// re-insert, also rebuilding the FTS index for that kind).
     pub fn store_entities(&self, kind: EntityKind, entities: &[Entity]) -> Result<()> {
+        self.store_entities_sourced(kind, SOURCE_UEX, entities)
+    }
+
+    /// Replace one kind's dataset for a named source (`uex` | `wiki`). Only
+    /// rows of this (kind, source) pair are deleted, so UEX and wiki datasets
+    /// can coexist in one table.
+    pub fn store_entities_sourced(
+        &self,
+        kind: EntityKind,
+        source: &str,
+        entities: &[Entity],
+    ) -> Result<()> {
         let kind_str = kind.as_str();
+        // Dedupe by id within the batch (keep first): two source rows with
+        // the same id would violate the (kind, id) primary key and sink the
+        // whole dataset (e.g. wiki rows with an empty uuid all hash to one
+        // id).
+        let mut seen_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let entities: Vec<&Entity> = entities.iter().filter(|e| seen_ids.insert(e.id)).collect();
+        let entities: Vec<Entity> = entities.into_iter().cloned().collect();
+        let entities = &entities;
         self.with(|conn| {
             let tx = conn.transaction()?;
-            tx.execute("DELETE FROM entities WHERE kind = ?1", [kind_str])?;
-            tx.execute("DELETE FROM entities_fts WHERE kind = ?1", [kind_str])?;
+            // FTS first: the entity_id subquery must see the rows being
+            // replaced — deleting `entities` before this would empty it.
+            tx.execute(
+                "DELETE FROM entities_fts WHERE kind = ?1 AND entity_id IN
+                    (SELECT id FROM entities WHERE kind = ?1 AND source = ?2)",
+                [kind_str, source],
+            )?;
+            tx.execute(
+                "DELETE FROM entities WHERE kind = ?1 AND source = ?2",
+                [kind_str, source],
+            )?;
             {
                 let mut stmt = tx.prepare(
-                    "INSERT INTO entities (kind, id, name, code, subtitle, fetched_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO entities (kind, id, name, code, subtitle, source, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 )?;
                 for e in entities {
                     stmt.execute(rusqlite::params![
@@ -286,6 +422,7 @@ impl Cache {
                         e.name,
                         e.code,
                         e.subtitle,
+                        source,
                         now_unix() as i64
                     ])?;
                 }
@@ -308,7 +445,7 @@ impl Cache {
             tx.execute(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (meta_key(kind), now_unix().to_string()),
+                (meta_key_sourced(kind, source), now_unix().to_string()),
             )?;
             tx.commit()
         })
@@ -319,6 +456,21 @@ impl Cache {
     /// Empty query → browse mode: the first `limit` rows of the requested kinds
     /// (Arkanis: a bare `:c`/`:i`/`:l` prefix lists that category).
     pub fn search(&self, kinds: &[EntityKind], query: &str, limit: u32) -> Result<Vec<SearchHit>> {
+        self.search_sourced(kinds, &[], query, limit)
+    }
+
+    /// [`Cache::search`] with a source filter: `sources` empty = any source
+    /// (historical behavior); otherwise only rows whose `source` is listed.
+    /// Used by the composite provider to keep the commodity search on the UEX
+    /// id space (wiki commodity rows are internal resolution data) while the
+    /// location group serves BOTH datasets.
+    pub fn search_sourced(
+        &self,
+        kinds: &[EntityKind],
+        sources: &[&str],
+        query: &str,
+        limit: u32,
+    ) -> Result<Vec<SearchHit>> {
         let query = query.trim();
         // rusqlite numbers parameters by token VALUE ("?1"?1" is ONE slot), so
         // each kind gets its own index.
@@ -326,33 +478,61 @@ impl Cache {
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        let kind_params = kinds
-            .iter()
-            .map(|k| Box::new(k.as_str()) as Box<dyn rusqlite::ToSql>)
-            .collect::<Vec<_>>();
+        let kind_params: Vec<String> = kinds.iter().map(|k| k.as_str().to_string()).collect();
+        // Optional source filter: `AND source IN (?, …)` after the kind list.
+        // The FTS table carries no source column, so the filter resolves
+        // through the entities table by id.
+        let (source_clause, source_params): (String, Vec<String>) = if sources.is_empty() {
+            (String::new(), Vec::new())
+        } else {
+            let n = kinds.len();
+            let ph = (0..sources.len())
+                .map(|i| format!("?{}", n + 1 + i))
+                .collect::<Vec<_>>()
+                .join(",");
+            (
+                format!(" AND source IN ({ph})"),
+                sources.iter().map(|s| (*s).to_string()).collect(),
+            )
+        };
+        let source_filter = if sources.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " AND entity_id IN (SELECT id FROM entities WHERE kind IN ({placeholders}){source_clause})"
+            )
+        };
+        let limit_idx = kinds.len() + source_params.len() + 1;
+
+        let map_row = |row: &rusqlite::Row| {
+            Ok(SearchHit {
+                id: row.get::<_, i64>(1)? as u64,
+                name: row.get(2)?,
+                kind: row.get(0)?,
+                code: row.get(3)?,
+                subtitle: row.get(4)?,
+            })
+        };
+
         if query.is_empty() {
             // No FTS match expression to rank by — list the kind in id order.
             let sql = format!(
                 "SELECT kind, entity_id, name, code, subtitle
                  FROM entities_fts
-                 WHERE kind IN ({placeholders})
-                 ORDER BY entity_id LIMIT ?{}",
-                kinds.len() + 1
+                 WHERE kind IN ({placeholders}){source_filter}
+                 ORDER BY entity_id LIMIT ?{limit_idx}"
             );
             return self.with(|conn| {
                 let mut stmt = conn.prepare(&sql)?;
-                let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-                params.extend(kind_params);
-                params.push(Box::new(limit as i64));
-                let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
-                    Ok(SearchHit {
-                        id: row.get::<_, i64>(1)? as u64,
-                        name: row.get(2)?,
-                        kind: row.get(0)?,
-                        code: row.get(3)?,
-                        subtitle: row.get(4)?,
-                    })
-                })?;
+                let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+                for p in &kind_params {
+                    params.push(p);
+                }
+                for p in &source_params {
+                    params.push(p);
+                }
+                params.push(&limit);
+                let rows = stmt.query_map(rusqlite::params_from_iter(params), map_row)?;
                 let mut out = Vec::new();
                 for r in rows {
                     out.push(r?);
@@ -365,26 +545,22 @@ impl Cache {
         let sql = format!(
             "SELECT kind, entity_id, name, code, subtitle
              FROM entities_fts
-             WHERE kind IN ({placeholders}) AND entities_fts MATCH ?{}
+             WHERE kind IN ({placeholders}){source_filter} AND entities_fts MATCH ?{limit_idx}
              ORDER BY rank LIMIT ?{}",
-            kinds.len() + 1,
-            kinds.len() + 2
+            limit_idx + 1
         );
         self.with(|conn| {
             let mut stmt = conn.prepare(&sql)?;
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            params.extend(kind_params);
-            params.push(Box::new(match_expr));
-            params.push(Box::new(limit as i64));
-            let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
-                Ok(SearchHit {
-                    id: row.get::<_, i64>(1)? as u64,
-                    name: row.get(2)?,
-                    kind: row.get(0)?,
-                    code: row.get(3)?,
-                    subtitle: row.get(4)?,
-                })
-            })?;
+            let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+            for p in &kind_params {
+                params.push(p);
+            }
+            for p in &source_params {
+                params.push(p);
+            }
+            params.push(&match_expr);
+            params.push(&limit);
+            let rows = stmt.query_map(rusqlite::params_from_iter(params), map_row)?;
             let mut out = Vec::new();
             for r in rows {
                 out.push(r?);
@@ -398,8 +574,13 @@ impl Cache {
     /// Seconds since the reference dataset of `kind` was fetched
     /// (`Ok(None)` = never fetched). Feeds the UI's freshness indicator.
     pub fn dataset_age(&self, kind: EntityKind) -> Result<Option<u64>> {
+        self.dataset_age_sourced(kind, SOURCE_UEX)
+    }
+
+    /// Per-source variant of [`Cache::dataset_age`].
+    pub fn dataset_age_sourced(&self, kind: EntityKind, source: &str) -> Result<Option<u64>> {
         Ok(self
-            .meta_get(&meta_key(kind))?
+            .meta_get(&meta_key_sourced(kind, source))?
             .map(|ts| now_unix().saturating_sub(ts)))
     }
 
@@ -415,13 +596,42 @@ impl Cache {
         })
     }
 
+    /// Number of cached entities of one (kind, source) pair.
+    pub fn count_entities_sourced(&self, kind: EntityKind, source: &str) -> Result<u64> {
+        self.with(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM entities WHERE kind = ?1 AND source = ?2",
+                [kind.as_str(), source],
+                |r| r.get::<_, i64>(0),
+            )
+            .map(|n| n as u64)
+        })
+    }
+
     /// All cached reference entities of one kind, id → row. Used for small
     /// lookups (e.g. star system id → region name) rather than FTS search.
     pub fn entities_of(&self, kind: EntityKind) -> Result<Vec<Entity>> {
+        self.entities_of_sourced(kind, None)
+    }
+
+    /// All entities of one kind, optionally restricted to one source
+    /// (`Some("wiki")` → only wiki rows). `None` keeps the historical
+    /// any-source behavior.
+    pub fn entities_of_sourced(
+        &self,
+        kind: EntityKind,
+        source: Option<&str>,
+    ) -> Result<Vec<Entity>> {
         self.with(|conn| {
-            let mut stmt =
-                conn.prepare("SELECT id, name, code, subtitle FROM entities WHERE kind = ?1")?;
-            let rows = stmt.query_map([kind.as_str()], |row| {
+            let sql = match source {
+                Some(_) => {
+                    "SELECT id, name, code, subtitle FROM entities
+                     WHERE kind = ?1 AND source = ?2"
+                }
+                None => "SELECT id, name, code, subtitle FROM entities WHERE kind = ?1",
+            };
+            let mut stmt = conn.prepare(sql)?;
+            let map = |row: &rusqlite::Row| {
                 Ok(Entity {
                     id: row.get::<_, i64>(0)? as u64,
                     kind,
@@ -429,7 +639,11 @@ impl Cache {
                     code: row.get(2)?,
                     subtitle: row.get(3)?,
                 })
-            })?;
+            };
+            let rows = match source {
+                Some(src) => stmt.query_map([kind.as_str(), src], map)?,
+                None => stmt.query_map([kind.as_str()], map)?,
+            };
             let mut out = Vec::new();
             for r in rows {
                 out.push(r?);
@@ -442,7 +656,12 @@ impl Cache {
 
     /// Whether cached prices for `commodity_id` are younger than `TTL_PRICES`.
     pub fn prices_fresh(&self, commodity_id: u64) -> Result<bool> {
-        let fetched = self.meta_get(&prices_meta_key(commodity_id))?;
+        self.prices_fresh_sourced(commodity_id, SOURCE_UEX)
+    }
+
+    /// Per-source freshness marker for one commodity's price table.
+    pub fn prices_fresh_sourced(&self, commodity_id: u64, source: &str) -> Result<bool> {
+        let fetched = self.meta_get(&prices_meta_key_sourced(commodity_id, source))?;
         Ok(match fetched {
             Some(ts) => now_unix().saturating_sub(ts) < TTL_PRICES.as_secs(),
             None => false,
@@ -451,6 +670,13 @@ impl Cache {
 
     /// Upsert price points (key = commodity × terminal) and mark them fetched.
     pub fn store_prices(&self, points: &[PricePoint]) -> Result<()> {
+        self.store_prices_sourced(points, SOURCE_UEX)
+    }
+
+    /// Upsert price points attributed to a named source and mark them fetched
+    /// under that source's freshness key. Wiki price rows (hash commodity ids)
+    /// and UEX rows never overwrite each other.
+    pub fn store_prices_sourced(&self, points: &[PricePoint], source: &str) -> Result<()> {
         if points.is_empty() {
             return Ok(());
         }
@@ -461,8 +687,8 @@ impl Cache {
                 let mut stmt = tx.prepare(
                     "INSERT INTO prices (id_commodity, id_terminal, commodity, terminal,
                                           buy_price, sell_price, buy_stock, sell_stock,
-                                          buy_status, sell_status, quality, updated, fetched_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                                          buy_status, sell_status, quality, source, updated, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                      ON CONFLICT(id_commodity, id_terminal) DO UPDATE SET
                        commodity = excluded.commodity,
                        terminal = excluded.terminal,
@@ -473,6 +699,7 @@ impl Cache {
                        buy_status = excluded.buy_status,
                        sell_status = excluded.sell_status,
                        quality = excluded.quality,
+                       source = excluded.source,
                        updated = excluded.updated,
                        fetched_at = excluded.fetched_at",
                 )?;
@@ -490,6 +717,7 @@ impl Cache {
                         p.buy_status as i64,
                         p.sell_status as i64,
                         p.quality as i64,
+                        source,
                         p.updated as i64,
                         now
                     ])?;
@@ -498,7 +726,7 @@ impl Cache {
             tx.execute(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (prices_meta_key(commodity_id), now_unix().to_string()),
+                (prices_meta_key_sourced(commodity_id, source), now_unix().to_string()),
             )?;
             tx.commit()
         })
@@ -507,13 +735,36 @@ impl Cache {
     /// Cached price points for one commodity (may be stale — caller checks
     /// [`Cache::prices_fresh`] first).
     pub fn prices_for(&self, commodity_id: u64) -> Result<Vec<PricePoint>> {
+        self.prices_for_sourced(commodity_id, None)
+    }
+
+    /// Cached price points for one commodity, restricted to one source
+    /// (`None` = any source, historical behavior).
+    pub fn prices_for_sourced(
+        &self,
+        commodity_id: u64,
+        source: Option<&str>,
+    ) -> Result<Vec<PricePoint>> {
         self.with(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT commodity, id_terminal, terminal, buy_price, sell_price,
-                        buy_stock, sell_stock, buy_status, sell_status, quality, updated
-                 FROM prices WHERE id_commodity = ?1 ORDER BY terminal",
-            )?;
-            let rows = stmt.query_map([commodity_id as i64], |row| {
+            let (sql, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = match source {
+                Some(_) => (
+                    "SELECT commodity, id_terminal, terminal, buy_price, sell_price,
+                            buy_stock, sell_stock, buy_status, sell_status, quality, updated
+                     FROM prices WHERE id_commodity = ?1 AND source = ?2 ORDER BY terminal",
+                    vec![
+                        Box::new(commodity_id as i64),
+                        Box::new(source.unwrap_or_default().to_string()),
+                    ],
+                ),
+                None => (
+                    "SELECT commodity, id_terminal, terminal, buy_price, sell_price,
+                            buy_stock, sell_stock, buy_status, sell_status, quality, updated
+                     FROM prices WHERE id_commodity = ?1 ORDER BY terminal",
+                    vec![Box::new(commodity_id as i64)],
+                ),
+            };
+            let mut stmt = conn.prepare(sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
                 Ok(PricePoint {
                     commodity: row.get(0)?,
                     commodity_id,
@@ -884,6 +1135,199 @@ impl Cache {
 mod tests {
     use super::*;
     use provider::{ListingType, MarketOperation};
+
+    #[test]
+    fn v2_migration_adds_source_columns_and_keeps_legacy_rows() {
+        // Simulate a v1 cache (SCHEMA without the source columns): opening it
+        // must ALTER the columns in, stamp user_version = 2 and attribute all
+        // legacy rows to `uex` — data stays valid, nothing is invalidated.
+        let legacy_schema = SCHEMA
+            .replace("  source     TEXT    NOT NULL DEFAULT 'uex',\n", "")
+            .replace("  source       TEXT    NOT NULL DEFAULT 'uex',\n", "");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("v1.sqlite3");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(&legacy_schema).unwrap();
+            conn.execute_batch(
+                "INSERT INTO entities (kind, id, name, code, subtitle, fetched_at)
+                 VALUES ('commodity', 1, 'Agricium', 'AGRI', 'Metal', 100);",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+        }
+        let cache = Cache::open(&path).unwrap();
+        // user_version stamped, legacy row kept and attributed to uex.
+        let conn_ok = cache
+            .with(|conn| {
+                let v: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+                let src: String =
+                    conn.query_row("SELECT source FROM entities WHERE id = 1", [], |r| r.get(0))?;
+                Ok((v, src))
+            })
+            .unwrap();
+        assert_eq!(conn_ok, (SCHEMA_VERSION, "uex".to_string()));
+        // Wiki datasets can be stored beside the legacy rows without overlap.
+        cache
+            .store_entities_sourced(
+                EntityKind::Locations,
+                SOURCE_WIKI,
+                &[entity(
+                    dto_like_hash(),
+                    EntityKind::Locations,
+                    "Levski",
+                    "levski",
+                    "Nyx > Delamar",
+                )],
+            )
+            .unwrap();
+        assert_eq!(
+            cache
+                .count_entities_sourced(EntityKind::Locations, SOURCE_WIKI)
+                .unwrap(),
+            1
+        );
+        let _ = path;
+        drop(dir);
+    }
+
+    fn dto_like_hash() -> u64 {
+        0xcbf29ce484222325_u64.wrapping_mul(0x100000001b3) ^ 42
+    }
+
+    #[test]
+    fn sourced_datasets_are_isolated_per_source() {
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .store_entities(
+                EntityKind::Commodities,
+                &[entity(
+                    1,
+                    EntityKind::Commodities,
+                    "Agricium",
+                    "AGRI",
+                    "Metal",
+                )],
+            )
+            .unwrap();
+        cache
+            .store_entities_sourced(
+                EntityKind::Commodities,
+                SOURCE_WIKI,
+                &[entity(
+                    99,
+                    EntityKind::Commodities,
+                    "Agricium",
+                    "agricium",
+                    "Raw",
+                )],
+            )
+            .unwrap();
+        assert_eq!(cache.count_entities(EntityKind::Commodities).unwrap(), 2);
+        assert_eq!(
+            cache
+                .count_entities_sourced(EntityKind::Commodities, SOURCE_WIKI)
+                .unwrap(),
+            1
+        );
+        // Replacing one source leaves the other intact.
+        cache
+            .store_entities_sourced(EntityKind::Commodities, SOURCE_WIKI, &[])
+            .unwrap();
+        assert_eq!(cache.count_entities(EntityKind::Commodities).unwrap(), 1);
+    }
+
+    #[test]
+    fn wiki_ttl_is_patch_driven_and_long() {
+        // Freshness per source: the wiki marker ages against the long patch
+        // TTL, the UEX marker against the research-doc TTL.
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .store_entities_sourced(
+                EntityKind::Locations,
+                SOURCE_WIKI,
+                &[entity(1, EntityKind::Locations, "Levski", "levski", "Nyx")],
+            )
+            .unwrap();
+        assert!(
+            cache
+                .is_fresh_sourced(EntityKind::Locations, SOURCE_WIKI)
+                .unwrap()
+        );
+        let long = now_unix() - ttl_for_source(EntityKind::Locations, SOURCE_WIKI).as_secs() - 1;
+        cache
+            .with(|conn| {
+                conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = ?2",
+                    [
+                        long.to_string(),
+                        meta_key_sourced(EntityKind::Locations, SOURCE_WIKI),
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            !cache
+                .is_fresh_sourced(EntityKind::Locations, SOURCE_WIKI)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn wiki_price_rows_carry_their_own_freshness() {
+        let cache = Cache::open_in_memory().unwrap();
+        let p = PricePoint {
+            commodity: "Agricium".into(),
+            commodity_id: 9_000_000_000,
+            location: "Levski".into(),
+            terminal_id: 778,
+            sell_price: 0.0,
+            buy_price: 8_379.0,
+            sell_stock: 0.0,
+            buy_stock: 0.0,
+            sell_status: 0,
+            buy_status: 7,
+            quality: 0,
+            updated: 1_700_000_000,
+        };
+        cache
+            .store_prices_sourced(&[p.clone()], SOURCE_WIKI)
+            .unwrap();
+        assert!(
+            cache
+                .prices_fresh_sourced(9_000_000_000, SOURCE_WIKI)
+                .unwrap()
+        );
+        assert!(
+            !cache.prices_fresh(9_000_000_000).unwrap(),
+            "UEX marker must stay independent"
+        );
+        let rows = cache
+            .prices_for_sourced(9_000_000_000, Some(SOURCE_WIKI))
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].buy_price, 8_379.0);
+        // UEX store under the same (commodity, terminal) pair must not clobber
+        // the wiki row — the sourced writes are isolated via distinct PK rows.
+        cache
+            .store_prices_sourced(
+                &[PricePoint {
+                    updated: 1_700_000_001,
+                    ..p.clone()
+                }],
+                SOURCE_WIKI,
+            )
+            .unwrap();
+        assert_eq!(
+            cache
+                .prices_for_sourced(9_000_000_000, Some(SOURCE_WIKI))
+                .unwrap()
+                .len(),
+            1
+        );
+        let _ = p;
+    }
 
     fn entity(id: u64, kind: EntityKind, name: &str, code: &str, subtitle: &str) -> Entity {
         Entity {

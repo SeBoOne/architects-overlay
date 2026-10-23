@@ -41,11 +41,20 @@ use tauri::{AppHandle, Emitter, State};
 pub const SYNC_EVENT: &str = "trade-sync";
 
 /// Group order and labels per the design contract: Commodities → Items →
-/// Locations, each with a counter.
-const GROUPS: &[(&str, &str, EntityKind)] = &[
-    ("commodity", "Commodities", EntityKind::Commodities),
-    ("item", "Items", EntityKind::Items),
-    ("location", "Locations", EntityKind::Terminals),
+/// Locations, each with a counter. Each group maps onto ONE OR MORE cache
+/// datasets: the location group searches BOTH the wiki location hierarchy
+/// (EntityKind::Locations, source=wiki, rich parent-child data) and the UEX
+/// terminal dataset (trade terminals). Commodities stay on the UEX id space
+/// — the wiki commodity rows in the cache are internal resolution data for
+/// the wiki price path, not search results.
+const GROUPS: &[(&str, &str, &[EntityKind])] = &[
+    ("commodity", "Commodities", &[EntityKind::Commodities]),
+    ("item", "Items", &[EntityKind::Items]),
+    (
+        "location",
+        "Locations",
+        &[EntityKind::Locations, EntityKind::Terminals],
+    ),
 ];
 
 /// Max hits served per group (keeps the palette compact and the IPC tiny).
@@ -80,6 +89,9 @@ pub struct TradeState {
     pub provider: Arc<dyn DataProvider>,
     pub cache: Arc<Cache>,
     pub tracker: Arc<SyncTracker>,
+    /// Extra wiki-dataset sync (commodities + locations, own TTLs). `None`
+    /// in tests with stub providers.
+    pub wiki_sync: Option<Arc<dyn crate::providers::WikiSync>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -181,9 +193,17 @@ pub fn search(
         if !filter_set.is_empty() && !filter_set.contains(*kind) {
             continue;
         }
+        // Commodities/Items serve only UEX rows (source filter); the
+        // location group serves both datasets (wiki locations + UEX
+        // terminals) — kinds and sources are disjoint per kind.
+        let sources: &[&str] = if *kind == "location" {
+            &[]
+        } else {
+            &[cache::SOURCE_UEX]
+        };
         let mut hits = state
             .cache
-            .search(&[*entity_kind], query, PER_GROUP_LIMIT)
+            .search_sourced(entity_kind, sources, query, PER_GROUP_LIMIT)
             .map_err(|e| format!("Cache-Fehler: {e}"))?;
         // Location-Gruppe (Kriterium 2 / QA-Auflage A): die Standort-ENTITY
         // selbst ist kein eigenes Dataset — `/terminals` liefert nur Terminal-
@@ -226,9 +246,12 @@ fn with_location_rows(
         return Ok(hits);
     }
     // Kette (subtitle) → Terminals der Kette, in Treffer-Reihenfolge zuerst.
+    // Wiki-Location-Zeilen (kind='location', source=wiki) sind bereits
+    // Standort-Zeilen und werden nicht noch einmal synthetisiert — sie
+    // bleiben unangetastet in der Trefferliste.
     let mut by_chain: std::collections::BTreeMap<String, Vec<provider::SearchHit>> =
         std::collections::BTreeMap::new();
-    for h in &hits {
+    for h in hits.iter().filter(|h| h.kind == "terminal") {
         let chain = h.subtitle.trim();
         if chain.is_empty() {
             continue;
@@ -391,10 +414,11 @@ fn fmt_number(v: f64) -> String {
 pub async fn get_prices(
     state: State<'_, TradeState>,
     commodity: String,
-    id: Option<u64>,
+    id: Option<IdArg>,
     kind: Option<String>,
 ) -> Result<PriceDetail, String> {
     let fetched_at = now_unix();
+    let id: Option<u64> = id.and_then(IdArg::into_u64);
     match kind.as_deref() {
         Some("terminal") => {
             // One terminal's OWN price table (run: prices of THIS terminal,
@@ -472,6 +496,25 @@ pub async fn get_prices(
     }
 }
 
+/// t_925a577a: RPC-ID-Argument, das sowohl die bisherigen JSON-Numbers als
+/// auch Strings akzeptiert (Wiki-Entity-IDs > 2^53 müssen als String durch
+/// die JS-WebView, sonst runden sie still).
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub enum IdArg {
+    Num(u64),
+    Str(String),
+}
+
+impl IdArg {
+    fn into_u64(self) -> Option<u64> {
+        match self {
+            IdArg::Num(v) => Some(v),
+            IdArg::Str(s) => s.parse().ok(),
+        }
+    }
+}
+
 /// Resolve an item's display name (by id, falling back to the raw query).
 async fn item_name(state: &TradeState, id: Option<u64>, raw: &str) -> Result<String, String> {
     let Some(item_id) = id else {
@@ -520,7 +563,13 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
 
     // Only one sweep at a time; a concurrent call just re-reads the status.
     if !tracker.syncing.swap(true, Ordering::SeqCst) {
-        let outcome: Result<(), String> = sweep(provider.as_ref(), cache.as_ref(), false).await;
+        let outcome = sweep(
+            provider.as_ref(),
+            cache.as_ref(),
+            state.wiki_sync.as_deref(),
+            false,
+        )
+        .await;
         {
             let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
             *guard = outcome.err();
@@ -621,6 +670,7 @@ pub fn start_background_refresh(
     app: &AppHandle,
     provider: &Arc<dyn DataProvider>,
     cache: &Arc<Cache>,
+    wiki_sync: Option<&Arc<dyn crate::providers::WikiSync>>,
     tracker: &Arc<SyncTracker>,
 ) {
     if tracker.background.swap(true, Ordering::SeqCst) {
@@ -637,15 +687,16 @@ pub fn start_background_refresh(
     // versucht es erneut und die UI fällt auf den letzten Snapshot zurück.
     let mprovider = provider.clone();
     let mcache = cache.clone();
+    let mwiki_sync = wiki_sync.cloned();
     _ = tauri::async_runtime::spawn(async move {
         // Erste Probe kurz nach Boot: Netz-Erreichbarkeit prüfen, unabhängig
         // von der TTL — ein frischer Cache mit totem Netz muss trotzdem als
         // offline erkannt werden.
         tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-        background_tick(&tracker, &provider, &cache, &handle).await;
+        background_tick(&tracker, &provider, &cache, mwiki_sync.clone(), &handle).await;
         loop {
             tokio::time::sleep(cache::sync::DEFAULT_INTERVAL).await;
-            background_tick(&tracker, &provider, &cache, &handle).await;
+            background_tick(&tracker, &provider, &cache, mwiki_sync.clone(), &handle).await;
         }
     });
 
@@ -680,9 +731,16 @@ async fn background_tick(
     tracker: &Arc<SyncTracker>,
     provider: &Arc<dyn DataProvider>,
     cache: &Arc<Cache>,
+    wiki_sync: Option<Arc<dyn crate::providers::WikiSync>>,
     handle: &AppHandle,
 ) {
-    let outcome = sweep(provider.as_ref(), cache.as_ref(), true).await;
+    let outcome = sweep(
+        provider.as_ref(),
+        cache.as_ref(),
+        wiki_sync.as_deref(),
+        true,
+    )
+    .await;
     {
         let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
         *guard = outcome.err();
@@ -702,26 +760,43 @@ async fn background_tick(
 async fn sweep(
     provider: &dyn DataProvider,
     cache: &Cache,
+    wiki_sync: Option<&dyn crate::providers::WikiSync>,
     probe_if_fresh: bool,
 ) -> Result<(), String> {
     let mut fetched = false;
-    for (_kind, label, entity_kind) in GROUPS {
-        let fresh = cache
-            .is_fresh(*entity_kind)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?;
-        if fresh {
-            continue;
+    for (_kind, label, entity_kinds) in GROUPS {
+        for entity_kind in *entity_kinds {
+            let fresh = cache
+                .is_fresh(*entity_kind)
+                .map_err(|e| format!("Cache-Fehler: {e}"))?;
+            if fresh {
+                continue;
+            }
+            fetched = true;
+            log::info!("sync: fetching {label} (stale)");
+            let entities = provider
+                .fetch_entities(*entity_kind)
+                .await
+                .map_err(friendly)?;
+            // Wiki datasets (Locations) store under their own source so they
+            // coexist with the UEX terminal rows in one table.
+            let source = match entity_kind {
+                EntityKind::Locations => cache::SOURCE_WIKI,
+                _ => cache::SOURCE_UEX,
+            };
+            cache
+                .store_entities_sourced(*entity_kind, source, &entities)
+                .map_err(|e| format!("Cache-Fehler: {e}"))?;
+            log::info!("sync: {label} stored ({} entries)", entities.len());
         }
-        fetched = true;
-        log::info!("sync: fetching {label} (stale)");
-        let entities = provider
-            .fetch_entities(*entity_kind)
+    }
+    // Wiki reference datasets beyond the GROUPS kinds (wiki commodities for
+    // the price path + an extra locations pass with its own TTL marker).
+    if let Some(wiki_sync) = wiki_sync {
+        wiki_sync
+            .sync_wiki_datasets(cache)
             .await
             .map_err(friendly)?;
-        cache
-            .store_entities(*entity_kind, &entities)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?;
-        log::info!("sync: {label} stored ({} entries)", entities.len());
     }
     if probe_if_fresh && !fetched {
         // Warm cache → only a forced round-trip detects an outage. Stored, so
@@ -743,10 +818,21 @@ fn build_status(
     tracker: &SyncTracker,
 ) -> SyncStatus {
     let mut datasets = Vec::new();
-    for (kind, label, entity_kind) in GROUPS {
-        let fresh = cache.is_fresh(*entity_kind).unwrap_or(false);
-        let age_secs = cache.dataset_age(*entity_kind).unwrap_or(None);
-        let count = cache.count_entities(*entity_kind).unwrap_or(0);
+    for (kind, label, entity_kinds) in GROUPS {
+        // A group's freshness = ALL its datasets fresh (worst case); the
+        // count sums across datasets (wiki locations + UEX terminals).
+        let mut fresh = true;
+        let mut age_secs = None;
+        let mut count = 0u64;
+        for entity_kind in *entity_kinds {
+            if !cache.is_fresh(*entity_kind).unwrap_or(false) {
+                fresh = false;
+            }
+            if let Some(a) = cache.dataset_age(*entity_kind).unwrap_or(None) {
+                age_secs = Some(age_secs.map_or(a, |old: u64| old.max(a)));
+            }
+            count += cache.count_entities(*entity_kind).unwrap_or(0);
+        }
         datasets.push(DatasetStatus {
             kind: (*kind).to_string(),
             label: (*label).to_string(),
@@ -803,6 +889,19 @@ fn now_unix() -> u64 {
 
 #[cfg(test)]
 mod tests {
+    /// Regression (t_925a577a): get_prices nimmt die Row-ID als String ODER
+    /// Number — Wiki-Location-IDs (> 2^53) müssen als String durch die
+    /// JS-WebView, sonst rundet JS still (…35130 → …35100) und der
+    /// Location→Terminal-Resolve bricht mit "not in reference data".
+    #[test]
+    fn id_arg_accepts_string_and_number() {
+        let s: IdArg = serde_json::from_str("\"404707429735935130\"").unwrap();
+        let n: IdArg = serde_json::from_str("778").unwrap();
+        assert_eq!(s.into_u64(), Some(404707429735935130));
+        assert_eq!(n.into_u64(), Some(778));
+        let junk: Result<IdArg, _> = serde_json::from_str("\"not-an-id\"");
+        assert!(junk.is_ok() && junk.unwrap().into_u64().is_none());
+    }
     use super::*;
     use tauri::Manager;
     use tauri::test::mock_app;
@@ -833,7 +932,9 @@ mod tests {
         assert_eq!(GROUPS[0].1, "Commodities");
         assert_eq!(GROUPS[1].1, "Items");
         assert_eq!(GROUPS[2].1, "Locations");
-        assert_eq!(GROUPS[2].2, EntityKind::Terminals);
+        // The location group serves BOTH datasets: wiki locations (rich
+        // hierarchy) first, then the UEX terminal dataset.
+        assert_eq!(GROUPS[2].2, &[EntityKind::Locations, EntityKind::Terminals]);
         assert_eq!(GROUPS.len(), 3);
     }
 
@@ -846,6 +947,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
         });
         let state = app.state::<TradeState>();
 
@@ -866,6 +968,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
         });
         let state = app.state::<TradeState>();
 
@@ -906,6 +1009,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
         });
         let state = app.state::<TradeState>();
 
@@ -980,6 +1084,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache,
             tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
         });
         let state = app.state::<TradeState>();
 
@@ -1212,6 +1317,7 @@ mod tests {
             provider: Arc::new(LocProvider),
             cache: cache.clone(),
             tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
         });
         let state = app.state::<TradeState>();
 
@@ -1219,7 +1325,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "Landing Services - Checkmate".into(),
-            Some(429),
+            Some(IdArg::Num(429)),
             Some("terminal".into()),
         )
         .await
@@ -1238,7 +1344,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "Guns - Checkmate".into(),
-            Some(437),
+            Some(IdArg::Num(437)),
             Some("terminal".into()),
         )
         .await
@@ -1250,7 +1356,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "Checkmate".into(),
-            Some(436),
+            Some(IdArg::Num(436)),
             Some("location".into()),
         )
         .await
@@ -1264,7 +1370,7 @@ mod tests {
         let d = get_prices(
             state.clone(),
             "CSP-68H Backpack".into(),
-            Some(465),
+            Some(IdArg::Num(465)),
             Some("item".into()),
         )
         .await
@@ -1326,6 +1432,7 @@ mod tests {
             provider: Arc::new(FailingProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
         });
         let state = app.state::<TradeState>();
 

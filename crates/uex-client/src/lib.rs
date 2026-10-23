@@ -166,10 +166,17 @@ impl DataProvider for UexProvider {
     async fn search(&self, entities: SearchEntities, query: &str) -> Result<Vec<SearchHit>> {
         let kinds = entities.kinds();
         for kind in kinds {
-            self.ensure_fresh(*kind).await?;
+            // Locations are owned by the wiki source — the UEX provider never
+            // fetches them (the composite provider ensures that dataset).
+            if *kind != EntityKind::Locations {
+                self.ensure_fresh(*kind).await?;
+            }
         }
+        // Only UEX-sourced rows: the wiki rows in the shared cache belong to
+        // the wiki provider and must not leak through this seam
+        // implementation.
         self.cache
-            .search(kinds, query, SEARCH_LIMIT)
+            .search_sourced(kinds, &[cache::SOURCE_UEX], query, SEARCH_LIMIT)
             .map_err(map_cache_err)
     }
 
@@ -446,6 +453,11 @@ impl DataProvider for UexProvider {
                     })
                     .collect())
             }
+            // Locations are owned by the wiki source (rich hierarchy, stored
+            // under source=wiki). The UEX provider has no location dataset —
+            // its terminal rows carry the trade terminals. An empty result
+            // keeps the seam exhaustive without a fabricated fetch.
+            EntityKind::Locations => Ok(Vec::new()),
         }
     }
 
@@ -675,6 +687,7 @@ pub mod private {
         CategoryRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow, StarSystemRow,
         TerminalRow,
     };
+    pub use crate::http::DEFAULT_BASE_URL;
 }
 
 #[cfg(test)]
