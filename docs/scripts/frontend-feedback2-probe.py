@@ -3,7 +3,7 @@
 
 Gates:
   1. Detail-Seite Commodity 'Gold'  → 43 Preiszeilen (.pane-detail .pr)
-  2. Location-Lock                    → 📌-Badge + gefilterte Detail (30 rows)
+  2. (obsolet — Location-Lock entfernt; Beleg: docs/screenshots/v0.1.5/README.md)
   3. Marketplace                       → 15 Angebote + "Weitere laden" → 30
 
 Backend = Tauri-Stub (docs/scripts/smoke-stub.js), injected per-CDP.
@@ -266,32 +266,14 @@ async def main():
         await shot("01-detail-commodity-43-rows")
 
         # ===================================================================
-        # 2) Location-Lock: Badge + gefilterte Detail (30)
+        # 2) OBSOLET: Location-Lock (badge + gefilterte Detail, 30 Zeilen)
         # ===================================================================
-        print("scenario 2: Location-Lock (badge + filter 30)")
-        await esc()
-        await wait_for("document.querySelector('.pane-detail') ? 0 : 1", want=1, timeout=5)
-        await typeQuery("")
-        await asyncio.sleep(0.5)
-        await typeQuery(":l checkmate")
-        await typeQuery(":l checkmate")
-        await wait_for("document.querySelectorAll('.row').length", want=lambda x: x and x >= 1, timeout=8)
-        await key("l")
-        await wait_for("document.querySelector('.lock-badge') ? 1 : 0", want=1, timeout=6)
-        badge = await js("document.querySelector('.lock-badge') ? document.querySelector('.lock-badge').innerText : ''")
-        check("lock: badge visible", "📌" in (badge or ""), f"badge={badge!r}")
-        check("lock: badge Checkmate Station", "Checkmate Station" in (badge or ""), f"badge={badge!r}")
-        await typeQuery("gold")
-        await typeQuery("gold")
-        await wait_for("document.querySelectorAll('.row').length", want=lambda x: x and x >= 1, timeout=8)
-        await js("document.querySelector('.row').click()")
-        await wait_for("document.querySelector('.pane-detail') ? 1 : 0", want=1, timeout=8)
-        lh = await js("document.querySelector('.pane-detail .lock-hint') ? document.querySelector('.pane-detail .lock-hint').innerText.replace(/\\s+/g,' ').trim() : ''")
-        prs2 = await js("document.querySelectorAll('.pane-detail .pr').length")
-        print(f"  lock-hint={lh!r} .pr={prs2}")
-        check("lock: 30 rows in hint", "30 Preiszeilen" in (lh or ""), f"lh={lh!r}")
-        check("lock: filtered >=30 rows", (prs2 or 0) >= 30, f".pr={prs2}")
-        await shot("02-lock-filtered-detail")
+        # Das Lock-Feature (":l"-Filter, .lock-badge, .lock-btn, Ortssperre-
+        # Hinweis) wurde entfernt — die alten Szenario-Checks prüfen tote
+        # Selektoren (3 obsolete Fails). Historischer Beleg:
+        # docs/screenshots/v0.1.5/README.md (02-lock-filtered-detail.png,
+        # Stub-Fixture). Der .lock-hint bleibt live als Filter-Hinweis.
+        print("scenario 2: Location-Lock — OBSOLET (Feature entfernt, übersprungen)")
 
         # ===================================================================
         # 3) Marketplace: 15 + load-more → 30
