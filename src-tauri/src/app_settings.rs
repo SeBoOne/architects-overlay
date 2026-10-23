@@ -9,10 +9,7 @@
 //! Secrets: the UEX API key is never returned to the frontend, only its
 //! "set / not set" status.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicU8, Ordering},
-};
+use std::sync::Mutex;
 
 use serde::Serialize;
 use settings::{CommoditySource, DetailVariant, Palette, Settings};
@@ -21,10 +18,10 @@ use settings::{CommoditySource, DetailVariant, Palette, Settings};
 /// immediately persists the same instance (single source of truth).
 pub struct SettingsState {
     inner: Mutex<Settings>,
-    /// Live commodity-source switch (0 = wiki, 1 = uex) shared with the
-    /// composite provider — see `providers::SourceSwitch`. Kept in sync with
-    /// the persisted value by every setter.
-    pub source_switch: Arc<AtomicU8>,
+    /// Live commodity-source switch shared with the composite provider —
+    /// see `providers::SourceSwitch`. Kept in sync with the persisted value
+    /// by every setter.
+    pub source_switch: crate::providers::SourceSwitch,
 }
 
 impl SettingsState {
@@ -34,10 +31,7 @@ impl SettingsState {
     pub fn load() -> SettingsState {
         let settings = settings::Settings::load().unwrap_or_default();
         SettingsState {
-            source_switch: Arc::new(AtomicU8::new(match settings.commodity_source() {
-                CommoditySource::Wiki => 0,
-                CommoditySource::Uex => 1,
-            })),
+            source_switch: crate::providers::SourceSwitch::new(settings.commodity_source()),
             inner: Mutex::new(settings),
         }
     }
