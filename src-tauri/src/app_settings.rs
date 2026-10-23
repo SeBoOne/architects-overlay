@@ -139,12 +139,6 @@ pub fn settings_set_commodity_source(
     let mut s = state.inner.lock().expect("settings lock");
     s.set_commodity_source(source);
     state.persist(&s);
-    state.source_switch.store(
-        match source {
-            CommoditySource::Wiki => 0,
-            CommoditySource::Uex => 1,
-        },
-        Ordering::SeqCst,
-    );
+    state.source_switch.set(source);
     Ok(SettingsSnapshot::from_settings(&s))
 }
