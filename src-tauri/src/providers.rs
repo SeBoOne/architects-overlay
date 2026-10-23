@@ -312,6 +312,8 @@ impl DataProvider for CompositeProvider {
                     &[EntityKind::Locations, EntityKind::Terminals],
                     &[],
                     query,
+                    // P1: Location-ENTITY nur per Name (Subtitle matcht nicht).
+                    &[EntityKind::Locations],
                     SEARCH_LIMIT,
                 )
                 .map_err(|e| ProviderError::Cache(e.to_string()))?;
@@ -970,5 +972,110 @@ mod live_tests {
             agg.location
         );
         assert_eq!(provider.name(), "wiki+uex (wiki)");
+    }
+
+    /// LIVE-Smoke (Feedback-Runde 4, t_7a1add66) — echte APIs, echter Cache.
+    /// Läuft nur mit `ARCH_SMOKE_CACHE=<pfad>` gegen eine KOPIE der App-Cache-DB
+    /// (`cargo test -p architects-overlay --lib live_smoke -- --ignored
+    /// --nocapture`), damit die laufende App unberührt bleibt. Prüft P1/P2/P3
+    /// und die Laranite-Baseline (26 Zeilen) gegen die echten Datenquellen.
+    #[tokio::test]
+    #[ignore = "live: needs ARCH_SMOKE_CACHE=<copy of app cache.db> + network"]
+    async fn live_smoke_search_semantics() {
+        let Some(path) = std::env::var_os("ARCH_SMOKE_CACHE") else {
+            panic!("ARCH_SMOKE_CACHE not set — this live test is opt-in");
+        };
+        let cache = Arc::new(Cache::open(std::path::Path::new(&path)).unwrap());
+        let uex = UexProvider::new(cache.clone(), None).unwrap();
+        let wiki = WikiProvider::new(cache.clone()).unwrap();
+        let provider = CompositeProvider::new(
+            uex,
+            wiki,
+            SourceSwitch::new(CommoditySource::Wiki),
+            cache.clone(),
+        );
+        println!(
+            "terminals in cache: {}",
+            cache.count_entities(EntityKind::Terminals).unwrap()
+        );
+
+        for q in ["levski", "checkmate"] {
+            let hits = provider.search(SearchEntities::Locations, q).await.unwrap();
+            println!("\n:l {q} → {} Treffer", hits.len());
+            for h in &hits {
+                println!("  [{}] {} · {}", h.kind, h.name, h.subtitle);
+            }
+            let mercy = hits.iter().any(|h| h.name.contains("Mercy"));
+            let services = hits.iter().any(|h| {
+                h.kind == "terminal"
+                    && (h.name.contains("Landing Services")
+                        || h.name.contains("Refinement Center")
+                        || h.name.contains("Rentals"))
+            });
+            assert!(
+                !mercy,
+                "P1: Mercy Hospital darf bei '{q}' nicht mehr auftauchen"
+            );
+            assert!(
+                !services,
+                "P2: Service-Terminals (Landing/Refinement/Rentals) sind gefiltert"
+            );
+            let shops = hits.iter().filter(|h| h.kind == "terminal").count();
+            println!("  Terminal-Zeilen (Station-Shops): {shops}");
+            assert!(shops > 0, "P1.2: Station-Shops müssen gelistet sein");
+        }
+
+        // P1.3: Levski-Aggregat (Location-Detail = alle Kaufterminals).
+        let hits = provider
+            .search(SearchEntities::Locations, "levski")
+            .await
+            .unwrap();
+        let loc = hits
+            .iter()
+            .find(|h| h.kind == "location" && h.name.eq_ignore_ascii_case("Levski"))
+            .expect("Levski location hit")
+            .clone();
+        let agg = provider.location_prices(loc.id).await.unwrap();
+        let rows: usize = agg.groups.iter().map(|g| g.prices.len()).sum();
+        println!(
+            "Levski-Aggregat: {} Terminal-Gruppen, {rows} Preiszeilen (erwarte 8+ Gruppen)",
+            agg.groups.len()
+        );
+        assert!(
+            agg.groups.len() >= 8,
+            "Levski-Referenzfall: 8+ Kaufterminals"
+        );
+
+        // `:c laranite` — Baseline 26 Zeilen.
+        let rows = provider.prices("laranite").await.unwrap();
+        println!("\n:c laranite → {} Preiszeilen (Baseline: 26)", rows.len());
+        assert_eq!(rows.len(), 26, "Laranite-Baseline unverändert");
+
+        use provider::OfferSort;
+        // P3: Market hybrid — komplettes Offer-Fenster für 'parallax'.
+        let offers = provider
+            .marketplace_offers(MarketplaceFilter {
+                q: "parallax".into(),
+                sort: Some(OfferSort::PriceAsc),
+                limit: 1000,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let q900: Vec<&provider::Offer> = offers.iter().filter(|o| o.quality >= 900).collect();
+        println!(
+            "\nMarket 'parallax': {} Offers, {} mit Q>=900 (erwarte >=15), price_asc={:?}",
+            offers.len(),
+            q900.len(),
+            q900.iter().take(5).map(|o| o.price).collect::<Vec<_>>()
+        );
+        assert!(
+            offers.len() >= 15,
+            "P3: 'Parallax + Min-Q 900' braucht >=15 Offers"
+        );
+        assert!(
+            offers.windows(2).all(|w| w[0].price <= w[1].price),
+            "price_asc sortiert"
+        );
     }
 }
