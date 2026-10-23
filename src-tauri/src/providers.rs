@@ -148,11 +148,13 @@ impl CompositeProvider {
     }
 
     /// Resolve a wiki location id to the UEX terminal id of the same place
-    /// (Location→Terminal-Konsistenz). The wiki chain is built in the same
-    /// shape as the UEX terminal subtitle ("Stanton > Hurston > Aberdeen"),
-    /// so the match is a chain lookup: exact chain match first, then a
-    /// location-name segment match; the money terminal of the matched chain
-    /// leads the aggregate (same heuristic as the palette's location rows).
+    /// (Location→Terminal-Konsistenz). Wiki- und UEX-Ketten weichen real
+    /// voneinander ab (Wiki „Nyx > Levski“ vs. UEX „Nyx > Delamar > Levski“),
+    /// daher ist die Matchung gestuft (siehe `terminal_match_tier`): exakte
+    /// Kette, dann last-segment / „- <Ort>“-Namenssuffix / Kettensuffix,
+    /// dann irgendein Segment. Gleichwertige Kandidaten werden über den
+    /// System-Kontext (erstes Kettensegment) und die Monetär-Heuristik
+    /// aufgelöst (siehe `best_terminal_match`).
     async fn uex_terminal_for_wiki_location(&self, wiki_id: u64) -> Result<u64> {
         let wiki_locations = self
             .cache
@@ -171,27 +173,98 @@ impl CompositeProvider {
             .cache
             .entities_of(EntityKind::Terminals)
             .map_err(|e| ProviderError::Cache(e.to_string()))?;
-        // Exact chain match, else any terminal whose chain carries the
-        // location name as a segment.
-        let candidates: Vec<&Entity> = terminals
-            .iter()
-            .filter(|t| t.subtitle == chain)
-            .chain(
-                terminals
-                    .iter()
-                    .filter(|t| t.subtitle != chain && chain_has(&t.subtitle, &name)),
-            )
-            .collect();
-        let chosen = candidates
-            .iter()
-            .copied()
-            .find(|t| is_money_terminal(&t.name))
-            .or_else(|| candidates.first().copied())
-            .ok_or_else(|| {
-                ProviderError::NotFound(format!("no UEX terminal matches wiki location '{name}'"))
-            })?;
+        let chosen = best_terminal_match(&name, &chain, &terminals).ok_or_else(|| {
+            ProviderError::NotFound(format!("no UEX terminal matches wiki location '{name}'"))
+        })?;
         Ok(chosen.id)
     }
+}
+
+/// Kettensegmente einer UEX-/Wiki-Kette ("A > B > C" → ["A", "B", "C"]),
+/// getrimmt, ohne leere Segmente.
+fn chain_segments(chain: &str) -> Vec<&str> {
+    chain
+        .split('>')
+        .map(str::trim)
+        .filter(|seg| !seg.is_empty())
+        .collect()
+}
+
+/// Match-Tier einer UEX-Terminal-Zeile gegen eine Wiki-Location (kleiner =
+/// besser). Die Stufen decken die realen Kettendifferenzen ab:
+/// 0 = exakte Kette; 1 = letztes Kettensegment == Ortsname (UEX „Nyx >
+/// Delamar > Levski“ vs. Wiki „Nyx > Levski“), Terminal-Name endet auf
+/// „- <Ortsname>“ (UEX-Namenskonvention, z.B. „Landing Services - Levski“)
+/// oder die Wiki-Kette ist ein Kettensuffix; 2 = Ortsname als irgendein
+/// Kettensegment (bestehende Toleranz).
+fn terminal_match_tier(name: &str, wiki_chain: &str, terminal: &Entity) -> Option<u8> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let t_chain = terminal.subtitle.trim();
+    let wiki_segs = chain_segments(wiki_chain);
+    let t_segs = chain_segments(t_chain);
+    if !wiki_segs.is_empty() && !t_segs.is_empty() && wiki_segs == t_segs {
+        return Some(0);
+    }
+    // (a) letztes Kettensegment == Ortsname.
+    let last_seg = t_segs.last().map(|s| s.eq_ignore_ascii_case(name));
+    // (b) Terminal-Name endet auf "- <Ortsname>" (UEX-Namenskonvention).
+    let name_suffix = terminal
+        .name
+        .trim()
+        .to_lowercase()
+        .ends_with(&format!("- {}", name.to_lowercase()));
+    // (c) die Wiki-Kette ist ein Kettensuffix der UEX-Kette.
+    let chain_suffix = !wiki_segs.is_empty()
+        && t_segs.len() >= wiki_segs.len()
+        && t_segs[t_segs.len() - wiki_segs.len()..]
+            .iter()
+            .zip(&wiki_segs)
+            .all(|(t, w)| t.eq_ignore_ascii_case(w));
+    if last_seg == Some(true) || name_suffix || chain_suffix {
+        return Some(1);
+    }
+    if chain_has(t_chain, name) {
+        return Some(2);
+    }
+    None
+}
+
+/// Wählt den besten UEX-Terminal für eine Wiki-Location aus: niedrigster
+/// Match-Tier zuerst; bei Gleichstand gewinnt der Kandidat im gleichen
+/// System (erstes Kettensegment der Wiki-Kette), dann die Monetär-Heuristik,
+/// dann die stabile Reihenfolge. Kein Match → None (→ NotFound).
+fn best_terminal_match<'a>(
+    name: &str,
+    wiki_chain: &str,
+    terminals: &'a [Entity],
+) -> Option<&'a Entity> {
+    let system = chain_segments(wiki_chain)
+        .first()
+        .map(|s| s.to_lowercase());
+    let mut best: Option<(u8, bool, bool, &'a Entity)> = None;
+    for t in terminals {
+        let Some(tier) = terminal_match_tier(name, wiki_chain, t) else {
+            continue;
+        };
+        let system_match = system
+            .as_deref()
+            .zip(chain_segments(&t.subtitle).first())
+            .is_some_and(|(sys, first)| sys.eq_ignore_ascii_case(first));
+        let money = is_money_terminal(&t.name);
+        let better = match &best {
+            None => true,
+            Some((b_tier, b_sys, b_money, _)) => {
+                (tier, !system_match, !money) < (*b_tier, !*b_sys, !*b_money)
+            }
+        };
+        if better {
+            best = Some((tier, system_match, money, t));
+        }
+    }
+    best.map(|(_, _, _, t)| t)
 }
 
 /// Does the UEX chain contain `name` as one of its segments?
@@ -492,6 +565,147 @@ mod tests {
         assert!(is_money_terminal("Trading console - Everus"));
         assert!(!is_money_terminal("Landing Services - Checkmate"));
         assert!(!is_money_terminal("Fuel Station - Checkmate"));
+    }
+
+    fn term(id: u64, name: &str, chain: &str) -> Entity {
+        Entity {
+            id,
+            kind: EntityKind::Terminals,
+            name: name.into(),
+            code: None,
+            subtitle: chain.into(),
+        }
+    }
+
+    /// Tier-0: exakte Ketten-Übereinstimmung.
+    #[test]
+    fn tier0_exact_chain_match() {
+        let t = term(1, "Shop - X", "Stanton > Hurston > Aberdeen");
+        assert_eq!(
+            terminal_match_tier("Aberdeen", "Stanton > Hurston > Aberdeen", &t),
+            Some(0)
+        );
+    }
+
+    /// Tier 1 (a): letztes Kettensegment == Ortsname — Wiki „Nyx > Levski“
+    /// vs. UEX „Nyx > Delamar > Levski“ (echter Cache-Befund, t_d43ac351).
+    #[test]
+    fn tier1_last_segment_match() {
+        let t = term(109, "Conscientious Objects - Levski", "Nyx > Delamar > Levski");
+        assert_eq!(
+            terminal_match_tier("Levski", "Nyx > Levski", &t),
+            Some(1),
+            "Letztes Segment 'Levski' muss trotz fehlendem 'Delamar' matchen"
+        );
+    }
+
+    /// Tier 1 (b): UEX-Namenskonvention „- <Ortsname>“ — der Checkmate-Fall:
+    /// UEX-Kette endet auf „Checkmate Station“, der Terminal-Name auf
+    /// „- Checkmate“; ohne Namensuffix-Regel bleibt der Match leer.
+    #[test]
+    fn tier1_name_suffix_match() {
+        let t = term(
+            436,
+            "Commodity Shop - Admin - Checkmate",
+            "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station",
+        );
+        assert_eq!(
+            terminal_match_tier("Checkmate", "Pyro > Checkmate", &t),
+            Some(1)
+        );
+        // Kein Über-Matchen: „Checkmate Clinic“-Terminal endet nicht auf
+        // „- Checkmate“ und seine Kette trägt den Namen nicht.
+        let clinic = term(
+            500,
+            "Checkmate Clinic",
+            "Pyro > Checkmate > Checkmate Clinic",
+        );
+        assert_eq!(
+            terminal_match_tier("Checkmate Station", "Pyro > Checkmate", &clinic),
+            None
+        );
+    }
+
+    /// Tier 1 (c): die Wiki-Kette ist ein Kettensuffix der UEX-Kette.
+    #[test]
+    fn tier1_chain_suffix_match() {
+        let t = term(
+            441,
+            "Refinery Shop",
+            "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station",
+        );
+        assert_eq!(
+            terminal_match_tier(
+                "Checkmate Station",
+                "Monox Lagrange Point 4 > Checkmate Station",
+                &t
+            ),
+            Some(1)
+        );
+    }
+
+    /// Tier 2: Ortsname als irgendein Segment (bestehende Toleranz).
+    #[test]
+    fn tier2_any_segment_match() {
+        let t = term(1, "Shop", "Stanton > Hurston > Aberdeen");
+        assert_eq!(
+            terminal_match_tier("Hurston", "Stanton > Hurston > Hurston Landing", &t),
+            Some(2)
+        );
+        // Gar kein Match → None (→ NotFound-Verhalten).
+        assert_eq!(
+            terminal_match_tier("Orbituary", "Pyro > Orbituary", &t),
+            None
+        );
+    }
+
+    /// N1-Mehrdeutigkeit (t_d43ac351): gleicher Ortsname in zwei Systemen —
+    /// der System-Kontext (erstes Kettensegment der Wiki-Kette) entscheidet,
+    /// nicht die Reihenfolge oder die Monetär-Heuristik.
+    #[test]
+    fn best_match_uses_system_context_for_ambiguous_location_names() {
+        let wiki_name = "Guns";
+        let wiki_chain = "Nyx > Delamar > Guns";
+        let terminals = vec![
+            // Gleicher Tier, falsches System, monetär (gewöbe sonst vor).
+            term(
+                437,
+                "Guns - Checkmate",
+                "Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station",
+            ),
+            // Gleicher Tier, richtiges System, NICHT monetär.
+            term(1, "Guns - Delamar", "Nyx > Delamar > Guns"),
+        ];
+        let chosen = best_terminal_match(wiki_name, wiki_chain, &terminals).unwrap();
+        assert_eq!(
+            chosen.id, 1,
+            "System-Kontext (Nyx) muss vor Monetär-Heuristik und Reihenfolge gehen"
+        );
+    }
+
+    /// Monetär-Heuristik als letzter Gleichstand-Tiebreaker bei gleichem Tier
+    /// und gleichem System.
+    #[test]
+    fn best_match_prefers_money_terminal_within_tier_and_system() {
+        let terminals = vec![
+            term(393, "Landing Services - Levski", "Nyx > Delamar > Levski"),
+            term(778, "Commodity Shop - Levski", "Nyx > Delamar > Levski"),
+        ];
+        let chosen = best_terminal_match("Levski", "Nyx > Levski", &terminals).unwrap();
+        assert_eq!(chosen.id, 778);
+    }
+
+    /// Tier-1 schlägt Tier-2, auch wenn der Tier-2-Kandidat monetär wäre.
+    #[test]
+    fn lower_tier_wins_over_higher_tier() {
+        let terminals = vec![
+            // Tier 2: Name nur als irgendein Segment.
+            term(9, "Trading console - Everus", "Stanton > Crusader > Everus > Levski"),
+            // Tier 1: letztes Segment == Ortsname.
+            term(778, "Commodity Shop - Levski", "Nyx > Delamar > Levski"),
+        ];
+        let chosen = best_terminal_match("Levski", "Nyx > Levski", &terminals).unwrap();
+        assert_eq!(chosen.id, 778);
     }
 
     #[test]
