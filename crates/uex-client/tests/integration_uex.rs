@@ -156,6 +156,31 @@ impl MockedApi {
                 .await;
         }
 
+        // Marketplace: param-specific mocks first (wiremock matches in mount
+        // order — the id_item mock must outrank the operation mocks because a
+        // q→id_item fetch may also carry operation), the catch-all covers any
+        // other shape.
+        // Item-scoped fetch (q → id_item server-side path): MacFlex 174.
+        Mock::given(method("GET"))
+            .and(path("/marketplace_listings"))
+            .and(query_param("id_item", "174"))
+            .respond_with(json_response(&fixture("marketplace_item_174.json")))
+            .mount(&server)
+            .await;
+        // operation=sell → recorded sell rows; operation=buy → buy rows with
+        // one overlapping id (179899) to exercise the merge dedupe.
+        Mock::given(method("GET"))
+            .and(path("/marketplace_listings"))
+            .and(query_param("operation", "sell"))
+            .respond_with(json_response(&fixture("marketplace_listings.json")))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/marketplace_listings"))
+            .and(query_param("operation", "buy"))
+            .respond_with(json_response(&fixture("marketplace_listings_buy.json")))
+            .mount(&server)
+            .await;
         Mock::given(method("GET"))
             .and(path("/marketplace_listings"))
             .respond_with(json_response(&fixture("marketplace_listings.json")))
@@ -551,8 +576,9 @@ async fn marketplace_serves_cache_while_fresh() {
         .await
         .unwrap();
 
-    // second call within TTL: served from cache — the only new requests are
-    // the star-system probe (already stored) → no /marketplace_listings call.
+    // second call within TTL: served from cache — the first call spent two
+    // /marketplace_listings fetches (sell + buy windows) plus the star-system
+    // probe; the second adds none of them.
     let before = api.server.received_requests().await.unwrap().len();
     p.marketplace_offers(MarketplaceFilter::default())
         .await
@@ -560,8 +586,136 @@ async fn marketplace_serves_cache_while_fresh() {
     let after = api.server.received_requests().await.unwrap().len();
     assert_eq!(
         (after, before),
-        (2, 2),
+        (3, 3),
         "cache-fresh marketplace read must not hit the API (cache served)"
+    );
+}
+
+#[tokio::test]
+async fn market_all_mode_merges_sell_and_buy_windows() {
+    // P1 regression: the API exposes no pagination and caps each fetch, so the
+    // old single fetch only ever saw one newest-window — q/sort over it looked
+    // "ignored" for the all view. The all mode must merge BOTH operation
+    // windows (and dedupe overlapping ids) before filtering/sorting locally.
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    let offers = p
+        .marketplace_offers(MarketplaceFilter {
+            sort: Some(provider::OfferSort::PriceAsc),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    // both operations present in the merged view
+    assert!(
+        offers
+            .iter()
+            .any(|o| o.operation == provider::MarketOperation::Sell),
+        "sell window missing"
+    );
+    assert!(
+        offers
+            .iter()
+            .any(|o| o.operation == provider::MarketOperation::Buy),
+        "buy window missing"
+    );
+    // the id 179899 exists in BOTH fixtures → merged exactly once
+    assert_eq!(
+        offers.iter().filter(|o| o.id == 179899).count(),
+        1,
+        "overlapping id must be deduped"
+    );
+    // price sort spans the merged set
+    let prices: Vec<f64> = offers.iter().map(|o| o.price).collect();
+    let mut sorted = prices.clone();
+    sorted.sort_by(|a, b| a.total_cmp(b));
+    assert_eq!(
+        prices, sorted,
+        "price ascending sort across merged windows failed"
+    );
+
+    // exactly two /marketplace_listings calls, one per operation
+    let reqs = api.server.received_requests().await.unwrap();
+    let marketplace_ops: Vec<Option<String>> = reqs
+        .iter()
+        .filter(|r| r.url.path().contains("marketplace_listings"))
+        .map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(k, _)| k == "operation")
+                .map(|(_, v)| v.to_string())
+        })
+        .collect();
+    assert_eq!(
+        marketplace_ops,
+        vec![Some("sell".into()), Some("buy".into())],
+        "all mode must fetch one window per operation"
+    );
+    // the API ignores a `limit` parameter — the client must not send one
+    assert!(
+        reqs.iter()
+            .filter(|r| r.url.path().contains("marketplace_listings"))
+            .all(|r| !r.url.query_pairs().any(|(k, _)| k == "limit")),
+        "no limit param may be sent (API ignores it)"
+    );
+}
+
+#[tokio::test]
+async fn market_wts_resolves_term_to_item_and_fetches_server_side() {
+    // P1 regression: WTS + term ("Parallax"-style) must not filter a tiny
+    // newest window — a term that names an item goes to the API as `id_item`
+    // (+ `operation`), which returns the COMPLETE per-item set and unlocks
+    // the 1,000-row cap, so the local price sort acts on the real data.
+    let api = MockedApi::start().await;
+    let (p, _cache) = provider(&api);
+
+    let offers = p
+        .marketplace_offers(MarketplaceFilter {
+            q: "MacFlex".into(),
+            operation: Some(provider::MarketOperation::Sell),
+            sort: Some(provider::OfferSort::PriceDesc),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        !offers.is_empty(),
+        "item-scoped fetch must return the item's offers"
+    );
+    assert!(
+        offers.iter().all(|o| o.item_id == 174),
+        "every offer must come from the id_item=4745 fetch"
+    );
+    assert!(
+        offers
+            .iter()
+            .all(|o| o.operation == provider::MarketOperation::Sell)
+    );
+    let prices: Vec<f64> = offers.iter().map(|o| o.price).collect();
+    let mut sorted = prices.clone();
+    sorted.sort_by(|a, b| b.total_cmp(a));
+    assert_eq!(prices, sorted, "price descending sort failed");
+
+    let reqs = api.server.received_requests().await.unwrap();
+    let item_scoped = reqs
+        .iter()
+        .filter(|r| r.url.path().contains("marketplace_listings"))
+        .filter(|r| {
+            r.url
+                .query_pairs()
+                .any(|(k, v)| k == "id_item" && v == "174")
+        })
+        .count();
+    assert_eq!(item_scoped, 1, "exactly one id_item fetch expected");
+    // no unscoped window fetch alongside the item-scoped one
+    assert!(
+        reqs.iter()
+            .filter(|r| r.url.path().contains("marketplace_listings"))
+            .all(|r| r.url.query_pairs().any(|(k, _)| k == "id_item")),
+        "q with an item match must not fall back to window fetches"
     );
 }
 
@@ -684,4 +838,43 @@ async fn api_error_status_maps_to_http_error_with_message() {
         }
         other => panic!("expected Http error, got {other:?}"),
     }
+}
+
+// Regression (QA-Runde 3, Auflage B): die Live-API schickt bei
+// /marketplace_listings einzelne Zeilen mit `"location": null` — ein
+// `#[serde(default)]` alleine fängt das NICHT ab (null ≠ fehlendes Feld) und
+// der Fetch-Plan (Verkauf+Kauf-Fenster) scheiterte am realen Datenbestand
+// (`invalid type: null, expected a string`). Die String-Felder des
+// ListingRow sind jetzt null-tolerant (null → "").
+#[tokio::test]
+async fn marketplace_offers_null_location_tolerated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/star_systems"))
+        .respond_with(json_response(&fixture("star_systems.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/marketplace_listings"))
+        .respond_with(json_response(&fixture("marketplace_listings_null.json")))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let p = UexProvider::with_base_url(cache, None, &server.uri(), Duration::ZERO).unwrap();
+
+    let offers = p
+        .marketplace_offers(MarketplaceFilter {
+            operation: Some(provider::MarketOperation::Sell),
+            ..Default::default()
+        })
+        .await
+        .expect("rows with location: null must not fail the fetch");
+    assert!(!offers.is_empty(), "expected the null-fixture rows");
+    // Kontrolle: 2 der 3 Fixture-Zeilen schicken `"location": null` (→ ""),
+    // die dritte trägt eine echte Location — beide Formen müssen gleichzeitig
+    // durchkommen.
+    assert_eq!(offers.iter().filter(|o| o.location.is_empty()).count(), 2);
+    assert_eq!(offers.iter().filter(|o| !o.location.is_empty()).count(), 1);
+    assert!(offers.iter().all(|o| !o.slug.is_empty()));
 }

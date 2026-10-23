@@ -1,0 +1,531 @@
+/* ===========================================================================
+   P8 — Preis-Detail-Redesign · gemeinsame Basis fuer die Varianten-Mockups
+   ---------------------------------------------------------------------------
+   Token-Vertrag 1:1 aus src/app.css uebernommen (Zeilen 16-99).
+   KEIN Literalfarbwert ausserhalb der Token-Bloecke. Die einzige Ausnahme ist
+   der Mockup-Buehnen-Block (--mock-*), der nicht Teil des Produkt-Vertrags ist
+   und nur den Spielhintergrund simuliert.
+   =========================================================================== */
+
+html[data-palette="amber"] {
+	--panel: #11100d;
+	--panel2: #1b1813;
+	--panel3: #0c0b09;
+	--line: #332c1f;
+	--lineb: #4a3f2b;
+	--fg: #fdf6e8;
+	--fgdim: #c3b49a;
+	--fgfaint: #a3927a;
+	--accent: #f2a33c;
+	--accent-h: #ffc46e;
+	--accent-d: #7d5220;
+	--on-accent: #0b0b0b;
+	--buy: #6bd694;
+	--sell: #ffcb63;
+	--ok: #6bd694;
+	--warn: #ffcb63;
+	--alert: #ff7a5c;
+}
+
+html[data-palette="mfcd"] {
+	--panel: #0a120e;
+	--panel2: #122019;
+	--panel3: #070d0a;
+	--line: #1e3328;
+	--lineb: #2e4c3b;
+	--fg: #e9fbf2;
+	--fgdim: #9dc0ae;
+	--fgfaint: #84a795;
+	--accent: #4be08a;
+	--accent-h: #95f7bd;
+	--accent-d: #1f6a42;
+	--on-accent: #04140c;
+	--buy: #95f7bd;
+	--sell: #ffcb63;
+	--ok: #95f7bd;
+	--warn: #ffcb63;
+	--alert: #ff7a5c;
+}
+
+html[data-palette="bloom"] {
+	--panel: #0d0c16;
+	--panel2: #171528;
+	--panel3: #090811;
+	--line: #262139;
+	--lineb: #3a3355;
+	--fg: #f1eefc;
+	--fgdim: #b0a8cc;
+	--fgfaint: #9a92b8;
+	--accent: #a98bf5;
+	--accent-h: #cfbcff;
+	--accent-d: #4d3a86;
+	--on-accent: #0a0714;
+	--buy: #6bd694;
+	--sell: #ffcb63;
+	--ok: #6bd694;
+	--warn: #ffcb63;
+	--alert: #ff7a5c;
+}
+
+/* --------------------------- Layout-Tokens ------------------------------- */
+:root {
+	--w-min: 60vw;
+	--w-max: 90vw;
+	--pad-top: 7.5vh;
+	--row-h: 66px;
+	--pad-x: max(1.6vh, 18px);
+	--fs-input: max(2.5vh, 1.5rem);
+	--pane-h: min(58vh, 640px);
+	--font-ui: 'Inter', 'Liberation Sans', system-ui, sans-serif;
+	--font-mono: 'JetBrainsMono NF', 'JetBrainsMono Nerd Font', 'Liberation Mono', monospace;
+	--shadow-shell: 0 20px 52px rgba(0, 0, 0, 0.78);
+	color-scheme: dark;
+
+	/* NUR Mockup-Buehne (simuliert Gameplay hinter dem Overlay) — nicht Teil
+	   des Produkt-Token-Vertrags. */
+	--mock-bg-1: #05060a;
+	--mock-bg-2: #16110c;
+	--mock-vig: rgba(0, 0, 0, 0.72);
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html,
+body {
+	height: 100%;
+	background: transparent;
+	color: var(--fg);
+	font-family: var(--font-ui);
+	-webkit-font-smoothing: antialiased;
+	overflow: hidden;
+}
+
+/* Mockup-Buehne: dunkler Grund statt transparentem Fenster. */
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	background:
+		radial-gradient(120% 90% at 22% 18%, var(--mock-bg-2), transparent 62%),
+		linear-gradient(160deg, var(--mock-bg-1), var(--mock-bg-1));
+	z-index: -1;
+}
+
+body::after {
+	content: 'Hintergrund: Gameplay (im Mockup neutral simuliert)';
+	position: fixed;
+	left: 14px;
+	bottom: 44px;
+	font: 600 10px/1 var(--font-mono);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+	opacity: 0.35;
+}
+
+/* --------------------------- Palette-Rahmen ------------------------------ */
+.pal-root {
+	width: fit-content;
+	min-width: min(var(--w-min), 94vw);
+	max-width: var(--w-max);
+	margin: 0 auto;
+	padding: var(--pad-top) 0 2vh;
+	position: relative;
+}
+
+.shell {
+	position: relative;
+	overflow: hidden;
+	background: var(--panel);
+	border: 1px solid var(--lineb);
+	border-left: 3px solid var(--accent);
+	clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
+	box-shadow: var(--shadow-shell);
+}
+
+/* --------------------------- Suchzeile ----------------------------------- */
+.srow {
+	display: flex;
+	align-items: center;
+	gap: var(--pad-x);
+	min-height: max(8vh, 72px);
+	padding: 0 var(--pad-x);
+	background: var(--panel2);
+	border-bottom: 2px solid var(--accent);
+}
+
+.srow .ico {
+	width: max(2.6vh, 22px);
+	height: max(2.6vh, 22px);
+	flex: 0 0 max(2.6vh, 22px);
+	color: var(--accent);
+}
+
+.srow .ico svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+.q {
+	flex: 1;
+	background: none;
+	border: 0;
+	outline: 0;
+	color: var(--fg);
+	font: 500 var(--fs-input)/1.15 var(--font-ui);
+	letter-spacing: 0.005em;
+}
+
+.smode {
+	font: 700 max(1.15vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--accent);
+	white-space: nowrap;
+}
+
+.esc {
+	font: 600 max(1.15vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--fgfaint);
+	border: 1px solid var(--lineb);
+	padding: 0.45vh 0.6em;
+	border-radius: 3px;
+}
+
+.helper {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 0.9em;
+	padding: 0.7vh var(--pad-x) 1vh;
+	background: var(--panel2);
+	border-bottom: 1px solid var(--lineb);
+	font: 700 max(1.15vh, 10.5px)/1.8 var(--font-mono);
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.helper span {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.45em;
+	white-space: nowrap;
+}
+
+.helper .sep {
+	color: var(--lineb);
+}
+
+.helper kbd {
+	font: inherit;
+	letter-spacing: 0.06em;
+	color: var(--accent);
+	border: 1px solid var(--lineb);
+	padding: 0.3em 0.5em;
+}
+
+.found {
+	display: flex;
+	justify-content: center;
+	padding: 1.1vh var(--pad-x) 0.9vh;
+	background: var(--panel3);
+	border-bottom: 1px solid var(--line);
+}
+
+.found .c {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5em;
+	padding: 0.4vh 0.9em;
+	border: 1px solid var(--lineb);
+	background: var(--panel);
+	color: var(--fgdim);
+	font: 700 max(1.1vh, 10px)/1.7 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.found .c b {
+	color: var(--accent);
+	font-weight: 700;
+}
+
+/* --------------------------- Detail-Rahmen ------------------------------- */
+.pane-detail {
+	display: block;
+	max-height: var(--pane-h);
+	overflow: auto;
+	scrollbar-width: thin;
+	background: var(--panel);
+	border-top: 1px solid var(--lineb);
+}
+
+body[data-pane="full"] .pane-detail {
+	max-height: none;
+}
+
+.pane-detail::-webkit-scrollbar {
+	width: 8px;
+}
+
+.pane-detail::-webkit-scrollbar-thumb {
+	background: var(--lineb);
+	border-radius: 4px;
+}
+
+.d-head {
+	display: flex;
+	align-items: center;
+	gap: var(--pad-x);
+	padding: calc(var(--pad-x) * 0.6) var(--pad-x);
+	border-bottom: 1px solid var(--lineb);
+	background: var(--panel2);
+	min-height: var(--row-h);
+}
+
+.d-head .d-back {
+	flex: 0 0 auto;
+	background: var(--panel3);
+	border: 1px solid var(--lineb);
+	color: var(--accent);
+	font: 700 max(1.05vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	padding: 0.6vh 0.8em;
+	cursor: pointer;
+}
+
+.d-head .d-title {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.d-head .d-title h2 {
+	font: 600 max(1.7vh, 15px)/1.15 var(--font-ui);
+	letter-spacing: -0.01em;
+	color: var(--fg);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.d-head .d-title .c {
+	display: block;
+	margin-top: 0.2vh;
+	font: 500 max(1.05vh, 10px)/1 var(--font-mono);
+	color: var(--fgdim);
+}
+
+.d-head .d-price {
+	flex: 0 0 auto;
+	display: flex;
+	gap: calc(var(--pad-x) * 0.9);
+}
+
+.d-head .d-price span {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 0.3vh;
+	font: 600 max(1.4vh, 12.5px)/1.2 var(--font-mono);
+	white-space: nowrap;
+}
+
+.d-head .d-price i {
+	font: 700 max(1vh, 9px)/1 var(--font-mono);
+	font-style: normal;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.d-head .d-price .buy {
+	color: var(--buy);
+}
+
+.d-head .d-price .sell {
+	color: var(--sell);
+}
+
+.lock-hint {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.45em;
+	width: 100%;
+	padding: 0.5vh var(--pad-x) 0.4vh;
+	font: 600 max(1.05vh, 10.5px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--fgdim);
+	background: var(--panel2);
+	border-bottom: 1px solid var(--line);
+}
+
+.lock-hint .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+}
+
+.d-body {
+	padding: calc(var(--pad-x) * 0.6) var(--pad-x) calc(var(--pad-x) * 0.8);
+}
+
+.d-foot {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0.8em;
+	padding: 0.8vh var(--pad-x);
+	border-top: 1px solid var(--lineb);
+	background: var(--panel3);
+	font: 600 max(1.05vh, 10px)/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	color: var(--fgdim);
+}
+
+.d-foot kbd {
+	color: var(--accent);
+	border: 1px solid var(--lineb);
+	padding: 0.25vh 0.5em;
+}
+
+.d-foot .sep {
+	color: var(--lineb);
+}
+
+.foot {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 8px 14px;
+	background: var(--panel3);
+	border-top: 1px solid var(--lineb);
+	font: 600 10px/1.4 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+}
+
+.foot b {
+	color: var(--fgdim);
+	font-weight: 600;
+}
+
+.sync {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+}
+
+.sync .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--ok);
+}
+
+.spot-status {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.spot-status .dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--ok);
+	box-shadow: 0 0 6px var(--ok);
+}
+
+/* Auswahl-Zustand der Tastatur-Navigation (↵) — in allen Varianten gleich:
+   Akzentflaeche wie im bestehenden .pr.is-chosen der App. */
+.nav-row.is-chosen {
+	background: var(--accent-h);
+	box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.nav-row.is-chosen .vA-name,
+.nav-row.is-chosen .vA-name small,
+.nav-row.is-chosen .vA-price,
+.nav-row.is-chosen .vA-price small,
+.nav-row.is-chosen .vA-ic,
+.nav-row.is-chosen .vB-t,
+.nav-row.is-chosen .vB-t small,
+.nav-row.is-chosen .vB-c,
+.nav-row.is-chosen .vC-t,
+.nav-row.is-chosen .vC-t small,
+.nav-row.is-chosen .vC-c {
+	color: var(--on-accent);
+}
+
+/* --------------------------- Mockup-Dev-Leiste --------------------------- */
+.devbar {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+	padding: 8px 14px;
+	background: var(--panel3);
+	border-top: 1px solid var(--lineb);
+	font: 700 10px/1 var(--font-mono);
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--fgfaint);
+	z-index: 10;
+}
+
+.devbar .g {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.devbar button {
+	background: var(--panel);
+	border: 1px solid var(--lineb);
+	color: var(--fgdim);
+	font: inherit;
+	letter-spacing: 0.1em;
+	padding: 5px 9px;
+	cursor: pointer;
+}
+
+.devbar button.on {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--on-accent);
+}
+
+.devbar a {
+	color: var(--fgdim);
+	text-decoration: none;
+	border: 1px solid var(--lineb);
+	padding: 5px 9px;
+}
+
+.devbar a.on {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: var(--on-accent);
+}
+
+.devbar .note {
+	letter-spacing: 0.06em;
+	text-transform: none;
+	color: var(--fgfaint);
+}

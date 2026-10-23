@@ -48,6 +48,17 @@ where
     Ok(Option::<u64>::deserialize(d)?.unwrap_or(0))
 }
 
+/// `null` → `""` for plain string fields. The live `/marketplace_listings`
+/// endpoint sends `null` for optional text fields (e.g. `location` in ~2% of
+/// rows) instead of an empty string — `#[serde(default)]` alone does NOT cover
+/// that, because an explicit `null` is not a missing field.
+pub(crate) fn de_string_null_to_empty<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
 /// Generic UEX response envelope.
 #[derive(Debug, Deserialize)]
 pub struct Envelope<T> {
@@ -167,9 +178,9 @@ pub struct PriceRow {
 #[derive(Debug, Deserialize)]
 pub struct ListingRow {
     pub id: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub description: String,
     #[serde(default)]
     pub id_item: u64,
@@ -180,24 +191,24 @@ pub struct ListingRow {
     #[serde(default)]
     pub id_star_system: u64,
     /// "buy" | "sell".
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub operation: String,
     /// "item" | "service" | "contract".
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     #[allow(non_snake_case)]
     pub r#type: String,
     /// The API sends the price as a STRING to preserve precision.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub price: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub currency: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub unit: String,
     #[serde(default)]
     pub in_stock: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub location: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub user_name: String,
     /// Quality on the source's scale (UEX: 0–1000); null when not set.
     #[serde(default)]
@@ -211,7 +222,7 @@ pub struct ListingRow {
     #[serde(default)]
     pub date_expiration: Option<u64>,
     /// Permalink slug on uexcorp.space (deep-link target).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub slug: String,
 }
 
