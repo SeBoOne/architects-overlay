@@ -241,9 +241,7 @@ fn best_terminal_match<'a>(
     wiki_chain: &str,
     terminals: &'a [Entity],
 ) -> Option<&'a Entity> {
-    let system = chain_segments(wiki_chain)
-        .first()
-        .map(|s| s.to_lowercase());
+    let system = chain_segments(wiki_chain).first().map(|s| s.to_lowercase());
     let mut best: Option<(u8, bool, bool, &'a Entity)> = None;
     for t in terminals {
         let Some(tier) = terminal_match_tier(name, wiki_chain, t) else {
@@ -591,7 +589,11 @@ mod tests {
     /// vs. UEX „Nyx > Delamar > Levski“ (echter Cache-Befund, t_d43ac351).
     #[test]
     fn tier1_last_segment_match() {
-        let t = term(109, "Conscientious Objects - Levski", "Nyx > Delamar > Levski");
+        let t = term(
+            109,
+            "Conscientious Objects - Levski",
+            "Nyx > Delamar > Levski",
+        );
         assert_eq!(
             terminal_match_tier("Levski", "Nyx > Levski", &t),
             Some(1),
@@ -700,7 +702,11 @@ mod tests {
     fn lower_tier_wins_over_higher_tier() {
         let terminals = vec![
             // Tier 2: Name nur als irgendein Segment.
-            term(9, "Trading console - Everus", "Stanton > Crusader > Everus > Levski"),
+            term(
+                9,
+                "Trading console - Everus",
+                "Stanton > Crusader > Everus > Levski",
+            ),
             // Tier 1: letztes Segment == Ortsname.
             term(778, "Commodity Shop - Levski", "Nyx > Delamar > Levski"),
         ];
