@@ -830,7 +830,7 @@ html[data-window="spotlight"] .shell {
 	background: transparent;
 }
 
-/* Kopfzeile: ← Zurück | Titel | Bestpreis-Chip | Ortssperre-Hinweis */
+/* Kopfzeile: ← Zurück | Titel | Bestpreis-Chip */
 .d-head {
 	display: flex;
 	align-items: center;
@@ -962,51 +962,7 @@ html[data-window="spotlight"] .shell {
 	color: var(--lineb);
 }
 
-/* --------------------------- Ortssperre (Lock) ---------------------------- */
-.found .lock-badge {
-	display: inline-flex;
-	align-items: center;
-	gap: 0.4em;
-	padding: 0.3vh 0.85em;
-	border: 1px solid var(--accent);
-	background: color-mix(in srgb, var(--accent) 18%, transparent);
-	font: 700 max(1.05vh, 10.5px)/1 var(--font-mono);
-	letter-spacing: 0.1em;
-	color: var(--on-accent);
-	white-space: nowrap;
-}
-
-.found .lock-badge .lock-x {
-	margin-left: 0.3em;
-	background: none;
-	border: 0;
-	color: var(--on-accent);
-	opacity: 0.8;
-	font-size: 1em;
-	line-height: 1;
-	cursor: pointer;
-}
-
-.found .lock-badge .lock-x:hover {
-	opacity: 1;
-}
-
-.found .lock-btn {
-	margin-left: 0.6em;
-	background: var(--panel3);
-	border: 1px solid var(--accent);
-	color: var(--accent);
-	font: 700 max(1.05vh, 10px)/1 var(--font-mono);
-	letter-spacing: 0.1em;
-	padding: 0.3vh 0.7em;
-	cursor: pointer;
-}
-
-.found .lock-btn:hover {
-	background: color-mix(in srgb, var(--accent) 28%, transparent);
-}
-
-/* Ortssperre-Hinweis unterhalb des Found-Chips bzw. im Detail-Kopf */
+/* Filter-Hinweis unterhalb des Found-Chips bzw. im Detail-Kopf */
 .lock-hint {
 	display: inline-flex;
 	align-items: center;

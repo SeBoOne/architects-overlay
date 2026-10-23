@@ -693,8 +693,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
-	// Alt+Zahl nur fokussieren: Badge ausgegraut, aber NICHT öffnen.
-	// (NB-1: das Öffnen übernimmt Enter auf der fokussierten Zeile.)
+	// Alt+Zahl fokussiert nur (Badge is-focus, NICHT aufklappen). Das Öffnen
+	// übernimmt Enter auf der fokussierten Zeile (toggleOpen(focusIdx ?? sel))
+	// bzw. Klick — NB-1 + QA-Kommentar 56.
 	function focusOnly(idx: number) {
 		focusRow(idx);
 	}
