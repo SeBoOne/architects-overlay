@@ -310,12 +310,96 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	function hangarBlank(): HangarItem {
+		return {
+			id: null,
+			name: '',
+			origin: 'ingame',
+			insurance: null,
+			custom_name: '',
+			entity_type: 'ship',
+			base_ship: '',
+			ship_code: '',
+			manufacturer: '',
+			purchase_price: null,
+			purchase_date: '',
+			pledge_id: '',
+			pledge_name: '',
+			warbond: false,
+			ccud: false,
+			created_at: null,
+			updated_at: null
+		};
+	}
+	let hangarFormOpen = $state(false);
+	let hangarEdit = $state(false);
+	let hangarForm = $state<HangarItem>(hangarBlank());
+	let hangarFormPrice = $state('');
+
+	function hangarOpenAdd() {
+		hangarForm = hangarBlank();
+		hangarFormPrice = '';
+		hangarFormOpen = true;
+		hangarEdit = false;
+		hangarView = 'list';
+		hangarDetail = null;
+	}
+
+	function hangarStartEdit(it: HangarItem) {
+		hangarForm = { ...it };
+		hangarFormPrice = it.purchase_price != null ? String(it.purchase_price) : '';
+		hangarEdit = true;
+		hangarFormOpen = false;
+	}
+
+	function hangarCancelEdit() {
+		hangarFormOpen = false;
+		hangarEdit = false;
+	}
+
+	async function hangarSaveForm() {
+		hangarBusy = true;
+		hangarNote = '';
+		try {
+			const name = hangarForm.name.trim();
+			if (!name) throw new Error('Name fehlt');
+			const price = hangarFormPrice.trim();
+			const item: HangarItem = {
+				...hangarForm,
+				name,
+				purchase_price: price === '' ? null : Number(price.replace(',', '.'))
+			};
+			let msg;
+			if (item.id != null) {
+				await invoke<HangarItem>('hangar_update', { item });
+				msg = `Aktualisiert: ${name}`;
+			} else {
+				const saved = await invoke<HangarItem>('hangar_add', { item });
+				msg = `Angelegt: ${hangarDisplayName(saved)}`;
+			}
+			hangarFormOpen = false;
+			hangarEdit = false;
+			await loadHangar(true);
+			hangarNote = msg;
+		} catch (e) {
+			hangarNote = String(e);
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
 	function hangarOpenDetail(item: HangarItem) {
 		hangarDetail = item;
 		hangarView = 'detail';
 	}
 
 	function hangarBack() {
+		if (hangarFormOpen || hangarEdit) {
+			// Formular zuerst schließen, dann View-Ebene.
+			hangarFormOpen = false;
+			hangarEdit = false;
+			return;
+		}
 		if (hangarView === 'detail') {
 			hangarView = 'list';
 			hangarDetail = null;
@@ -1604,10 +1688,42 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('xplorer')}>Import XPLorer</button>
 						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('ccugame')}>Import CCUgame</button>
 						<button class="hbtn" disabled={hangarBusy} onclick={hangarExport}>Export</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={hangarOpenAdd} title="Eintrag manuell anlegen">+ Anlegen</button>
 					</div>
 				</header>
 				{#if hangarNote}<div class="hangar-note">{hangarNote}</div>{/if}
-				{#if hangarView === 'list'}
+				{#if hangarFormOpen && hangarView === 'list'}
+					<form class="hangar-form" onsubmit={(e) => { e.preventDefault(); hangarSaveForm(); }}>
+						<div class="hf-title">EINTRAG ANLEGEN</div>
+						<div class="hf-grid">
+							<label>Name<input bind:value={hangarForm.name} placeholder="z. B. Cutlass Black" required /></label>
+							<label>Typ
+								<select bind:value={hangarForm.entity_type}>
+									<option value="ship">Schiff</option>
+									<option value="vehicle">Fahrzeug</option>
+									<option value="module">Modul</option>
+								</select>
+							</label>
+							<label>Herkunft
+								<select bind:value={hangarForm.origin}>
+									<option value="ingame">Ingame</option>
+									<option value="pledge">Pledge</option>
+								</select>
+							</label>
+							<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
+							<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
+							<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+							<label>Hersteller<input bind:value={hangarForm.manufacturer} /></label>
+							<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" placeholder="z. B. 180" /></label>
+							<label>Datum<input bind:value={hangarForm.purchase_date} placeholder="2025-01-31" /></label>
+						</div>
+						<div class="hf-actions">
+							<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
+							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
+						</div>
+					</form>
+				{/if}
+				{#if hangarView === 'list' && !hangarFormOpen}
 					<div class="hangar-list" role="listbox" aria-label="Hangar-Einträge">
 						{#each hangarFiltered as it, i (it.id ?? `${it.name}#${i}`)}
 							<button
@@ -1634,8 +1750,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
 							<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
 							<span class="hchip ins">{hangarDetail.insurance ?? '—'}</span>
+							{#if !hangarEdit}
+								<button class="hbtn" disabled={hangarBusy} onclick={() => hangarStartEdit(hangarDetail!)}>Bearbeiten</button>
+							{/if}
 							<button class="hbtn danger" disabled={hangarBusy} onclick={() => hangarDelete(hangarDetail!)}>Löschen</button>
 						</div>
+						{#if hangarEdit}
+							<form class="hangar-form" onsubmit={(e) => { e.preventDefault(); hangarSaveForm(); }}>
+								<div class="hf-grid">
+									<label>Name<input bind:value={hangarForm.name} required /></label>
+									<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
+									<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
+									<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+									<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" /></label>
+									<label>Datum<input bind:value={hangarForm.purchase_date} /></label>
+								</div>
+								<div class="hf-actions">
+									<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
+									<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
+								</div>
+							</form>
+						{:else}
 						<dl class="hd-grid">
 							<div><dt>Modell</dt><dd>{hangarDetail.name}</dd></div>
 							<div><dt>Hersteller</dt><dd>{hangarDetail.manufacturer || '—'}</dd></div>
@@ -1660,6 +1795,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<div class="hmodempty">Keine Module zugeordnet.</div>
 								{/each}
 							</div>
+						{/if}
 						{/if}
 					</div>
 				{/if}
