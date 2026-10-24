@@ -11,6 +11,8 @@ use std::sync::Arc;
 #[cfg(desktop)]
 mod app_settings;
 #[cfg(desktop)]
+mod inventory;
+#[cfg(desktop)]
 mod ipc_socket;
 #[cfg(desktop)]
 mod overlay;
@@ -38,6 +40,11 @@ pub fn run() {
             trade::sync_now,
             trade::get_marketplace,
             trade::open_marketplace_listing,
+            inventory::inventory_list,
+            inventory::inventory_locations,
+            inventory::inventory_add,
+            inventory::inventory_update,
+            inventory::inventory_delete,
             app_settings::settings_get,
             app_settings::settings_set_palette,
             app_settings::settings_set_detail_variant,
