@@ -93,6 +93,7 @@ impl RouteSort {
 
 /// Legality-Filter: 0 = alle, 1 = nur legale, 2 = nur illegale Waren.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RouteLegality {
     #[default]
     All,
