@@ -938,22 +938,23 @@ html[data-window="spotlight"] .shell {
    Jede Terminal-Gruppe (.ptab mit .cap-Terminal-Header) bekommt deutlichen
    Abstand + feine Trennlinie zur vorherigen Gruppe; der Terminal-Header
    ist prominenter als die Kauf/Verkauf-Untertrennung. Betrifft NUR die
-   Location-Detail-Gruppen im .d-body, nicht die Einzeldetail-Tabellen. */
-.d-body > .ptab {
+   Location-Detail-Gruppen (.ptab.locgrp im .d-body), nicht die
+   Einzeldetail-Tabellen (deren .ptab keine .locgrp-Klasse trägt). */
+.d-body > .ptab.locgrp {
 	padding-top: calc(var(--pad-x) * 0.9);
 	margin-top: calc(var(--pad-x) * 0.45);
 	border-top: 1px solid var(--lineb);
 }
 
 /* Erste Gruppe: kein doppeltes Abstands-Geblinke unter dem d-head. */
-.d-body > .ptab:first-child {
+.d-body > .ptab.locgrp:first-child {
 	padding-top: 0.3vh;
 	margin-top: 0;
 	border-top: 0;
 }
 
 /* Terminal-Gruppen-Header: kompakt, aber klar vom Tabellenkopf abgesetzt. */
-.d-body > .ptab > .cap {
+.d-body > .ptab.locgrp > .cap {
 	color: var(--fgdim);
 	font-size: max(1.2vh, 11px);
 }

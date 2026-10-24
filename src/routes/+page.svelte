@@ -1682,7 +1682,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									{#if d.location}
 										<!-- Location-Aggregat: je Terminal eine Gruppe (N2: über dLoc gefiltert) -->
 										{#each dLoc as grp}
-											<div class="ptab">
+											<div class="ptab locgrp">
 												<div class="cap">{grp.terminal_name}</div>
 												{#if grp.buys.length || grp.sells.length}
 													<div class="ph"><span>Item</span><span>Preis</span><span>SCU</span></div>
