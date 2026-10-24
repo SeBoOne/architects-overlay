@@ -19,6 +19,8 @@ mod overlay;
 #[cfg(desktop)]
 mod providers;
 #[cfg(desktop)]
+mod routes;
+#[cfg(desktop)]
 mod trade;
 #[cfg(desktop)]
 mod tray;
@@ -46,6 +48,8 @@ pub fn run() {
             trade::sync_now,
             trade::get_marketplace,
             trade::open_marketplace_listing,
+            routes::get_routes,
+            routes::vehicles_scu,
             app_settings::settings_get,
             app_settings::settings_set_palette,
             app_settings::settings_set_detail_variant,

@@ -948,7 +948,7 @@ fn build_status(
 }
 
 /// Map a seam error to a German, user-facing message (design contract).
-fn friendly(e: ProviderError) -> String {
+pub(crate) fn friendly(e: ProviderError) -> String {
     match e {
         ProviderError::RateLimit { retry_after } => match retry_after {
             Some(secs) => format!("HTTP 429 · Rate-Limit (Retry in {secs} s)"),
