@@ -37,6 +37,7 @@
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	import Inventory from '../lib/Inventory.svelte';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -1188,7 +1189,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// Platzhalter-Modi (Inventar/Hangar): nur Esc/F-Tasten wirken — keine
 		// Ergebnis-Navigation, kein Enter im Leeren.
 		if (railMode) {
-			if (k === 'Escape') {
+			// Inventar (t_1bab1fea) besitzt eine eigene Key-Handler-Kette
+			// (Formular → Item-Detail → Übersicht → Suche): Esc geht an die
+			// Komponente, NICHT an diesen Handler. Hangar bleibt der alte
+			// Platzhalter-Pfad (Esc = zurück zur Suche).
+			if (k === 'Escape' && railMode === 'hangar') {
 				railMode = null;
 				focusSearch(true);
 				e.preventDefault();
@@ -1389,9 +1394,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				bind:this={searchEl}
 				bind:value={input}
 				oninput={onInput}
-				placeholder={phase === 'market'
-				? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
-				: inDetail
+				placeholder={railMode === 'inventory'
+				? 'Inventar filtern — Standort oder Material …'
+				: phase === 'market'
+					? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
+					: inDetail
 					? detailHit?.kind === 'location' || detailHit?.kind === 'terminal'
 						? `Filter: Waren in ${detailHit?.name} …`
 						: `Filter: Orte mit Preisen für ${detailHit?.name} …`
@@ -1405,7 +1412,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 		<!-- Helper-Zeile (P7): nur Kategorie-Präfixe + math kurz. Alles andere
 		     (Navigation, Filter, Refresh) lebt in der dynamischen Fußzeile (P6). -->
-		{#if phase !== 'market' && !inDetail}
+		{#if phase !== 'market' && !inDetail && !railMode}
 			<div class="helper">
 				<span><kbd>:c</kbd> commodities</span>
 				<span class="sep">·</span>
@@ -1418,12 +1425,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{/if}
 
 		<!-- Inhalt je Zustand -->
-		{#if railMode}
-			<!-- Inventar/Hangar: Platzhalter-View (eigene Karten, gleiche Rail).
+		{#if railMode === 'inventory'}
+			<!-- Inventar-Modus (t_1bab1fea): eigene SPA-Komponente; das HAUPT-
+			     Suchfeld dient als In-Context-Filter (Standort/Material). -->
+			<Inventory onexit={() => setMode('search')} filter={input} />
+{:else if railMode}
+			<!-- Hangar: Platzhalter-View (eigene Karten, gleiche Rail).
 			     Esc/F1 → zurück zur Suche; das Suchfeld ist hier inert. -->
 			<div class="pane-placeholder" role="status">
 				<div class="center">
-					<div class="big">{railMode === 'inventory' ? 'INVENTAR' : 'HANGAR'}</div>
+					<div class="big">HANGAR</div>
 					<div class="sm">kommt bald — eigener Modus in Arbeit.</div>
 					<div class="sm"><kbd>F1</kbd>/<kbd>Esc</kbd> zurück zur Suche · <kbd>F2</kbd> Marktplatz</div>
 				</div>

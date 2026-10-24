@@ -156,11 +156,14 @@ async def main():
 
         # ---- F3/F4 → Platzhalter, Esc zurück ----
         await key("F3")
-        ph = (await js("document.querySelector('.pane-placeholder .big') ? document.querySelector('.pane-placeholder .big').innerText : 'NONE'")).strip()
-        check("f3-inventar-placeholder", ph == "INVENTAR", ph)
+        # t_1bab1fea: F3 zeigt jetzt den ECHTEN Inventar-Modus (kein Platzhalter).
+        inv = await js("!!document.querySelector('.pane-inventory')")
+        check("f3-opens-inventory", bool(inv), "pane-inventory missing")
+        smode3 = (await js("document.querySelector('.smode') ? document.querySelector('.smode').innerText : 'NONE'")).strip()
+        check("f3-smode-inventar", smode3 == "INVENTAR", smode3)
         await key("Escape")
-        ph_gone = await js("!document.querySelector('.pane-placeholder')")
-        check("esc-placeholder-back", bool(ph_gone))
+        inv_gone = await js("!document.querySelector('.pane-inventory')")
+        check("esc-inventory-back", bool(inv_gone))
         await key("F4")
         ph = (await js("document.querySelector('.pane-placeholder .big') ? document.querySelector('.pane-placeholder .big').innerText : 'NONE'")).strip()
         check("f4-hangar-placeholder", ph == "HANGAR", ph)

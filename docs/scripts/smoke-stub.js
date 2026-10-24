@@ -495,8 +495,68 @@ window.__TAURI_INTERNALS__ = {
 				globalThis.__lastMarket = { filters: filter, returned: out.length };
 				return { source: 'cache', fetched_at: now, offers: out, note: null };
 			}
-			default:
-				return null;
+		case 'inventory_list': {
+			return invRows();
+		}
+		case 'inventory_locations': {
+			const seen = new Set();
+			const names = [];
+			for (const r of __inv.rows) {
+				const k = r.location_name.toLowerCase();
+				if (!seen.has(k)) { seen.add(k); names.push(r.location_name); }
+			}
+			return names;
+		}
+		case 'inventory_add': {
+			const e = a.entry || {};
+			const now = Math.floor(Date.now() / 1000);
+			const row = {
+				id: ++__inv.nextId,
+				entity_kind: e.entity_kind ?? null,
+				entity_id: e.entity_id ?? null,
+				name: e.name, quality: e.quality,
+				location_id: e.location_id ?? null,
+				location_name: e.location_name,
+				quantity: e.quantity, price: e.price ?? null,
+				created_at: now, updated_at: now
+			};
+			__inv.rows.push(row);
+			globalThis.__lastInv = { op: 'add', row };
+			return row;
+		}
+		case 'inventory_update': {
+			const e = a.entry || {};
+			const row = __inv.rows.find((r) => r.id === a.id);
+			if (!row) throw Error('Position ' + a.id + ' existiert nicht');
+			Object.assign(row, e, { entity_id: e.entity_id ?? null, location_id: e.location_id ?? null, price: e.price ?? null, updated_at: Math.floor(Date.now() / 1000) });
+			globalThis.__lastInv = { op: 'update', row };
+			return null;
+		}
+		case 'inventory_delete': {
+			const i = __inv.rows.findIndex((r) => r.id === a.id);
+			if (i < 0) throw Error('Position ' + a.id + ' existiert nicht');
+			__inv.rows.splice(i, 1);
+			globalThis.__lastInv = { op: 'delete', id: a.id };
+			return null;
+		}
+		default:
+			return null;
 		}
 	}
 };
+
+/* Inventar-Datensatz (Karte t_1bab1fea): Gold mit Qualitäts-Spreizung
+   (Q900 vs Q364) über zwei Standorte + Freitext-Position. */
+const __inv = {
+	nextId: 4,
+	rows: [
+		{ id: 1, entity_kind: 'commodity', entity_id: 1000, name: 'Gold', quality: 900, location_id: null, location_name: 'Heim-Hangar', quantity: 12, price: 4500, created_at: 0, updated_at: 0 },
+		{ id: 2, entity_kind: 'commodity', entity_id: 1001, name: 'Gold', quality: 364, location_id: null, location_name: 'Meine Carrack', quantity: 3, price: null, created_at: 0, updated_at: 0 },
+		{ id: 3, entity_kind: 'commodity', entity_id: 22, name: 'Titanium', quality: 720, location_id: null, location_name: 'Org-Depot', quantity: 40, price: 300, created_at: 0, updated_at: 0 }
+	]
+};
+function invRows() { return __inv.rows.map((r) => ({ ...r })); }
+
+
+window.addEventListener('error', function (e) { globalThis.__pageErr = String((e.error && e.error.stack) || e.message); });
+window.addEventListener('unhandledrejection', function (e) { globalThis.__pageErr = 'PROMISE:' + String(e.reason && (e.reason.stack || e.reason)); });

@@ -416,6 +416,7 @@ dependencies = [
  "log",
  "provider",
  "rusqlite",
+ "serde",
  "tempfile",
  "tokio",
 ]

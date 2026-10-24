@@ -139,4 +139,18 @@ unter der Electron-Baseline 1031 MiB PSS).
 - CI: `.gitea/workflows/build.yml` finalisiert — Linux-Job baut deb/AppImage bei
   push auf main und an `v*`-Tags (inkl. Gitea-Release-Upload). Windows-Job
   (Label `windows-selfhosted`, Einrichtung: `docs/CI-WINDOWS.md`) wartet
-  sauber, bis ein Windows-Runner registriert ist — kein Rot ohne Runner.
+  sauber, bis ein Windows-Runner registriert ist — kein Rot ohne Runner.- **v0.3.0 Karte 2 (t_1bab1fea, Branch `feature/inventory`):** Inventar-Modus
+  (F3 / Rail) — lokaler, privater Bestand mit Pflicht-Qualität (0–1000),
+  Standort und Menge (SCU bzw. Stück), optionaler Kaufpreis in aUEC. Positionen
+  referenzieren bestehende Entities (Commodity/Item aus der entities-DB,
+  Entity-Picker mit FTS-Suche) ODER sind Freitext-Zeilen; Standorte ebenso
+  (Location-Entity oder Freitext-Depot wie „meine Carrack", „Heim-Hangar").
+  Views: Gesamtübersicht nach Standort gruppiert (Summen je Standort),
+  Item-Detail mit allen Qualitäten/Standorten eines Materials inkl.
+  gesamtmenge und SCU-gewichteter Ø-Qualität, Sortierung
+  Standort/Menge/Qualität, Live-Filter über das Haupt-Suchfeld. Bearbeitung:
+  Erfassen (`N` oder „+ Position"), Ändern (Enter im Item-Detail / Stift),
+  Löschen (Entf), Esc-Kette Formular → Item-Detail → Übersicht → Suche.
+  **Lokal und privat:** die Daten liegen in der neuen `inventory`-Tabelle der
+  Cache-DB (Schema-Version v4, rein additiv — Bestands-Caches behalten alle
+  Daten); KEINE Sync-/Sharing-/API-Anbindung, nur die App schreibt hier.

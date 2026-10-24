@@ -17,6 +17,7 @@
 //!
 //! [`sync::spawn_sync`] provides the background refetch loop (tokio).
 
+pub mod inventory;
 pub mod sync;
 
 use std::path::Path;
@@ -188,6 +189,25 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+-- Lokal-privates Inventar (Karte t_1bab1fea, v0.3.0 K2). Eine Zeile = eine
+-- Position: Item-/Commodity-Referenz (entity_kind/entity_id, name aufgelöst)
+-- ODER Freitext (beide NULL), Qualitaet 0–1000 (Pflicht), Standort als
+-- Location-Entity-Referenz ODER Freitext-Depot (location_id NULL), Menge
+-- (SCU bzw. Stueck), optional Kaufpreis aUEC. KEIN Sync, KEIN API-Zugriff —
+-- nur die App schreibt hier.
+CREATE TABLE IF NOT EXISTS inventory (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_kind   TEXT,
+  entity_id     INTEGER,
+  name          TEXT    NOT NULL,
+  quality       INTEGER NOT NULL,
+  location_id   INTEGER,
+  location_name TEXT    NOT NULL,
+  quantity      REAL    NOT NULL DEFAULT 0,
+  price         REAL,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL
+);
 "#;
 
 fn meta_key(kind: EntityKind) -> String {
@@ -266,7 +286,15 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   legacy data stays valid and is NOT invalidated — only wiki rows carry
 ///   `source = 'wiki'`. Freshness is tracked per (kind, source), so the first
 ///   wiki sync is triggered by the wiki dataset simply being absent.
-pub const SCHEMA_VERSION: i64 = 3;
+/// * v3 — Feedback-Runde 4: einmaliger UEX-Terminal-Purge (Service-Terminals
+///   vor dem Typ-Filter); Terminal-Dataset wird beim nächsten ensure neu
+///   importiert.
+/// * v4 — Inventar-Modus (Karte t_1bab1fea): neue Tabelle `inventory`
+///   (lokal-privat, nur App-Schreibzugriff, siehe `inventory`-Modul). Der
+///   Bump ist rein additiv: `CREATE TABLE IF NOT EXISTS` im SCHEMA erzeugt
+///   die Tabelle auf jedem Open (auch auf Bestands-Caches); die Migration
+///   läuft daher einmalig durch und verändert bestehende Daten NICHT.
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
