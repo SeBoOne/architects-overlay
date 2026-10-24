@@ -155,6 +155,8 @@ html[data-window="spotlight"] .shell {
    Abgrenzung zum Gameplay (Design: Kantentrennung leistet bewusst der Schatten). */
 .shell {
 	position: relative;
+	display: flex;
+	align-items: stretch;
 	overflow: hidden;
 	background: var(--panel);
 	border: 1px solid var(--lineb);
@@ -162,6 +164,12 @@ html[data-window="spotlight"] .shell {
 	border-radius: 0;
 	clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
 	box-shadow: var(--shadow-shell);
+}
+
+/* Rail-Spalte: der bisherige Shell-Inhalt (Suchzeile, Panes, Fußzeile). */
+.shell-main {
+	flex: 1;
+	min-width: 0;
 }
 
 .deco {
@@ -2004,4 +2012,109 @@ html[data-window="spotlight"] .shell {
 	font-size: 11px;
 	color: var(--accent);
 	margin-top: 4px;
+}
+
+/* ==========================================================================
+   Rail — linke Modus-Leiste (Karte t_315a26cc)
+   F1 Suche · F2 Marktplatz · F3 Inventar · F4 Hangar · F12 Einstellungen.
+   ~56 px breit, Icon + F-Key-Label, aktiver Modus in Akzentfarbe. Kollabiert
+   auf reine Icons bei schmaler Palette (class `is-compact` vom Elternteil).
+   Nur Token-Farben (KEIN Literalfarbwert) — folgt dem Token-Vertrag.
+   ========================================================================== */
+.rail {
+	flex: 0 0 56px;
+	width: 56px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 10px 0;
+	background: var(--panel3);
+	border-right: 1px solid var(--line);
+}
+
+.rentry {
+	appearance: none;
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	padding: 8px 0 7px;
+	background: none;
+	border: 0;
+	border-left: 2px solid transparent;
+	color: var(--fgdim);
+	cursor: pointer;
+	font-family: var(--font-mono);
+}
+
+.rentry:hover {
+	color: var(--fg);
+	background: var(--panel2);
+}
+
+.rentry:focus-visible {
+	outline: 1px solid var(--accent);
+	outline-offset: -1px;
+}
+
+/* Aktiver Modus: orange Akzentkante + getönte Fläche (Palette-Akzent). */
+.rentry.is-on {
+	color: var(--accent);
+	border-left-color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.ric {
+	width: 18px;
+	height: 18px;
+	flex: 0 0 18px;
+}
+
+.ric svg {
+	width: 100%;
+	height: 100%;
+	display: block;
+}
+
+.rkey {
+	font: 700 9px/1 var(--font-mono);
+	letter-spacing: 0.06em;
+	color: var(--fgfaint);
+}
+
+.rentry.is-on .rkey {
+	color: var(--accent);
+}
+
+.rlbl {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+}
+
+/* Kollaps: schmale Palette → reine Icons (Label kommt zurück, sobald breit). */
+.rail.is-compact .rkey {
+	display: none;
+}
+
+.rail.is-compact .rentry {
+	padding: 10px 0;
+}
+
+/* Platzhalter-View für Inventar/Hangar (eigene Karten, gleiche Rail). */
+.pane-placeholder {
+	min-height: 120px;
+	background: var(--panel);
+}
+
+.pane-placeholder kbd {
+	padding: 1px 5px;
+	border: 1px solid var(--lineb);
+	background: var(--panel2);
+	border-radius: 3px;
+	font: 700 10px/1.4 var(--font-mono);
+	color: var(--fgdim);
 }

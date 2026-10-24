@@ -3,7 +3,8 @@
 	//
 	// Beide Tauri-Fenster rendern dieselbe Palette ("main" = Entwicklungs-Shell,
 	// "spotlight" = Overlay über Star Citizen). Der Spotlight ist click-through-
-	// fähig und zeigt den Spiel-/Fokus-Status; Esc blendet ihn aus.
+	// fähig und zeigt den Spiel-/Fokus-Status; das Ausblenden übernimmt der
+	// globale Toggle (CTRL+SHIFT+U), NICHT Esc.
 	//
 	// Bedienung orientiert an ArkanisOverlay:
 	//   - Kategorie-Präfixe  :c :i :l  filtern je Term der Suchzeile
@@ -13,11 +14,17 @@
 	//     (keine Inline-Expansion mehr; Rückkehr behält Scroll-Position +
 	//      Selektion der geöffneten Zeile)
 	//   - Alt+1..0 fokussiert den n-ten Treffer, erneut → zurück ins Suchfeld
-	//   - Esc: Suchfeld-Fokus ⇒ Overlay ausblenden; sonst Fokus ins Suchfeld
+	//   - Esc: reine interne Zurück-Navigation (Detail → Liste → Suche); im Root
+	//     tut Esc NICHTS — Ausblenden ausschließlich per globalem Toggle
+	//     (Hyprland-Bind CTRL+SHIFT+U → arch-overlay toggle, KEIN In-App-Esc)
 	//   - Pfeil-Navigation scrollt die Liste auf die fokussierte Zeile (auto)
-	// Market-Modus (Tab/M): DAS Haupt-Suchfeld durchsucht Offers (Name/Typ/
-	// Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung, Alt+Zahl-
-	// Badges auf den ersten 10 Offers, Esc zurück zur Suche.
+	// Modi (Karte t_315a26cc): F1 Suche · F2 Marktplatz · F3 Inventar ·
+	// F4 Hangar · F12 Einstellungen — In-App-Keyhandler, die nur greifen, wenn
+	// das Overlay sichtbar+fokussiert ist (compositor_focus beim Show); die Rail
+	// links zeigt die Modi mit F-Key-Label, aktiver Modus in Akzentfarbe.
+	// Market-Modus (F2 / M / Strg+M): DAS Haupt-Suchfeld durchsucht Offers
+	// (Name/Typ/Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung,
+	// Alt+Zahl-Badges auf den ersten 10 Offers, Esc/F2 zurück zur Suche.
 	//   - Detail-Tastatur: ↑↓ Zeile, ↵ Auswahl, Esc zurück.
 	//   - N2 Enter-Detail-Filter: das Suchfeld ist im Detail der In-Context-Filter
 	//     (Location → Waren-/Terminalnamen, Commodity/Item → Orts-/Terminalnamen).
@@ -27,6 +34,9 @@
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
+	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
+	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
+	import Rail from '../lib/Rail.svelte';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -165,6 +175,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// tung wirkt SOFORT auch ohne Backend (statischer Build/Probe) über einen
 	// lokalen Fallback, bis settings_set_detail_variant antwortet.
 	let localVariant = $state<'a' | 'c' | null>(null);
+
+	// ---- Modi (Karte t_315a26cc) --------------------------------------------
+	// Zentraler Mode-State: F1 Suche · F2 Marktplatz · F3 Inventar · F4 Hangar ·
+	// F12 Einstellungen. Der bestehende Market-Modus (M/Strg+M) ist derselbe
+	// State — `phase === 'market'` bleibt die Render-Quelle, Config bleibt
+	// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).
+	type Mode = 'search' | 'market' | 'inventory' | 'hangar' | 'settings';
+	let railMode = $state<'inventory' | 'hangar' | null>(null);
+	let mode = $derived<Mode>(railMode ?? (inConfig ? 'settings' : phase === 'market' ? 'market' : 'search'));
+	// Palletten-Breite (bind:clientWidth) → Rail-Kollaps auf reine Icons, wenn schmal.
+	let palW = $state(0);
+
 	let detailVariant = $derived<'a' | 'c'>((cfg?.detail_variant ?? localVariant ?? 'c') === 'a' ? 'a' : 'c');
 
 	// data-palette + data-detail-variant am html — CSS-Scoping-Kontaktstelle
@@ -534,6 +556,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Das HAUPT-Suchfeld treibt beide Modi — im Market-Modus durchsucht es die
 	// Offers (Name/Typ/Terminal/Verkäufer), der Platzhalter wechselt mit.
 	function onInput() {
+		// Platzhalter-Modi (Inventar/Hangar): das Haupt-Suchfeld ist dort inert —
+		// erst zurück im Suche/Market-Modus treibt es wieder Suche/Offers.
+		if (railMode) return;
 		// N2: Im Detail ist das Suchfeld der In-Context-Filter — `input` fließt
 		// über das dFilter-Derived direkt in die gefilterten Zeilen (kein
 		// debounce, kein neuer search-Call). Erst zurück in der Hauptsuche
@@ -797,15 +822,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return idx < 9 ? String(idx + 1) : '0';
 	}
 
-	// ---- Esc-Toggle (Kernfeature) --------------------------------------------
-	// Esc-Zustände (Spec §3/§4): 1) Detail-Ansicht offen → schließen + Fokus zurück;
+	// ---- Esc-Toggle (Karte t_315a26cc: reine interne Zurück-Navigation) ------
+	// Esc-Zustände: 1) Detail-Ansicht offen → zurück zur Liste + Fokus zurück;
 	// 2) Ergebnis fokussiert (Alt+Zahl) oder eine Zeile geöffnet → zuklappen +
-	//    Fokus ins Suchfeld; 3) Suchfeld fokussiert → Overlay ausblenden (Spotlight)
-	//    bzw. leeren; 4) Fokus woanders → Fokus ins Suchfeld (Select-All).
-	// Nie ausblenden, wenn der Fokus woanders liegt (Arkanis-Verhalten).
+	//    Fokus ins Suchfeld; 3) Platzhalter-Modus → zurück zur Suche;
+	// 4) Fokus woanders → Fokus ins Suchfeld (Select-All).
+	// Im Root (Suchfeld fokussiert, Suche-Modus) tut Esc NICHTS mehr: das
+	// Ausblenden des Overlays bleibt ausschließlich dem globalen Toggle
+	// (Hyprland-Bind CTRL+SHIFT+U → arch-overlay toggle) vorbehalten — SC
+	// verliert so nie Tasten an Esc-Restarbeit.
 	function escSearch() {
 		if (inDetail) {
 			closeDetail();
+			return;
+		}
+		if (railMode) {
+			railMode = null;
+			focusSearch(true);
 			return;
 		}
 		if (focusIdx !== null || expanded !== null) {
@@ -814,71 +847,98 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			return;
 		}
 		const inSearch = searchEl ? document.activeElement === searchEl : phase !== 'typing';
-		if (inSearch) {
-			// Suchfeld fokussiert → Overlay ausblenden (Spotlight) bzw. leeren.
-			if (isSpotlight) {
-				void invoke<boolean>('overlay_set_visible', { visible: false });
-			} else {
-				input = '';
-				groups = [];
-				flat = [];
-				groupOffsets = [];
-				expanded = null;
-				focusIdx = null;
-				xpan = null;
-				calcResult = null;
-				calcError = null;
-				phase = 'idle';
-			}
-		} else {
+		if (!inSearch) {
 			// Fokus woanders (Ergebnis/Expansion/…) → Suchfeld (Select-All).
 			focusSearch(true);
 		}
+		// Root + Suchfeld fokussiert: bewusst NICHTS — kein Overlay-hide
+		// (isSpotlight-Zweig entfernt), kein Leeren. Global-Toggle only.
 	}
 
 	function toggleMarket() {
-		if (phase === 'market') {
-			// P5: Rückweg Market → Search hinterlässt NICHTS — das Eingabefeld
-			// wird geleert (im Market-Modus stand dort der Offer-Query), die
-			// Sortierung/Operation/Qualität fallen auf ihre Defaults zurück,
-			// damit der nächste Market-Besuch unbelastet startet.
-			phase = 'typing';
-			input = '';
-			offerDetail = null;
-			mSel = 0;
-			mMshown = M_PAGE;
-			mAllLoaded = false;
-			mSort = 'newest';
-			mOp = 'all';
-			mqMin = '';
-			mqMax = '';
-			offers = [];
-			mNote = null;
-			groups = [];
-			flat = [];
-			groupOffsets = [];
-			sel = 0;
-			expanded = null;
-			focusIdx = null;
-			xpan = null;
-			xpanToken++;
-			calcResult = null;
-			calcError = null;
-			inDetail = false;
-			detailHit = null;
-			dSel = 0;
-			dChosen = null;
-			dToast = '';
-			// Wieder im Such-Modus: Ergebnisliste an den Suchtext des HAUPT-
-			// Suchfelds angleichen (im Market-Modus wurde dort der Offer-Query
-			// getippt — keine veralteten Treffer stehen lassen).
-			void runSearch();
+		if (phase === 'market') exitMarket();
+		else enterMarket();
+	}
+
+	// Market-Modus betreten (F2 / M / Strg+M / Rail): P3 — wenn die Market-Daten
+	// älter als 5 Minuten sind, sofortiger Sync im Hintergrund (kein Blocken).
+	function enterMarket() {
+		phase = 'market';
+		const stale = mFetchedAt > 0 && nowSec() - mFetchedAt > MARKET_STALE_SECS;
+		void loadMarket(stale ? 'bg' : 'normal');
+	}
+
+	// Market-Modus verlassen (Esc/F2/Tab/M/Rail): P5 — Rückweg hinterlässt
+	// NICHTS: Eingabefeld leeren (im Market-Modus stand dort der Offer-Query),
+	// Sortierung/Operation/Qualität auf Defaults, damit der nächste
+	// Market-Besuch unbelastet startet.
+	function exitMarket() {
+		phase = 'typing';
+		input = '';
+		offerDetail = null;
+		mSel = 0;
+		mMshown = M_PAGE;
+		mAllLoaded = false;
+		mSort = 'newest';
+		mOp = 'all';
+		mqMin = '';
+		mqMax = '';
+		offers = [];
+		mNote = null;
+		groups = [];
+		flat = [];
+		groupOffsets = [];
+		sel = 0;
+		expanded = null;
+		focusIdx = null;
+		xpan = null;
+		xpanToken++;
+		calcResult = null;
+		calcError = null;
+		inDetail = false;
+		detailHit = null;
+		dSel = 0;
+		dChosen = null;
+		dToast = '';
+		// Wieder im Such-Modus: Ergebnisliste an den Suchtext des HAUPT-
+		// Suchfelds angleichen (im Market-Modus wurde dort der Offer-Query
+		// getippt — keine veralteten Treffer stehen lassen).
+		void runSearch();
+	}
+
+	// ---- Modi-Wechsel (F1/F2/F3/F4/F12 + Rail-Klicks) ------------------------
+	// Ein zentraler Einstieg: räumt den jeweiligen Alt-Zustand auf (Market-
+	// Reset, Config schließen, Detail schließen) und behält den Tastaturfokus
+	// im Suchfeld — wie bisher nach Market-Exit/Detail-Schließen.
+	function setMode(m: Mode) {
+		if (m === 'search') {
+			railMode = null;
+			if (inConfig) closeConfig();
+			else if (phase === 'market') exitMarket();
+			else if (inDetail) closeDetail();
+			if (searchEl) searchEl.focus();
+		} else if (m === 'market') {
+			railMode = null;
+			if (inConfig) closeConfig();
+			if (phase !== 'market') {
+				if (inDetail) closeDetail();
+				enterMarket();
+				if (searchEl) searchEl.focus();
+			}
+		} else if (m === 'inventory' || m === 'hangar') {
+			// Platzhalter-Modus: Overlay-States räumen (Detail schließen,
+			// Market sauber verlassen), dann Platzhalter zeigen.
+			if (inConfig) closeConfig();
+			else if (phase === 'market') exitMarket();
+			else if (inDetail) closeDetail();
+			railMode = m;
+			if (debounce) clearTimeout(debounce);
 		} else {
-			phase = 'market';
-			// P3: beim Wechsel in den Market-Modus — wenn die Market-Daten älter
-			// als 5 Minuten sind, sofortiger Sync im Hintergrund (kein Blocken).
-			const stale = mFetchedAt > 0 && nowSec() - mFetchedAt > MARKET_STALE_SECS;
-			void loadMarket(stale ? 'bg' : 'normal');
+			// settings → bestehender Config-View (Zahnrad-Pfad, settings_set_*-IPC).
+			if (phase === 'market') exitMarket();
+			else if (inDetail) closeDetail();
+			railMode = null;
+			openConfig();
 		}
 	}
 
@@ -1102,6 +1162,39 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
+		// ---- F-Tasten: In-App-Moduswechsel (Karte t_315a26cc) ----------------
+		// F1 Suche · F2 Marktplatz · F3 Inventar · F4 Hangar · F12 Einstellungen.
+		// KEINE Hyprland-Binds — die Tasten greifen nur, solange das Overlay
+		// sichtbar+fokussiert ist (compositor_focus beim Show): SC verliert nie
+		// Tasten. F-Tasten erzeugen keine Zeichen, sie können also auch bei
+		// Fokus im Suchfeld/Stepper nicht in Eingaben geraten; einzig gegen
+		// contentEditable-Editoren (die F-Tasten selbst belegen können) wird
+		// mit demselben Check geschützt wie die bestehenden m/o-Shortcuts.
+		if (/^F(1|2|3|4|12)$/.test(k)) {
+			if (
+				typeof (e.target as HTMLElement | null)?.isContentEditable === 'boolean' &&
+				(e.target as HTMLElement).isContentEditable
+			) {
+				return; // Rich-Text-Editor behält seine F-Tasten
+			}
+			if (k === 'F1') setMode('search');
+			else if (k === 'F2') setMode('market');
+			else if (k === 'F3') setMode('inventory');
+			else if (k === 'F4') setMode('hangar');
+			else setMode('settings');
+			e.preventDefault();
+			return;
+		}
+		// Platzhalter-Modi (Inventar/Hangar): nur Esc/F-Tasten wirken — keine
+		// Ergebnis-Navigation, kein Enter im Leeren.
+		if (railMode) {
+			if (k === 'Escape') {
+				railMode = null;
+				focusSearch(true);
+				e.preventDefault();
+			}
+			return;
+		}
 		// Config-View: Esc → zurück zur Suche (NICHT Overlay-hide). Alle anderen
 		// Shortcuts (Nav/Alt-Zahlen/Ctrl+M/F5) sind in dieser Ansicht gesperrt —
 		// Eingabe im API-Key-Feld bleibt natürlich erlaubt.
@@ -1273,10 +1366,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 <svelte:window onkeydown={onKey} />
 
-<main class="pal-root">
+<main class="pal-root" bind:clientWidth={palW}>
 	<div class="shell" class:in-detail={inDetail}>
 		<i class="deco t1"></i><i class="deco t2"></i>
 
+		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F12) — gehört nur zum Overlay -->
+		<Rail mode={mode} compact={palW > 0 && palW < 520} onselect={setMode} />
+
+		<div class="shell-main">
 		<!-- Suchzeile -->
 		<div class="srow">
 			<span class="ico">
@@ -1302,7 +1399,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				spellcheck="false"
 				autocomplete="off"
 			/>
-			<span class="smode">{phase === 'market' ? 'MARKETPLACE' : 'SUCHE'}</span>
+			<span class="smode">{mode === 'market' ? 'MARKETPLACE' : mode === 'inventory' ? 'INVENTAR' : mode === 'hangar' ? 'HANGAR' : mode === 'settings' ? 'EINSTELLUNGEN' : 'SUCHE'}</span>
 			<span class="esc">ESC</span>
 		</div>
 
@@ -1321,7 +1418,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{/if}
 
 		<!-- Inhalt je Zustand -->
-		{#if inConfig}
+		{#if railMode}
+			<!-- Inventar/Hangar: Platzhalter-View (eigene Karten, gleiche Rail).
+			     Esc/F1 → zurück zur Suche; das Suchfeld ist hier inert. -->
+			<div class="pane-placeholder" role="status">
+				<div class="center">
+					<div class="big">{railMode === 'inventory' ? 'INVENTAR' : 'HANGAR'}</div>
+					<div class="sm">kommt bald — eigener Modus in Arbeit.</div>
+					<div class="sm"><kbd>F1</kbd>/<kbd>Esc</kbd> zurück zur Suche · <kbd>F2</kbd> Marktplatz</div>
+				</div>
+			</div>
+		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").
 			     Esc/zurück-Pfeil → zurück zur Suche; kein neues Fenster. -->
 			<div class="pane-config" role="dialog" aria-label="Konfiguration">
@@ -1808,11 +1915,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="sect"><div class="h">Zuletzt gesucht</div></div>
 						<div class="recent"><span class="r">Keine — tippe, um zu suchen</span></div>
 						<div class="sect"><div class="h">Schnellzugriff</div></div>
-						<div class="recent">
-							<span class="r"><b>Marketplace</b> · Ctrl+M</span>
-							<span class="r"><b>Rechner</b> · =2*250+15%</span>
-							<span class="r"><b>Kategorie</b> · :c gold</span>
-						</div>
+							<div class="recent">
+								<span class="r"><b>F2</b> Marktplatz · <b>M</b></span>
+								<span class="r"><b>F12</b> Einstellungen</span>
+								<span class="r"><b>Rechner</b> · =2*250+15%</span>
+								<span class="r"><b>Kategorie</b> · :c gold</span>
+							</div>
 					</div>
 				{/if}
 			</div>
@@ -1847,7 +1955,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
-					<span><kbd>Esc</kbd> {isSpotlight ? 'ausblenden' : 'leeren'}</span>
+					<span><kbd>Esc</kbd> zurück</span>
 					<span><kbd>M</kbd> Market</span>
 					<span><kbd>F5</kbd> Preise syncen</span>
 				{/if}
@@ -1888,5 +1996,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				</div>
 			{/if}
 		</div>
+		</div><!-- /shell-main -->
 	</div>
 </main>
