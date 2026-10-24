@@ -13,8 +13,14 @@
 //!   customName,account,packageName,tags`. `insurance` trägt `LTI`,
 //!   Monate-Zahlen (`3`, `120`) oder leer.
 //!
-//! Merge-Strategie: Datensätze mit gleicher `pledge_id` werden aktualisiert
-//! (nicht dupliziert); ohne pledge_id zählt das (ship_code, name)-Paar.
+//! Merge-Strategie: Importe werden pledge-gruppenweise gematcht —
+//! (pledge_id, ship_code), dann (pledge_id, Name). Nur wenn Pledge im
+//! Import-Batch UND in der DB jeweils genau EIN Objekt enthält, darf über
+//! die pledge_id gemerged werden (toleriert Namensvarianten zwischen den
+//! Formaten, z. B. „600i Explorer" vs. „600i Exploration Module"). Packs mit
+//! mehreren Objekten je pledge_id (z. B. Golem Duo Pack) kollabieren so nie.
+//! Ohne pledge_id zählt (ship_code, name) bzw. (name, custom_name).
+//! Modellnamen folgen einer Quellen-Priorität: manual > xplorer > ccugame.
 //!
 //! Export: eigenes sauberes JSON-Format (alle Felder, insurance vollständig).
 //!
@@ -71,6 +77,11 @@ pub struct HangarItem {
     pub warbond: bool,
     #[serde(default)]
     pub ccud: bool,
+    /// Import-Herkunft des letzten Schreibvorgangs: "xplorer" | "ccugame" |
+    /// "manual". Steuert die Namens-Priorität beim Merge. Intern — nicht
+    /// Teil des Export-JSON (`serde(skip)` hält das Export-Format stabil).
+    #[serde(skip, default)]
+    pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -133,6 +144,8 @@ pub fn parse_xplorer_json(text: &str) -> Result<(Vec<HangarItem>, usize), String
         };
         out.push(HangarItem {
             id: None,
+            // Quelle wird zentral in hangar_import gestempelt.
+            source: String::new(),
             name,
             origin: "pledge".to_string(),
             insurance: if lti { Some("LTI".to_string()) } else { None },
@@ -194,6 +207,8 @@ pub fn parse_ccugame_csv(text: &str) -> Result<(Vec<HangarItem>, usize), String>
         let insurance = normalize_insurance(&cell(i_ins));
         out.push(HangarItem {
             id: None,
+            // Quelle wird zentral in hangar_import gestempelt.
+            source: String::new(),
             name,
             origin: "pledge".to_string(),
             insurance,
@@ -255,7 +270,7 @@ fn parse_xplorer_date(v: Option<&str>) -> String {
     }
     // Format: "<Month> <d>, <yyyy>"
     let parts: Vec<&str> = v
-        .split(|c| c == ' ' || c == ',')
+        .split([' ', ','])
         .filter(|p| !p.is_empty())
         .collect();
     if parts.len() != 3 {
@@ -364,24 +379,110 @@ fn row_to_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<HangarItem> {
         pledge_name: r.get(12)?,
         warbond: r.get::<_, i64>(13)? != 0,
         ccud: r.get::<_, i64>(14)? != 0,
-        created_at: Some(r.get(15)?),
-        updated_at: Some(r.get(16)?),
+        source: r.get(15)?,
+        created_at: Some(r.get(16)?),
+        updated_at: Some(r.get(17)?),
     })
 }
 
 const HANGAR_COLS: &str = "id, name, origin, insurance, custom_name, entity_type, base_ship, \
      ship_code, manufacturer, purchase_price, purchase_date, pledge_id, pledge_name, \
-     warbond, ccud, created_at, updated_at";
+     warbond, ccud, source, created_at, updated_at";
 
-/// Merge-Kandidat für einen Import-/CRUD-Eintrag suchen.
+/// Normalisierte Namensbasis für Match-Vergleiche: lowercase,
+/// Whitespace zusammengefasst — "Golem  OX" und "golem ox" sind gleich.
+fn norm_name(s: &str) -> String {
+    s.split_whitespace()
+        .map(|w| w.to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn name_matches(a: &str, b: &str) -> bool {
+    let na = norm_name(a);
+    !na.is_empty() && na == norm_name(b)
+}
+
+/// Quellen-Priorität für den Modellnamen: manuelle Eingaben schlagen XPLorer,
+/// XPLorer (Primärformat) schlägt CCUgame. Leer (Altdaten) = niedrigste.
+fn source_priority(source: &str) -> u8 {
+    match source {
+        "manual" => 3,
+        "xplorer" => 2,
+        "ccugame" => 1,
+        _ => 0,
+    }
+}
+
+/// Match-Kandidat für einen IMPORT-Eintrag innerhalb eines Batch-Laufs.
+///
+/// `db` ist der aktuelle Stand (bestehende Zeilen + in diesem Import bereits
+/// geschriebene), `incoming_group` die Anzahl der Einträge MIT GLEICHER
+/// pledge_id im GESAMTEN Import-Batch.
+///
 /// Wichtig: Pack-/Bundle-Einträge teilen sich eine pledge_id, enthalten aber
 /// mehrere Objekte (z. B. Golem Duo Pack: DRAK_Golem + DRAK_Golem_OX). Der
 /// Merge-Key muss das Objekt innerhalb des Pledges unterscheiden:
 ///   1. (pledge_id, ship_code)  — wenn ship_code vorliegt
-///   2. (pledge_id, name)       — CSV hat keinen ship_code
-///   3. (ship_code, name)       — ohne pledge_id
-///   4. (name, custom_name)     — ohne beides
-fn find_merge_candidate(
+///   2. (pledge_id, name)       — normalisiert; CSV hat keinen ship_code
+///   3. pledge_id NUR bei 1-zu-1 (genau ein Objekt im Batch UND in der DB) —
+///      toleriert Namensvarianten zwischen den Formaten („600i Explorer" vs.
+///      „600i Exploration Module"); Mehrzeilige Packs kollabieren so nie.
+///      (Review-Blocker: der alte COUNT==1-Fallback prüfte nur den DB-State
+///      mitten im laufenden Import und verschluckte das zweite Pack-Schiff.)
+///   4. (ship_code, name)       — ohne pledge_id
+///   5. (name, custom_name)     — ohne beides
+fn find_import_candidate(
+    db: &[HangarItem],
+    item: &HangarItem,
+    incoming_group: usize,
+) -> Option<usize> {
+    if !item.pledge_id.is_empty() {
+        let same_pledge: Vec<usize> = db
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.pledge_id == item.pledge_id)
+            .map(|(i, _)| i)
+            .collect();
+        if !item.ship_code.is_empty()
+            && let Some(i) = same_pledge
+                .iter()
+                .copied()
+                .find(|&i| db[i].ship_code == item.ship_code)
+        {
+            return Some(i);
+        }
+        if let Some(i) = same_pledge
+            .iter()
+            .copied()
+            .find(|&i| name_matches(&db[i].name, &item.name))
+        {
+            return Some(i);
+        }
+        if same_pledge.len() == 1 && incoming_group == 1 {
+            return Some(same_pledge[0]);
+        }
+        return None;
+    }
+    if !item.ship_code.is_empty() {
+        return db.iter().position(|r| {
+            !r.ship_code.is_empty()
+                && r.ship_code == item.ship_code
+                && name_matches(&r.name, &item.name)
+        });
+    }
+    db.iter().position(|r| {
+        r.ship_code.is_empty()
+            && name_matches(&r.name, &item.name)
+            && r.custom_name == item.custom_name
+    })
+}
+
+/// Match-Kandidat für einen MANUELLEN Eintrag (hangar_add ohne id): strikt —
+/// nur eindeutige Feldkombinationen, KEIN pledge-only-Fallback. Ein manuell
+/// angelegtes Objekt soll nie still eine fremde Zeile überschreiben; im
+/// Zweifel entsteht eine neue (sichtbare, löschbare) Zeile.
+fn find_strict_candidate(
     tx: &rusqlite::Transaction<'_>,
     item: &HangarItem,
 ) -> rusqlite::Result<Option<i64>> {
@@ -418,29 +519,6 @@ fn find_merge_candidate(
             )
             .ok());
     }
-    if !item.pledge_id.is_empty() {
-        // Fallback für ship_code-lose Zeilen (CCUgame-CSV), deren Namen von
-        // XPLorer abweichen (z. B. "600i Explorer" vs. "600i Exploration
-        // Module"): Merge auf die pledge_id — ABER nur wenn genau EINE Zeile
-        // diesen Pledge hat. Mehrzeilige Packs (Golem Duo) kollabieren so nie.
-        let count: i64 = tx
-            .query_row(
-                "SELECT COUNT(*) FROM hangar WHERE pledge_id = ?1",
-                [item.pledge_id.as_str()],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        if count == 1 {
-            return Ok(tx
-                .query_row(
-                    "SELECT id FROM hangar WHERE pledge_id = ?1 LIMIT 1",
-                    [item.pledge_id.as_str()],
-                    |r| r.get(0),
-                )
-                .ok());
-        }
-        return Ok(None);
-    }
     Ok(tx
         .query_row(
             "SELECT id FROM hangar WHERE ship_code = '' AND name = ?1 AND custom_name = ?2 LIMIT 1",
@@ -462,9 +540,29 @@ fn merge_import(existing: &HangarItem, item: &HangarItem) -> HangarItem {
             inc.trim().to_string()
         }
     };
+    // Namens-Priorität (Review-Finding: der CCUgame-Rückimport überschrieb
+    // den XPLorer-Modellnamen): eine Quelle darf den Namen nur schreiben,
+    // wenn ihre Priorität mindestens so hoch ist wie die der bestehenden.
+    // Gleiche Quelle darf aktualisieren (frischer Export derselben Herkunft).
+    let incoming_name = item.name.trim();
+    let name = if !incoming_name.is_empty()
+        && source_priority(&item.source) >= source_priority(&existing.source)
+    {
+        incoming_name.to_string()
+    } else if !existing.name.trim().is_empty() {
+        existing.name.clone()
+    } else {
+        incoming_name.to_string()
+    };
+    let source = if name == incoming_name && !item.source.is_empty() {
+        item.source.clone()
+    } else {
+        existing.source.clone()
+    };
     HangarItem {
         id: existing.id,
-        name: nz(&item.name, &existing.name),
+        name,
+        source,
         // origin/entity_type: Importquellen liefern teils hartcodierte Defaults
         // (CSV setzt immer "ship") — bestehenden Wert nicht verschlechtern.
         origin: if existing.origin.is_empty() {
@@ -496,24 +594,95 @@ fn merge_import(existing: &HangarItem, item: &HangarItem) -> HangarItem {
     }
 }
 
+fn write_update(
+    tx: &rusqlite::Transaction<'_>,
+    id: i64,
+    item: &HangarItem,
+    now: i64,
+) -> rusqlite::Result<()> {
+    let insurance = item.insurance.as_deref();
+    let price = item.purchase_price;
+    tx.execute(
+        "UPDATE hangar SET name=?1, origin=?2, insurance=?3, custom_name=?4, \
+         entity_type=?5, base_ship=?6, ship_code=?7, manufacturer=?8, \
+         purchase_price=?9, purchase_date=?10, pledge_id=?11, pledge_name=?12, \
+         warbond=?13, ccud=?14, source=?15, updated_at=?16 WHERE id=?17",
+        rusqlite::params![
+            item.name,
+            item.origin,
+            insurance,
+            item.custom_name,
+            item.entity_type,
+            item.base_ship,
+            item.ship_code,
+            item.manufacturer,
+            price,
+            item.purchase_date,
+            item.pledge_id,
+            item.pledge_name,
+            item.warbond as i64,
+            item.ccud as i64,
+            item.source,
+            now,
+            id
+        ],
+    )?;
+    Ok(())
+}
+
+fn write_insert(
+    tx: &rusqlite::Transaction<'_>,
+    item: &HangarItem,
+    now: i64,
+) -> rusqlite::Result<i64> {
+    let insurance = item.insurance.as_deref();
+    let price = item.purchase_price;
+    tx.execute(
+        "INSERT INTO hangar (name, origin, insurance, custom_name, entity_type, \
+         base_ship, ship_code, manufacturer, purchase_price, purchase_date, \
+         pledge_id, pledge_name, warbond, ccud, source, created_at, updated_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+        rusqlite::params![
+            item.name,
+            item.origin,
+            insurance,
+            item.custom_name,
+            item.entity_type,
+            item.base_ship,
+            item.ship_code,
+            item.manufacturer,
+            price,
+            item.purchase_date,
+            item.pledge_id,
+            item.pledge_name,
+            item.warbond as i64,
+            item.ccud as i64,
+            item.source,
+            now,
+            now
+        ],
+    )?;
+    Ok(tx.last_insert_rowid())
+}
+
+/// Upsert für MANUELLE CRUD-Pfade (hangar_add/hangar_update): striktes
+/// Match (kein pledge-only-Fallback). Manuelles Update (hangar_update)
+/// kommt MIT id — dann gezielt nach id schreiben, kein Merge-Matching
+/// (könnte eine fremde Zeile treffen).
 fn upsert(
     conn: &mut rusqlite::Connection,
     item: &HangarItem,
     now: i64,
 ) -> rusqlite::Result<(i64, bool)> {
     let tx = conn.transaction()?;
-    // Manuelles Update (hangar_update) kommt MIT id — dann gezielt nach id
-    // schreiben, kein Merge-Matching (könnte eine fremde Zeile treffen).
     let existing: Option<i64> = match item.id {
         Some(id) => Some(id),
-        None => find_merge_candidate(&tx, item)?,
+        None => find_strict_candidate(&tx, item)?,
     };
-    let id = match existing {
+    let (id, inserted) = match existing {
         Some(id) => {
-            // Import (item.id == None): bestehende Zeile laden und nur mit
-            // nicht-leeren Feldern anreichern (kein Degradieren durch ärmere
-            // Importquellen). Manuelles Update (item.id == Some) schreibt
-            // bewusst alles, was das UI liefert.
+            // Manuelles Anlegen (item.id == None) mit Treffer: bestehende
+            // Zeile laden und nur mit nicht-leeren Feldern anreichern.
             let effective: HangarItem = if item.id.is_none() {
                 let cur: HangarItem = tx.query_row(
                     &format!("SELECT {HANGAR_COLS} FROM hangar WHERE id = ?1"),
@@ -524,66 +693,70 @@ fn upsert(
             } else {
                 item.clone()
             };
-            let insurance = effective.insurance.as_deref();
-            let price = effective.purchase_price;
-            tx.execute(
-                "UPDATE hangar SET name=?1, origin=?2, insurance=?3, custom_name=?4, \
-                 entity_type=?5, base_ship=?6, ship_code=?7, manufacturer=?8, \
-                 purchase_price=?9, purchase_date=?10, pledge_id=?11, pledge_name=?12, \
-                 warbond=?13, ccud=?14, updated_at=?15 WHERE id=?16",
-                rusqlite::params![
-                    effective.name,
-                    effective.origin,
-                    insurance,
-                    effective.custom_name,
-                    effective.entity_type,
-                    effective.base_ship,
-                    effective.ship_code,
-                    effective.manufacturer,
-                    price,
-                    effective.purchase_date,
-                    effective.pledge_id,
-                    effective.pledge_name,
-                    effective.warbond as i64,
-                    effective.ccud as i64,
-                    now,
-                    id
-                ],
-            )?;
+            write_update(&tx, id, &effective, now)?;
             (id, false)
         }
-        None => {
-            let insurance = item.insurance.as_deref();
-            let price = item.purchase_price;
-            tx.execute(
-                "INSERT INTO hangar (name, origin, insurance, custom_name, entity_type, \
-                 base_ship, ship_code, manufacturer, purchase_price, purchase_date, \
-                 pledge_id, pledge_name, warbond, ccud, created_at, updated_at) \
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
-                rusqlite::params![
-                    item.name,
-                    item.origin,
-                    insurance,
-                    item.custom_name,
-                    item.entity_type,
-                    item.base_ship,
-                    item.ship_code,
-                    item.manufacturer,
-                    price,
-                    item.purchase_date,
-                    item.pledge_id,
-                    item.pledge_name,
-                    item.warbond as i64,
-                    item.ccud as i64,
-                    now,
-                    now
-                ],
-            )?;
-            (tx.last_insert_rowid(), true)
-        }
+        None => (write_insert(&tx, item, now)?, true),
     };
     tx.commit()?;
-    Ok(id)
+    Ok((id, inserted))
+}
+
+/// Batch-Import: matcht den GESAMTEN Import-Batch pledge-gruppenweise gegen
+/// die DB (inklusive der in diesem Lauf bereits geschriebenen Zeilen).
+/// Ersetzt den zeilenweisen upsert für Importe — dessen pledge-only-Fallback
+/// prüfte den DB-State MITTEN im laufenden Import (COUNT==1, sobald der
+/// erste Pack-Eintrag stand) und kollabierte/kappte Pack-Schiffe je nach
+/// Import-Reihenfolge (Review-R2-Blocker).
+fn import_items(
+    conn: &mut rusqlite::Connection,
+    items: &[HangarItem],
+    now: i64,
+) -> rusqlite::Result<(usize, usize)> {
+    use std::collections::HashMap;
+    // Gruppengröße je pledge_id im Import-Batch (für die 1-zu-1-Regel).
+    let mut pledge_counts: HashMap<&str, usize> = HashMap::new();
+    for it in items {
+        if !it.pledge_id.is_empty() {
+            *pledge_counts.entry(it.pledge_id.as_str()).or_default() += 1;
+        }
+    }
+    let tx = conn.transaction()?;
+    let mut db: Vec<HangarItem> = {
+        let mut stmt = tx.prepare(&format!("SELECT {HANGAR_COLS} FROM hangar"))?;
+        let rows = stmt.query_map([], row_to_item)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut imported = 0usize;
+    let mut updated = 0usize;
+    for item in items {
+        let incoming_group = if item.pledge_id.is_empty() {
+            1
+        } else {
+            pledge_counts
+                .get(item.pledge_id.as_str())
+                .copied()
+                .unwrap_or(1)
+        };
+        match find_import_candidate(&db, item, incoming_group) {
+            Some(idx) => {
+                let id = db[idx].id.expect("DB-Zeile hat id");
+                let merged = merge_import(&db[idx], item);
+                write_update(&tx, id, &merged, now)?;
+                db[idx] = merged;
+                updated += 1;
+            }
+            None => {
+                let id = write_insert(&tx, item, now)?;
+                let mut row = item.clone();
+                row.id = Some(id);
+                db.push(row);
+                imported += 1;
+            }
+        }
+    }
+    tx.commit()?;
+    Ok((imported, updated))
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +789,8 @@ pub fn hangar_add(
     }
     let item = HangarItem {
         name: item.name.trim().to_string(),
+        // Manuelle Eingabe — höchste Namens-Priorität.
+        source: "manual".to_string(),
         ..item
     };
     let now = unix_now() as i64;
@@ -639,6 +814,9 @@ pub fn hangar_update(
     let current = hangar_get_by_id(cache, id)?;
     let merged = HangarItem {
         id: Some(id),
+        // Manuelle Bearbeitung — höchste Namens-Priorität (schützt manuelle
+        // Umbenennungen vor dem nächsten Import).
+        source: "manual".to_string(),
         created_at: current.created_at,
         updated_at: Some(now),
         ..item
@@ -675,21 +853,20 @@ pub fn hangar_import(
         "ccugame" => parse_ccugame_csv(&text)?,
         other => return Err(format!("Unbekanntes Import-Format: {other}")),
     };
+    // Quellen-Stempel für die Namens-Priorität (manual > xplorer > ccugame).
+    let items: Vec<HangarItem> = items
+        .into_iter()
+        .map(|mut it| {
+            it.source = format.clone();
+            it
+        })
+        .collect();
     let now = unix_now() as i64;
     let cache = &state.inner().cache;
-    let mut imported = 0usize;
-    let mut updated = 0usize;
-    for item in &items {
-        // Upsert entscheidet anhand der Merge-Regel und meldet insert/update.
-        let (_id, inserted) = cache
-            .with(|conn| upsert(conn, item, now))
-            .map_err(|e| format!("hangar import: {e}"))?;
-        if inserted {
-            imported += 1;
-        } else {
-            updated += 1;
-        }
-    }
+    // Batch-Import: pledge-gruppensicheres Matching in EINEM Lauf.
+    let (imported, updated) = cache
+        .with(|conn| import_items(conn, &items, now))
+        .map_err(|e| format!("hangar import: {e}"))?;
     Ok(HangarImportResult {
         imported,
         updated,
@@ -869,6 +1046,7 @@ mod tests {
         let now = 1_792_500_000i64;
         let item = HangarItem {
             id: None,
+            source: String::new(),
             name: "600i Explorer".into(),
             origin: "pledge".into(),
             insurance: Some("LTI".into()),
@@ -926,6 +1104,7 @@ mod tests {
         let now = 1_792_500_000i64;
         let mk = |name: &str, code: &str| HangarItem {
             id: None,
+            source: String::new(),
             name: name.into(),
             origin: "pledge".into(),
             insurance: Some("LTI".into()),
@@ -995,6 +1174,7 @@ mod tests {
         let now = 1_792_500_000i64;
         let rich = HangarItem {
             id: None,
+            source: String::new(),
             name: "600i Exploration Module".into(),
             origin: "pledge".into(),
             insurance: Some("LTI".into()),
@@ -1067,68 +1247,333 @@ mod tests {
         let (ccugame, sk2) = parse_ccugame_csv(&csv_text).unwrap();
         assert_eq!(sk2, 0, "CCUgame-Realdatei: keine Zeilen verworfen");
 
-        let cache = cache::Cache::open_in_memory().unwrap();
+        // Quellen-Stempel wie im echten hangar_import.
+        let stamp = |mut items: Vec<HangarItem>, source: &str| {
+            for it in &mut items {
+                it.source = source.to_string();
+            }
+            items
+        };
+        let xplorer = stamp(xplorer, "xplorer");
+        let ccugame = stamp(ccugame, "ccugame");
         let now = 1_792_500_000i64;
-        for it in &xplorer {
+
+        let count = |cache: &cache::Cache| -> usize {
             cache
-                .with(|c| upsert(c, it, now))
+                .with(|c| c.query_row("SELECT COUNT(*) FROM hangar", [], |r| r.get::<_, i64>(0)))
+                .map_err(|e| e.to_string())
+                .unwrap() as usize
+        };
+        let golem_rows = |cache: &cache::Cache| -> Vec<String> {
+            cache
+                .with(|c| {
+                    let mut stmt = c.prepare(
+                        "SELECT name FROM hangar WHERE pledge_id = '93874564' ORDER BY name",
+                    )?;
+                    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+                    rows.collect::<rusqlite::Result<Vec<_>>>()
+                })
+                .map_err(|e| e.to_string())
+                .unwrap()
+        };
+        let no_dupes = |cache: &cache::Cache| -> bool {
+            let dupes: i64 = cache
+                .with(|c| {
+                    c.query_row(
+                        "SELECT COUNT(*) FROM (SELECT pledge_id, LOWER(TRIM(name)) AS n, \
+                         COUNT(*) AS k FROM hangar WHERE pledge_id != '' \
+                         GROUP BY pledge_id, n HAVING k > 1)",
+                        [],
+                        |r| r.get(0),
+                    )
+                })
                 .map_err(|e| e.to_string())
                 .unwrap();
-        }
-        let after_x: i64 = cache
-            .with(|c| c.query_row("SELECT COUNT(*) FROM hangar", [], |r| r.get(0)))
+            dupes == 0
+        };
+        let name_of_pledge = |cache: &cache::Cache, pledge: &str| -> String {
+            cache
+                .with(|c| {
+                    c.query_row(
+                        "SELECT name FROM hangar WHERE pledge_id = ?1",
+                        [pledge],
+                        |r| r.get(0),
+                    )
+                })
+                .map_err(|e| e.to_string())
+                .unwrap()
+        };
+
+        // Akzeptanzcheck 1: CCUgame-CSV ALLEIN in leere DB — alle Zeilen,
+        // Golem Duo Pack zweizeilig („Golem" darf nicht verschluckt werden).
+        let cache1 = cache::Cache::open_in_memory().unwrap();
+        cache1
+            .with(|c| import_items(c, &ccugame, now))
             .map_err(|e| e.to_string())
             .unwrap();
         assert_eq!(
-            after_x as usize,
-            xplorer.len(),
-            "XPLORer-Import: keine Kollabierung"
+            count(&cache1),
+            ccugame.len(),
+            "CCUgame-Only: alle CSV-Zeilen"
         );
-        for it in &ccugame {
-            cache
-                .with(|c| upsert(c, it, now))
-                .map_err(|e| e.to_string())
-                .unwrap();
-        }
-        let after_csv: i64 = cache
-            .with(|c| c.query_row("SELECT COUNT(*) FROM hangar", [], |r| r.get(0)))
+        assert_eq!(
+            golem_rows(&cache1),
+            vec!["Golem".to_string(), "Golem OX".to_string()],
+            "CCUgame-Only: Golem Duo Pack bleibt zweizeilig"
+        );
+
+        // Akzeptanzcheck 2: CCUgame dann XPLORer — konvergiert ohne
+        // Duplikate; ship_code/manufacturer werden angereichert; der
+        // XPLorer-Modellname gewinnt (Quellen-Priorität).
+        let cache2 = cache::Cache::open_in_memory().unwrap();
+        cache2
+            .with(|c| import_items(c, &ccugame, now))
             .map_err(|e| e.to_string())
             .unwrap();
-        // Re-Import darf weder kollabieren noch Zeilen löschen.
+        cache2
+            .with(|c| import_items(c, &xplorer, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(count(&cache2), ccugame.len(), "CSV→JSON: keine Duplikate");
         assert!(
-            after_csv >= after_x,
-            "CCUgame-Nachimport darf keine Zeilen entfernen"
+            no_dupes(&cache2),
+            "CSV→JSON: keine doppelten (pledge, name)-Paare"
         );
-        // Kein Feld-Leeren durch den ärmeren CSV-Import:
-        let empty_codes: i64 = cache
+        let empty_codes: i64 = cache2
             .with(|c| {
                 c.query_row(
-                    "SELECT COUNT(*) FROM hangar WHERE pledge_id != '' AND ship_code = ''",
+                    "SELECT COUNT(*) FROM hangar WHERE ship_code = ''",
                     [],
                     |r| r.get(0),
                 )
             })
             .map_err(|e| e.to_string())
             .unwrap();
-        // Zeilen, die XPLorer einen ship_code gegeben hat, müssen ihn behalten.
-        let xplorer_with_code = xplorer.iter().filter(|i| !i.ship_code.is_empty()).count() as i64;
-        assert!(
-            empty_codes <= after_x - xplorer_with_code,
-            "CCUgame-Nachimport hat ship_codes geleert: {empty_codes}"
+        assert_eq!(
+            empty_codes, 0,
+            "CSV→JSON: ship_code/manufacturer vollständig angereichert"
         );
-        // Der Golem-Duo-Pack bleibt zweizeilig.
-        let golem_rows: i64 = cache
-            .with(|c| {
-                c.query_row(
-                    "SELECT COUNT(*) FROM hangar WHERE pledge_id = '93874564'",
-                    [],
-                    |r| r.get(0),
-                )
-            })
+        assert_eq!(
+            name_of_pledge(&cache2, "71394952"),
+            "600i Exploration Module",
+            "CSV→JSON: XPLorer-Modellname gewinnt"
+        );
+
+        // Akzeptanzcheck 3: XPLORer dann CCUgame — bleibt vollzählig, der
+        // XPLorer-Modellname wird vom ärmeren CSV-Import NICHT überschrieben.
+        let cache3 = cache::Cache::open_in_memory().unwrap();
+        cache3
+            .with(|c| import_items(c, &xplorer, now))
             .map_err(|e| e.to_string())
             .unwrap();
-        assert_eq!(golem_rows, 2, "Golem Duo Pack: 2 Schiffe, nicht 1");
+        cache3
+            .with(|c| import_items(c, &ccugame, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(count(&cache3), xplorer.len(), "JSON→CSV: keine Duplikate");
+        assert!(
+            no_dupes(&cache3),
+            "JSON→CSV: keine doppelten (pledge, name)-Paare"
+        );
+        assert_eq!(
+            golem_rows(&cache3).len(),
+            2,
+            "JSON→CSV: Pack bleibt zweizeilig"
+        );
+        assert_eq!(
+            name_of_pledge(&cache3, "71394952"),
+            "600i Exploration Module",
+            "JSON→CSV: CCUgame überschreibt den XPLorer-Modellnamen nicht"
+        );
     }
+    #[test]
+    fn ccugame_only_import_keeps_all_pack_ships() {
+        // Review-R2-Akzeptanzcheck 1 (synthetisch, läuft OHNE Realdateien):
+        // ein Pack mit 2 Schiffen auf EINER pledge_id, CSV-like (kein
+        // ship_code) — der alte COUNT==1-Fallback kollabierte hier zu 1 Zeile.
+        let cache = cache::Cache::open_in_memory().unwrap();
+        let now = 1_792_500_000i64;
+        let mk = |name: &str, pledge: &str| HangarItem {
+            id: None,
+            source: "ccugame".into(),
+            name: name.into(),
+            origin: "pledge".into(),
+            insurance: Some("LTI".into()),
+            custom_name: String::new(),
+            entity_type: "ship".into(),
+            base_ship: String::new(),
+            ship_code: String::new(),
+            manufacturer: String::new(),
+            purchase_price: Some(130.0),
+            purchase_date: "2025-12-02".into(),
+            pledge_id: pledge.into(),
+            pledge_name: "Packs - Golem Duo Pack".into(),
+            warbond: false,
+            ccud: false,
+            created_at: None,
+            updated_at: None,
+        };
+        let items = vec![
+            mk("600i Explorer", "71394952"),
+            mk("Golem", "93874564"),
+            mk("Golem OX", "93874564"),
+        ];
+        let (ins, upd) = cache
+            .with(|c| import_items(c, &items, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!((ins, upd), (3, 0), "CSV-only: alle 3 Zeilen neu angelegt");
+        let rows: Vec<String> = cache
+            .with(|c| {
+                let mut stmt = c.prepare(
+                    "SELECT name FROM hangar WHERE pledge_id = '93874564' ORDER BY name",
+                )?;
+                let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec!["Golem".to_string(), "Golem OX".to_string()],
+            "Pack bleibt zweizeilig"
+        );
+    }
+
+    #[test]
+    fn ccugame_then_xplorer_converges_without_duplicates() {
+        // Review-R2-Akzeptanzcheck 2 (synthetisch): erst CSV (Namen weichen
+        // von XPLorer ab, kein ship_code), dann JSON — es dürfen weder
+        // Duplikate entstehen noch Objekte verloren gehen.
+        let cache = cache::Cache::open_in_memory().unwrap();
+        let now = 1_792_500_000i64;
+        let csv_item = |name: &str, pledge: &str| HangarItem {
+            id: None,
+            source: "ccugame".into(),
+            name: name.into(),
+            origin: "pledge".into(),
+            insurance: Some("LTI".into()),
+            custom_name: String::new(),
+            entity_type: "ship".into(),
+            base_ship: String::new(),
+            ship_code: String::new(),
+            manufacturer: String::new(),
+            purchase_price: Some(130.0),
+            purchase_date: "2025-12-02".into(),
+            pledge_id: pledge.into(),
+            pledge_name: "Pack".into(),
+            warbond: false,
+            ccud: false,
+            created_at: None,
+            updated_at: None,
+        };
+        let json_item = |name: &str, code: &str, pledge: &str| HangarItem {
+            source: "xplorer".into(),
+            ship_code: code.into(),
+            manufacturer: "Drake".into(),
+            purchase_price: Some(150.0),
+            ..csv_item(name, pledge)
+        };
+        let csv = vec![
+            csv_item("600i Explorer", "71394952"),
+            csv_item("Golem", "93874564"),
+            csv_item("Golem OX", "93874564"),
+        ];
+        let json = vec![
+            json_item("600i Exploration Module", "ORIG_600i", "71394952"),
+            json_item("Golem", "DRAK_Golem", "93874564"),
+            json_item("Golem OX", "DRAK_Golem_OX", "93874564"),
+        ];
+        cache
+            .with(|c| import_items(c, &csv, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        cache
+            .with(|c| import_items(c, &json, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        let rows: Vec<(String, String)> = cache
+            .with(|c| {
+                let mut stmt =
+                    c.prepare("SELECT name, ship_code FROM hangar ORDER BY pledge_id, name")?;
+                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("600i Exploration Module".into(), "ORIG_600i".into()),
+                ("Golem".into(), "DRAK_Golem".into()),
+                ("Golem OX".into(), "DRAK_Golem_OX".into()),
+            ],
+            "konvergiert: 3 Zeilen, angereichert, XPLorer-Namen"
+        );
+    }
+
+    #[test]
+    fn manual_name_survives_weaker_import() {
+        // Manuell gesetzter Name (source=manual) darf von keinem Import
+        // überschrieben werden; XPLorer schlägt CCUgame (Quellen-Priorität).
+        let cache = cache::Cache::open_in_memory().unwrap();
+        let now = 1_792_500_000i64;
+        let base = HangarItem {
+            id: None,
+            name: "Meine 600i".into(),
+            origin: "pledge".into(),
+            insurance: None,
+            custom_name: String::new(),
+            entity_type: "ship".into(),
+            base_ship: String::new(),
+            ship_code: String::new(),
+            manufacturer: String::new(),
+            purchase_price: None,
+            purchase_date: String::new(),
+            pledge_id: "71394952".into(),
+            pledge_name: String::new(),
+            warbond: false,
+            ccud: false,
+            source: "manual".into(),
+            created_at: None,
+            updated_at: None,
+        };
+        let (id, inserted) = cache
+            .with(|c| upsert(c, &base, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert!(inserted);
+        let mut ccugame = base.clone();
+        ccugame.id = None;
+        ccugame.source = "ccugame".into();
+        ccugame.name = "600i Explorer".into();
+        ccugame.insurance = Some("3 Monate".into());
+        cache
+            .with(|c| import_items(c, std::slice::from_ref(&ccugame), now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        let row: HangarItem = cache
+            .with(|c| {
+                c.query_row(
+                    &format!("SELECT {HANGAR_COLS} FROM hangar WHERE id = ?1"),
+                    [id],
+                    row_to_item,
+                )
+            })
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(
+            row.name, "Meine 600i",
+            "manuellem Namen wird nie überschrieben"
+        );
+        assert_eq!(
+            row.insurance.as_deref(),
+            Some("3 Monate"),
+            "Anreicherung funktioniert"
+        );
+        assert_eq!(row.source, "manual", "Quelle bleibt manual");
+    }
+
     #[test]
     fn dump_real_import_for_smoke() {
         // Gate: ARCH_HANGAR_DUMP=<pfad> — importiert die realen
@@ -1145,12 +1590,22 @@ mod tests {
         let (ccugame, _) = parse_ccugame_csv(&csv_text).unwrap();
         let cache = cache::Cache::open_in_memory().unwrap();
         let now = 1_792_500_000i64;
-        for it in xplorer.iter().chain(ccugame.iter()) {
-            cache
-                .with(|c| upsert(c, it, now))
-                .map_err(|e| e.to_string())
-                .unwrap();
+        let mut xs = xplorer;
+        for it in &mut xs {
+            it.source = "xplorer".to_string();
         }
+        let mut cs = ccugame;
+        for it in &mut cs {
+            it.source = "ccugame".to_string();
+        }
+        cache
+            .with(|c| import_items(c, &xs, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        cache
+            .with(|c| import_items(c, &cs, now))
+            .map_err(|e| e.to_string())
+            .unwrap();
         let items: Vec<HangarItem> = cache
             .with(|c| {
                 let mut stmt = c.prepare(&format!(

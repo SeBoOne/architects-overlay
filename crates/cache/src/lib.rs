@@ -208,6 +208,7 @@ CREATE TABLE IF NOT EXISTS hangar (
   pledge_name    TEXT    NOT NULL DEFAULT '',
   warbond        INTEGER NOT NULL DEFAULT 0,
   ccud           INTEGER NOT NULL DEFAULT 0,
+  source         TEXT    NOT NULL DEFAULT '',
   created_at     INTEGER NOT NULL,
   updated_at     INTEGER NOT NULL
 );
@@ -289,13 +290,19 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   legacy data stays valid and is NOT invalidated — only wiki rows carry
 ///   `source = 'wiki'`. Freshness is tracked per (kind, source), so the first
 ///   wiki sync is triggered by the wiki dataset simply being absent.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 // v4: `hangar` table — user-owned ship/vehicle/module records with insurance
 // and pledge metadata (Karte t_317f19c5). The table is created idempotently
 // by the `SCHEMA` batch (`CREATE TABLE IF NOT EXISTS`), so no column
 // migration is needed; the version bump exists so the migration story stays
 // explicit and future hangar column changes can hook in here.
+//
+// v5: `hangar` gains a `source` column ("xplorer" | "ccugame" | "manual")
+// that records where a row's name came from, so import merges can apply a
+// source priority (manual > xplorer > ccugame) instead of letting a weaker
+// import format overwrite the richer model name. Existing rows keep their
+// data with source = '' (lowest priority — the next import may name them).
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -341,8 +348,26 @@ fn migrate_source_columns(conn: &Connection) -> Result<()> {
                 .map_err(|e| CacheError::Open(format!("migration {alter}: {e}")))?;
         }
     }
-    // v3: einmaliger Terminal-Purge (Service-Terminals vor dem Typ-Filter).
-    purge_service_terminals(conn)?;
+    // v3: einmaliger Terminal-Purge (Service-Terminals vor dem Typ-Filter) —
+    // nur für Caches, die v3 noch NIE gesehen haben (version < 3); spätere
+    // Migrationen (v4 → v5) dürfen den Purge nicht wiederholen.
+    if version < 3 {
+        purge_service_terminals(conn)?;
+    }
+    // v5: `hangar.source` — Quellen-Stempel für die Namens-Priorität beim
+    // Import-Merge. Bestehende Zeilen behalten ihre Daten (source = '').
+    let hangar_has_source = conn
+        .prepare("SELECT 1 FROM pragma_table_info('hangar') WHERE name = 'source'")
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
+        .exists([])
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?;
+    if !hangar_has_source {
+        conn.execute(
+            "ALTER TABLE hangar ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|e| CacheError::Open(format!("migration hangar.source: {e}")))?;
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;
     Ok(())

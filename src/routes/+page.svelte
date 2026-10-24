@@ -380,6 +380,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			hangarFormOpen = false;
 			hangarEdit = false;
 			await loadHangar(true);
+			// Review-Finding: nach dem Speichern zeigte die Detailansicht die
+			// alten Werte — hangarDetail aus der frischen Liste nachziehen.
+			if (hangarDetail?.id != null) {
+				const fresh = hangarItems.find((i) => i.id === hangarDetail!.id);
+				if (fresh) hangarDetail = fresh;
+			}
 			hangarNote = msg;
 		} catch (e) {
 			hangarNote = String(e);
