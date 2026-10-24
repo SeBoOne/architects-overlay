@@ -192,15 +192,11 @@ pub fn compute_routes_full(
             continue; // Terminal ohne Metadaten (frisch importiert) — skippen
         };
         // Terminal-Filter: Autoload / Cargodeck / Boden-Space.
-        if let Some(want) = filters.autoload {
-            if meta.autoload != want {
-                continue;
-            }
+        if filters.autoload.is_some_and(|want| meta.autoload != want) {
+            continue;
         }
-        if let Some(want) = filters.cargo_deck {
-            if meta.cargo_center != want {
-                continue;
-            }
+        if filters.cargo_deck.is_some_and(|want| meta.cargo_center != want) {
+            continue;
         }
         if filters.ground_only && !meta.ground {
             continue;
