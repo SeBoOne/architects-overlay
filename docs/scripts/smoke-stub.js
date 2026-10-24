@@ -6,6 +6,30 @@
    trifft mindestens ein Feld Name/Typ/Terminal/Verkäufer, operation-Regel,
    Sortierung, Limit) — der echte Pfad ist durch cargo tests belegt, dieser
    Mirror dient nur der Svelte-Logik-Verifikation (Live-Feedback, t_594c213c). */
+
+/* Hangar (t_317f19c5): IPC-Stub für UI-Smoke. Die Daten in
+   window.__HANGAR_DATA__ stammen aus dem ECHTEN Import (cargo test
+   dump_real_import_for_smoke mit ARCH_HANGAR_DUMP, echter Parser+Merge
+   gegen /tmp/HangarExport) — hier wird nur die IPC-Grenze gestubbt. */
+window.__HANGAR_DATA__ = window.__HANGAR_DATA__ || [];
+function hangarSave() { /* In-Memory; kein Persistenz-Nachweis nötig */ }
+function hangarNextId() {
+  return window.__HANGAR_DATA__.reduce((m, i) => Math.max(m, i.id || 0), 0) + 1;
+}
+function hangarUpsertStub(item) {
+  const now = Math.floor(Date.now() / 1000);
+  if (item.id != null) {
+    const idx = window.__HANGAR_DATA__.findIndex((i) => i.id === item.id);
+    if (idx >= 0) {
+      window.__HANGAR_DATA__[idx] = { ...item, updated_at: now };
+      return { id: item.id, inserted: false };
+    }
+  }
+  const id = hangarNextId();
+  window.__HANGAR_DATA__.push({ ...item, id, created_at: now, updated_at: now });
+  return { id, inserted: true };
+}
+
 window.isTauri = true;
 window.__TAURI__ = {};
 const stubState = {
@@ -49,6 +73,27 @@ window.__TAURI_INTERNALS__ = {
 				};
 			case 'sync_now':
 				return { provider: 'uex', syncing: true, online: true, last_error: null, datasets: [] };
+			case 'hangar_list':
+				return JSON.parse(JSON.stringify(window.__HANGAR_DATA__));
+			case 'hangar_add': {
+				const r = hangarUpsertStub(a.item);
+				return window.__HANGAR_DATA__.find((i) => i.id === r.id);
+			}
+			case 'hangar_update': {
+				hangarUpsertStub(a.item);
+				return window.__HANGAR_DATA__.find((i) => i.id === a.item.id);
+			}
+			case 'hangar_delete':
+				window.__HANGAR_DATA__ = window.__HANGAR_DATA__.filter((i) => i.id !== a.id);
+				return undefined;
+			case 'hangar_import': {
+				// Parser-Pfad ist durch cargo tests gegen die Realdateien belegt;
+				// hier genügt die Zähl-Antwort für die UI-Note.
+				const n = (window.__HANGAR_DATA__ || []).length;
+				return { imported: n, updated: 0, skipped: 0, format: a.format };
+			}
+			case 'hangar_export':
+				return JSON.stringify(window.__HANGAR_DATA__, null, 2);
 			case 'get_prices': {
 				const name = String(a.commodity || '');
 				const now = Math.floor(Date.now() / 1000);

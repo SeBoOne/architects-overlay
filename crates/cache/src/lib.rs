@@ -207,6 +207,29 @@ CREATE TABLE IF NOT EXISTS inventory (
   price         REAL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
+-- Hangar (v4): user-owned private data — pledge/ingame ships, vehicles and
+-- modules. `origin` distinguishes pledge vs ingame purchases; `insurance`
+-- carries the pledge's insurance (LTI/Standard/…) and is NULL for ingame.
+-- Modules may reference their base ship by name.
+CREATE TABLE IF NOT EXISTS hangar (
+  id             INTEGER PRIMARY KEY,
+  name           TEXT    NOT NULL,
+  origin         TEXT    NOT NULL DEFAULT 'pledge',
+  insurance      TEXT,
+  custom_name    TEXT    NOT NULL DEFAULT '',
+  entity_type    TEXT    NOT NULL DEFAULT 'ship',
+  base_ship      TEXT    NOT NULL DEFAULT '',
+  ship_code      TEXT    NOT NULL DEFAULT '',
+  manufacturer   TEXT    NOT NULL DEFAULT '',
+  purchase_price REAL,
+  purchase_date  TEXT    NOT NULL DEFAULT '',
+  pledge_id      TEXT    NOT NULL DEFAULT '',
+  pledge_name    TEXT    NOT NULL DEFAULT '',
+  warbond        INTEGER NOT NULL DEFAULT 0,
+  ccud           INTEGER NOT NULL DEFAULT 0,
+  source         TEXT    NOT NULL DEFAULT '',
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
 );
 "#;
 
@@ -294,7 +317,11 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   Bump ist rein additiv: `CREATE TABLE IF NOT EXISTS` im SCHEMA erzeugt
 ///   die Tabelle auf jedem Open (auch auf Bestands-Caches); die Migration
 ///   läuft daher einmalig durch und verändert bestehende Daten NICHT.
-pub const SCHEMA_VERSION: i64 = 4;
+/// * v5 — Hangar-Modus (Karte t_317f19c5): neue Tabelle `hangar` (Schiffe,
+///   Fahrzeuge, Module mit Herkunft pledge/ingame + Versicherung); die
+///   `source`-Spalte vermerkt die Herkunft (manual > xplorer > ccugame) für
+///   Import-Merges. Bump ebenfalls rein additiv.
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -340,8 +367,26 @@ fn migrate_source_columns(conn: &Connection) -> Result<()> {
                 .map_err(|e| CacheError::Open(format!("migration {alter}: {e}")))?;
         }
     }
-    // v3: einmaliger Terminal-Purge (Service-Terminals vor dem Typ-Filter).
-    purge_service_terminals(conn)?;
+    // v3: einmaliger Terminal-Purge (Service-Terminals vor dem Typ-Filter) —
+    // nur für Caches, die v3 noch NIE gesehen haben (version < 3); spätere
+    // Migrationen (v4 → v5) dürfen den Purge nicht wiederholen.
+    if version < 3 {
+        purge_service_terminals(conn)?;
+    }
+    // v5: `hangar.source` — Quellen-Stempel für die Namens-Priorität beim
+    // Import-Merge. Bestehende Zeilen behalten ihre Daten (source = '').
+    let hangar_has_source = conn
+        .prepare("SELECT 1 FROM pragma_table_info('hangar') WHERE name = 'source'")
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
+        .exists([])
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?;
+    if !hangar_has_source {
+        conn.execute(
+            "ALTER TABLE hangar ADD COLUMN source TEXT NOT NULL DEFAULT ''",
+            [],
+        )
+        .map_err(|e| CacheError::Open(format!("migration hangar.source: {e}")))?;
+    }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;
     Ok(())
@@ -401,7 +446,9 @@ impl Cache {
         })
     }
 
-    fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T> {
+    /// Führt eine closure mit exklusivem DB-Access aus. Öffentlich für
+    /// Besitzer-Datenmodule (z. B. hangar), die ihre eigene Tabelle pflegen.
+    pub fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T> {
         let mut conn = self.conn.lock().expect("cache mutex poisoned");
         f(&mut conn).map_err(|e| CacheError::Query(e.to_string()))
     }

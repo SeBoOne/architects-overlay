@@ -12,6 +12,7 @@ use std::sync::Arc;
 mod app_settings;
 #[cfg(desktop)]
 mod inventory;
+mod hangar;
 #[cfg(desktop)]
 mod ipc_socket;
 #[cfg(desktop)]
@@ -34,6 +35,12 @@ pub fn run() {
             overlay::overlay_set_click_through,
             overlay::overlay_set_visible,
             trade::search,
+            hangar::hangar_list,
+            hangar::hangar_add,
+            hangar::hangar_update,
+            hangar::hangar_delete,
+            hangar::hangar_import,
+            hangar::hangar_export,
             trade::math_eval,
             trade::get_prices,
             trade::sync_status,

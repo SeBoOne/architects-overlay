@@ -188,6 +188,235 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Palletten-Breite (bind:clientWidth) → Rail-Kollaps auf reine Icons, wenn schmal.
 	let palW = $state(0);
 
+	// ---- Hangar (Karte t_317f19c5) ------------------------------------------
+	// Schiffe/Fahrzeuge/Module mit Versicherung — Backend-Tabelle `hangar`
+	// (Schema v4). Import: Hangar-XPLORer JSON (Primärformat) + CCUgame CSV;
+	// Export: eigenes sauberes JSON. Merge über pledge_id / (ship_code, name).
+	type HangarItem = {
+		id: number | null;
+		name: string;
+		origin: string;
+		insurance: string | null;
+		custom_name: string;
+		entity_type: string;
+		base_ship: string;
+		ship_code: string;
+		manufacturer: string;
+		purchase_price: number | null;
+		purchase_date: string;
+		pledge_id: string;
+		pledge_name: string;
+		warbond: boolean;
+		ccud: boolean;
+		created_at: number | null;
+		updated_at: number | null;
+	};
+	type HangarImportResult = { imported: number; updated: number; skipped: number; format: string };
+
+	let hangarItems = $state<HangarItem[]>([]);
+	let hangarLoaded = $state(false);
+	let hangarBusy = $state(false);
+	let hangarNote = $state('');
+	let hangarFilter = $state<'all' | 'pledge' | 'ingame' | 'lti' | 'module'>('all');
+	let hangarSel = $state(0);
+	let hangarView = $state<'list' | 'detail'>('list');
+	let hangarDetail = $state<HangarItem | null>(null);
+
+	const hangarFiltered = $derived.by(() => {
+		let items = hangarItems;
+		if (hangarFilter === 'pledge') items = items.filter((i) => i.origin === 'pledge');
+		else if (hangarFilter === 'ingame') items = items.filter((i) => i.origin === 'ingame');
+		else if (hangarFilter === 'lti') items = items.filter((i) => i.insurance === 'LTI');
+		else if (hangarFilter === 'module') items = items.filter((i) => i.entity_type === 'module');
+		return items;
+	});
+
+	async function loadHangar(force = false) {
+		if (hangarLoaded && !force) return;
+		hangarBusy = true;
+		hangarNote = '';
+		try {
+			hangarItems = await invoke<HangarItem[]>('hangar_list');
+			hangarLoaded = true;
+		} catch (e) {
+			hangarNote = String(e);
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	function hangarDisplayName(i: HangarItem) {
+		return i.custom_name || i.name;
+	}
+
+	function hangarModulesOf(shipName: string) {
+		return hangarItems.filter((i) => i.entity_type === 'module' && i.base_ship === shipName);
+	}
+
+	async function hangarImportFile(format: 'xplorer' | 'ccugame', file: File) {
+		hangarBusy = true;
+		hangarNote = '';
+		try {
+			const text = await file.text();
+			const res = await invoke<HangarImportResult>('hangar_import', { format, text });
+			hangarNote = `Import (${res.format}): ${res.imported} neu · ${res.updated} aktualisiert · ${res.skipped} übersprungen`;
+			await loadHangar(true);
+		} catch (e) {
+			hangarNote = String(e);
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	function hangarTriggerImport(format: 'xplorer' | 'ccugame') {
+		const input = document.createElement('input');
+		input.type = 'file';
+		input.accept = format === 'xplorer' ? '.json,application/json' : '.csv,text/csv';
+		input.onchange = () => {
+			const f = input.files?.[0];
+			if (f) hangarImportFile(format, f);
+		};
+		input.click();
+	}
+
+	async function hangarExport() {
+		hangarBusy = true;
+		try {
+			const json = await invoke<string>('hangar_export');
+			const blob = new Blob([json], { type: 'application/json' });
+			const a = document.createElement('a');
+			a.href = URL.createObjectURL(blob);
+			a.download = 'architects-overlay-hangar.json';
+			a.click();
+			URL.revokeObjectURL(a.href);
+			hangarNote = 'Export: architects-overlay-hangar.json';
+		} catch (e) {
+			hangarNote = String(e);
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	async function hangarDelete(item: HangarItem) {
+		if (item.id == null) return;
+		hangarBusy = true;
+		try {
+			await invoke('hangar_delete', { id: item.id });
+			await loadHangar(true);
+			hangarNote = `Gelöscht: ${hangarDisplayName(item)}`;
+		} catch (e) {
+			hangarNote = String(e);
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	function hangarBlank(): HangarItem {
+		return {
+			id: null,
+			name: '',
+			origin: 'ingame',
+			insurance: null,
+			custom_name: '',
+			entity_type: 'ship',
+			base_ship: '',
+			ship_code: '',
+			manufacturer: '',
+			purchase_price: null,
+			purchase_date: '',
+			pledge_id: '',
+			pledge_name: '',
+			warbond: false,
+			ccud: false,
+			created_at: null,
+			updated_at: null
+		};
+	}
+	let hangarFormOpen = $state(false);
+	let hangarEdit = $state(false);
+	let hangarForm = $state<HangarItem>(hangarBlank());
+	let hangarFormPrice = $state('');
+
+	function hangarOpenAdd() {
+		hangarForm = hangarBlank();
+		hangarFormPrice = '';
+		hangarFormOpen = true;
+		hangarEdit = false;
+		hangarView = 'list';
+		hangarDetail = null;
+	}
+
+	function hangarStartEdit(it: HangarItem) {
+		hangarForm = { ...it };
+		hangarFormPrice = it.purchase_price != null ? String(it.purchase_price) : '';
+		hangarEdit = true;
+		hangarFormOpen = false;
+	}
+
+	function hangarCancelEdit() {
+		hangarFormOpen = false;
+		hangarEdit = false;
+	}
+
+	async function hangarSaveForm() {
+		hangarBusy = true;
+		hangarNote = '';
+		try {
+			const name = hangarForm.name.trim();
+			if (!name) throw new Error('Name fehlt');
+			const price = hangarFormPrice.trim();
+			const item: HangarItem = {
+				...hangarForm,
+				name,
+				purchase_price: price === '' ? null : Number(price.replace(',', '.'))
+			};
+			let msg;
+			if (item.id != null) {
+				await invoke<HangarItem>('hangar_update', { item });
+				msg = `Aktualisiert: ${name}`;
+			} else {
+				const saved = await invoke<HangarItem>('hangar_add', { item });
+				msg = `Angelegt: ${hangarDisplayName(saved)}`;
+			}
+			hangarFormOpen = false;
+			hangarEdit = false;
+			await loadHangar(true);
+			// Review-Finding: nach dem Speichern zeigte die Detailansicht die
+			// alten Werte — hangarDetail aus der frischen Liste nachziehen.
+			if (hangarDetail?.id != null) {
+				const fresh = hangarItems.find((i) => i.id === hangarDetail!.id);
+				if (fresh) hangarDetail = fresh;
+			}
+			hangarNote = msg;
+		} catch (e) {
+			hangarNote = String(e);
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	function hangarOpenDetail(item: HangarItem) {
+		hangarDetail = item;
+		hangarView = 'detail';
+	}
+
+	function hangarBack() {
+		if (hangarFormOpen || hangarEdit) {
+			// Formular zuerst schließen, dann View-Ebene.
+			hangarFormOpen = false;
+			hangarEdit = false;
+			return;
+		}
+		if (hangarView === 'detail') {
+			hangarView = 'list';
+			hangarDetail = null;
+		} else {
+			// Hangar-Root: zurück zur Suche (analog Platzhalter-Esc).
+			railMode = null;
+			focusSearch(true);
+		}
+	}
+
 	let detailVariant = $derived<'a' | 'c'>((cfg?.detail_variant ?? localVariant ?? 'c') === 'a' ? 'a' : 'c');
 
 	// data-palette + data-detail-variant am html — CSS-Scoping-Kontaktstelle
@@ -933,6 +1162,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			else if (phase === 'market') exitMarket();
 			else if (inDetail) closeDetail();
 			railMode = m;
+			if (m === 'hangar') loadHangar();
 			if (debounce) clearTimeout(debounce);
 		} else {
 			// settings → bestehender Config-View (Zahnrad-Pfad, settings_set_*-IPC).
@@ -1189,11 +1419,33 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// Platzhalter-Modi (Inventar/Hangar): nur Esc/F-Tasten wirken — keine
 		// Ergebnis-Navigation, kein Enter im Leeren.
 		if (railMode) {
-			// Inventar (t_1bab1fea) besitzt eine eigene Key-Handler-Kette
-			// (Formular → Item-Detail → Übersicht → Suche): Esc geht an die
-			// Komponente, NICHT an diesen Handler. Hangar bleibt der alte
-			// Platzhalter-Pfad (Esc = zurück zur Suche).
-			if (k === 'Escape' && railMode === 'hangar') {
+			// Inventar (t_1bab1fea) und Hangar (t_317f19c5) besitzen eigene
+			// Key-Handler-Ketten: Esc geht an die jeweilige Komponente.
+			if (railMode === 'hangar') {
+				if (k === 'Escape') {
+					hangarBack();
+					e.preventDefault();
+					return;
+				}
+				if (hangarView === 'list') {
+					if (k === 'ArrowDown') {
+						hangarSel = Math.min(hangarSel + 1, Math.max(hangarFiltered.length - 1, 0));
+						e.preventDefault();
+						return;
+					}
+					if (k === 'ArrowUp') {
+						hangarSel = Math.max(hangarSel - 1, 0);
+						e.preventDefault();
+						return;
+					}
+					if (k === 'Enter') {
+						const it = hangarFiltered[hangarSel];
+						if (it) hangarOpenDetail(it);
+						e.preventDefault();
+						return;
+					}
+				}
+			} else if (k === 'Escape') {
 				railMode = null;
 				focusSearch(true);
 				e.preventDefault();
@@ -1425,19 +1677,143 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{/if}
 
 		<!-- Inhalt je Zustand -->
-		{#if railMode === 'inventory'}
+{#if railMode === 'inventory'}
 			<!-- Inventar-Modus (t_1bab1fea): eigene SPA-Komponente; das HAUPT-
 			     Suchfeld dient als In-Context-Filter (Standort/Material). -->
 			<Inventory onexit={() => setMode('search')} filter={input} />
-{:else if railMode}
-			<!-- Hangar: Platzhalter-View (eigene Karten, gleiche Rail).
-			     Esc/F1 → zurück zur Suche; das Suchfeld ist hier inert. -->
-			<div class="pane-placeholder" role="status">
-				<div class="center">
-					<div class="big">HANGAR</div>
-					<div class="sm">kommt bald — eigener Modus in Arbeit.</div>
-					<div class="sm"><kbd>F1</kbd>/<kbd>Esc</kbd> zurück zur Suche · <kbd>F2</kbd> Marktplatz</div>
-				</div>
+{:else if railMode === 'hangar'}
+			<!-- Hangar (Karte t_317f19c5): Schiffe/Fahrzeuge/Module mit Versicherung.
+			     Import: Hangar-XPLORer JSON + CCUgame CSV · Export: eigenes JSON.
+			     Tastatur: ↑/↓ Auswahl · Enter Detail · Esc zurück/zur Suche. -->
+			<div class="hangar" role="region" aria-label="Hangar">
+				<header class="hangar-head">
+					<button class="hangar-back" onclick={hangarBack} title="Zurück (Esc)" aria-label="Zurück">←</button>
+					<span class="hangar-title">HANGAR</span>
+					<div class="hangar-filters">
+						{#each [['all', 'ALLE'], ['pledge', 'PLEDGE'], ['ingame', 'INGAME'], ['lti', 'LTI'], ['module', 'MODULE']] as [f, lbl] (f)}
+							<button
+								type="button"
+								class="hchip"
+								class:is-on={hangarFilter === f}
+								onclick={() => { hangarFilter = f as typeof hangarFilter; hangarSel = 0; hangarView = 'list'; hangarDetail = null; }}
+							>{lbl}</button>
+						{/each}
+					</div>
+					<div class="hangar-actions">
+						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('xplorer')}>Import XPLorer</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('ccugame')}>Import CCUgame</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={hangarExport}>Export</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={hangarOpenAdd} title="Eintrag manuell anlegen">+ Anlegen</button>
+					</div>
+				</header>
+				{#if hangarNote}<div class="hangar-note">{hangarNote}</div>{/if}
+				{#if hangarFormOpen && hangarView === 'list'}
+					<form class="hangar-form" onsubmit={(e) => { e.preventDefault(); hangarSaveForm(); }}>
+						<div class="hf-title">EINTRAG ANLEGEN</div>
+						<div class="hf-grid">
+							<label>Name<input bind:value={hangarForm.name} placeholder="z. B. Cutlass Black" required /></label>
+							<label>Typ
+								<select bind:value={hangarForm.entity_type}>
+									<option value="ship">Schiff</option>
+									<option value="vehicle">Fahrzeug</option>
+									<option value="module">Modul</option>
+								</select>
+							</label>
+							<label>Herkunft
+								<select bind:value={hangarForm.origin}>
+									<option value="ingame">Ingame</option>
+									<option value="pledge">Pledge</option>
+								</select>
+							</label>
+							<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
+							<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
+							<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+							<label>Hersteller<input bind:value={hangarForm.manufacturer} /></label>
+							<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" placeholder="z. B. 180" /></label>
+							<label>Datum<input bind:value={hangarForm.purchase_date} placeholder="2025-01-31" /></label>
+						</div>
+						<div class="hf-actions">
+							<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
+							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
+						</div>
+					</form>
+				{/if}
+				{#if hangarView === 'list' && !hangarFormOpen}
+					<div class="hangar-list" role="listbox" aria-label="Hangar-Einträge">
+						{#each hangarFiltered as it, i (it.id ?? `${it.name}#${i}`)}
+							<button
+								type="button"
+								class="hrow"
+								class:is-sel={i === hangarSel}
+								onclick={() => { hangarSel = i; hangarOpenDetail(it); }}
+							>
+								<span class="hname">
+									{hangarDisplayName(it)}
+									{#if it.custom_name && it.custom_name !== it.name}<span class="hmodel">· {it.name}</span>{/if}
+								</span>
+								<span class="hchip o-{it.origin}">{it.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+								<span class="hchip ins">{it.insurance ?? '—'}</span>
+								<span class="hprice">{it.purchase_price != null ? `$${it.purchase_price.toFixed(2)}` : ''}</span>
+							</button>
+						{:else}
+							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} — Import oben.</div>
+						{/each}
+					</div>
+				{:else if hangarView === 'detail' && hangarDetail}
+					<div class="hangar-detail">
+						<div class="hd-head">
+							<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
+							<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+							<span class="hchip ins">{hangarDetail.insurance ?? '—'}</span>
+							{#if !hangarEdit}
+								<button class="hbtn" disabled={hangarBusy} onclick={() => hangarStartEdit(hangarDetail!)}>Bearbeiten</button>
+							{/if}
+							<button class="hbtn danger" disabled={hangarBusy} onclick={() => hangarDelete(hangarDetail!)}>Löschen</button>
+						</div>
+						{#if hangarEdit}
+							<form class="hangar-form" onsubmit={(e) => { e.preventDefault(); hangarSaveForm(); }}>
+								<div class="hf-grid">
+									<label>Name<input bind:value={hangarForm.name} required /></label>
+									<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
+									<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
+									<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+									<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" /></label>
+									<label>Datum<input bind:value={hangarForm.purchase_date} /></label>
+								</div>
+								<div class="hf-actions">
+									<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
+									<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
+								</div>
+							</form>
+						{:else}
+						<dl class="hd-grid">
+							<div><dt>Modell</dt><dd>{hangarDetail.name}</dd></div>
+							<div><dt>Hersteller</dt><dd>{hangarDetail.manufacturer || '—'}</dd></div>
+							<div><dt>Ship-Code</dt><dd>{hangarDetail.ship_code || '—'}</dd></div>
+							<div><dt>Typ</dt><dd>{hangarDetail.entity_type}</dd></div>
+							<div><dt>Pledge</dt><dd>{hangarDetail.pledge_name || '—'}</dd></div>
+							<div><dt>Pledge-ID</dt><dd>{hangarDetail.pledge_id || '—'}</dd></div>
+							<div><dt>Datum</dt><dd>{hangarDetail.purchase_date || '—'}</dd></div>
+							<div><dt>Preis</dt><dd>{hangarDetail.purchase_price != null ? `$${hangarDetail.purchase_price.toFixed(2)}` : '—'}</dd></div>
+							<div><dt>Warbond</dt><dd>{hangarDetail.warbond ? 'Ja' : 'Nein'}</dd></div>
+							<div><dt>CCUD</dt><dd>{hangarDetail.ccud ? 'Ja' : 'Nein'}</dd></div>
+						</dl>
+						{#if hangarDetail.entity_type !== 'module'}
+							<div class="hd-mods">
+								<div class="h">Module ({hangarModulesOf(hangarDetail.name).length})</div>
+								{#each hangarModulesOf(hangarDetail.name) as m (m.id ?? m.name)}
+									<div class="hmod">
+										<span>{hangarDisplayName(m)}</span>
+										<span class="hchip ins">{m.insurance ?? '—'}</span>
+									</div>
+								{:else}
+									<div class="hmodempty">Keine Module zugeordnet.</div>
+								{/each}
+							</div>
+						{/if}
+						{/if}
+					</div>
+				{/if}
 			</div>
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").

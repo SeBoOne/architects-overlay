@@ -74,6 +74,7 @@ dependencies = [
  "log",
  "math-eval",
  "provider",
+ "rusqlite",
  "serde",
  "serde_json",
  "settings",
