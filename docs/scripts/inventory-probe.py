@@ -239,6 +239,13 @@ async def main():
         await js("var p=document.querySelector('.if-picks .if-pick'); if(p) p.click();")
         await js(set_input_expr(".inv-form input[type='number']", "880"))
         # Zahl-Inputs: Qualität (1.) und Menge (2.) — Qualität ist das erste
+        # Keyboard-Pfad: ↓/Enter wählt den Vorschlag, Fokus springt ins
+        # Qualität-Feld (keyboard-first Erfassen).
+        await js("document.querySelector('.if-picks .if-pick') && document.querySelectorAll('.if-picks .if-pick')[0].focus();")
+        await key("ArrowDown")
+        await key("Enter")
+        kb_focus = await js("document.activeElement && document.activeElement.placeholder || ''")
+        check("keyboard-enter-chooses-entity-focuses-quality", "900" in str(kb_focus), str(kb_focus))
         await js(set_input_expr(".inv-form .if-grid .if-sect:first-child .if-input", "880"))
         await js(set_input_expr(".inv-form .if-grid .if-sect:last-child .if-input", "2"))
         await js(set_input_expr(".inv-form input[list='inv-locs']", "Heim-Hangar"))

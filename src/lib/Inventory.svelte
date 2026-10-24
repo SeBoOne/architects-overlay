@@ -61,6 +61,11 @@
 	let pickQuery = $state('');
 	let pickHits = $state<SearchHit[]>([]);
 	let pickBusy = $state(false);
+	let pickIdx = $state(0);
+	let locIdx = $state(0);
+	let pickInputEl = $state<HTMLInputElement | null>(null);
+	let locInputEl = $state<HTMLInputElement | null>(null);
+	let qualityEl = $state<HTMLInputElement | null>(null);
 	let pickTimer: ReturnType<typeof setTimeout> | null = null;
 	// Standort-Vorschläge: bestehende Inventar-Standorte + Location-Entities.
 	let locSuggest = $state<string[]>([]);
@@ -188,9 +193,17 @@
 		if (view === 'item') {
 			view = 'overview';
 			itemDetail = null;
+			blur();
 			return;
 		}
 		onexit();
+	}
+
+	/// Fokus auf body zurückgeben (Entf-Löschen und die Root-Esc-Kette der
+	/// Palette arbeiten auf document.body bzw. dem Suchfeld).
+	function blur() {
+		const a = document.activeElement;
+		if (a instanceof HTMLElement && a !== document.body) a.blur();
 	}
 
 	async function removeRow(id: number) {
@@ -216,8 +229,12 @@
 		formError = '';
 		pickQuery = '';
 		pickHits = [];
+		pickIdx = 0;
+		locIdx = 0;
 		inForm = true;
 		void loadLocSuggestions();
+		// Keyboard-first: der Cursor startet direkt im Material-Suchfeld.
+		setTimeout(() => pickInputEl?.focus(), 0);
 	}
 
 	function openEdit(e: InvEntry) {
@@ -235,6 +252,8 @@
 		pickHits = [];
 		inForm = true;
 		void loadLocSuggestions();
+		// Bearbeiten: Material steht fest — Cursor startet im Qualität-Feld.
+		setTimeout(() => qualityEl?.focus(), 0);
 	}
 
 	function closeForm() {
@@ -243,6 +262,7 @@
 		formError = '';
 		pickHits = [];
 		locEntities = [];
+		blur();
 	}
 
 	async function loadLocSuggestions() {
@@ -254,6 +274,7 @@
 	}
 
 	function onPickInput() {
+		pickIdx = 0;
 		if (pickTimer) clearTimeout(pickTimer);
 		const q = pickQuery.trim();
 		if (!q) {
@@ -284,6 +305,10 @@
 		fEntityKind = h.kind === 'item' ? 'item' : 'commodity';
 		fEntityId = Number(h.id);
 		fName = h.name;
+		pickIdx = 0;
+		// Keyboard-Flow: nach der Materialwahl landet der Cursor im
+		// Pflichtfeld Qualität.
+		if (qualityEl) qualityEl.focus();
 	}
 
 	function chooseFreeText() {
@@ -294,6 +319,7 @@
 
 	function onLocInput() {
 		fLocationId = null; // Freitext, bis ein Entity-Vorschlag gewählt wird
+		locIdx = 0;
 		const q = fLocation.trim();
 		if (!q) {
 			locEntities = [];
@@ -319,6 +345,7 @@
 		fLocation = h.name;
 		fLocationId = Number(h.id);
 		locEntities = [];
+		locIdx = 0;
 	}
 
 	async function saveForm() {
@@ -383,6 +410,46 @@
 			if (e.key === 'Escape') {
 				closeForm();
 				e.preventDefault();
+				return;
+			}
+			// Keyboard-first Erfassen (analog Detailsuche): Enter wählt den
+			// markierten Entity-/Location-Vorschlag, ↓/↑ wandern in der
+			// Vorschlagsliste, Strg+Enter speichert von jedem Feld aus.
+			const t = e.target;
+			const inPick = t === pickInputEl || t === locInputEl || (t instanceof HTMLElement && (t.classList.contains('if-pick') || t.closest('.if-picks') !== null));
+			if (e.ctrlKey && e.key === 'Enter') {
+				void saveForm();
+				e.preventDefault();
+				return;
+			}
+			if (t === pickInputEl || (t instanceof HTMLElement && t.classList.contains('if-pick'))) {
+				if (e.key === 'ArrowDown') {
+					pickIdx = Math.min(pickIdx + 1, Math.max(pickHits.length - 1, 0));
+					e.preventDefault();
+					return;
+				}
+				if (e.key === 'ArrowUp') {
+					pickIdx = Math.max(pickIdx - 1, 0);
+					e.preventDefault();
+					return;
+				}
+				if (e.key === 'Enter' && pickHits[pickIdx]) {
+					chooseEntity(pickHits[pickIdx]);
+					e.preventDefault();
+					return;
+				}
+			}
+			if (t === locInputEl || (t instanceof HTMLElement && t.classList.contains('if-pick') && inPick)) {
+				if (e.key === 'ArrowDown' && t === locInputEl) {
+					locIdx = Math.min(locIdx + 1, Math.max(locEntities.length - 1, 0));
+					e.preventDefault();
+					return;
+				}
+				if (e.key === 'Enter' && t === locInputEl && locEntities[locIdx]) {
+					chooseLocation(locEntities[locIdx]);
+					e.preventDefault();
+					return;
+				}
 			}
 			return;
 		}
@@ -461,17 +528,18 @@
 						placeholder="Item / Commodity suchen … oder Freitext"
 						bind:value={pickQuery}
 						oninput={onPickInput}
+						bind:this={pickInputEl}
 					/>
 					{#if pickBusy}
 						<div class="if-hint">Suche …</div>
 					{/if}
 					{#if pickHits.length}
 						<div class="if-picks" role="listbox" aria-label="Entity-Treffer">
-							{#each pickHits.slice(0, 8) as h}
+							{#each pickHits.slice(0, 8) as h, pi}
 								<button
 									type="button"
 									class="if-pick"
-									class:is-on={fEntityId !== null && Number(h.id) === fEntityId}
+									class:is-on={fEntityId !== null && Number(h.id) === fEntityId || pi === pickIdx}
 									onclick={() => chooseEntity(h)}
 								>
 									<span class="k">{h.kind === 'item' ? 'i' : 'c'}</span>
@@ -506,6 +574,7 @@
 							step="1"
 							placeholder="z. B. 900"
 							bind:value={fQuality}
+						bind:this={qualityEl}
 						/>
 					</section>
 					<section class="if-sect">
@@ -522,6 +591,7 @@
 						bind:value={fLocation}
 						oninput={onLocInput}
 						list="inv-locs"
+						bind:this={locInputEl}
 					/>
 					<datalist id="inv-locs">
 						{#each locSuggest as loc}
@@ -530,8 +600,8 @@
 					</datalist>
 					{#if locEntities.length}
 						<div class="if-picks" role="listbox" aria-label="Standort-Entities">
-							{#each locEntities.slice(0, 6) as h}
-								<button type="button" class="if-pick" class:is-on={fLocationId !== null && Number(h.id) === fLocationId} onclick={() => chooseLocation(h)}>
+							{#each locEntities.slice(0, 6) as h, li}
+								<button type="button" class="if-pick" class:is-on={(fLocationId !== null && Number(h.id) === fLocationId) || li === locIdx} onclick={() => chooseLocation(h)}>
 									<span class="k">l</span>{h.name}{#if h.subtitle}<small>{h.subtitle}</small>{/if}
 								</button>
 							{/each}
