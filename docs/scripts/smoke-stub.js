@@ -377,6 +377,10 @@ window.__TAURI_INTERNALS__ = {
 						{ id: 465, name: 'CSP-68H Backpack', kind: 'item', subtitle: 'Item · Rucksack', code: null }
 					],
 					location: [
+						// Reale Wiki-Location-Id (> 2^53, aus der echten Cache-DB):
+						// beweist im Component-Flow, dass die Id als String
+						// unangetastet durch den Picker geht (t_1bab1fea Blocker 2).
+						{ id: '9218937313948769813', name: 'Mining Claim #QR4-25Q', kind: 'location', subtitle: 'Stanton > Crusader > Yela > Bashak Fields', code: null },
 						{ id: 436, name: 'Checkmate Station', kind: 'location', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: null },
 							{ id: 428, name: 'Landing Services - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'LSCHE' },
 							{ id: 431, name: 'Refinement Center - Checkmate', kind: 'terminal', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station', code: 'RCCHE' },
@@ -511,7 +515,10 @@ window.__TAURI_INTERNALS__ = {
 			const e = a.entry || {};
 			const now = Math.floor(Date.now() / 1000);
 			const row = {
-				id: ++__inv.nextId,
+				// Reale Ids kommen als Strings über die IPC (t_1bab1fea Blocker 2:
+				// wiki ids > 2^53 runden als JS-Number still — Konvention
+				// t_925a577a). Der Stub spiegelt das Verhalten.
+				id: String(++__inv.nextId),
 				entity_kind: e.entity_kind ?? null,
 				entity_id: e.entity_id ?? null,
 				name: e.name, quality: e.quality,
@@ -526,14 +533,14 @@ window.__TAURI_INTERNALS__ = {
 		}
 		case 'inventory_update': {
 			const e = a.entry || {};
-			const row = __inv.rows.find((r) => r.id === a.id);
+			const row = __inv.rows.find((r) => String(r.id) === String(a.id));
 			if (!row) throw Error('Position ' + a.id + ' existiert nicht');
 			Object.assign(row, e, { entity_id: e.entity_id ?? null, location_id: e.location_id ?? null, price: e.price ?? null, updated_at: Math.floor(Date.now() / 1000) });
 			globalThis.__lastInv = { op: 'update', row };
 			return null;
 		}
 		case 'inventory_delete': {
-			const i = __inv.rows.findIndex((r) => r.id === a.id);
+			const i = __inv.rows.findIndex((r) => String(r.id) === String(a.id));
 			if (i < 0) throw Error('Position ' + a.id + ' existiert nicht');
 			__inv.rows.splice(i, 1);
 			globalThis.__lastInv = { op: 'delete', id: a.id };
@@ -550,9 +557,9 @@ window.__TAURI_INTERNALS__ = {
 const __inv = {
 	nextId: 4,
 	rows: [
-		{ id: 1, entity_kind: 'commodity', entity_id: 1000, name: 'Gold', quality: 900, location_id: null, location_name: 'Heim-Hangar', quantity: 12, price: 4500, created_at: 0, updated_at: 0 },
-		{ id: 2, entity_kind: 'commodity', entity_id: 1001, name: 'Gold', quality: 364, location_id: null, location_name: 'Meine Carrack', quantity: 3, price: null, created_at: 0, updated_at: 0 },
-		{ id: 3, entity_kind: 'commodity', entity_id: 22, name: 'Titanium', quality: 720, location_id: null, location_name: 'Org-Depot', quantity: 40, price: 300, created_at: 0, updated_at: 0 }
+		{ id: '1', entity_kind: 'commodity', entity_id: '1000', name: 'Gold', quality: 900, location_id: null, location_name: 'Heim-Hangar', quantity: 12, price: 4500, created_at: 0, updated_at: 0 },
+		{ id: '2', entity_kind: 'commodity', entity_id: '1001', name: 'Gold', quality: 364, location_id: null, location_name: 'Meine Carrack', quantity: 3, price: null, created_at: 0, updated_at: 0 },
+		{ id: '3', entity_kind: 'commodity', entity_id: '22', name: 'Titanium', quality: 720, location_id: null, location_name: 'Org-Depot', quantity: 40, price: 300, created_at: 0, updated_at: 0 }
 	]
 };
 function invRows() { return __inv.rows.map((r) => ({ ...r })); }

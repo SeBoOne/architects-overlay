@@ -54,22 +54,34 @@ pub fn inventory_add(
 #[tauri::command]
 pub fn inventory_update(
     state: State<'_, TradeState>,
-    id: u64,
+    id: FlexId,
     entry: NewInventoryEntry,
 ) -> Result<(), String> {
     state
         .cache
-        .inventory_update(id, entry)
+        .inventory_update(id.0, entry)
         .map_err(|e| format!("Inventar-Fehler: {e}"))
 }
 
 /// Delete one position.
 #[tauri::command]
-pub fn inventory_delete(state: State<'_, TradeState>, id: u64) -> Result<(), String> {
+pub fn inventory_delete(state: State<'_, TradeState>, id: FlexId) -> Result<(), String> {
     state
         .cache
-        .inventory_delete(id)
+        .inventory_delete(id.0)
         .map_err(|e| format!("Inventar-Fehler: {e}"))
+}
+
+/// IPC-bound row id: the frontend holds inventory-row ids as STRINGS (they
+/// arrive string-serialized from `inventory_list` — same JS-precision
+/// convention as entity ids, t_1bab1fea blocker 2). Accepts string or number.
+#[derive(Debug, Clone, Copy)]
+pub struct FlexId(pub u64);
+
+impl<'de> serde::Deserialize<'de> for FlexId {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        provider::deserialize_id_flexible(d).map(FlexId)
+    }
 }
 
 #[cfg(test)]
@@ -138,7 +150,7 @@ mod tests {
         assert_eq!(added.name, "Gold");
         assert_eq!(added.quality, 900);
 
-        inventory_update(state.clone(), added.id, entry("Gold", 364, "Depot"))
+        inventory_update(state.clone(), FlexId(added.id), entry("Gold", 364, "Depot"))
             .expect("update must succeed");
         let list = inventory_list(state.clone()).unwrap();
         assert_eq!(list.len(), 1);
@@ -148,7 +160,7 @@ mod tests {
         let locs = inventory_locations(state.clone()).unwrap();
         assert_eq!(locs, ["Depot"]);
 
-        inventory_delete(state.clone(), added.id).unwrap();
+        inventory_delete(state.clone(), FlexId(added.id)).unwrap();
         assert!(inventory_list(state.clone()).unwrap().is_empty());
 
         // Quality validation surfaces as a German IPC error.

@@ -20,12 +20,18 @@ use super::{Cache, CacheError, Result};
 
 /// One inventory position. `entity_kind` is `"commodity"` or `"item"`
 /// (entity reference) or `None` (free-text line).
+///
+/// Ids cross the IPC boundary to a JS WebView as STRINGS: wiki entity ids
+/// (> 2^53) silently lose precision as JS numbers (t_925a577a convention,
+/// t_1bab1fea blocker 2). Deserialize accepts bare JSON numbers as well.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct InventoryEntry {
+    #[serde(serialize_with = "provider::serialize_id_as_string")]
     pub id: u64,
     /// `"commodity" | "item"` for entity rows, `None` for free text.
     pub entity_kind: Option<String>,
     /// Reference into `entities (kind, id)` — `None` for free text.
+    #[serde(serialize_with = "ser_opt_id_as_string")]
     pub entity_id: Option<u64>,
     /// Display name (resolved from the entity, or the free text).
     pub name: String,
@@ -33,6 +39,7 @@ pub struct InventoryEntry {
     pub quality: u32,
     /// Reference into `entities` (kind = location) — `None` for a free-text
     /// depot.
+    #[serde(serialize_with = "ser_opt_id_as_string")]
     pub location_id: Option<u64>,
     /// Display location (resolved entity name or free-text depot).
     pub location_name: String,
@@ -45,13 +52,18 @@ pub struct InventoryEntry {
 }
 
 /// Payload for adding a position (no id/timestamps — those are assigned).
+/// Entity/location ids arrive from the JS frontend as STRINGS (wiki ids
+/// > 2^53 lose precision as JS numbers — t_1bab1fea blocker 2); bare JSON
+/// numbers are still accepted for older callers.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct NewInventoryEntry {
     pub entity_kind: Option<String>,
+    #[serde(deserialize_with = "provider::deserialize_opt_id_flexible")]
     pub entity_id: Option<u64>,
     pub name: String,
     pub quality: u32,
+    #[serde(deserialize_with = "provider::deserialize_opt_id_flexible")]
     pub location_id: Option<u64>,
     pub location_name: String,
     pub quantity: f64,
@@ -72,6 +84,18 @@ fn u64_sql(v: Option<u64>) -> impl ToSql {
         }
     }
     Opt64(v)
+}
+
+/// `Option<u64>` id → JSON: Some as string (JS-WebView precision loss above
+/// 2^53), None as null (t_1bab1fea blocker 2, same convention as SearchHit).
+fn ser_opt_id_as_string<S: serde::Serializer>(
+    v: &Option<u64>,
+    s: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match v {
+        Some(id) => s.serialize_str(&id.to_string()),
+        None => s.serialize_none(),
+    }
 }
 
 fn row_to_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryEntry> {
@@ -326,5 +350,59 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, id);
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// t_1bab1fea blocker 2: ids cross IPC as strings (wiki ids > 2^53 lose
+    /// precision as JS numbers). The frontend sends entity_id/location_id as
+    /// strings — deserialize must parse them exactly, including negative wiki
+    /// ids (two's-complement-wrapped u64), and re-serialize as strings.
+    #[test]
+    fn ids_cross_ipc_as_strings_and_roundtrip_losslessly() {
+        // Wiki-scale id: above 2^53, a JS number would round this silently.
+        const WIKI_LOC: &str = "9218937313948769813";
+        // Negative wiki id (two's-complement u64 representation).
+        const WIKI_NEG: &str = "-9216218779739218542";
+        let json = format!(
+            r#"{{"entity_kind":"item","entity_id":"{WIKI_LOC}","name":"Testar","quality":900,
+                "location_id":"{WIKI_NEG}","location_name":"Mining Claim #QR4-25Q","quantity":1.0,"price":null}}"#
+        );
+        let new: NewInventoryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(new.entity_id, Some(WIKI_LOC.parse::<u64>().unwrap()));
+        assert_eq!(
+            new.location_id,
+            Some(WIKI_NEG.parse::<i64>().unwrap() as u64)
+        );
+
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.inventory_add(new).unwrap();
+        let list = c.inventory_list().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].entity_id, Some(WIKI_LOC.parse::<u64>().unwrap()));
+        assert_eq!(
+            list[0].location_id,
+            Some(WIKI_NEG.parse::<i64>().unwrap() as u64)
+        );
+
+        // Wire format: ids must arrive as strings (not lossy JS numbers).
+        // The negative wiki id is stored/returned in its two's-complement u64
+        // representation — the cast chain (i64 → u64 → i64) is lossless, so
+        // the exact wiki id survives every hop.
+        let wrapped = WIKI_NEG.parse::<i64>().unwrap() as u64;
+        let wire = serde_json::to_string(&list[0]).unwrap();
+        assert!(wire.contains(&format!(r#""id":"{id}""#)), "wire={wire}");
+        assert!(
+            wire.contains(r#""entity_id":"9218937313948769813""#),
+            "wire={wire}"
+        );
+        assert!(
+            wire.contains(&format!(r#""location_id":"{wrapped}""#)),
+            "wire={wire}"
+        );
+
+        // Bare numbers remain accepted (older callers / smoke stubs).
+        let num: NewInventoryEntry =
+            serde_json::from_str(r#"{"entity_id":42,"location_id":null,"name":"n","quality":1,"location_name":"l","quantity":1.0}"#).unwrap();
+        assert_eq!(num.entity_id, Some(42));
+        assert_eq!(num.location_id, None);
     }
 }

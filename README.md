@@ -139,7 +139,8 @@ unter der Electron-Baseline 1031 MiB PSS).
 - CI: `.gitea/workflows/build.yml` finalisiert — Linux-Job baut deb/AppImage bei
   push auf main und an `v*`-Tags (inkl. Gitea-Release-Upload). Windows-Job
   (Label `windows-selfhosted`, Einrichtung: `docs/CI-WINDOWS.md`) wartet
-  sauber, bis ein Windows-Runner registriert ist — kein Rot ohne Runner.- **v0.3.0 Karte 2 (t_1bab1fea, Branch `feature/inventory`):** Inventar-Modus
+  sauber, bis ein Windows-Runner registriert ist — kein Rot ohne Runner.
+- **v0.3.0 Karte 2 (t_1bab1fea, Branch `feature/inventory`):** Inventar-Modus
   (F3 / Rail) — lokaler, privater Bestand mit Pflicht-Qualität (0–1000),
   Standort und Menge (SCU bzw. Stück), optionaler Kaufpreis in aUEC. Positionen
   referenzieren bestehende Entities (Commodity/Item aus der entities-DB,

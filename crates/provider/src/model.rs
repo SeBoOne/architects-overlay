@@ -103,11 +103,11 @@ pub struct SearchHit {
 /// t_925a577a: IDs überqueren die IPC-Grenze zu einer JS-WebView. Wiki-IDs
 /// (> 2^53) verlieren als JS-Number Präzision — deshalb als String
 /// serialisieren, beim Lesen beides (Number oder String) akzeptieren.
-fn serialize_id_as_string<S: serde::Serializer>(id: &u64, s: S) -> Result<S::Ok, S::Error> {
+pub fn serialize_id_as_string<S: serde::Serializer>(id: &u64, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&id.to_string())
 }
 
-fn deserialize_id_flexible<'de, D>(d: D) -> Result<u64, D::Error>
+pub fn deserialize_id_flexible<'de, D>(d: D) -> Result<u64, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -124,10 +124,65 @@ where
             u64::try_from(v).map_err(serde::de::Error::custom)
         }
         fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<u64, E> {
-            v.parse::<u64>().map_err(serde::de::Error::custom)
+            // Negative wiki ids exist in the entities table (i64 storage);
+            // they arrive here wrapped via the u64 two's-complement cast.
+            // Accept the raw negative string as well and wrap it back, so a
+            // negative id round-trips losslessly (t_1bab1fea blocker 2).
+            match v.parse::<u64>() {
+                Ok(id) => Ok(id),
+                Err(_) => v
+                    .parse::<i64>()
+                    .map(|x| x as u64)
+                    .map_err(serde::de::Error::custom),
+            }
         }
     }
     d.deserialize_any(IdVisitor)
+}
+
+/// `Option<u64>`-Variante von [`deserialize_id_flexible`]: JSON null/missing →
+/// None, sonst Number oder numeric string → Some(id). Negative wiki-id-Strings
+/// (two's-complement-wrapped u64) werden ebenfalls akzeptiert (t_1bab1fea).
+pub fn deserialize_opt_id_flexible<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct OptIdVisitor;
+    impl<'de> serde::de::Visitor<'de> for OptIdVisitor {
+        type Value = Option<u64>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("entity id (null, number or numeric string)")
+        }
+        fn visit_unit<E: serde::de::Error>(self) -> Result<Option<u64>, E> {
+            Ok(None)
+        }
+        fn visit_none<E: serde::de::Error>(self) -> Result<Option<u64>, E> {
+            Ok(None)
+        }
+        fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Option<u64>, D::Error> {
+            deserialize_id_flexible(d).map(Some)
+        }
+        fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Option<u64>, E> {
+            Ok(Some(v))
+        }
+        fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Option<u64>, E> {
+            u64::try_from(v).map(Some).map_err(serde::de::Error::custom)
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Option<u64>, E> {
+            // Negative wiki ids exist in the entities table (i64 storage);
+            // they arrive here wrapped via the u64 two's-complement cast.
+            // Accept the raw negative string as well and wrap it back, so a
+            // negative id round-trips losslessly (t_1bab1fea blocker 2).
+            match v.parse::<u64>() {
+                Ok(id) => Ok(Some(id)),
+                Err(_) => v
+                    .parse::<i64>()
+                    .map(|x| Some(x as u64))
+                    .map_err(serde::de::Error::custom),
+            }
+        }
+    }
+    d.deserialize_any(OptIdVisitor)
 }
 
 /// One terminal's price table inside a location aggregate (see

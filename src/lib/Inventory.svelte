@@ -13,12 +13,14 @@
 	import { invoke } from '@tauri-apps/api/core';
 
 	type InvEntry = {
-		id: number;
+		// Ids kommen als STRINGS über die IPC (Wiki-Ids > 2^53 runden als JS-
+		// Number still — t_925a577a-Konvention, t_1bab1fea Blocker 2).
+		id: string;
 		entity_kind: string | null;
-		entity_id: number | null;
+		entity_id: string | null;
 		name: string;
 		quality: number;
-		location_id: number | null;
+		location_id: string | null;
 		location_name: string;
 		quantity: number;
 		price: number | null;
@@ -38,20 +40,21 @@
 	let rows = $state<InvEntry[]>([]);
 	let loaded = $state(false);
 	let sortMode = $state<SortMode>('loc');
-	let view = $state<'overview' | 'item'>('overview');
+	let view = $state<'overview' | 'item' | 'location'>('overview');
 	let itemDetail = $state<string | null>(null); // Materialname des Item-Detail
+	let locationDetail = $state<string | null>(null); // Standortname des Standort-Detail
 	let sel = $state(0);
 	let toast = $state('');
 	let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 	// Formular (Hinzufügen/Bearbeiten). `editingId = null` → Hinzufügen.
 	let inForm = $state(false);
-	let editingId = $state<number | null>(null);
+	let editingId = $state<string | null>(null);
 	let fEntityKind = $state<'commodity' | 'item' | null>(null);
-	let fEntityId = $state<number | null>(null);
+	let fEntityId = $state<string | null>(null);
 	let fName = $state('');
 	let fQuality = $state('');
-	let fLocationId = $state<number | null>(null);
+	let fLocationId = $state<string | null>(null);
 	let fLocation = $state('');
 	let fQty = $state('');
 	let fPrice = $state('');
@@ -123,7 +126,20 @@
 	});
 
 	// Gruppen nur im Standort-Sortiment: nach Standort gruppiert, zweite
-	// Ebene = Positionen (Qualität absteigend). Übrige Sortierungen = flach.
+	// Ebene = Item-Subgroups (Material → Positionen, Qualität absteigend).
+	// Übrige Sortierungen = flach.
+	function matGroups(entries: InvEntry[]) {
+		const map = new Map<string, InvEntry[]>();
+		for (const e of entries) {
+			if (!map.has(e.name)) map.set(e.name, []);
+			map.get(e.name)!.push(e);
+		}
+		return [...map.entries()].map(([name, list]) => ({
+			name,
+			list,
+			total: list.reduce((s, e) => s + e.quantity, 0)
+		}));
+	}
 	let groups = $derived.by(() => {
 		if (sortMode !== 'loc') return [];
 		const map = new Map<string, InvEntry[]>();
@@ -134,22 +150,36 @@
 		return [...map.entries()].map(([loc, entries]) => ({
 			loc,
 			entries,
-			total: entries.reduce((s, e) => s + e.quantity, 0)
+			total: entries.reduce((s, e) => s + e.quantity, 0),
+			mats: matGroups(entries)
 		}));
 	});
 
-	// Flaches Navigationsmodell je Ansicht.
-	type NavRow = { entry: InvEntry | null; kind: 'header' | 'row' };
+	// Flaches Navigationsmodell je Ansicht. `sub`-Zeilen sind die Item-
+	// Subgroup-Header (zweite Gruppierungsebene), reine Anzeige.
+	type NavRow = { entry: InvEntry | null; kind: 'header' | 'sub' | 'row'; label?: string };
 	let navRows = $derived.by((): NavRow[] => {
 		if (view === 'item' && itemDetail) {
 			const mine = sortedRows.filter((r) => r.name === itemDetail);
 			return mine.map((entry) => ({ entry, kind: 'row' as const }));
 		}
+		if (view === 'location' && locationDetail) {
+			const mine = sortedRows.filter((r) => r.location_name === locationDetail);
+			const out: NavRow[] = [];
+			for (const m of matGroups(mine)) {
+				out.push({ entry: null, kind: 'sub', label: m.name });
+				for (const e of m.list) out.push({ entry: e, kind: 'row' });
+			}
+			return out;
+		}
 		if (sortMode === 'loc') {
 			const out: NavRow[] = [];
 			for (const g of groups) {
-				out.push({ entry: null, kind: 'header' });
-				for (const e of g.entries) out.push({ entry: e, kind: 'row' });
+				out.push({ entry: null, kind: 'header', label: g.loc });
+				for (const m of g.mats) {
+					out.push({ entry: null, kind: 'sub', label: m.name });
+					for (const e of m.list) out.push({ entry: e, kind: 'row' });
+				}
 			}
 			return out;
 		}
@@ -175,6 +205,21 @@
 		);
 	});
 
+	// Standort-Detail: alle Positionen eines Standorts + Summen. Die Item-
+	// Subgroups rendert die Ansicht selbst; navRows nutzt dieselbe Aufteilung.
+	let locRows = $derived(
+		locationDetail ? visRows.filter((r) => r.location_name === locationDetail) : []
+	);
+	let locTotal = $derived(locRows.reduce((s, r) => s + r.quantity, 0));
+	let locMatCount = $derived(new Set(locRows.map((r) => r.name)).size);
+	let locAvgQ = $derived.by(() => {
+		if (!locRows.length) return 0;
+		return Math.round(
+			locRows.reduce((s, r) => s + r.quality * r.quantity, 0) /
+				Math.max(locRows.reduce((s, r) => s + r.quantity, 0), 1e-9)
+		);
+	});
+
 	// Distinct-Materialien (für die Übersichtszahl).
 	let materialCount = $derived(new Set(visRows.map((r) => r.name)).size);
 
@@ -182,6 +227,13 @@
 	function openItem(name: string) {
 		itemDetail = name;
 		view = 'item';
+		sel = 0;
+	}
+
+	/// Standort-Detail: alle Positionen eines Standorts (mit Item-Subgroups).
+	function openLocation(name: string) {
+		locationDetail = name;
+		view = 'location';
 		sel = 0;
 	}
 
@@ -196,6 +248,12 @@
 			blur();
 			return;
 		}
+		if (view === 'location') {
+			view = 'overview';
+			locationDetail = null;
+			blur();
+			return;
+		}
 		onexit();
 	}
 
@@ -206,7 +264,7 @@
 		if (a instanceof HTMLElement && a !== document.body) a.blur();
 	}
 
-	async function removeRow(id: number) {
+	async function removeRow(id: string) {
 		try {
 			await invoke('inventory_delete', { id });
 			rows = rows.filter((r) => r.id !== id);
@@ -303,7 +361,9 @@
 
 	function chooseEntity(h: SearchHit) {
 		fEntityKind = h.kind === 'item' ? 'item' : 'commodity';
-		fEntityId = Number(h.id);
+		// String-Id unangetastet durchreichen (Wiki-Ids > 2^53 runden als
+		// JS-Number still — t_1bab1fea Blocker 2, Muster t_925a577a).
+		fEntityId = h.id;
 		fName = h.name;
 		pickIdx = 0;
 		// Keyboard-Flow: nach der Materialwahl landet der Cursor im
@@ -343,7 +403,9 @@
 
 	function chooseLocation(h: SearchHit) {
 		fLocation = h.name;
-		fLocationId = Number(h.id);
+		// String-Id unangetastet durchreichen (Wiki-Ids > 2^53 runden als
+		// JS-Number still — t_1bab1fea Blocker 2, Muster t_925a577a).
+		fLocationId = h.id;
 		locEntities = [];
 		locIdx = 0;
 	}
@@ -539,7 +601,7 @@
 								<button
 									type="button"
 									class="if-pick"
-									class:is-on={fEntityId !== null && Number(h.id) === fEntityId || pi === pickIdx}
+									class:is-on={fEntityId !== null && h.id === fEntityId || pi === pickIdx}
 									onclick={() => chooseEntity(h)}
 								>
 									<span class="k">{h.kind === 'item' ? 'i' : 'c'}</span>
@@ -601,7 +663,7 @@
 					{#if locEntities.length}
 						<div class="if-picks" role="listbox" aria-label="Standort-Entities">
 							{#each locEntities.slice(0, 6) as h, li}
-								<button type="button" class="if-pick" class:is-on={(fLocationId !== null && Number(h.id) === fLocationId) || li === locIdx} onclick={() => chooseLocation(h)}>
+								<button type="button" class="if-pick" class:is-on={(fLocationId !== null && h.id === fLocationId) || li === locIdx} onclick={() => chooseLocation(h)}>
 									<span class="k">l</span>{h.name}{#if h.subtitle}<small>{h.subtitle}</small>{/if}
 								</button>
 							{/each}
@@ -659,8 +721,51 @@
 				{/each}
 			</div>
 		</div>
+	{:else if view === 'location' && locationDetail}
+		<!-- Standort-Detail: alle Positionen dieses Standorts, gruppiert per
+			Item-Subgroup, mit Summen (Gesamt/Positionen/Materialien/Ø Qualität). -->
+		<div class="inv-detail">
+			<div class="if-head">
+				<button type="button" class="inv-back" onclick={back} aria-label="zurück zur Übersicht">←</button>
+				<div class="if-title">{locationDetail.toUpperCase()}</div>
+				<div class="if-sums">
+					<span><i>Gesamt</i> {fmtQty(locTotal)}</span>
+					<span><i>Positionen</i> {locRows.length}</span>
+					<span><i>Materialien</i> {locMatCount}</span>
+					<span><i>Ø Qualität</i> {locRows.length ? locAvgQ : '—'}</span>
+				</div>
+			</div>
+			<div class="inv-list">
+				{#each matGroups(locRows) as m}
+					<div class="isub">
+						<button
+							type="button"
+							class="isub-btn"
+							onclick={() => openItem(m.name)}
+							title="Material-Detail öffnen"
+							aria-label="Material {m.name} öffnen"
+						>{m.name}</button>
+						<span class="n">{m.list.length} Pos · {fmtQty(m.total)} {m.list[0]?.entity_kind === 'item' ? 'Stk' : 'SCU'}</span>
+					</div>
+					{#each m.list as r (r.id)}
+						<div class="inv-row" class:is-sel={sel === locRows.indexOf(r)} onclick={() => (sel = locRows.indexOf(r))} ondblclick={() => openEdit(r)}>
+							<span class="q q-{Math.floor(r.quality / 250) * 250}">Q{r.quality}</span>
+							<div class="main">
+								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? 'Item' : 'Commodity'}</span>{/if}</div>
+								<div class="sub">{#if r.price}Kauf {fmtPrice(r.price)} aUEC{:else}kein Kaufpreis{/if}</div>
+							</div>
+							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? 'Stk' : 'SCU'}</small></div>
+							<button type="button" class="inv-edit" aria-label="Bearbeiten" onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
+						</div>
+					{:else}
+						<div class="inv-empty">Keine Positionen an diesem Standort.</div>
+					{/each}
+				{:else}
+					<div class="inv-empty">Keine Positionen an diesem Standort.</div>
+				{/each}
+			</div>
+		</div>
 	{:else}
-		<!-- Gesamtübersicht: nach Standort gruppiert (Standort-Sortierung) -->
 		<div class="inv-bar">
 			<button type="button" class="chip" class:is-on={sortMode === 'loc'} onclick={() => setSort('loc')}>Standort</button>
 			<button type="button" class="chip" class:is-on={sortMode === 'qty'} onclick={() => setSort('qty')}>Menge ↓</button>
@@ -677,9 +782,28 @@
 				</div>
 			{:else if sortMode === 'loc'}
 				{#each groups as g (g.loc)}
-					<div class="vgroup">{g.loc} <span class="n">{g.entries.length} Pos · {fmtQty(g.total)} {g.entries[0]?.entity_kind === 'item' ? 'Stk' : 'SCU'}</span></div>
-					{#each g.entries as r (r.id)}
-						<div class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
+					<button
+						type="button"
+						class="vgroup"
+						onclick={() => openLocation(g.loc)}
+						title="Standort-Detail öffnen"
+						aria-label="Standort {g.loc} öffnen"
+					>
+						{g.loc} <span class="n">{g.entries.length} Pos · {fmtQty(g.total)} {g.entries[0]?.entity_kind === 'item' ? 'Stk' : 'SCU'}</span>
+					</button>
+					{#each g.mats as m}
+						<div class="isub">
+							<button
+								type="button"
+								class="isub-btn"
+								onclick={() => openItem(m.name)}
+								title="Material-Detail öffnen"
+								aria-label="Material {m.name} öffnen"
+							>{m.name}</button>
+							<span class="n">{m.list.length} · {fmtQty(m.total)}</span>
+						</div>
+						{#each m.list as r (r.id)}
+							<div class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
 							<span class="q q-{Math.floor(r.quality / 250) * 250}">Q{r.quality}</span>
 							<div class="main" onclick={() => openItem(r.name)}>
 								<div class="loc">{r.name}</div>
@@ -687,10 +811,11 @@
 							</div>
 							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? 'Stk' : 'SCU'}</small></div>
 							<button type="button" class="inv-edit" aria-label="Bearbeiten" onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
-						</div>
-					{/each}
-				{/each}
-			{:else}
+							</div>
+							{/each}
+							{/each}
+							{/each}
+							{:else}
 				{#each sortedRows as r, i (r.id)}
 					<div class="inv-row" class:is-sel={sel === i} onclick={() => (sel = i)} ondblclick={() => openEdit(r)}>
 						<span class="q q-{Math.floor(r.quality / 250) * 250}">Q{r.quality}</span>
@@ -778,6 +903,15 @@
 		padding: 4px 8px 8px;
 	}
 	.vgroup {
+		/* Standort-Gruppenkopf = klickbarer Button (öffnet das Standort-Detail). */
+		/* Button-Reset + bisherige Optik unverändert. */
+		border: none;
+		background: transparent;
+		font: inherit;
+		cursor: pointer;
+		display: block;
+		width: 100%;
+		text-align: left;
 		font-size: 10px;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
@@ -785,9 +919,41 @@
 		padding: 10px 6px 4px;
 		border-bottom: 1px solid color-mix(in srgb, var(--line) 40%, transparent);
 	}
+	.vgroup:hover,
+	.vgroup:focus-visible {
+		color: var(--accent);
+	}
 	.vgroup .n {
 		color: var(--fgdim);
 		margin-left: 6px;
+	}
+	/* Zweite Gruppierungsebene: Item-Subgroup-Header innerhalb einer */
+	/* Standortgruppe (bzw. im Standort-Detail). Klein + gedimmt, klickbar */
+	/* ins Material-Detail. */
+	.isub {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
+		padding: 5px 6px 3px 16px;
+		border-bottom: 1px solid color-mix(in srgb, var(--line) 25%, transparent);
+	}
+	.isub-btn {
+		border: none;
+		background: transparent;
+		font: inherit;
+		cursor: pointer;
+		padding: 0;
+		color: var(--fg);
+		font-size: 11.5px;
+		letter-spacing: 0.04em;
+	}
+	.isub-btn:hover,
+	.isub-btn:focus-visible {
+		color: var(--accent);
+	}
+	.isub .n {
+		color: var(--fgdim);
+		font-size: 10px;
 	}
 	.inv-row {
 		display: flex;

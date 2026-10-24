@@ -142,6 +142,9 @@ async def main():
         await asyncio.sleep(0.4)
         groups = json.loads(await js("JSON.stringify([...document.querySelectorAll('.vgroup')].map(function(e){return e.childNodes[0].textContent.trim();}))"))
         check("grouped-by-location", groups == ["Heim-Hangar", "Meine Carrack", "Org-Depot"], str(groups))
+        # Zweite Gruppierungsebene: Item-Subgroups unter jedem Standortkopf.
+        subs = int(await js("document.querySelectorAll('.inv-list .isub').length"))
+        check("overview-item-subgroups", subs >= 3, "subs=" + str(subs))
         gold900 = await js("!![...document.querySelectorAll('.inv-row .q')].some(function(e){return e.innerText.trim()==='Q900';})")
         gold364 = await js("!![...document.querySelectorAll('.inv-row .q')].some(function(e){return e.innerText.trim()==='Q364';})")
         check("gold-q900-and-q364-visible", bool(gold900 and gold364))
@@ -197,6 +200,21 @@ async def main():
         await asyncio.sleep(0.3)
         back = await js("!!document.querySelector('.inv-bar') && !document.querySelector('.inv-detail')")
         check("esc-item-detail-back-to-overview", bool(back))
+        # ---- 4b. Standort-Detail-View: Gruppenkopf anklicken öffnet die
+        # Standort-View (Positionen dort, Item-Subgroups, Esc-Zurück). ----
+        await js("var g=document.querySelector('.vgroup'); if(g) g.click();")
+        await asyncio.sleep(0.4)
+        det_title = await js("document.querySelector('.inv-detail .if-title') ? document.querySelector('.inv-detail .if-title').innerText : 'NONE'")
+        check("location-detail-opens", bool(await js("!!document.querySelector('.inv-detail')")) and str(det_title).strip() not in ("", "NONE"), str(det_title))
+        det_rows = int(await js("document.querySelectorAll('.inv-detail .inv-row').length"))
+        det_subs = int(await js("document.querySelectorAll('.inv-detail .isub').length"))
+        check("location-detail-shows-positions", det_rows >= 1, "rows=" + str(det_rows))
+        check("location-detail-item-subgroups", det_subs >= 1, "subs=" + str(det_subs))
+        await shot("03-inventar-standort-detail.png")
+        await key("Escape")
+        await asyncio.sleep(0.3)
+        locback = await js("!!document.querySelector('.inv-bar') && !document.querySelector('.inv-detail')")
+        check("esc-location-detail-back-to-overview", bool(locback))
         # Enter in der Übersicht öffnet das Material-Detail, Enter im Detail
         # öffnet das Bearbeiten-Formular (Gold Q900, sel=0).
         await key("Enter")
@@ -255,6 +273,33 @@ async def main():
         check("add-saves-position", op == "add", str(op))
         added = json.loads(await js("JSON.stringify(globalThis.__lastInv ? {name:globalThis.__lastInv.row.name, q:globalThis.__lastInv.row.quality, loc:globalThis.__lastInv.row.location_name, qty:globalThis.__lastInv.row.quantity, kind:globalThis.__lastInv.row.entity_kind} : {})"))
         check("add-row-shape", added.get("name") == "Laranite" and added.get("q") == 880 and added.get("loc") == "Heim-Hangar" and added.get("kind") == "commodity", str(added))
+
+        # ---- 5b. Standort-Entity-Pick mit realer Wiki-Id (> 2^53): die
+        # String-Id muss UNANGETASTET in den Payload übernommen werden
+        # (Number() rundet sie still — t_1bab1fea Blocker 2). ----
+        await js("window.__lastInv = null;")
+        await js("var c=document.querySelector('.inv-bar .chip.add'); if(c) c.click();")
+        await asyncio.sleep(0.4)
+        check("add2-form-opens", bool(await js("!!document.querySelector('.inv-form')")))
+        await js(set_input_expr(".inv-form .if-sect:first-child .if-input", "gold"))
+        await asyncio.sleep(0.8)
+        await js("var p=document.querySelectorAll('[aria-label=\"Entity-Treffer\"] .if-pick')[0]; if(p) p.click();")
+        await asyncio.sleep(0.2)
+        await js(set_input_expr(".inv-form .if-grid .if-sect:first-child .if-input", "500"))
+        await js(set_input_expr(".inv-form .if-grid .if-sect:last-child .if-input", "1"))
+        await js(set_input_expr(".inv-form input[list='inv-locs']", "mining"))
+        await asyncio.sleep(0.9)
+        loc_picks = await js("JSON.stringify([...document.querySelectorAll('[aria-label=\"Standort-Entities\"] .if-pick')].map(function(e){return e.innerText.trim();}))")
+        check("location-picker-shows-wiki-claim", "Mining Claim" in str(loc_picks), str(loc_picks))
+        await js("var b=[...document.querySelectorAll('[aria-label=\"Standort-Entities\"] .if-pick')].find(function(e){return e.innerText.indexOf('Mining Claim')>=0;}); if(b) b.click();")
+        await asyncio.sleep(0.2)
+        await js("var b=[...document.querySelectorAll('.if-actions .btn')].find(function(e){return e.innerText.toLowerCase().indexOf('erfassen')>=0;}); if(b) b.click();")
+        await asyncio.sleep(0.5)
+        op2 = await js("globalThis.__lastInv ? globalThis.__lastInv.op : 'none'")
+        check("add2-saves-position", op2 == "add", str(op2))
+        added2 = json.loads(await js("JSON.stringify(globalThis.__lastInv ? {loc:globalThis.__lastInv.row.location_name, lid:globalThis.__lastInv.row.location_id} : {})"))
+        check("location-id-string-passthrough", added2.get("lid") == "9218937313948769813", str(added2))
+        await key("Escape")
 
         # ---- 6. Esc-Kette: Übersicht → Suche; F4 bleibt Platzhalter ----
         await key("Escape")
