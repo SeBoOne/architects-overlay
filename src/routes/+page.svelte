@@ -300,8 +300,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let dLoc = $derived<LocGroupView[]>(
 		xpan?.detail?.location
 			? (() => {
-				const c = { i: 0 };
-				return (xpan?.detail!.location!.groups ?? []).flatMap((grp) => {
+					const c = { i: 0 };
+					return (xpan?.detail!.location!.groups ?? [])
+						// t_dc152764: Gruppen alphabetisch nach Terminal-Name — auch wenn
+						// ein (älterer) Cache noch nach terminal_id sortierte Daten liefert.
+						.slice()
+						.sort((a, b) => a.terminal_name.toLowerCase().localeCompare(b.terminal_name.toLowerCase()))
+						.flatMap((grp) => {
 					const buys = dRowsFor(grp.prices ?? [], 'buy', false, c);
 					const sells = dRowsFor(grp.prices ?? [], 'sell', false, c);
 					const termHit = !!dFilter && grp.terminal_name.toLowerCase().includes(dFilter);
@@ -1677,7 +1682,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									{#if d.location}
 										<!-- Location-Aggregat: je Terminal eine Gruppe (N2: über dLoc gefiltert) -->
 										{#each dLoc as grp}
-											<div class="ptab">
+											<div class="ptab locgrp">
 												<div class="cap">{grp.terminal_name}</div>
 												{#if grp.buys.length || grp.sells.length}
 													<div class="ph"><span>Item</span><span>Preis</span><span>SCU</span></div>

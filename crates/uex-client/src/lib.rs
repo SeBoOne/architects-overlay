@@ -669,7 +669,13 @@ impl UexProvider {
                 prices: points,
             });
         }
-        groups.sort_by_key(|g| g.terminal_id);
+        // Alphabetisch nach Terminal-Name (t_dc152764): die Location-Detail-
+        // Ansicht gruppiert je Terminal — stabile, lesbare Reihenfolge.
+        groups.sort_by(|a, b| {
+            a.terminal_name
+                .to_lowercase()
+                .cmp(&b.terminal_name.to_lowercase())
+        });
 
         Ok(LocationPrices {
             location: chain,
