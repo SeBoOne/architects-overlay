@@ -195,7 +195,10 @@ pub fn compute_routes_full(
         if filters.autoload.is_some_and(|want| meta.autoload != want) {
             continue;
         }
-        if filters.cargo_deck.is_some_and(|want| meta.cargo_center != want) {
+        if filters
+            .cargo_deck
+            .is_some_and(|want| meta.cargo_center != want)
+        {
             continue;
         }
         if filters.ground_only && !meta.ground {

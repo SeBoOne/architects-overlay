@@ -1701,13 +1701,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				e.preventDefault();
 				return;
 			}
-			if (k === 'Tab' && !inStepper) {
-				// P5: Tab verlässt den Market-Modus zurück zur Suche (Feld wird
-				// im toggleMarket-Exit komplett zurückgesetzt).
-				toggleMarket();
-				e.preventDefault();
-				return;
-			}
 			if ((k === 'm' || k === 'M') && !inStepper) {
 				// P5: M (bzw. Strg+M) verlässt den Market-Modus symmetrisch zum
 				// Eintritt — 'm' im Suchfeld tippt weiterhin normal.
