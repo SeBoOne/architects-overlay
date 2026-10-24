@@ -31,8 +31,8 @@ use std::sync::{
 
 use cache::{Cache, SOURCE_WIKI};
 use provider::{
-    routes::RouteList, DataProvider, Entity, EntityKind, LocationPrices, MarketplaceFilter,
-    PricePoint, ProviderError, Result, SearchEntities, SearchHit,
+    DataProvider, Entity, EntityKind, LocationPrices, MarketplaceFilter, PricePoint, ProviderError,
+    Result, SearchEntities, SearchHit, routes::RouteList,
 };
 use settings::CommoditySource;
 use uex_client::UexProvider;

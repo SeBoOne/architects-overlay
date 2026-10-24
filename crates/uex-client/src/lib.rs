@@ -34,12 +34,10 @@ use std::time::Duration;
 use cache::{Cache, CacheError, TTL_COMMODITIES, TTL_PRICES, TTL_TERMINALS};
 use http::{DEFAULT_BASE_URL, DEFAULT_MIN_INTERVAL, UexHttpClient};
 use provider::{
-    routes::{
-        RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta,
-    },
     DataProvider, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
     MarketplaceFilter, Offer, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
     TerminalPriceGroup,
+    routes::{RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta},
 };
 
 use dto::{
@@ -559,8 +557,8 @@ impl UexProvider {
                     )
                 })
                 .collect();
-            let payload = serde_json::to_string(&flags)
-                .map_err(|e| ProviderError::Json(e.to_string()))?;
+            let payload =
+                serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
             self.cache
                 .route_meta_set(ROUTE_META_TERMINALS, now_unix_secs(), &payload)
                 .map_err(map_cache_err)?;
@@ -569,7 +567,11 @@ impl UexProvider {
     }
 
     fn load_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
-        match self.cache.route_meta_get(ROUTE_META_TERMINALS).map_err(map_cache_err)? {
+        match self
+            .cache
+            .route_meta_get(ROUTE_META_TERMINALS)
+            .map_err(map_cache_err)?
+        {
             Some((_, json)) => serde_json::from_str(&json)
                 .map_err(|e| ProviderError::Json(format!("route terminal flags: {e}"))),
             None => Ok(HashMap::new()),
@@ -592,13 +594,17 @@ impl UexProvider {
                     )
                 })
                 .collect();
-            let payload = serde_json::to_string(&flags)
-                .map_err(|e| ProviderError::Json(e.to_string()))?;
+            let payload =
+                serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
             self.cache
                 .route_meta_set(ROUTE_META_COMMODITIES, now_unix_secs(), &payload)
                 .map_err(map_cache_err)?;
         }
-        match self.cache.route_meta_get(ROUTE_META_COMMODITIES).map_err(map_cache_err)? {
+        match self
+            .cache
+            .route_meta_get(ROUTE_META_COMMODITIES)
+            .map_err(map_cache_err)?
+        {
             Some((_, json)) => serde_json::from_str(&json)
                 .map_err(|e| ProviderError::Json(format!("route commodity flags: {e}"))),
             None => Ok(HashMap::new()),
@@ -609,7 +615,10 @@ impl UexProvider {
     /// mehr frisch ist, wird live nachgezogen (`/commodities_prices?
     /// id_terminal=…` in den `terminal_prices`-Cache). Frische Terminals
     /// kosten keinen Request. Gibt die Anzahl NACHGEZOGENER Terminals zurück.
-    async fn sweep_route_terminals(&self, flags: &HashMap<u64, RouteTerminalMeta>) -> Result<usize> {
+    async fn sweep_route_terminals(
+        &self,
+        flags: &HashMap<u64, RouteTerminalMeta>,
+    ) -> Result<usize> {
         let mut refetched = 0usize;
         let mut failures = 0usize;
         // Deterministische Reihenfolge (kleinste id zuerst) — stabile Logs.
@@ -652,7 +661,11 @@ impl UexProvider {
         let commodity_flags = self.ensure_route_commodity_flags().await?;
 
         // Sweep: bei Frische kein Netzwerk; sonst nur nachziehen, was stale ist.
-        let swept_at = match self.cache.route_meta_get(ROUTE_META_SWEEP).map_err(map_cache_err)? {
+        let swept_at = match self
+            .cache
+            .route_meta_get(ROUTE_META_SWEEP)
+            .map_err(map_cache_err)?
+        {
             Some((ts, _)) if now_unix_secs().saturating_sub(ts) < ROUTES_SWEEP_TTL.as_secs() => ts,
             _ => {
                 self.sweep_route_terminals(&terminal_flags).await?;
@@ -669,7 +682,11 @@ impl UexProvider {
             .map(|e| (e.id, e.name))
             .collect();
         let mut rows: Vec<RoutePriceRow> = Vec::new();
-        for (_terminal_id, points) in self.cache.terminal_price_rows_all().map_err(map_cache_err)? {
+        for (_terminal_id, points) in self
+            .cache
+            .terminal_price_rows_all()
+            .map_err(map_cache_err)?
+        {
             for p in points {
                 rows.push(RoutePriceRow {
                     commodity_id: p.commodity_id,

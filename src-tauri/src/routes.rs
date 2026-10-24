@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use provider::routes::{RouteFilters, RouteList, TradeRoute};
 
-use crate::trade::{friendly, TradeState};
+use crate::trade::{TradeState, friendly};
 
 /// Response der Routen-Abfrage.
 #[derive(Clone, serde::Serialize)]
