@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS inventory (
   price         REAL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
+);
 -- Hangar (v4): user-owned private data — pledge/ingame ships, vehicles and
 -- modules. `origin` distinguishes pledge vs ingame purchases; `insurance`
 -- carries the pledge's insurance (LTI/Standard/…) and is NULL for ingame.
