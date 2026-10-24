@@ -269,10 +269,7 @@ fn parse_xplorer_date(v: Option<&str>) -> String {
         return String::new();
     }
     // Format: "<Month> <d>, <yyyy>"
-    let parts: Vec<&str> = v
-        .split([' ', ','])
-        .filter(|p| !p.is_empty())
-        .collect();
+    let parts: Vec<&str> = v.split([' ', ',']).filter(|p| !p.is_empty()).collect();
     if parts.len() != 3 {
         return v.to_string();
     }
