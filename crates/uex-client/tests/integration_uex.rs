@@ -317,8 +317,8 @@ async fn location_prices_aggregates_all_terminals_of_the_chain() {
     let ids: Vec<u64> = agg.groups.iter().map(|g| g.terminal_id).collect();
     assert_eq!(
         ids,
-        [435, 436],
-        "only trade terminals are aggregated, sorted by terminal id"
+        [436, 435],
+        "only trade terminals are aggregated, sorted by terminal NAME (t_dc152764)"
     );
 
     // commodity terminal carries its price table
