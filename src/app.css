@@ -2118,3 +2118,135 @@ html[data-window="spotlight"] .shell {
 	font: 700 10px/1.4 var(--font-mono);
 	color: var(--fgdim);
 }
+
+
+/* Hangar-Modus (Karte t_317f19c5): eigene Karte in der Shell, gleiche Rail. */
+.hangar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  font-family: var(--font-sans);
+  color: var(--fg);
+}
+.hangar-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.hangar-back {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font: inherit;
+}
+.hangar-back:hover { background: var(--panel2); }
+.hangar-title {
+  font: 700 13px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.hangar-filters { display: flex; gap: 4px; flex-wrap: wrap; }
+.hchip {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fgdim);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font: 700 10px/1.4 var(--font-mono);
+  cursor: pointer;
+}
+.hchip.is-on { border-color: var(--accent); color: var(--accent); }
+.hchip.o-pledge { color: var(--accent); border-color: var(--accent-d); }
+.hchip.o-ingame { color: var(--fgdim); }
+.hchip.ins { color: var(--fgdim); }
+.hangar-actions { display: flex; gap: 6px; margin-left: auto; }
+.hbtn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 4px;
+  padding: 3px 10px;
+  font: 600 11px/1.4 var(--font-sans);
+  cursor: pointer;
+}
+.hbtn:hover { border-color: var(--accent); color: var(--accent); }
+.hbtn:disabled { opacity: 0.4; cursor: default; }
+.hbtn.danger:hover { border-color: #e5484d; color: #e5484d; }
+.hangar-note {
+  margin: 6px 12px 0;
+  padding: 4px 8px;
+  border: 1px solid var(--accent-d);
+  border-radius: 4px;
+  font: 11px/1.4 var(--font-sans);
+  color: var(--accent-h);
+}
+.hangar-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px; }
+.hrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--fg);
+  cursor: pointer;
+  font: 12px/1.3 var(--font-sans);
+}
+.hrow:hover { background: var(--panel2); }
+.hrow.is-sel { border-color: var(--accent-d); background: var(--panel2); }
+.hname { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hmodel { color: var(--fgdim); font-size: 11px; margin-left: 6px; }
+.hprice { font: 11px/1 var(--font-mono); color: var(--fgdim); }
+.hangar-empty {
+  padding: 20px;
+  text-align: center;
+  color: var(--fgdim);
+  font: 12px/1.5 var(--font-sans);
+}
+.hangar-detail { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px; }
+.hd-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.hd-name { font: 700 15px/1.2 var(--font-sans); }
+.hd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px 14px;
+  margin: 0 0 14px;
+}
+.hd-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel2);
+}
+.hd-grid dt { font: 700 9px/1.2 var(--font-mono); letter-spacing: 0.08em; color: var(--fgdim); }
+.hd-grid dd { margin: 0; font: 12px/1.3 var(--font-sans); }
+.hd-mods .h {
+  font: 700 10px/1.4 var(--font-mono);
+  letter-spacing: 0.1em;
+  color: var(--fgdim);
+  margin-bottom: 4px;
+}
+.hmod {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 3px;
+  font: 12px/1.3 var(--font-sans);
+}
+.hmodempty { color: var(--fgdim); font: 11px/1.4 var(--font-sans); padding: 4px 0; }

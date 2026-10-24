@@ -188,6 +188,29 @@ CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+-- Hangar (v4): user-owned private data — pledge/ingame ships, vehicles and
+-- modules. `origin` distinguishes pledge vs ingame purchases; `insurance`
+-- carries the pledge's insurance (LTI/Standard/…) and is NULL for ingame.
+-- Modules may reference their base ship by name.
+CREATE TABLE IF NOT EXISTS hangar (
+  id             INTEGER PRIMARY KEY,
+  name           TEXT    NOT NULL,
+  origin         TEXT    NOT NULL DEFAULT 'pledge',
+  insurance      TEXT,
+  custom_name    TEXT    NOT NULL DEFAULT '',
+  entity_type    TEXT    NOT NULL DEFAULT 'ship',
+  base_ship      TEXT    NOT NULL DEFAULT '',
+  ship_code      TEXT    NOT NULL DEFAULT '',
+  manufacturer   TEXT    NOT NULL DEFAULT '',
+  purchase_price REAL,
+  purchase_date  TEXT    NOT NULL DEFAULT '',
+  pledge_id      TEXT    NOT NULL DEFAULT '',
+  pledge_name    TEXT    NOT NULL DEFAULT '',
+  warbond        INTEGER NOT NULL DEFAULT 0,
+  ccud           INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL,
+  updated_at     INTEGER NOT NULL
+);
 "#;
 
 fn meta_key(kind: EntityKind) -> String {
@@ -266,7 +289,13 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   legacy data stays valid and is NOT invalidated — only wiki rows carry
 ///   `source = 'wiki'`. Freshness is tracked per (kind, source), so the first
 ///   wiki sync is triggered by the wiki dataset simply being absent.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
+
+// v4: `hangar` table — user-owned ship/vehicle/module records with insurance
+// and pledge metadata (Karte t_317f19c5). The table is created idempotently
+// by the `SCHEMA` batch (`CREATE TABLE IF NOT EXISTS`), so no column
+// migration is needed; the version bump exists so the migration story stays
+// explicit and future hangar column changes can hook in here.
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -373,7 +402,9 @@ impl Cache {
         })
     }
 
-    fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T> {
+    /// Führt eine closure mit exklusivem DB-Access aus. Öffentlich für
+    /// Besitzer-Datenmodule (z. B. hangar), die ihre eigene Tabelle pflegen.
+    pub fn with<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T> {
         let mut conn = self.conn.lock().expect("cache mutex poisoned");
         f(&mut conn).map_err(|e| CacheError::Query(e.to_string()))
     }
