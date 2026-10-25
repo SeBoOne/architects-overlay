@@ -178,13 +178,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let localVariant = $state<'a' | 'c' | null>(null);
 
 	// ---- Modi (Karte t_315a26cc) --------------------------------------------
-	// Zentraler Mode-State: F1 Suche · F2 Marktplatz · F3 Inventar · F4 Hangar ·
+	// Zentraler Mode-State: F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar ·
 	// F12 Einstellungen. Der bestehende Market-Modus (M/Strg+M) ist derselbe
 	// State — `phase === 'market'` bleibt die Render-Quelle, Config bleibt
 	// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).
-	type Mode = 'search' | 'market' | 'inventory' | 'hangar' | 'settings';
+	// P1 t_a39f6811: F6 Handelsrouten — eigener Mode für die Rail/Keyhandler;
+	// intern bleibt es der Market-Phase mit mTab='routes'.
+	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
+	let mTab = $state<'offers' | 'routes'>('offers');
 	let railMode = $state<'inventory' | 'hangar' | null>(null);
-	let mode = $derived<Mode>(railMode ?? (inConfig ? 'settings' : phase === 'market' ? 'market' : 'search'));
+	let mode = $derived<Mode>(
+		railMode ??
+			(inConfig
+				? 'settings'
+				: phase === 'market'
+					? mTab === 'routes'
+						? 'routes'
+						: 'market'
+					: 'search')
+	);
 	// Palletten-Breite (bind:clientWidth) → Rail-Kollaps auf reine Icons, wenn schmal.
 	let palW = $state(0);
 
@@ -702,7 +714,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	};
 	type RoutesResponse = { source: string; swept_at: number; routes: TradeRoute[] };
 
-	let mTab = $state<'offers' | 'routes'>('offers');
 	let routes_ = $state<TradeRoute[]>([]);
 	let rLoading = $state(false);
 	let rNote = $state<string | null>(null);
@@ -1294,7 +1305,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		void runSearch();
 	}
 
-	// ---- Modi-Wechsel (F1/F2/F3/F4/F12 + Rail-Klicks) ------------------------
+	// ---- Modi-Wechsel (F1/F2/F3/F4/F6/F12 + Rail-Klicks) ------------------------
 	// Ein zentraler Einstieg: räumt den jeweiligen Alt-Zustand auf (Market-
 	// Reset, Config schließen, Detail schließen) und behält den Tastaturfokus
 	// im Suchfeld — wie bisher nach Market-Exit/Detail-Schließen.
@@ -1313,6 +1324,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				enterMarket();
 				if (searchEl) searchEl.focus();
 			}
+			mTab = 'offers'; // F2 = Angebots-Tab (F6 trägt Routen)
+		} else if (m === 'routes') {
+			// F6/Rail: Handelsrouten-Tab im Marktmodus (t_a39f6811 P1).
+			if (inConfig) closeConfig();
+			if (phase !== 'market') {
+				if (inDetail) closeDetail();
+				enterMarket();
+				if (searchEl) searchEl.focus();
+			}
+			mTab = 'routes';
 		} else if (m === 'inventory' || m === 'hangar') {
 			// Platzhalter-Modus: Overlay-States räumen (Detail schließen,
 			// Market sauber verlassen), dann Platzhalter zeigen.
@@ -1552,14 +1573,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
 		// ---- F-Tasten: In-App-Moduswechsel (Karte t_315a26cc) ----------------
-		// F1 Suche · F2 Marktplatz · F3 Inventar · F4 Hangar · F12 Einstellungen.
+		// F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar · F12 Einstellungen.
 		// KEINE Hyprland-Binds — die Tasten greifen nur, solange das Overlay
 		// sichtbar+fokussiert ist (compositor_focus beim Show): SC verliert nie
 		// Tasten. F-Tasten erzeugen keine Zeichen, sie können also auch bei
 		// Fokus im Suchfeld/Stepper nicht in Eingaben geraten; einzig gegen
 		// contentEditable-Editoren (die F-Tasten selbst belegen können) wird
 		// mit demselben Check geschützt wie die bestehenden m/o-Shortcuts.
-		if (/^F(1|2|3|4|12)$/.test(k)) {
+		if (/^F(1|2|3|4|6|12)$/.test(k)) {
 			if (
 				typeof (e.target as HTMLElement | null)?.isContentEditable === 'boolean' &&
 				(e.target as HTMLElement).isContentEditable
@@ -1570,6 +1591,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			else if (k === 'F2') setMode('market');
 			else if (k === 'F3') setMode('inventory');
 			else if (k === 'F4') setMode('hangar');
+			else if (k === 'F6') setMode('routes');
 			else setMode('settings');
 			e.preventDefault();
 			return;
@@ -1705,9 +1727,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				return;
 			}
 			if ((k === 'm' || k === 'M') && !inStepper) {
-				// P5: M (bzw. Strg+M) verlässt den Market-Modus symmetrisch zum
-				// Eintritt — 'm' im Suchfeld tippt weiterhin normal.
-				if (isFieldFocused(e) && !e.ctrlKey && !e.metaKey) {
+				// P5: 'm' verlässt den Market-Modus symmetrisch zum Eintritt —
+				// 'm' im Suchfeld tippt weiterhin normal. CTRL+M entfernt
+				// (t_a39f6811 P2): Rail + F2 decken den Wechsel ab.
+				if (isFieldFocused(e)) {
 					return;
 				}
 				toggleMarket();
@@ -1782,7 +1805,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			escSearch();
 			e.preventDefault();
 		} else if (k === 'm' || k === 'M') {
-			if (isFieldFocused(e) && !e.ctrlKey && !e.metaKey) {
+			// CTRL+M entfernt (t_a39f6811 P2) — nur der Fokus-Check bleibt:
+			// 'm' im Suchfeld tippt normal, außerhalb toggelt der Market.
+			if (isFieldFocused(e)) {
 				return;
 			}
 			toggleMarket();
@@ -1809,7 +1834,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	<div class="shell" class:in-detail={inDetail}>
 		<i class="deco t1"></i><i class="deco t2"></i>
 
-		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F12) — gehört nur zum Overlay -->
+		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F6/F12) — gehört nur zum Overlay -->
 		<Rail mode={mode} compact={palW > 0 && palW < 520} onselect={setMode} />
 
 		<div class="shell-main">
@@ -1840,7 +1865,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				spellcheck="false"
 				autocomplete="off"
 			/>
-			<span class="smode">{mode === 'market' ? 'MARKETPLACE' : mode === 'inventory' ? 'INVENTAR' : mode === 'hangar' ? 'HANGAR' : mode === 'settings' ? 'EINSTELLUNGEN' : 'SUCHE'}</span>
+			<span class="smode">{mode === 'market' ? 'MARKETPLACE' : mode === 'routes' ? 'HANDELSROUTEN' : mode === 'inventory' ? 'INVENTAR' : mode === 'hangar' ? 'HANGAR' : mode === 'settings' ? 'EINSTELLUNGEN' : 'SUCHE'}</span>
 			<span class="esc">ESC</span>
 		</div>
 
@@ -2669,29 +2694,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<span class="f5-msg" role="status">{f5Msg}</span>
 			{/if}
 			<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
-			<button
-				type="button"
-				class="gear"
-				onclick={openConfig}
-				title="Konfiguration öffnen"
-				aria-label="Konfiguration öffnen"
-			>
-				<svg
-					width="13"
-					height="13"
-					viewBox="0 0 24 24"
-					fill="none"
-					stroke="currentColor"
-					stroke-width="2"
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				>
-					<circle cx="12" cy="12" r="3"></circle>
-					<path
-						d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-					></path>
-				</svg>
-			</button>
+			<!-- Zahnrad entfernt (t_a39f6811 P2): Rail + F12 decken die Konfiguration ab. -->
 			{#if isSpotlight}
 				<div class="spot-status">
 					<span class="dot" class:live={overlay?.game_running}></span>

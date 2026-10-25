@@ -1983,33 +1983,6 @@ html[data-window="spotlight"] .shell {
 }
 
 
-/* Zahnrad in der Statuszeile: klein, Amber-Outline, reine Mausbedienung */
-.gear {
-	margin-left: 6px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 22px;
-	height: 22px;
-	border: 1px solid var(--line);
-	border-radius: 3px;
-	background: transparent;
-	color: var(--accent);
-	cursor: pointer;
-	transition: border-color 0.15s ease, background 0.15s ease;
-}
-.gear:hover {
-	border-color: var(--accent);
-	background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.gear:focus-visible {
-	outline: 1px solid var(--accent);
-	outline-offset: 1px;
-}
-.gear svg {
-	display: block;
-}
-
 /* Config-View: eigenes Pane wie die Detail-Seite (kein Modal, kein neues Fenster) */
 .pane-config {
 	display: flex;

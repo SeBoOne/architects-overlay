@@ -207,6 +207,7 @@ CREATE TABLE IF NOT EXISTS inventory (
   price         REAL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
+);
 -- Handelsrouten (v6, Karte t_128b7547): JSON-Metadatensätze hinter einem
 -- Frischemarkierer — Terminal-Flags (Autoload/Cargodeck/Boden/Kette) und
 -- Ware-Flags (illegal/sellable/buyable) aus UEX, plus der Routen-Sweep-
