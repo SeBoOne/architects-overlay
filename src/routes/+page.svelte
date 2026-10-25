@@ -712,12 +712,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		margin: number;
 		distance: number;
 	};
-	type RoutesResponse = { source: string; swept_at: number; routes: TradeRoute[] };
+	type RoutesResponse = { source: string; swept_at: number; refreshing: boolean; routes: TradeRoute[] };
 
 	let routes_ = $state<TradeRoute[]>([]);
 	let rLoading = $state(false);
 	let rNote = $state<string | null>(null);
 	let rSweptAt = $state(0);
+	let rRefreshing = $state(false);
 	let rSel = $state(0);
 	let rDetail = $state<TradeRoute | null>(null);
 	// Filter (Kartenvorgabe).
@@ -782,9 +783,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			});
 			routes_ = resp.routes;
 			rSweptAt = resp.swept_at;
+			rRefreshing = resp.refreshing;
 			rSel = 0;
 		} catch (e) {
 			routes_ = [];
+			rRefreshing = false;
 			rNote = String(e);
 		} finally {
 			rLoadingRef = false;
@@ -2295,6 +2298,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>Distanz ↑</button>
 							<span class="m-spacer"></span>
 							{#if rSweptAt}<span class="chip"><span class="dot"></span>Stand {new Date(rSweptAt * 1000).toLocaleTimeString('de-DE')}</span>{/if}
+							{#if rRefreshing}<span class="chip">↻ Updating…</span>{/if}
 						</div>
 						{#if rLoading && !routes_.length}
 							<div class="center" style="padding: 28px 16px">

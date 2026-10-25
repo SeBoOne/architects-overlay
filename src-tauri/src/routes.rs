@@ -16,6 +16,9 @@ pub struct RoutesResponse {
     pub source: String,
     /// Unix-Sekunden des letzten Routen-Sweeps (Datenstand-Anzeige).
     pub swept_at: u64,
+    /// Stale-While-Revalidate: Sweep-Marker older than its TTL → the served
+    /// data is (possibly) veralt, a background refresh runs (UI: ↻ chip).
+    pub refreshing: bool,
     pub routes: Vec<TradeRoute>,
 }
 
@@ -36,6 +39,7 @@ pub async fn get_routes(
     Ok(RoutesResponse {
         source: state.provider.name(),
         swept_at: list.swept_at,
+        refreshing: list.refreshing,
         routes: list.routes,
     })
 }

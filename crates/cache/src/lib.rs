@@ -25,6 +25,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use provider::{Entity, EntityKind, Offer, PricePoint, SearchHit};
+use provider::routes::{TradeRoute};
 use rusqlite::Connection;
 
 /// Reference-data TTLs, from the research doc (patch-cycle data).
@@ -218,6 +219,37 @@ CREATE TABLE IF NOT EXISTS route_meta (
   fetched_at INTEGER NOT NULL,
   payload    TEXT    NOT NULL
 );
+-- Profit-Matrix (v6, Karte K1 Cache-Architectur): PRECOMPUTED best-Buy →
+-- best-Sell pair per Commodity — the artifact behind the Handelsrouten-View.
+-- Filled after every price-data change (epoch invalidation, see
+-- `route_matrix_epoch_get`/`uex_client::matrix_epoch`), NEVER rebuilt by re-fetching
+-- the UEX-API: serving reads this table. `profit_total`/`cost_total` are NOT
+-- stored (they depend on the SCU capacity of the query); everything else is
+-- complete. Empty table = no artifact yet.
+CREATE TABLE IF NOT EXISTS route_matrix (
+  id_commodity      INTEGER NOT NULL,
+  commodity         TEXT    NOT NULL,
+  illegal           INTEGER NOT NULL DEFAULT 0,
+  buy_terminal_id   INTEGER NOT NULL,
+  buy_terminal      TEXT    NOT NULL,
+  buy_chain         TEXT    NOT NULL DEFAULT '',
+  buy_price         REAL    NOT NULL,
+  buy_autoload      INTEGER NOT NULL DEFAULT 0,
+  buy_cargo_deck    INTEGER NOT NULL DEFAULT 0,
+  buy_ground        INTEGER NOT NULL DEFAULT 0,
+  sell_terminal_id  INTEGER NOT NULL,
+  sell_terminal     TEXT    NOT NULL,
+  sell_chain        TEXT    NOT NULL DEFAULT '',
+  sell_price        REAL    NOT NULL,
+  sell_autoload     INTEGER NOT NULL DEFAULT 0,
+  sell_cargo_deck   INTEGER NOT NULL DEFAULT 0,
+  sell_ground       INTEGER NOT NULL DEFAULT 0,
+  sell_stock        REAL    NOT NULL DEFAULT 0,
+  profit_per_scu    REAL    NOT NULL,
+  margin            REAL    NOT NULL DEFAULT 0,
+  distance          INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (id_commodity)
+);
 -- Hangar (v4): user-owned private data — pledge/ingame ships, vehicles and
 -- modules. `origin` distinguishes pledge vs ingame purchases; `insurance`
 -- carries the pledge's insurance (LTI/Standard/…) and is NULL for ingame.
@@ -282,6 +314,20 @@ fn item_prices_meta_key(item_id: u64) -> String {
 
 const MARKETPLACE_META_KEY: &str = "fetched_at:marketplace";
 
+/// Epoch stamp of the `route_matrix` artifact (`meta` keys, cf. v6 schema):
+/// the epoch VALUE describes the price dataset the matrix was built from.
+const ROUTE_MATRIX_EPOCH_KEY: &str = "route_matrix:epoch";
+const ROUTE_MATRIX_BUILT_KEY: &str = "route_matrix:built_at";
+
+/// SQLite has no bool — flags are stored as 0/1 integers.
+fn bool_as_int(b: bool) -> i64 {
+    if b {
+        1
+    } else {
+        0
+    }
+}
+
 /// Columns added to `marketplace_offers` after the initial Phase-1 schema.
 /// `CREATE TABLE IF NOT EXISTS` does not alter an existing table, so pre-Phase-2
 /// caches need a column migration here.
@@ -332,7 +378,14 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   Fahrzeuge, Module mit Herkunft pledge/ingame + Versicherung); die
 ///   `source`-Spalte vermerkt die Herkunft (manual > xplorer > ccugame) für
 ///   Import-Merges. Bump ebenfalls rein additiv.
-pub const SCHEMA_VERSION: i64 = 5;
+/// * v6 — Cache-Architectur (Karte K1): neue Tabelle `route_matrix`
+///   (precomputated Profit-Matrix: best Buy → best Sell per Commodity, see
+///   below). Rein additiv again: `CREATE TABLE IF NOT EXISTS` im SCHEMA
+///   creates it on every open (also on existing caches); NO existing table,
+///   row or freshness marker is touched by this migration. The matrix lives
+///   in the DB, so it survives instance- AND update-boundaries; it is only
+///   rebuilt on new price data (epoch invalidation), never by re-fetching.
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -469,6 +522,33 @@ impl Cache {
     /// Whether the reference dataset of `kind` is fresher than its TTL.
     pub fn is_fresh(&self, kind: EntityKind) -> Result<bool> {
         self.is_fresh_sourced(kind, SOURCE_UEX)
+    }
+
+    /// Whether the reference dataset of `kind` (UEX source) has ANY rows in
+    /// the cache — stale-but-present data is SERVED (stale-first), only a
+    /// genuinely EMPTY dataset triggers the blocking import.
+    pub fn has_entities(&self, kind: EntityKind) -> Result<bool> {
+        self.with(|conn| {
+            let mut stmt =
+                conn.prepare(
+                    "SELECT 1 FROM entities WHERE kind = ?1 AND source = ?2 LIMIT 1",
+                )?;
+            let mut rows = stmt.query([kind.as_str(), SOURCE_UEX])?;
+            Ok(rows.next()?.is_some())
+        })
+    }
+
+    /// `fetched_at` of one route_meta dataset (no TTL judgement — the
+    /// provider decides freshness policy).
+    pub fn route_meta_fetched_at(&self, key: &str) -> Result<Option<u64>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT fetched_at FROM route_meta WHERE key = ?1")?;
+            let mut rows = stmt.query([key])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(row.get::<_, i64>(0)? as u64)),
+                None => Ok(None),
+            }
+        })
     }
 
     /// Freshness per (kind, source) — wiki rows carry their own fetched-at
@@ -1268,6 +1348,167 @@ impl Cache {
                 rusqlite::params![key, fetched_at as i64, payload],
             )?;
             Ok(())
+        })
+    }
+
+    // ---------- Profit-Matrix (v6, Cache-Architectur K1) ----------
+
+    /// `(row count, max fetched_at)` of the terminal-price table — cheap
+    /// aggregate over the PK-order (27k rows: ~1 ms). Together with the
+    /// route_meta flag-timestamps this forms the price-dataset EPOCH: the
+    /// matrix artifact is invalidated ONLY when the epoch moves, i.e. only
+    /// when NEW price/flag data actually landed.
+    pub fn terminal_price_stats(&self) -> Result<(u64, u64)> {
+        self.with(|conn| {
+            let (count, max_fetched): (i64, i64) =
+                conn.query_row(
+                    "SELECT (SELECT COUNT(*) FROM terminal_prices),
+                     (SELECT COALESCE(MAX(fetched_at), 0) FROM terminal_prices)",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+            Ok((count as u64, max_fetched as u64))
+        })
+    }
+
+    /// Store the precomputed Profit-Matrix (replaces the old one, in ONE
+    /// transaction — old rows stay visible until the new ones are in, the
+    /// stale-never-empty contract). Empty input = no artifact (clears it).
+    pub fn store_route_matrix(&self, routes: &[TradeRoute]) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM route_matrix", [])?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO route_matrix (id_commodity, commodity, illegal,
+                     buy_terminal_id, buy_terminal, buy_chain, buy_price,
+                     buy_autoload, buy_cargo_deck, buy_ground,
+                     sell_terminal_id, sell_terminal, sell_chain, sell_price,
+                     sell_autoload, sell_cargo_deck, sell_ground,
+                     sell_stock, profit_per_scu, margin, distance)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                )?;
+                for r in routes {
+                    stmt.execute(rusqlite::params![
+                        r.commodity_id as i64,
+                        r.commodity,
+                        bool_as_int(r.illegal),
+                        r.buy_terminal_id as i64,
+                        r.buy_terminal,
+                        r.buy_chain,
+                        r.buy_price,
+                        bool_as_int(r.buy_terminal_autoload),
+                        bool_as_int(r.buy_terminal_cargo_deck),
+                        bool_as_int(r.buy_terminal_ground),
+                        r.sell_terminal_id as i64,
+                        r.sell_terminal,
+                        r.sell_chain,
+                        r.sell_price,
+                        bool_as_int(r.sell_terminal_autoload),
+                        bool_as_int(r.sell_terminal_cargo_deck),
+                        bool_as_int(r.sell_terminal_ground),
+                        r.sell_stock,
+                        r.profit_per_scu,
+                        r.margin,
+                        r.distance as i64,
+                    ])?;
+                }
+            }
+            tx.commit()
+        })
+    }
+
+    /// The stored Profit-Matrix (may be stale — the CALLER checks the epoch
+    /// via [`uex_client::matrix_epoch`]; serving it regardless of age is the
+    /// stale-first contract). `profit_total`/`cost_total` come back as 0:
+    /// they depend on the query's SCU capacity and are applied on serve.
+    pub fn route_matrix_rows(&self) -> Result<Vec<TradeRoute>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id_commodity, commodity, illegal,
+                 buy_terminal_id, buy_terminal, buy_chain, buy_price,
+                 buy_autoload, buy_cargo_deck, buy_ground,
+                 sell_terminal_id, sell_terminal, sell_chain, sell_price,
+                 sell_autoload, sell_cargo_deck, sell_ground,
+                 sell_stock, profit_per_scu, margin, distance
+                 FROM route_matrix ORDER BY id_commodity",
+            )?;
+            let map = |row: &rusqlite::Row| {
+                let b = |i: usize| -> rusqlite::Result<bool> { Ok(row.get::<_, i64>(i)? != 0) };
+                let id = |i: usize| -> rusqlite::Result<u64> { Ok(row.get::<_, i64>(i)? as u64) };
+                Ok(TradeRoute {
+                    commodity_id: id(0)?,
+                    commodity: row.get(1)?,
+                    illegal: b(2)?,
+                    buy_terminal_id: id(3)?,
+                    buy_terminal: row.get(4)?,
+                    buy_chain: row.get(5)?,
+                    buy_price: row.get(6)?,
+                    buy_terminal_autoload: b(7)?,
+                    buy_terminal_cargo_deck: b(8)?,
+                    buy_terminal_ground: b(9)?,
+                    sell_terminal_id: id(10)?,
+                    sell_terminal: row.get(11)?,
+                    sell_chain: row.get(12)?,
+                    sell_price: row.get(13)?,
+                    sell_terminal_autoload: b(14)?,
+                    sell_terminal_cargo_deck: b(15)?,
+                    sell_terminal_ground: b(16)?,
+                    sell_stock: row.get(17)?,
+                    profit_per_scu: row.get(18)?,
+                    profit_total: 0.0,
+                    cost_total: 0.0,
+                    margin: row.get(19)?,
+                    distance: row.get::<_, i64>(20)? as u8,
+                })
+            };
+            let rows = stmt.query_map([], map)?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Epoch key of the matrix artifact (`meta` bookkeeping, not a TTL —
+    /// the epoch VALUE is compared to the live dataset epoch).
+    pub fn route_matrix_epoch_get(&self) -> Result<Option<String>> {
+        self.meta_get_str(&ROUTE_MATRIX_EPOCH_KEY)
+    }
+
+    /// Stamp the matrix with the dataset epoch it was built from (+ build
+    /// timestamp for the UI's data-age display when no sweep marker exists).
+    pub fn route_matrix_epoch_set(&self, epoch: String, built_at: u64) -> Result<()> {
+        let built_s = built_at.to_string();
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [ROUTE_MATRIX_EPOCH_KEY, epoch.as_str()],
+            )?;
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [ROUTE_MATRIX_BUILT_KEY, &built_s],
+            )?;
+            Ok(())
+        })
+    }
+
+    pub fn route_matrix_built_at(&self) -> Result<Option<u64>> {
+        self.meta_get(&ROUTE_MATRIX_BUILT_KEY)
+    }
+
+    /// Raw string value from `meta` (numeric values use [`meta_get`]).
+    fn meta_get_str(&self, key: &str) -> Result<Option<String>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?1")?;
+            let mut rows = stmt.query([key])?;
+            match rows.next()? {
+                Some(row) => Ok(row.get::<_, Option<String>>(0)?),
+                None => Ok(None),
+            }
         })
     }
 
