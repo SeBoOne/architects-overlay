@@ -1,0 +1,30 @@
+Gate + Live-Smoke t_04e3d8c6 (Fix: railMode-Latch im routes-Zweig, src/routes/+page.svelte setMode)
+
+Datum: 2026-10-25, Branch feature/v030-fixes, Fix-Commit siehe git log.
+Build: pnpm tauri build --no-bundle (eingebettete Assets, kein Dev-Server).
+
+1) cargo fmt --all -- --check        -> exit 0
+2) cargo test --workspace            -> alle grün (11 result-Blöcke ok, 0 failed; u.a. 56/24/19/18/16/14 passed, 13 ignored gesamt)
+3) pnpm run check (svelte-check)     -> 0 errors / 28 warnings
+
+Live-Smoke (echtes Tauri-Fenster):
+- Nested Hyprland (eigene Instanz, Monitor FALLBACK, wayland-2 + Xwayland :1), App aus
+  pnpm tauri build --no-bundle, XDG_DATA_HOME=/tmp/smoke-data (DB-Kopie, echte IPC, kein Stub).
+- X11-Backend (GDK_BACKEND=x11, XTest via python-xlib, /tmp/smoke-hypr/xt.py):
+  01 F3 -> INVENTAR (Rail F3 aktiv)
+  02 F6 -> HANDELSROUTEN-Tab aktiv, Rail F6 aktiv   <- Kernfix (Review-Blocker)
+  03 F1 -> F6 -> HANDELSROUTEN, Rail F6 aktiv
+  04 F2 -> F6 -> HANDELSROUTEN, Rail F6 aktiv
+  05 F4 -> HANGAR (Shot im selben Pfad als Vorher-Beleg: 05 zeigt HANGAR vor F6)
+     05b F6 aus HANGAR -> HANDELSROUTEN (f6-a6)
+  06 F12 -> F6 -> HANDELSROUTEN, Rail F6 aktiv
+  07 Gegenprobe: F6 -> F2 -> ANGEBOTE-Tab aktiv (WTS-Liste), Rail F2 aktiv
+- Wayland-Backend (wtype, Main-Window fokussiert):
+  08 F3 -> INVENTAR
+  09 F6 -> HANDELSROUTEN-Tab aktiv
+  10 F4 -> HANGAR
+  11 F6 aus HANGAR -> HANDELSROUTEN-Tab aktiv
+- Gegenprobe Wayland: f6-w9-gegenprobe-f2 (F6 -> F2 -> ANGEBOTE) == 07 oben (X11).
+
+Fix-Ursache: setMode('routes') setzte railMode nicht zurueck -> mode $derived blieb
+'hangar'/'inventory' gelatcht. Fix: railMode = null im routes-Zweig (analog market-Zweig).

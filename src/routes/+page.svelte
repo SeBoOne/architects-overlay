@@ -1327,6 +1327,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			mTab = 'offers'; // F2 = Angebots-Tab (F6 trägt Routen)
 		} else if (m === 'routes') {
 			// F6/Rail: Handelsrouten-Tab im Marktmodus (t_a39f6811 P1).
+			// railMode lösen (t_04e3d8c6): sonst bleibt aus Hangar/Inventar
+			// railMode gesetzt und mode $derived wechselt nie auf 'routes'.
+			railMode = null;
 			if (inConfig) closeConfig();
 			if (phase !== 'market') {
 				if (inDetail) closeDetail();
