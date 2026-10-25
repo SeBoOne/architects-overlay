@@ -270,3 +270,33 @@ Aufgabe „Windows-Build aktivieren"); bis dahin bleibt alles auf Gitea/Linux.
 - **gh-CLI-Hinweis:** `~/.local/bin/gh` ist ein mise-Wrapper und hängt bei
   jedem Aufruf (Registry-Lookup). Direkt verwenden:
   `~/.local/share/mise/installs/gh/2.101.0/gh_2.101.0_linux_amd64/bin/gh`.
+
+### 8.3 Stand 2026-10-25: Windows-Builds AKTIVIERT und End-to-End verifiziert
+
+Auf Sebos ausdrücklichen Wunsch aktiviert (t_413b5466). Die Pipeline ist
+seitdem dauerhaft scharf: jeder Push auf `main` und jedes Tag `v*` auf Gitea
+wird vom Push-Mirror nach GitHub gespiegelt und dort auf `windows-latest`
+gebaut.
+
+**End-to-End-Nachweis (Run 40157806149, Tag `v0.3.1`):**
+
+- GitHub-Actions-Run `windows-build` auf `windows-latest` → **success**
+  (15 min). Auch die Runs auf `main` (u. a. 40145648022, 40157873393)
+  grün.
+- Gitea-Release `v0.3.1` enthält nach dem Lauf die Windows-Assets:
+  - `architects-overlay_0.3.1_x64-setup.exe` (NSIS, ~4.2 MB)
+  - `architects-overlay_0.3.1_x64_en-US.msi` (~6.0 MB)
+  plus die Linux-Assets (AppImage/deb) aus der Gitea-Pipeline.
+- Download-Test: NSIS-Asset per API/`releases/download/v0.3.1/...`
+  geladen → HTTP 200, Größe stimmt.
+
+**Wartungshinweise:**
+
+- Beim Re-Setzen eines bereits gebauten Tags bleiben Assets des ersten
+  Runs in der Release hängen (alte Versionsnummern). Vor Re-Tag alte
+  Assets am Release löschen oder Tag komplett löschen/neu schieben.
+- Kommt ein Versions-Bump ohne `Cargo.lock`-Nachzug, baut das Bundle
+  trotzdem nach `tauri.conf.json` — Cargo.lock trotzdem mit committen
+  (Follow-up c60833f).
+- Watchdog: `gh run list -R SeBoOne/architects-overlay --limit 5`
+  (direkt über die mise-Install-Path-Version, siehe §8.2).
