@@ -679,12 +679,33 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function pushRecent(qRaw: string) {
 		const q = qRaw.trim();
 		if (!q) return;
-		recent = [q, ...recent.filter((s) => s !== q)].slice(0, 8);
+		// P8-Fix (Review t_50c64411 B1): no history entry may be the Prefix of
+		// a newer one → typing-Fragments of a partial search get dropped.
+		// (old: Dedupe exact-Equals only → prefix of a newer entry kept)
+		recent = [q, ...recent.filter((s) => s !== q && !q.startsWith(s))].slice(0, 8);
 		try {
 			localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
 		} catch {
 			/* localStorage incomplete — In-Memory-Tracking stays active. */
 		}
+	}
+	// P8-Fix (Review t_50c64411 B1): pushRecent must NOT run in runSearch —
+	// runSearch fires on every 180ms debounce-Interval while typing, one
+	// History-entry per Prefix. Only a completed search persistiert:
+	// persistRecent fires after 750ms Typing-Stille (see onInput) or gets
+	// flushed when the search is explicitly left (Detail open/close).
+	let recentTimer: ReturnType<typeof setTimeout> | null = null;
+	function persistRecent() {
+		recentTimer = null;
+		if (phase === 'market' || railMode || inDetail) return;
+		const q = parseQuery();
+		if (!q.isCalc && q.text) pushRecent(q.text);
+	}
+	function flushRecent() {
+		if (recentTimer === null) return;
+		clearTimeout(recentTimer);
+		recentTimer = null;
+		persistRecent();
 	}
 	let f5Msg = $state(''); // kurzer Status-Text aus dem F5-Sync
 	let f5Clear: ReturnType<typeof setTimeout> | null = null;
@@ -988,6 +1009,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 		if (debounce) clearTimeout(debounce);
 		debounce = setTimeout(() => void (phase === 'market' ? loadMarket() : runSearch()), 180);
+		// P8-Fix: second, much longer debounce = Typing-Stille → only a
+		// completed search reacheth the History (750ms after last keystroke).
+		if (phase !== 'market') {
+			if (recentTimer) clearTimeout(recentTimer);
+			recentTimer = setTimeout(persistRecent, 750);
+		}
 	}
 
 	async function runSearch() {
@@ -1045,7 +1072,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// Präfix-only (z. B. `:c`) hat keinen Freitext → dann alle Treffer der
 		// Kategorie listen (Suchtext leer = Breitensuche).
 		const query = q.text;
-		pushRecent(query); // P8 (K5): persist search history (idle-pane)
+		// P8-Fix: persistiert nicht hier — see persistRecent (750ms Stille).
 		const t0 = performance.now();
 		try {
 			const resp = await invoke<SearchResponse>('search', {
@@ -1133,6 +1160,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// N2: Suchfeld = In-Context-Filter der Detail-Ansicht → mit leerem Filter
 		// starten (alles zeigen); Fokus bleibt im Suchfeld zum sofortigen Filtern.
 		if (debounce) clearTimeout(debounce);
+		flushRecent(); // P8-Fix
 		input = '';
 		focusSearch(false);
 		void loadDetail(flat[idx]);
@@ -1147,6 +1175,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// N2: Filter zurücksetzen — das Feld ist in der Hauptsuche wieder die
 		// Volltextsuche (leer, Ergebnisliste der letzten Suche bleibt stehen).
 		if (debounce) clearTimeout(debounce);
+		flushRecent(); // P8-Fix
 		input = '';
 		focusSearch(true);
 		// Scroll-Position der Liste wiederherstellen (kein Scroll-Back to top).
