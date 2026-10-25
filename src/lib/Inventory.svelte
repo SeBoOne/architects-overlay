@@ -47,6 +47,31 @@
 	let toast = $state('');
 	let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
+	// P13 (K5): Switch List-View ⇄ Cards (grid of cards per Stand-ort,
+	// Item-Groups inside the cards). Persistiert via localStorage
+	// (same pattern as Palette-fetchedAt → survives app restart).
+	const INV_CARDS_KEY = 'architects-overlay.inventory.cards';
+	let cardView = $state(localStorage.getItem(INV_CARDS_KEY) === '1');
+	function toggleCardView() {
+		cardView = !cardView;
+		try {
+			localStorage.setItem(INV_CARDS_KEY, cardView ? '1' : '0');
+		} catch {
+			/* localStorage incomplete — Switch stays active in-Memory. */
+		}
+		sel = 0;
+	}
+
+	// P14 (K5): 4 Quality-Steps (previously 2 with 750-border): <500 Bad
+	// (reddish) · 500–749 ok · 750–899 good · 900–1000 Very good. q-chip-
+	// class everywhere (also in the card view — Consistent).
+	function qTier(q: number): string {
+		if (q < 500) return 'bad';
+		if (q < 750) return 'ok';
+		if (q < 900) return 'good';
+		return 'top';
+	}
+
 	// Formular (Hinzufügen/Bearbeiten). `editingId = null` → Hinzufügen.
 	let inForm = $state(false);
 	let editingId = $state<string | null>(null);
@@ -155,6 +180,26 @@
 		}));
 	});
 
+	// Cards-view-Groups: Grouping per Stand-ort independent of the sortmode;
+	// the cards react to the Sort-Chips (qty → Quantity, quality → Ø Quality,
+	// loc → Name).
+	let cardGroups = $derived.by(() => {
+		const map = new Map<string, InvEntry[]>();
+		for (const r of sortedRows) {
+			if (!map.has(r.location_name)) map.set(r.location_name, []);
+			map.get(r.location_name)!.push(r);
+		}
+		const arr = [...map.entries()].map(([loc, entries]) => {
+			const total = entries.reduce((s, e) => s + e.quantity, 0);
+			const avgQ = Math.round(entries.reduce((s, e) => s + e.quality * e.quantity, 0) / Math.max(total, 1e-9));
+			return { loc, entries, total, avgQ, mats: matGroups(entries) };
+		});
+		if (sortMode === 'qty') arr.sort((a, b) => b.total - a.total);
+		else if (sortMode === 'quality') arr.sort((a, b) => b.avgQ - a.avgQ);
+		else arr.sort((a, b) => (a.loc < b.loc ? -1 : 1));
+		return arr;
+	});
+
 	// Flaches Navigationsmodell je Ansicht. `sub`-Zeilen sind die Item-
 	// Subgroup-Header (zweite Gruppierungsebene), reine Anzeige.
 	type NavRow = { entry: InvEntry | null; kind: 'header' | 'sub' | 'row'; label?: string };
@@ -169,6 +214,17 @@
 			for (const m of matGroups(mine)) {
 				out.push({ entry: null, kind: 'sub', label: m.name });
 				for (const e of m.list) out.push({ entry: e, kind: 'row' });
+			}
+			return out;
+		}
+		if (cardView) {
+			const out: NavRow[] = [];
+			for (const g of cardGroups) {
+				out.push({ entry: null, kind: 'header', label: g.loc });
+				for (const m of g.mats) {
+					out.push({ entry: null, kind: 'sub', label: m.name });
+					for (const e of m.list) out.push({ entry: e, kind: 'row' });
+				}
 			}
 			return out;
 		}
@@ -708,7 +764,7 @@
 			<div class="inv-list">
 				{#each itemRows as r (r.id)}
 					<div class="inv-row" class:is-sel={sel === itemRows.indexOf(r)} onclick={() => (sel = itemRows.indexOf(r))} ondblclick={() => openEdit(r)}>
-						<span class="q q-{Math.floor(r.quality / 250) * 250}">Q{r.quality}</span>
+						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div class="main">
 							<div class="loc">{r.location_name}{#if r.location_id !== null}<span class="src"> · Location</span>{/if}</div>
 							<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Kauf {fmtPrice(r.price)} aUEC{/if}</div>
@@ -749,7 +805,7 @@
 					</div>
 					{#each m.list as r (r.id)}
 						<div class="inv-row" class:is-sel={sel === locRows.indexOf(r)} onclick={() => (sel = locRows.indexOf(r))} ondblclick={() => openEdit(r)}>
-							<span class="q q-{Math.floor(r.quality / 250) * 250}">Q{r.quality}</span>
+							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div class="main">
 								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? 'Item' : 'Commodity'}</span>{/if}</div>
 								<div class="sub">{#if r.price}Kauf {fmtPrice(r.price)} aUEC{:else}kein Kaufpreis{/if}</div>
@@ -771,6 +827,7 @@
 			<button type="button" class="chip" class:is-on={sortMode === 'qty'} onclick={() => setSort('qty')}>Menge ↓</button>
 			<button type="button" class="chip" class:is-on={sortMode === 'quality'} onclick={() => setSort('quality')}>Qualität ↓</button>
 			<span class="sp"></span>
+			<button type="button" class="chip view" class:is-on={cardView} onclick={toggleCardView} title="Cards-View toggle">Cards</button>
 			<button type="button" class="chip add" onclick={openAdd}>+ Position <kbd>N</kbd></button>
 		</div>
 		<div class="inv-list">
@@ -779,6 +836,48 @@
 			{:else if !visRows.length}
 				<div class="inv-empty">
 					{filter.trim() ? `Keine Positionen passen zu „${filter}“.` : 'Inventar leer — erfasse die erste Position mit <b>N</b>.'}
+				</div>
+			{:else if cardView}
+				<!-- P13 (K5): Cards-View — grid of Stand-ort-cards, Item-
+				     Subgroups inside the cards (card header: Ø Quality, P14-Colors). -->
+				<div class="inv-cards">
+					{#each cardGroups as g (g.loc)}
+						<div class="inv-card">
+							<div class="ic-head">
+								<button
+									type="button"
+									class="vgroup"
+									onclick={() => openLocation(g.loc)}
+									title="Open Stand-ort-Detail"
+									aria-label="Open Stand-ort {g.loc}"
+								>{g.loc} <span class="n">{g.entries.length} Pos · {fmtQty(g.total)} {g.entries[0]?.entity_kind === 'item' ? 'Stk' : 'SCU'}</span></button>
+								<span class="q q-{qTier(g.avgQ)}">Ø {g.avgQ}</span>
+							</div>
+							{#each g.mats as m}
+								<div class="isub">
+									<button
+										type="button"
+										class="isub-btn"
+										onclick={() => openItem(m.name)}
+										title="Open Material-Detail"
+										aria-label="Open Material {m.name}"
+									>{m.name}</button>
+									<span class="n">{m.list.length} Pos · {fmtQty(m.total)}</span>
+								</div>
+								{#each m.list as r (r.id)}
+									<div class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
+										<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
+										<div class="main" onclick={() => openItem(r.name)}>
+											<div class="loc">{r.name}</div>
+											<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Purchase {fmtPrice(r.price)} aUEC{/if}</div>
+										</div>
+										<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? 'Stk' : 'SCU'}</small></div>
+										<button type="button" class="inv-edit" aria-label="Edit" onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
+									</div>
+								{/each}
+							{/each}
+						</div>
+					{/each}
 				</div>
 			{:else if sortMode === 'loc'}
 				{#each groups as g (g.loc)}
@@ -804,7 +903,7 @@
 						</div>
 						{#each m.list as r (r.id)}
 							<div class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
-							<span class="q q-{Math.floor(r.quality / 250) * 250}">Q{r.quality}</span>
+							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div class="main" onclick={() => openItem(r.name)}>
 								<div class="loc">{r.name}</div>
 								<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Kauf {fmtPrice(r.price)} aUEC{/if}</div>
@@ -818,7 +917,7 @@
 							{:else}
 				{#each sortedRows as r, i (r.id)}
 					<div class="inv-row" class:is-sel={sel === i} onclick={() => (sel = i)} ondblclick={() => openEdit(r)}>
-						<span class="q q-{Math.floor(r.quality / 250) * 250}">Q{r.quality}</span>
+						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div class="main" onclick={() => openItem(r.name)}>
 							<div class="loc">{r.name} <small>{r.location_name}</small></div>
 							<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Kauf {fmtPrice(r.price)} aUEC{/if}</div>
@@ -902,6 +1001,26 @@
 		overflow-y: auto;
 		padding: 4px 8px 8px;
 	}
+	/* P13 (K5): Cards-View — Stand-ort-card-grid (Overlay-Style). */
+	.inv-cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+		gap: 10px;
+		align-content: start;
+	}
+	.inv-card {
+		display: flex;
+		flex-direction: column;
+		border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+		border-radius: 4px;
+		padding: 2px 10px 8px;
+	}
+	.inv-card .ic-head {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		margin-bottom: 2px;
+	}
 	.vgroup {
 		/* Standort-Gruppenkopf = klickbarer Button (öffnet das Standort-Detail). */
 		/* Button-Reset + bisherige Optik unverändert. */
@@ -967,7 +1086,8 @@
 		background: color-mix(in srgb, var(--accent) 10%, transparent);
 		box-shadow: inset 2px 0 0 var(--accent);
 	}
-	.inv-row .q {
+	.inv-row .q,
+	.inv-card .q {
 		font: 700 11px/1 var(--mono, monospace);
 		padding: 3px 6px;
 		border-radius: 3px;
@@ -976,13 +1096,21 @@
 		background: color-mix(in srgb, var(--fgdim) 15%, transparent);
 		color: var(--fg);
 	}
-	.inv-row .q-750,
-	.inv-row .q-1000 {
-		color: var(--accent);
-		background: color-mix(in srgb, var(--accent) 14%, transparent);
+	.inv-row .q-bad,
+	.inv-card .q-bad {
+		color: var(--alert, #ff6b6b);
+		background: color-mix(in srgb, var(--alert, #ff6b6b) 16%, transparent);
 	}
-	.inv-row .q-0 {
-		color: var(--fgdim);
+	/* q-ok = the Default neutral chip look (see .inv-row .q). */
+	.inv-row .q-good,
+	.inv-card .q-good {
+		color: var(--ok);
+		background: color-mix(in srgb, var(--ok) 16%, transparent);
+	}
+	.inv-row .q-top,
+	.inv-card .q-top {
+		color: color-mix(in srgb, var(--ok) 55%, white);
+		background: color-mix(in srgb, var(--ok) 28%, transparent);
 	}
 	.inv-row .main {
 		flex: 1;

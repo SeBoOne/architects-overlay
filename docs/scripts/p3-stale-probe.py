@@ -159,7 +159,7 @@ async def main():
         # ---- 1) fresh entry: normal load, persisted fetched_at ----
         print("scenario 1: fresh market entry (normal load)")
         calls_before = await js("(window.__calls||[]).filter(function(c){return c==='get_marketplace'}).length")
-        await key("m", "m", vk=77, mods=2)  # Ctrl+M
+        await key("F2", "F2", vk=110)  # F2/Rail = Realit (t_a39f6811: M-Shortcut removed)
         await asyncio.sleep(1.5)
         rows1 = await market_rows()
         check("p3-fresh: market list filled", (rows1 or 0) > 0, f"rows={rows1}")

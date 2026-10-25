@@ -22,7 +22,7 @@
 	// F4 Hangar · F12 Einstellungen — In-App-Keyhandler, die nur greifen, wenn
 	// das Overlay sichtbar+fokussiert ist (compositor_focus beim Show); die Rail
 	// links zeigt die Modi mit F-Key-Label, aktiver Modus in Akzentfarbe.
-	// Market-Modus (F2 / M / Strg+M): DAS Haupt-Suchfeld durchsucht Offers
+	// Market-Modus (F2 / Rail): DAS Haupt-Suchfeld durchsucht Offers
 	// (Name/Typ/Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung,
 	// Alt+Zahl-Badges auf den ersten 10 Offers, Esc/F2 zurück zur Suche.
 	//   - Detail-Tastatur: ↑↓ Zeile, ↵ Auswahl, Esc zurück.
@@ -179,7 +179,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// ---- Modi (Karte t_315a26cc) --------------------------------------------
 	// Zentraler Mode-State: F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar ·
-	// F12 Einstellungen. Der bestehende Market-Modus (M/Strg+M) ist derselbe
+	// F12 Einstellungen. Der bestehende Market-Modus (F2/Rail) ist derselbe
 	// State — `phase === 'market'` bleibt die Render-Quelle, Config bleibt
 	// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).
 	// P1 t_a39f6811: F6 Handelsrouten — eigener Mode für die Rail/Keyhandler;
@@ -661,6 +661,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 	let mFetchedAt = $state(loadMarketFetchedAt());
+
+	// P8 (K5): Search-History — Querystrings of the last searches persistiert
+	// (same localStorage-pattern as fetchedAt above). Root-Cause of the empty
+	// idle-pane "Zuletzt gesucht": searches were never persisted and the
+	// pane showed a static "Keine" — now filled from `recent`.
+	const RECENT_KEY = 'architects-overlay.recentSearches';
+	function loadRecent(): string[] {
+		try {
+			const v = JSON.parse(String(localStorage.getItem(RECENT_KEY) ?? '[]'));
+			return Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim()).slice(0, 8) : [];
+		} catch {
+			return [];
+		}
+	}
+	let recent = $state(loadRecent());
+	function pushRecent(qRaw: string) {
+		const q = qRaw.trim();
+		if (!q) return;
+		recent = [q, ...recent.filter((s) => s !== q)].slice(0, 8);
+		try {
+			localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+		} catch {
+			/* localStorage incomplete — In-Memory-Tracking stays active. */
+		}
+	}
 	let f5Msg = $state(''); // kurzer Status-Text aus dem F5-Sync
 	let f5Clear: ReturnType<typeof setTimeout> | null = null;
 
@@ -1020,6 +1045,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// Präfix-only (z. B. `:c`) hat keinen Freitext → dann alle Treffer der
 		// Kategorie listen (Suchtext leer = Breitensuche).
 		const query = q.text;
+		pushRecent(query); // P8 (K5): persist search history (idle-pane)
 		const t0 = performance.now();
 		try {
 			const resp = await invoke<SearchResponse>('search', {
@@ -1252,7 +1278,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		else enterMarket();
 	}
 
-	// Market-Modus betreten (F2 / M / Strg+M / Rail): P3 — wenn die Market-Daten
+	// Market-Modus betreten (F2 / Rail): P3 — wenn die Market-Daten
 	// älter als 5 Minuten sind, sofortiger Sync im Hintergrund (kein Blocken).
 	function enterMarket() {
 		phase = 'market';
@@ -1636,7 +1662,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			return;
 		}
 		// Config-View: Esc → zurück zur Suche (NICHT Overlay-hide). Alle anderen
-		// Shortcuts (Nav/Alt-Zahlen/Ctrl+M/F5) sind in dieser Ansicht gesperrt —
+		// Shortcuts (Nav/Alt-Zahlen/F2/F5) sind in dieser Ansicht gesperrt —
 		// Eingabe im API-Key-Feld bleibt natürlich erlaubt.
 		if (inConfig) {
 			if (k === 'Escape') {
@@ -2646,10 +2672,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<!-- idle -->
 					<div class="pane-idle">
 						<div class="sect"><div class="h">Zuletzt gesucht</div></div>
-						<div class="recent"><span class="r">Keine — tippe, um zu suchen</span></div>
+						<div class="recent">
+						{#each recent.slice(0, 6) as q (q)}
+							<span class="r" title="This search" onclick={() => { input = q; void runSearch(); }}>{q}</span>
+						{:else}
+							<span class="r">Keine — tippe, um zu suchen</span>
+						{/each}
+					</div>
 						<div class="sect"><div class="h">Schnellzugriff</div></div>
 							<div class="recent">
-								<span class="r"><b>F2</b> Marktplatz · <b>M</b></span>
+								<span class="r"><b>F2</b> Marktplatz · <b>F6</b> Routen</span>
 								<span class="r"><b>F12</b> Einstellungen</span>
 								<span class="r"><b>Rechner</b> · =2*250+15%</span>
 								<span class="r"><b>Kategorie</b> · :c gold</span>
@@ -2689,7 +2721,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
 					<span><kbd>Esc</kbd> zurück</span>
-					<span><kbd>M</kbd> Market</span>
+					<span><kbd>F2</kbd> Marktplatz</span>
 					<span><kbd>F5</kbd> Preise syncen</span>
 				{/if}
 			</div>
