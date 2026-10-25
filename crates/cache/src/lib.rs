@@ -207,6 +207,15 @@ CREATE TABLE IF NOT EXISTS inventory (
   price         REAL,
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
+-- Handelsrouten (v6, Karte t_128b7547): JSON-Metadatensätze hinter einem
+-- Frischemarkierer — Terminal-Flags (Autoload/Cargodeck/Boden/Kette) und
+-- Ware-Flags (illegal/sellable/buyable) aus UEX, plus der Routen-Sweep-
+-- Zeitstempel. Payloads sind klein (einige 100 KB) und leben bewusst NICHT
+-- in den Entity-Tabellen (dort sind nur die Such-Felder).
+CREATE TABLE IF NOT EXISTS route_meta (
+  key        TEXT PRIMARY KEY,
+  fetched_at INTEGER NOT NULL,
+  payload    TEXT    NOT NULL
 );
 -- Hangar (v4): user-owned private data — pledge/ingame ships, vehicles and
 -- modules. `origin` distinguishes pledge vs ingame purchases; `insurance`
@@ -1232,8 +1241,76 @@ impl Cache {
         })
     }
 
-    /// The last marketplace snapshot, newest first (offline display only —
-    /// always stale by design unless [`Cache::marketplace_fresh`]).
+    // ---------- Handelsrouten (Karte t_128b7547) ----------
+
+    /// JSON-Metadatensatz der Routen (Terminal-/Ware-Flags) lesen.
+    pub fn route_meta_get(&self, key: &str) -> Result<Option<(u64, String)>> {
+        self.with(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT fetched_at, payload FROM route_meta WHERE key = ?1")?;
+            let mut rows = stmt.query([key])?;
+            let row = rows.next()?;
+            match row {
+                Some(r) => Ok(Some((r.get::<_, i64>(0)? as u64, r.get::<_, String>(1)?))),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// JSON-Metadatensatz der Routen schreiben (Upsert).
+    pub fn route_meta_set(&self, key: &str, fetched_at: u64, payload: &str) -> Result<()> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO route_meta (key, fetched_at, payload) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET fetched_at = excluded.fetched_at,
+                                                payload = excluded.payload",
+                rusqlite::params![key, fetched_at as i64, payload],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// ALLE Terminal-Preiszeilen (id_terminal + Punkt) — die Basis des
+    /// Routen-Sweeps: der Sweep füllt `terminal_prices` über alle
+    /// Commodity-Terminals, der Routen-Compute liest die Gesamtheit.
+    pub fn terminal_price_rows_all(&self) -> Result<Vec<(u64, Vec<PricePoint>)>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id_terminal, commodity, id_commodity, buy_price, sell_price,
+                        buy_stock, sell_stock, buy_status, sell_status, quality, updated
+                 FROM terminal_prices ORDER BY id_terminal, commodity",
+            )?;
+            let mut out: Vec<(u64, Vec<PricePoint>)> = Vec::new();
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    PricePoint {
+                        location: String::new(),
+                        commodity: row.get(1)?,
+                        commodity_id: row.get::<_, i64>(2)? as u64,
+                        terminal_id: row.get::<_, i64>(0)? as u64,
+                        buy_price: row.get(3)?,
+                        sell_price: row.get(4)?,
+                        buy_stock: row.get(5)?,
+                        sell_stock: row.get(6)?,
+                        buy_status: row.get(7)?,
+                        sell_status: row.get(8)?,
+                        quality: row.get(9)?,
+                        updated: row.get::<_, i64>(10)? as u64,
+                    },
+                ))
+            })?;
+            for row in rows {
+                let (terminal_id, point) = row?;
+                match out.last_mut() {
+                    Some((id, points)) if *id == terminal_id => points.push(point),
+                    _ => out.push((terminal_id, vec![point])),
+                }
+            }
+            Ok(out)
+        })
+    }
+
     pub fn marketplace_snapshot(&self) -> Result<Vec<Offer>> {
         self.with(|conn| {
             let mut stmt = conn.prepare(

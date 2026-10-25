@@ -32,7 +32,7 @@ use std::sync::{
 use cache::{Cache, SOURCE_WIKI};
 use provider::{
     DataProvider, Entity, EntityKind, LocationPrices, MarketplaceFilter, PricePoint, ProviderError,
-    Result, SearchEntities, SearchHit,
+    Result, SearchEntities, SearchHit, routes::RouteList,
 };
 use settings::CommoditySource;
 use uex_client::UexProvider;
@@ -368,6 +368,19 @@ impl DataProvider for CompositeProvider {
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<provider::Offer>> {
         // Marketplace stays UEX (deprecated-free there).
         self.uex.marketplace_offers(filters).await
+    }
+
+    async fn trade_routes(&self, filters: &provider::routes::RouteFilters) -> Result<RouteList> {
+        // Handelsrouten bleiben bewusst UEX-EXKLUSIV (Karte t_128b7547):
+        // unabhängig vom Primary-Source-Switch (wiki|uex) kommt der
+        // Routen-Sweep immer aus dem UEX-Datensatz — die Wiki-Preis-Daten
+        // tragen keine Terminal-Flags/Bestände und keinen Voll-Sweep.
+        self.uex.trade_routes(filters).await
+    }
+
+    async fn vehicles_scu(&self) -> Result<std::collections::HashMap<String, f64>> {
+        // UEX-Referenzdatum (Schiffs-Cargo) — nicht source-switch-abhängig.
+        self.uex.vehicles_scu().await
     }
 
     async fn fetch_entities(&self, kind: EntityKind) -> Result<Vec<Entity>> {

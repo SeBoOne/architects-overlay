@@ -29,18 +29,20 @@ mod http;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-use cache::{Cache, CacheError};
+use cache::{Cache, CacheError, TTL_COMMODITIES, TTL_PRICES, TTL_TERMINALS};
 use http::{DEFAULT_BASE_URL, DEFAULT_MIN_INTERVAL, UexHttpClient};
 use provider::{
     DataProvider, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
     MarketplaceFilter, Offer, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
     TerminalPriceGroup,
+    routes::{RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta},
 };
 
 use dto::{
     CategoryRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow, StarSystemRow,
-    TerminalRow,
+    TerminalRow, VehicleRow,
 };
 
 /// Search result page size served from the cache.
@@ -463,9 +465,280 @@ impl DataProvider for UexProvider {
         }
     }
 
+    async fn trade_routes(&self, filters: &RouteFilters) -> Result<RouteList> {
+        self.trade_routes_impl(filters).await
+    }
+
+    async fn vehicles_scu(&self) -> Result<HashMap<String, f64>> {
+        self.vehicles_scu_impl().await
+    }
+
     fn name(&self) -> String {
         String::from("uex")
     }
+}
+
+// ---------------------------------------------------------------------------
+// Handelsrouten (Karte t_128b7547)
+// ---------------------------------------------------------------------------
+
+/// Fact-Check (im Task dokumentiert): UEX bietet KEINEN Routen-Endpoint —
+/// `/commodities_routes` & Co. antworten 404, `/commodities_prices` verlangt
+/// zwingend `id_commodity` ODER `id_terminal`. Die Routen entstehen daher
+/// LOKAL: ein Sweep über alle Commodity-Terminals füllt den
+/// `terminal_prices`-Cache, die Berechnung (bester Einkauf → bester Verkauf
+/// je Ware) läuft in `provider::routes::compute_routes_full`.
+///
+/// Schiffs-SCU: UEX `/vehicles` trägt `scu` (Cargoraum) — der Hangar-Filter
+/// löst Schiffsname → SCU darüber (siehe `vehicles_scu`); das ersetzt das im
+/// Task erwogene statische Paket und bleibt komplett UEX-Daten.
+///
+/// Entfernung: UEX hat keine Koordinaten — Distanz = Hierarchie-Proxy
+/// (siehe `provider::routes`-Doku).
+const ROUTES_SWEEP_TTL: Duration = TTL_PRICES; // 30 min
+/// Terminal-Flags ändern sich selten — Referenz-Daten-TTL.
+const ROUTES_TERMINAL_FLAGS_TTL: Duration = TTL_TERMINALS; // 12 h
+const ROUTES_COMMODITY_FLAGS_TTL: Duration = TTL_COMMODITIES; // 1 h
+const ROUTE_META_TERMINALS: &str = "route_meta:terminals";
+const ROUTE_META_COMMODITIES: &str = "route_meta:commodities";
+const ROUTE_META_SWEEP: &str = "route_meta:sweep";
+
+impl UexProvider {
+    fn route_meta_fresh(&self, key: &str, ttl: Duration) -> Result<bool> {
+        match self.cache.route_meta_get(key).map_err(map_cache_err)? {
+            Some((ts, _)) => Ok(now_unix_secs().saturating_sub(ts) < ttl.as_secs()),
+            None => Ok(false),
+        }
+    }
+
+    async fn ensure_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
+        if !self.route_meta_fresh(ROUTE_META_TERMINALS, ROUTES_TERMINAL_FLAGS_TTL)? {
+            // /terminals liefert ALLE Terminals (auch Nicht-Handel); die
+            // Flags werden nur für Trade-Terminals gehalten.
+            let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
+            let flags: HashMap<u64, RouteTerminalMeta> = rows
+                .iter()
+                .filter(|r| is_trade_terminal_type(r.r#type.as_deref()))
+                .map(|r| {
+                    let ground = [r.city_name.as_deref(), r.outpost_name.as_deref(), r.poi_name.as_deref()]
+                        .into_iter().flatten().any(|s| !s.is_empty())
+                        // Weder Boden- noch Orbit-Kontext (z. B. POI auf Mond
+                        // ohne Ortsnamen) zählt als Boden — der Normalfall.
+                        || ([r.space_station_name.as_deref(), r.orbit_name.as_deref()]
+                            .into_iter().flatten().all(|s| s.is_empty()));
+                    let mut chain_parts = Vec::new();
+                    for field in [
+                        r.star_system_name.clone(),
+                        r.planet_name.clone(),
+                        r.moon_name.clone(),
+                        r.orbit_name.clone(),
+                        r.space_station_name.clone(),
+                        r.city_name.clone(),
+                        r.outpost_name.clone(),
+                        r.poi_name.clone(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        if !field.is_empty()
+                            && chain_parts.last().map(String::as_str) != Some(field.as_str())
+                        {
+                            chain_parts.push(field);
+                        }
+                    }
+                    (
+                        r.id,
+                        RouteTerminalMeta {
+                            autoload: r.is_auto_load != 0,
+                            cargo_center: r.is_cargo_center != 0,
+                            ground,
+                            chain: chain_parts.join(" > "),
+                        },
+                    )
+                })
+                .collect();
+            let payload =
+                serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
+            self.cache
+                .route_meta_set(ROUTE_META_TERMINALS, now_unix_secs(), &payload)
+                .map_err(map_cache_err)?;
+        }
+        self.load_route_terminal_flags()
+    }
+
+    fn load_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
+        match self
+            .cache
+            .route_meta_get(ROUTE_META_TERMINALS)
+            .map_err(map_cache_err)?
+        {
+            Some((_, json)) => serde_json::from_str(&json)
+                .map_err(|e| ProviderError::Json(format!("route terminal flags: {e}"))),
+            None => Ok(HashMap::new()),
+        }
+    }
+
+    async fn ensure_route_commodity_flags(&self) -> Result<HashMap<u64, RouteCommodityMeta>> {
+        if !self.route_meta_fresh(ROUTE_META_COMMODITIES, ROUTES_COMMODITY_FLAGS_TTL)? {
+            let rows: Vec<CommodityRow> = self.http.get("/commodities", &[]).await?;
+            let flags: HashMap<u64, RouteCommodityMeta> = rows
+                .iter()
+                .map(|r| {
+                    (
+                        r.id,
+                        RouteCommodityMeta {
+                            illegal: r.is_illegal != 0,
+                            sellable: r.is_sellable != 0,
+                            buyable: r.is_buyable != 0,
+                        },
+                    )
+                })
+                .collect();
+            let payload =
+                serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
+            self.cache
+                .route_meta_set(ROUTE_META_COMMODITIES, now_unix_secs(), &payload)
+                .map_err(map_cache_err)?;
+        }
+        match self
+            .cache
+            .route_meta_get(ROUTE_META_COMMODITIES)
+            .map_err(map_cache_err)?
+        {
+            Some((_, json)) => serde_json::from_str(&json)
+                .map_err(|e| ProviderError::Json(format!("route commodity flags: {e}"))),
+            None => Ok(HashMap::new()),
+        }
+    }
+
+    /// Ein Sweep-Durchlauf: jedes Trade-Terminal, dessen Preis-Tabelle nicht
+    /// mehr frisch ist, wird live nachgezogen (`/commodities_prices?
+    /// id_terminal=…` in den `terminal_prices`-Cache). Frische Terminals
+    /// kosten keinen Request. Gibt die Anzahl NACHGEZOGENER Terminals zurück.
+    async fn sweep_route_terminals(
+        &self,
+        flags: &HashMap<u64, RouteTerminalMeta>,
+    ) -> Result<usize> {
+        let mut refetched = 0usize;
+        let mut failures = 0usize;
+        // Deterministische Reihenfolge (kleinste id zuerst) — stabile Logs.
+        let mut ids: Vec<u64> = flags.keys().copied().collect();
+        ids.sort_unstable();
+        for id in ids {
+            let fresh = self
+                .cache
+                .terminal_prices_fresh(id)
+                .map_err(map_cache_err)?;
+            if fresh {
+                continue;
+            }
+            match self.terminal_prices_impl(id).await {
+                Ok(_) => refetched += 1,
+                Err(ProviderError::NotFound(_)) => refetched += 1, // leeres Terminal
+                Err(e) => {
+                    failures += 1;
+                    log::warn!("routes sweep: terminal {id} failed: {e}");
+                }
+            }
+        }
+        if refetched == 0 && failures > 0 {
+            return Err(ProviderError::Http {
+                status: 0,
+                body: format!("routes sweep failed for all {failures} stale terminals"),
+            });
+        }
+        self.cache
+            .route_meta_set(ROUTE_META_SWEEP, now_unix_secs(), "1")
+            .map_err(map_cache_err)?;
+        Ok(refetched)
+    }
+
+    async fn trade_routes_impl(&self, filters: &RouteFilters) -> Result<RouteList> {
+        // Referenzdaten frisch halten (Commodities + Terminals, eigene TTLs).
+        self.ensure_fresh(EntityKind::Commodities).await?;
+        self.ensure_fresh(EntityKind::Terminals).await?;
+        let terminal_flags = self.ensure_route_terminal_flags().await?;
+        let commodity_flags = self.ensure_route_commodity_flags().await?;
+
+        // Sweep: bei Frische kein Netzwerk; sonst nur nachziehen, was stale ist.
+        let swept_at = match self
+            .cache
+            .route_meta_get(ROUTE_META_SWEEP)
+            .map_err(map_cache_err)?
+        {
+            Some((ts, _)) if now_unix_secs().saturating_sub(ts) < ROUTES_SWEEP_TTL.as_secs() => ts,
+            _ => {
+                self.sweep_route_terminals(&terminal_flags).await?;
+                now_unix_secs()
+            }
+        };
+
+        // Rohzeilen aus dem Cache → provider-reine Berechnung.
+        let terminal_names: HashMap<u64, String> = self
+            .cache
+            .entities_of(EntityKind::Terminals)
+            .map_err(map_cache_err)?
+            .into_iter()
+            .map(|e| (e.id, e.name))
+            .collect();
+        let mut rows: Vec<RoutePriceRow> = Vec::new();
+        for (_terminal_id, points) in self
+            .cache
+            .terminal_price_rows_all()
+            .map_err(map_cache_err)?
+        {
+            for p in points {
+                rows.push(RoutePriceRow {
+                    commodity_id: p.commodity_id,
+                    commodity: p.commodity,
+                    terminal_id: p.terminal_id,
+                    buy_price: p.buy_price,
+                    sell_price: p.sell_price,
+                    sell_stock: p.sell_stock,
+                    buy_status: p.buy_status,
+                    sell_status: p.sell_status,
+                    quality: p.quality,
+                    updated: p.updated,
+                });
+            }
+        }
+        let routes = provider::routes::compute_routes_full(
+            &rows,
+            &terminal_flags,
+            &terminal_names,
+            &commodity_flags,
+            filters,
+        );
+        Ok(RouteList { routes, swept_at })
+    }
+
+    /// Schiffs-SCU-Kapazitäten aus UEX `/vehicles` (Case-insensitive
+    /// Namens- oder Slug-Match). Für den Hangar-Filter im Frontend.
+    async fn vehicles_scu_impl(&self) -> Result<HashMap<String, f64>> {
+        let rows: Vec<VehicleRow> = self.http.get("/vehicles", &[]).await?;
+        let mut out = HashMap::new();
+        for r in rows {
+            let scu = r.scu.max(0.0);
+            if let Some(name) = r.name.as_deref().filter(|s| !s.is_empty()) {
+                out.insert(name.to_lowercase(), scu);
+            }
+            if let Some(full) = r.name_full.as_deref().filter(|s| !s.is_empty()) {
+                out.insert(full.to_lowercase(), scu);
+            }
+            if let Some(slug) = r.slug.as_deref().filter(|s| !s.is_empty()) {
+                out.insert(slug.to_lowercase(), scu);
+            }
+        }
+        Ok(out)
+    }
+}
+
+/// Unix-Sekunden (Lokalzeit unabhängig).
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 impl UexProvider {

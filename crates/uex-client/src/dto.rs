@@ -84,6 +84,14 @@ pub struct CommodityRow {
     pub price_buy: f64,
     #[serde(default)]
     pub price_sell: f64,
+    /// Routen-Flags (Karte t_128b7547): Illegal-Gut, handelbar in welcher
+    /// Richtung (0/1 auf dem Wire, null → 0).
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub is_illegal: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub is_sellable: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub is_buyable: u8,
 }
 
 /// `/terminals` row — carries the full location hierarchy as plain fields.
@@ -117,6 +125,37 @@ pub struct TerminalRow {
     pub outpost_name: Option<String>,
     #[serde(default)]
     pub poi_name: Option<String>,
+    /// Routen-Flags (Karte t_128b7547): Autoload-Fähigkeit, Cargodeck,
+    /// Ladedock/Frachtaufzug. `serde(default)`-Struct-Felder fehlen nicht.
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub is_auto_load: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub is_cargo_center: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub has_loading_dock: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub has_freight_elevator: u8,
+}
+
+/// `/vehicles` row (Schiffs-SCU-Kapazitäten für Routen-Filter, Karte
+/// t_128b7547): nur die Felder, die der Routen-Filter braucht.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)] // id/is_ground_vehicle/is_available_live: Komplettbild des Rows
+pub struct VehicleRow {
+    pub id: u64,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub name_full: Option<String>,
+    #[serde(default)]
+    pub slug: Option<String>,
+    /// Cargoraum in SCU (0 bei Fahrzeugen ohne Cargogrid).
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub scu: f64,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub is_ground_vehicle: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub is_available_live: u8,
 }
 
 /// `/items` row (per category).

@@ -11,6 +11,7 @@
 //! and can be held behind `Arc<dyn DataProvider>`.
 
 mod model;
+pub mod routes;
 
 pub use crate::model::{
     Entity, EntityKind, ListingType, LocationPrices, MarketOperation, MarketplaceFilter, Offer,
@@ -167,6 +168,20 @@ pub trait DataProvider: Send + Sync {
     /// stale — a fresh fetch happens on every call; the last snapshot is kept
     /// locally for offline display only.
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>>;
+
+    /// Handelsrouten (Karte t_128b7547): bester Einkauf → bester Verkauf je
+    /// Ware, aus dem eigenen Preis-Datensatz. Der Default meldet "nicht
+    /// unterstützt" — Implementierungen ohne Routen-Sweep fallen hier durch.
+    async fn trade_routes(&self, filters: &routes::RouteFilters) -> Result<routes::RouteList> {
+        let _ = filters;
+        Err(ProviderError::Unsupported("trade routes".to_string()))
+    }
+
+    /// Schiffs-SCU-Kapazitäten (name/name_full/slug → SCU, lowercase) für den
+    /// Hangar-Filter des Routen-Views. Default: nicht unterstützt.
+    async fn vehicles_scu(&self) -> Result<std::collections::HashMap<String, f64>> {
+        Err(ProviderError::Unsupported("vehicle scu".to_string()))
+    }
 
     /// Download the full reference dataset of one `EntityKind` (used by the
     /// background sync task). Providers return source-agnostic [`Entity`] rows.

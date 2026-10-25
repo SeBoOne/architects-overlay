@@ -593,6 +593,49 @@ window.__TAURI_INTERNALS__ = {
 		}
 		default:
 			return null;
+			case 'vehicles_scu': {
+				// SCU-Kapazitäten (lowercase name → SCU) — Smoke-Daten.
+				return { 'carrack': 62, 'nomad': 24, 'cutlass black': 46 };
+			}
+			case 'get_routes': {
+				// Provider-Kontrakt-Spiegel: RouteFilters → gefilterte/sortierte
+				// Routen (Berechnung selbst ist cargo-test-belegt in
+				// provider::routes — hier genügt die Kontrakt-Struktur).
+				const f = (a && a.filters) || {};
+				const now = Math.floor(Date.now() / 1000);
+				const R = (cid, cname, illegal, bt, bchain, buy, bauto, bcargo, bground, st, schain, sell, sauto, scargo, sground, stock, dist) => ({
+					commodity_id: cid, commodity: cname, illegal,
+					buy_terminal_id: bt[0], buy_terminal: bt[1], buy_chain: bchain, buy_price: buy,
+					buy_terminal_autoload: bauto, buy_terminal_cargo_deck: bcargo, buy_terminal_ground: bground,
+					sell_terminal_id: st[0], sell_terminal: st[1], sell_chain: schain, sell_price: sell,
+					sell_terminal_autoload: sauto, sell_terminal_cargo_deck: scargo, sell_terminal_ground: sground,
+					sell_stock: stock, profit_per_scu: sell - buy, profit_total: (sell - buy) * (f.scu || 1),
+					cost_total: buy * (f.scu || 1), margin: Math.round((sell - buy) / buy * 10000) / 10000, distance: dist
+				});
+				let routes = [
+					R(27, 'Distilled Spirits', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1427, true, true, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 2320, true, true, false, 900, 2),
+					R(3, 'Agricultural Supplies', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1108, true, true, true, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 1780, false, true, false, 4000, 2),
+					R(4, 'Altruciatoxin', true, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 3200, false, false, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6200, true, true, false, 120, 2)
+				];
+				if (f.commodity) routes = routes.filter((r) => r.commodity.toLowerCase().includes(String(f.commodity).toLowerCase()));
+				if (f.from) routes = routes.filter((r) => (r.buy_terminal + ' ' + r.buy_chain).toLowerCase().includes(String(f.from).toLowerCase()));
+				if (f.to) routes = routes.filter((r) => (r.sell_terminal + ' ' + r.sell_chain).toLowerCase().includes(String(f.to).toLowerCase()));
+				if (f.legality === 'legal') routes = routes.filter((r) => !r.illegal);
+				if (f.legality === 'illegal') routes = routes.filter((r) => r.illegal);
+				if (f.autoload !== null && f.autoload !== undefined) routes = routes.filter((r) => r.buy_terminal_autoload === f.autoload && r.sell_terminal_autoload === f.autoload);
+				if (f.cargo_deck !== null && f.cargo_deck !== undefined) routes = routes.filter((r) => r.buy_terminal_cargo_deck === f.cargo_deck && r.sell_terminal_cargo_deck === f.cargo_deck);
+				if (f.ground_only) routes = routes.filter((r) => r.buy_terminal_ground && r.sell_terminal_ground);
+				if (f.space_only) routes = routes.filter((r) => !r.buy_terminal_ground && !r.sell_terminal_ground);
+				const sort = f.sort || 'profit_desc';
+				if (sort === 'profit_asc') routes.sort((x, y) => x.profit_per_scu - y.profit_per_scu);
+				else if (sort === 'total_profit_desc') routes.sort((x, y) => y.profit_total - x.profit_total);
+				else if (sort === 'margin_desc') routes.sort((x, y) => y.margin - x.margin);
+				else if (sort === 'distance_asc') routes.sort((x, y) => x.distance - y.distance);
+				else routes.sort((x, y) => y.profit_per_scu - x.profit_per_scu);
+				return { source: 'stub', swept_at: now, routes };
+			}
+			default:
+				return null;
 		}
 	}
 };

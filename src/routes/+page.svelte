@@ -669,6 +669,157 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (mSel > top || (visOffers.length === 0 && mSel !== 0)) mSel = top;
 	});
 
+	// ---- Handelsrouten (Karte t_128b7547) ------------------------------------
+	// Separater Tab im Marktmodus (Design-Empfehlung der Karte). Datenquelle:
+	// UEX-Sweep über alle Commodity-Terminals (Backend `get_routes`), Filte-
+	// rung/Sortierung serverseitig im Backend. BEWUSST ohne Mindest-/Maximal-
+	// bestand-Filter (Unterschied zu Arkanis).
+	type RouteSort = 'profit_desc' | 'profit_asc' | 'distance_asc' | 'total_profit_desc' | 'margin_desc';
+	type TradeRoute = {
+		commodity_id: number;
+		commodity: string;
+		illegal: boolean;
+		buy_terminal_id: number;
+		buy_terminal: string;
+		buy_chain: string;
+		buy_price: number;
+		buy_terminal_autoload: boolean;
+		buy_terminal_cargo_deck: boolean;
+		buy_terminal_ground: boolean;
+		sell_terminal_id: number;
+		sell_terminal: string;
+		sell_chain: string;
+		sell_price: number;
+		sell_terminal_autoload: boolean;
+		sell_terminal_cargo_deck: boolean;
+		sell_terminal_ground: boolean;
+		sell_stock: number;
+		profit_per_scu: number;
+		profit_total: number;
+		cost_total: number;
+		margin: number;
+		distance: number;
+	};
+	type RoutesResponse = { source: string; swept_at: number; routes: TradeRoute[] };
+
+	let mTab = $state<'offers' | 'routes'>('offers');
+	let routes_ = $state<TradeRoute[]>([]);
+	let rLoading = $state(false);
+	let rNote = $state<string | null>(null);
+	let rSweptAt = $state(0);
+	let rSel = $state(0);
+	let rDetail = $state<TradeRoute | null>(null);
+	// Filter (Kartenvorgabe).
+	let rCommodity = $state('');
+	let rFrom = $state('');
+	let rTo = $state('');
+	let rLegal = $state<'all' | 'legal' | 'illegal'>('all');
+	let rAutoload = $state<'any' | 'yes' | 'no'>('any');
+	let rCargo = $state<'any' | 'yes' | 'no'>('any');
+	let rPlace = $state<'any' | 'ground' | 'space'>('any');
+	let rSort = $state<RouteSort>('profit_desc');
+	let rScu = $state(0);
+	// Schiff aus Hangar → SCU automatisch (UEX /vehicles.scu), oder manuell.
+	let rShipName = $state('');
+	let vehicleScuMap = $state<Record<string, number> | null>(null);
+
+	/** Ship → SCU via UEX /vehicles (case-insensitive über name/full/slug). */
+	async function shipScu(name: string): Promise<number | null> {
+		if (!name.trim()) return null;
+		if (vehicleScuMap === null) {
+			try {
+				vehicleScuMap = await invoke<Record<string, number>>('vehicles_scu');
+			} catch {
+				vehicleScuMap = {};
+			}
+		}
+		const q = name.trim().toLowerCase();
+		const v = vehicleScuMap[q];
+		return typeof v === 'number' && v > 0 ? v : null;
+	}
+
+	async function applyShipScu(name: string) {
+		rShipName = name;
+		if (!name) {
+			rScu = 0;
+			return;
+		}
+		const scu = await shipScu(name);
+		if (scu !== null) rScu = scu;
+	}
+
+	let rLoadingRef: boolean = false;
+	async function loadRoutes() {
+		if (rLoadingRef) return;
+		rLoadingRef = true;
+		rLoading = true;
+		rNote = null;
+		try {
+			const resp = await invoke<RoutesResponse>('get_routes', {
+				filters: {
+					commodity: rCommodity.trim() || null,
+					from: rFrom.trim() || null,
+					to: rTo.trim() || null,
+					legality: rLegal,
+					autoload: rAutoload === 'any' ? null : rAutoload === 'yes',
+					cargo_deck: rCargo === 'any' ? null : rCargo === 'yes',
+					ground_only: rPlace === 'ground',
+					space_only: rPlace === 'space',
+					scu: Number(rScu) || 0,
+					sort: rSort
+				}
+			});
+			routes_ = resp.routes;
+			rSweptAt = resp.swept_at;
+			rSel = 0;
+		} catch (e) {
+			routes_ = [];
+			rNote = String(e);
+		} finally {
+			rLoadingRef = false;
+			rLoading = false;
+		}
+	}
+
+	// Filter/Sort-Änderung → neu laden (debounced, Text-Filter tippt sich).
+	let rDebounce: ReturnType<typeof setTimeout> | null = null;
+	function queueRoutes() {
+		if (rDebounce) clearTimeout(rDebounce);
+		rDebounce = setTimeout(() => void loadRoutes(), 250);
+	}
+	$effect(() => {
+		// Reaktive Abhängigkeiten: alle Filter + Sort; mTab steuert den Start.
+		rCommodity; rFrom; rTo; rLegal; rAutoload; rCargo; rPlace; rSort; rScu;
+		if (phase === 'market' && mTab === 'routes') {
+			void loadHangar(); // Schiff-Auswahl aus dem Hangar (SCU auto)
+			queueRoutes();
+		}
+	});
+
+	/** Hangar-Schiffe (keine Module) für die Schiff-Auswahl. */
+	let hangarShips = $derived(hangarItems.filter((i) => i.entity_type !== 'module'));
+	const DIST_LABELS = ['gleiches Terminal', 'gleicher Mond', 'gleicher Planet', 'gleiches System', 'anderes System'];
+
+	function rMove(dir: number) {
+		if (!routes_.length) return;
+		rSel = Math.min(Math.max(rSel + dir, 0), routes_.length - 1);
+		scrollRouteIntoView(rSel);
+	}
+	function scrollRouteIntoView(i: number) {
+		const el = document.querySelector(`[data-route-idx="${i}"]`);
+		el?.scrollIntoView({ block: 'nearest' });
+	}
+	function openRouteDetail() {
+		if (routes_.length) rDetail = routes_[rSel] ?? null;
+	}
+	/** Gewinn = Einheit * Preisdifferenz * SCU — Plausibilitäts-Check im Smoke. */
+	function routeMath(r: TradeRoute) {
+		const scu = rScu || 1; // ohne Schiff/SCU-Angabe: Einzel-SCU rechnen
+		const cost = r.buy_price * scu;
+		const gross = r.sell_price * scu;
+		return { cost, gross, profit: gross - cost };
+	}
+
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
 	let flat = $state<SearchHit[]>([]);
 	let groupOffsets = $state<number[]>([]);
@@ -1106,6 +1257,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		phase = 'typing';
 		input = '';
 		offerDetail = null;
+		// Routen-Tab sauber verlassen (Kartenvorgabe: Market-Exit hinterlässt
+		// nichts — nächster Besuch startet unbelastet).
+		mTab = 'offers';
+		routes_ = [];
+		rDetail = null;
+		rSel = 0;
+		rNote = null;
 		mSel = 0;
 		mMshown = M_PAGE;
 		mAllLoaded = false;
@@ -1474,6 +1632,37 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const t = e.target;
 			const inStepper = t instanceof HTMLInputElement && t.type === 'number';
 			const onChip = t instanceof HTMLButtonElement;
+			// Tab: ANGEBOTE ⇄ ROUTEN (separater Routen-Tab, Karte t_128b7547).
+			if (k === 'Tab') {
+				mTab = mTab === 'offers' ? 'routes' : 'offers';
+				e.preventDefault();
+				return;
+			}
+			if (mTab === 'routes') {
+				if (k === 'Escape') {
+					if (rDetail) rDetail = null;
+					else toggleMarket();
+					e.preventDefault();
+					return;
+				}
+				if (rDetail) return; // Detail: keine Listen-Navigation
+				if (k === 'ArrowDown' && !inStepper) {
+					rMove(1);
+					e.preventDefault();
+					return;
+				}
+				if (k === 'ArrowUp' && !inStepper) {
+					rMove(-1);
+					e.preventDefault();
+					return;
+				}
+				if (k === 'Enter' && !onChip && !inStepper) {
+					openRouteDetail();
+					e.preventDefault();
+					return;
+				}
+				return; // Routen-Tab: keine Offer-Shortcuts
+			}
 			if (k === 'ArrowDown' && !offerDetail && !inStepper) {
 				mMove(1);
 				e.preventDefault();
@@ -1512,13 +1701,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					// das Overlay NICHT aus (Fokus liegt in der Ergebnisliste).
 					toggleMarket();
 				}
-				e.preventDefault();
-				return;
-			}
-			if (k === 'Tab' && !inStepper) {
-				// P5: Tab verlässt den Market-Modus zurück zur Suche (Feld wird
-				// im toggleMarket-Exit komplett zurückgesetzt).
-				toggleMarket();
 				e.preventDefault();
 				return;
 			}
@@ -1949,7 +2131,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 		{:else if phase === 'market'}
 			<div class="pane-market">
-				{#if offerDetail}
+			{#if !offerDetail}
+				<div class="mtabs" role="tablist">
+					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
+					<button type="button" role="tab" aria-selected={mTab === 'routes'} class="chip" class:is-on={mTab === 'routes'} onclick={() => (mTab = 'routes')}>Handelsrouten</button>
+				</div>
+			{/if}
+			{#if offerDetail}
 					<div class="mdetail">
 						<div class="md-head">
 							<div class="md-t">
@@ -1988,6 +2176,136 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							Öffnet <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — nur Lesen, keine Änderungen.
 						</div>
 					</div>
+				{:else if mTab === 'routes'}
+					{#if rDetail}
+						<div class="rdetail" role="dialog" aria-modal="true" aria-label="Routen-Detail">
+							<div class="md-head">
+								<div class="md-t">
+									<h2>{rDetail.commodity} {rDetail.illegal ? '⚠ illegal' : ''}</h2>
+									<span class="tag" style="color: var(--fgdim)">Distanz: {DIST_LABELS[rDetail.distance] ?? rDetail.distance}</span>
+								</div>
+								<div class="md-price">
+									<div class="v sell">+{fmtPrice(rDetail.profit_total)}</div>
+									<div class="u">aUEC Gewinn bei {rScu || 1} SCU</div>
+								</div>
+							</div>
+							<div class="rd-leg">
+								<div class="rd-stop">
+									<div class="rd-cap">KAUF</div>
+									<div class="rd-term">{rDetail.buy_terminal}</div>
+									<div class="rd-chain">{rDetail.buy_chain}</div>
+									<div class="rd-price">{fmtPrice(rDetail.buy_price)} aUEC / SCU</div>
+									<div class="rd-flags">
+										{#if rDetail.buy_terminal_autoload}<span class="chip">Autoload</span>{/if}
+										{#if rDetail.buy_terminal_cargo_deck}<span class="chip">Cargodeck</span>{/if}
+										{#if rDetail.buy_terminal_ground}<span class="chip">Boden</span>{:else}<span class="chip">Space</span>{/if}
+									</div>
+								</div>
+								<div class="rd-arrow">→</div>
+								<div class="rd-stop">
+									<div class="rd-cap">VERKAUF</div>
+									<div class="rd-term">{rDetail.sell_terminal}</div>
+									<div class="rd-chain">{rDetail.sell_chain}</div>
+									<div class="rd-price">{fmtPrice(rDetail.sell_price)} aUEC / SCU</div>
+									<div class="rd-flags">
+										{#if rDetail.sell_terminal_autoload}<span class="chip">Autoload</span>{/if}
+										{#if rDetail.sell_terminal_cargo_deck}<span class="chip">Cargodeck</span>{/if}
+										{#if rDetail.sell_terminal_ground}<span class="chip">Boden</span>{:else}<span class="chip">Space</span>{/if}
+									</div>
+								</div>
+							</div>
+							<div class="rd-math">
+								<span><b>SCU</b> {rScu || 1}</span>
+								<span><b>Einkauf</b> {fmtPrice(routeMath(rDetail).cost)} aUEC</span>
+								<span><b>Brutto</b> {fmtPrice(routeMath(rDetail).gross)} aUEC</span>
+								<span><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
+								<span><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
+								<span><b>Bestand dort</b> {fmtPrice(rDetail.sell_stock)} SCU</span>
+							</div>
+							<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
+							<div class="md-actions">
+								<span class="btn-ghost" onclick={() => (rDetail = null)}>Zurück (Esc)</span>
+							</div>
+						</div>
+					{:else}
+						<div class="mbar2">
+							<span class="m-lbl">Schiff</span>
+							<select class="qnum rsel" aria-label="Schiff aus Hangar" onchange={(e) => applyShipScu(e.currentTarget.value)}>
+								<option value="">— manuell —</option>
+								{#each hangarShips as s (s.id)}
+									<option value={s.name}>{s.custom_name || s.name}</option>
+								{/each}
+							</select>
+							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
+							<input class="rtext" placeholder="Ware" aria-label="Ware filtern" bind:value={rCommodity} />
+							<input class="rtext" placeholder="Startort" aria-label="Startort filtern" bind:value={rFrom} />
+							<input class="rtext" placeholder="Zielort" aria-label="Zielort filtern" bind:value={rTo} />
+						</div>
+						<div class="mbar2">
+							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>Alle</button>
+							<button type="button" class="chip" class:is-on={rLegal === 'legal'} onclick={() => (rLegal = 'legal')}>Legal</button>
+							<button type="button" class="chip" class:is-on={rLegal === 'illegal'} onclick={() => (rLegal = 'illegal')}><span class="dot"></span>Illegal</button>
+							<span class="m-lbl">Autoload</span>
+							<button type="button" class="chip" class:is-on={rAutoload === 'any'} onclick={() => (rAutoload = 'any')}>Egal</button>
+							<button type="button" class="chip" class:is-on={rAutoload === 'yes'} onclick={() => (rAutoload = 'yes')}>Ja</button>
+							<button type="button" class="chip" class:is-on={rAutoload === 'no'} onclick={() => (rAutoload = 'no')}>Nein</button>
+							<span class="m-lbl">Cargodeck</span>
+							<button type="button" class="chip" class:is-on={rCargo === 'any'} onclick={() => (rCargo = 'any')}>Egal</button>
+							<button type="button" class="chip" class:is-on={rCargo === 'yes'} onclick={() => (rCargo = 'yes')}>Ja</button>
+							<button type="button" class="chip" class:is-on={rCargo === 'no'} onclick={() => (rCargo = 'no')}>Nein</button>
+							<span class="m-lbl">Ort</span>
+							<button type="button" class="chip" class:is-on={rPlace === 'any'} onclick={() => (rPlace = 'any')}>Alle</button>
+							<button type="button" class="chip" class:is-on={rPlace === 'ground'} onclick={() => (rPlace = 'ground')}>Boden</button>
+							<button type="button" class="chip" class:is-on={rPlace === 'space'} onclick={() => (rPlace = 'space')}>Space</button>
+						</div>
+						<div class="mbar2">
+							<span class="m-lbl">Sort</span>
+							<button type="button" class="chip" class:is-on={rSort === 'profit_desc'} onclick={() => (rSort = 'profit_desc')}>Gewinn/SCU ↓</button>
+							<button type="button" class="chip" class:is-on={rSort === 'profit_asc'} onclick={() => (rSort = 'profit_asc')}>Gewinn/SCU ↑</button>
+							<button type="button" class="chip" class:is-on={rSort === 'total_profit_desc'} onclick={() => (rSort = 'total_profit_desc')}>Profit absolut ↓</button>
+							<button type="button" class="chip" class:is-on={rSort === 'margin_desc'} onclick={() => (rSort = 'margin_desc')}>Marge ↓</button>
+							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>Distanz ↑</button>
+							<span class="m-spacer"></span>
+							{#if rSweptAt}<span class="chip"><span class="dot"></span>Stand {new Date(rSweptAt * 1000).toLocaleTimeString('de-DE')}</span>{/if}
+						</div>
+						{#if rLoading && !routes_.length}
+							<div class="center" style="padding: 28px 16px">
+								<span class="spin"></span>
+								<div class="big" style="margin-top: 12px">Sweepe UEX-Terminals …</div>
+								<div class="sm">Erster Lauf ~1 min, danach aus dem Cache.</div>
+							</div>
+						{:else if rNote && !routes_.length}
+							<div class="row-empty" style="padding: 28px 16px">{rNote}</div>
+						{:else if routes_.length}
+							<div class="mlist">
+								{#each routes_ as r, i (r.commodity_id + '-' + r.buy_terminal_id + '-' + r.sell_terminal_id)}
+									<div
+										class="mrow rrow"
+										role="option"
+										aria-selected={i === rSel}
+										class:is-sel={i === rSel}
+										data-route-idx={i}
+										onclick={() => { rSel = i; openRouteDetail(); }}
+									>
+										<div class="m-main">
+											<div class="m-title">{r.commodity} {r.illegal ? '⚠' : ''}</div>
+											<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
+										</div>
+										<div class="m-right">
+											<div class="m-price sell">+{fmtPrice(r.profit_per_scu)}</div>
+											<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · Marge {(r.margin * 100).toFixed(0)} %</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+							<div class="m-foot">
+								<span>{routes_.length} Routen · Gewinn/SCU = Verkauf − Kauf</span>
+								<span class="src">UEX Corp</span>
+							</div>
+						{:else}
+							<div class="row-empty" style="padding: 28px 16px">Keine Routen für diese Filter.</div>
+						{/if}
+					{/if}
 				{:else if mLoading && !offers.length}
 					<div class="center">
 						<span class="spin"></span>
