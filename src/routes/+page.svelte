@@ -732,6 +732,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let rScu = $state(0);
 	// Schiff aus Hangar → SCU automatisch (UEX /vehicles.scu), oder manuell.
 	let rShipName = $state('');
+	// P15b (Karte t_5fbd43b6): Type-ahead — Tippen kurzwidd die Ship-Selection;
+	// geneueneinerer → auto-Selected (SCU applies automatically).
+	let rShipQ = $state('');
 	let vehicleScuMap = $state<Record<string, number> | null>(null);
 
 	/** Ship → SCU via UEX /vehicles (case-insensitive über name/full/slug). */
@@ -792,6 +795,37 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	// P15c (Karte t_5fbd43b6): Start-/Zielort-Autocomplete — LOCATIONEN only.
+	// Backend `location_suggest` reads EntityKind::Locations (Wiki+UEX merged);
+	// Shops/Terminals (EntityKind::Terminals) dorfnet appear in the list.
+	// geneueneinerer → input auto-completed with the full Location-name.
+	let rFromSug = $state<string[]>([]);
+	let rToSug = $state<string[]>([]);
+	$effect(() => {
+		const qf = rFrom.trim();
+		const qt = rTo.trim();
+		void (async () => {
+			try {
+				const sug = qf ? await invoke<string[]>('location_suggest', { query: qf }) : [];
+				rFromSug = sug;
+				// Autocomplete: exactly one Mate → complete the input (guarded
+				// against equal → no endless self-write).
+				if (sug.length === 1 && sug[0].toLowerCase() !== qf.toLowerCase()) rFrom = sug[0];
+			} catch {
+				rFromSug = [];
+			}
+		})();
+		void (async () => {
+			try {
+				const sug = qt ? await invoke<string[]>('location_suggest', { query: qt }) : [];
+				rToSug = sug;
+				if (sug.length === 1 && sug[0].toLowerCase() !== qt.toLowerCase()) rTo = sug[0];
+			} catch {
+				rToSug = [];
+			}
+		})();
+	});
+
 	// Filter/Sort-Änderung → neu laden (debounced, Text-Filter tippt sich).
 	let rDebounce: ReturnType<typeof setTimeout> | null = null;
 	function queueRoutes() {
@@ -809,6 +843,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	/** Hangar-Schiffe (keine Module) für die Schiff-Auswahl. */
 	let hangarShips = $derived(hangarItems.filter((i) => i.entity_type !== 'module'));
+
+	// P15b (Karte t_5fbd43b6): Type-ahead — Tippen in dem Schiff-Fild narower die
+	// <select> (Substring über Name/Custom-Name, case-insensitive). Genaw eine
+	// Mate → auto-Selected, SCU auto via applyShipScu.
+	let shipMatches = $derived(
+		rShipQ.trim()
+			? hangarShips.filter((s) => {
+				const q = rShipQ.trim().toLowerCase();
+				return s.name.toLowerCase().includes(q) ||
+					(s.custom_name || '').toLowerCase().includes(q);
+			})
+			: hangarShips
+	);
+	$effect(() => {
+		// P15b: geneueneinerer (exactly one Mate) → auto-Selected + SCU auto.
+		if (phase === 'market' && mTab === 'routes' && shipMatches.length === 1) {
+			const only = shipMatches[0];
+			if (rShipName !== only.name) void applyShipScu(only.name);
+		}
+	});
 	const DIST_LABELS = ['gleiches Terminal', 'gleicher Mond', 'gleicher Planet', 'gleiches System', 'anderes System'];
 
 	function rMove(dir: number) {
@@ -2246,8 +2300,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span><b>SCU</b> {rScu || 1}</span>
 								<span><b>Einkauf</b> {fmtPrice(routeMath(rDetail).cost)} aUEC</span>
 								<span><b>Brutto</b> {fmtPrice(routeMath(rDetail).gross)} aUEC</span>
-								<span><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
-								<span><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
+								<span title="Gain = (Sell−Buy) × SCU · absolute"><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
+								<span title="Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)"><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
 								<span><b>Bestand dort</b> {fmtPrice(rDetail.sell_stock)} SCU</span>
 							</div>
 							<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
@@ -2258,17 +2312,34 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{:else}
 						<div class="mbar2">
 							<span class="m-lbl">Schiff</span>
-							<select class="qnum rsel" aria-label="Schiff aus Hangar" onchange={(e) => applyShipScu(e.currentTarget.value)}>
-								<option value="">— manuell —</option>
-								{#each hangarShips as s (s.id)}
-									<option value={s.name}>{s.custom_name || s.name}</option>
-								{/each}
+							<input class="rtext" type="text" placeholder="Type-ahead Schiff" aria-label="Schiff Type-ahead — Tippen shortens the selection" bind:value={rShipQ} />
+							<select class="qnum rsel" aria-label="Schiff aus Hangar (Type-ahead filteret)" onchange={(e) => applyShipScu(e.currentTarget.value)}>
+							<option value="">— manuell —</option>
+							{#each shipMatches as s (s.id)}
+							<option value={s.name}>{s.custom_name || s.name}</option>
+							{/each}
 							</select>
 							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
 							<input class="rtext" placeholder="Ware" aria-label="Ware filtern" bind:value={rCommodity} />
 							<input class="rtext" placeholder="Startort" aria-label="Startort filtern" bind:value={rFrom} />
 							<input class="rtext" placeholder="Zielort" aria-label="Zielort filtern" bind:value={rTo} />
 						</div>
+						{#if rFrom.trim() || rTo.trim()}
+							<div class="rsug" aria-live="polite">
+								{#if rFromSug.length}
+									<span class="rsug-lbl">Startort:</span>
+									<span class="rsug-list">{rFromSug.slice(0, 8).join(' · ')}</span>
+								{:else}
+									<span class="rsug-list">Startort: —</span>
+								{/if}
+								{#if rToSug.length}
+									<span class="rsug-lbl">Zielort:</span>
+									<span class="rsug-list">{rToSug.slice(0, 8).join(' · ')}</span>
+								{:else}
+									<span class="rsug-list">Zielort: —</span>
+								{/if}
+							</div>
+						{/if}
 						<div class="mbar2">
 							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>Alle</button>
 							<button type="button" class="chip" class:is-on={rLegal === 'legal'} onclick={() => (rLegal = 'legal')}>Legal</button>
@@ -2320,14 +2391,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
 										</div>
 										<div class="m-right">
-											<div class="m-price sell">+{fmtPrice(r.profit_per_scu)}</div>
-											<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · Marge {(r.margin * 100).toFixed(0)} %</div>
+											<div class="m-price sell" title="Gain/SCU = Sell − Buy · absolute aUEC per SCU">+{fmtPrice(r.profit_per_scu)}</div>
+											<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title="Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)">Marge {(r.margin * 100).toFixed(0)} %</span></div>
 										</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{routes_.length} Routen · Gewinn/SCU = Verkauf − Kauf</span>
+								<span>{routes_.length} Routen · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · Marge = relative % (Gain/SCU ÷ Buy)</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{:else}

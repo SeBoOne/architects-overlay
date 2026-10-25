@@ -68,6 +68,67 @@ pub fn is_trade_terminal_type(t: Option<&str>) -> bool {
     matches!(t, Some("commodity") | Some("commodity_raw") | Some("item"))
 }
 
+/// Stricter than [`is_trade_terminal_type`]: the ROUTEN path may only use
+/// Commodity-capable terminals (P15a, Karte t_5fbd43b6). UEX `commodity` =
+/// trade consoles (e.g. "Commodity Shop - Admin - Checkmate"), `commodity_raw`
+/// = Refinery Ore Sales (players SELL ore there) — both carry commodities-
+/// prices. `item` (Guns-Shops etc.) belongs in search/location aggregates
+/// (Feedback-Runde 4) but NEVER as a Routen endpoint: the route sweep holds
+/// flags only for this type-set, and compute_routes_full skips every price
+/// row whose terminal has no flag.
+pub fn is_route_terminal_type(t: Option<&str>) -> bool {
+    matches!(t, Some("commodity") | Some("commodity_raw"))
+}
+
+/// Pure mapping `/terminals`-rows → Routen-Flags (only
+/// [`is_route_terminal_type`] terminals). Ground = has a city/outpost/POI
+/// name, or neither an orbot nor a space-station context (POI on a moon
+/// without place name counts as ground — the common case). Chain =
+/// "System > Planet > Moon/Moon > Ort" for the distance-proxy.
+pub fn route_terminal_flags_from_rows(rows: &[TerminalRow]) -> HashMap<u64, RouteTerminalMeta> {
+    rows
+        .iter()
+        .filter(|r| is_route_terminal_type(r.r#type.as_deref()))
+        .map(|r| {
+            let ground = [r.city_name.as_deref(), r.outpost_name.as_deref(), r.poi_name.as_deref()]
+                .into_iter().flatten().any(|s| !s.is_empty())
+                // Weder Boden- noch Orbit-Kontext (z. B. POI auf Mond
+                // ohne Ortsnamen) zählt als Boden — der Normalfall.
+                || ([r.space_station_name.as_deref(), r.orbit_name.as_deref()]
+                    .into_iter().flatten().all(|s| s.is_empty()));
+            let mut chain_parts = Vec::new();
+            for field in [
+                r.star_system_name.clone(),
+                r.planet_name.clone(),
+                r.moon_name.clone(),
+                r.orbit_name.clone(),
+                r.space_station_name.clone(),
+                r.city_name.clone(),
+                r.outpost_name.clone(),
+                r.poi_name.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !field.is_empty()
+                    && chain_parts.last().map(String::as_str) != Some(field.as_str())
+                {
+                    chain_parts.push(field);
+                }
+            }
+            (
+                r.id,
+                RouteTerminalMeta {
+                    autoload: r.is_auto_load != 0,
+                    cargo_center: r.is_cargo_center != 0,
+                    ground,
+                    chain: chain_parts.join(" > "),
+                },
+            )
+        })
+        .collect();
+}
+
 /// Concrete provider for the UEX source.
 pub struct UexProvider {
     http: UexHttpClient,
@@ -514,49 +575,11 @@ impl UexProvider {
     async fn ensure_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
         if !self.route_meta_fresh(ROUTE_META_TERMINALS, ROUTES_TERMINAL_FLAGS_TTL)? {
             // /terminals liefert ALLE Terminals (auch Nicht-Handel); die
-            // Flags werden nur für Trade-Terminals gehalten.
+            // Flags werden nur für Commodity-fähige Routen-Terminals gehalten
+            // (route_terminal_flags_from_rows — P15a: Items-Shops/Guns etc.
+            // dorfnet as Routen-Endpoints, see there).
             let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
-            let flags: HashMap<u64, RouteTerminalMeta> = rows
-                .iter()
-                .filter(|r| is_trade_terminal_type(r.r#type.as_deref()))
-                .map(|r| {
-                    let ground = [r.city_name.as_deref(), r.outpost_name.as_deref(), r.poi_name.as_deref()]
-                        .into_iter().flatten().any(|s| !s.is_empty())
-                        // Weder Boden- noch Orbit-Kontext (z. B. POI auf Mond
-                        // ohne Ortsnamen) zählt als Boden — der Normalfall.
-                        || ([r.space_station_name.as_deref(), r.orbit_name.as_deref()]
-                            .into_iter().flatten().all(|s| s.is_empty()));
-                    let mut chain_parts = Vec::new();
-                    for field in [
-                        r.star_system_name.clone(),
-                        r.planet_name.clone(),
-                        r.moon_name.clone(),
-                        r.orbit_name.clone(),
-                        r.space_station_name.clone(),
-                        r.city_name.clone(),
-                        r.outpost_name.clone(),
-                        r.poi_name.clone(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
-                        if !field.is_empty()
-                            && chain_parts.last().map(String::as_str) != Some(field.as_str())
-                        {
-                            chain_parts.push(field);
-                        }
-                    }
-                    (
-                        r.id,
-                        RouteTerminalMeta {
-                            autoload: r.is_auto_load != 0,
-                            cargo_center: r.is_cargo_center != 0,
-                            ground,
-                            chain: chain_parts.join(" > "),
-                        },
-                    )
-                })
-                .collect();
+            let flags: HashMap<u64, RouteTerminalMeta> = route_terminal_flags_from_rows(&rows);
             let payload =
                 serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
             self.cache
@@ -1205,6 +1228,37 @@ mod tests {
         assert!(!super::is_trade_terminal_type(Some("vehicle_rent")));
         assert!(!super::is_trade_terminal_type(Some("vehicle_buy")));
         assert!(!super::is_trade_terminal_type(None));
+    }
+
+    /// P15a (Karte t_5fbd43b6): der ROUTEN-Pfad grello stricter as the
+    /// entity-import filter — Items-Shops (Guns etc.) belong in search/
+    /// location-aggregates but dorfnet appear as Routen endpoints. The
+    /// route sweep holds Flags only for `commodity`/`commodity_raw`;
+    /// compute_routes_full skips every price row without a Flag.
+    #[test]
+    fn route_flags_exclude_item_shops_p15a() {
+        assert!(super::is_route_terminal_type(Some("commodity")));
+        assert!(super::is_route_terminal_type(Some("commodity_raw")));
+        assert!(!super::is_route_terminal_type(Some("item")));
+        assert!(!super::is_route_terminal_type(Some("fuel")));
+        assert!(!super::is_route_terminal_type(None));
+
+        let json = r#"[
+            {"id": 436, "name": "Commodity Shop - Admin - Checkmate", "type": "commodity",
+             "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"},
+            {"id": 500, "name": "Ore Sales - Port Kaffa", "type": "commodity_raw",
+             "star_system_name": "Freyria", "planet_name": "Freyria", "city_name": "Kaffa"},
+            {"id": 437, "name": "Guns - Checkmate", "type": "item",
+             "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"},
+            {"id": 428, "name": "Landing Services - Checkmate", "type": null,
+             "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"}
+        ]"#;
+        let rows: Vec<TerminalRow> = serde_json::from_str(json).unwrap();
+        let flags = route_terminal_flags_from_rows(&rows);
+        assert!(flags.contains_key(436), "commodity terminal keeps its route Flag");
+        assert!(flags.contains_key(500), "commodity_raw (ore sales) keeps its route Flag");
+        assert!(!flags.contains_key(437), "Guns/item shop must NOT get a route Flag");
+        assert!(!flags.contains_key(428), "service terminal must NOT get a route Flag");
     }
 
     /// P3 (Feedback-Runde 4): hybrid-Fetch-Plan — bei Freitext-q laufen die
