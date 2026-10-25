@@ -61,6 +61,7 @@ pub fn run() {
             app_settings::settings_set_detail_variant,
             app_settings::settings_set_uex_api_key,
             app_settings::settings_set_commodity_source,
+            app_settings::settings_set_scale,
             overlay::overlay_config_closed,
         ]);
     }
