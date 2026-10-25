@@ -38,6 +38,9 @@
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
 	import Inventory from '../lib/Inventory.svelte';
+	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
+	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
+	import { suggestShips, isSnubShip } from '../lib/hangar_ships';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -204,6 +207,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Schiffe/Fahrzeuge/Module mit Versicherung — Backend-Tabelle `hangar`
 	// (Schema v4). Import: Hangar-XPLORer JSON (Primärformat) + CCUgame CSV;
 	// Export: eigenes sauberes JSON. Merge über pledge_id / (ship_code, name).
+	// P9 (t_aa6cc070): DAS HAUPT-Suchfeld (input) filtert the Hangar-List.
+	// P11 (t_aa6cc070): Action-Message auto-fade (hangarNoteSet, ~3.5 s).
 	type HangarItem = {
 		id: number | null;
 		name: string;
@@ -224,34 +229,67 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		updated_at: number | null;
 	};
 	type HangarImportResult = { imported: number; updated: number; skipped: number; format: string };
+	// Autocomplete-Candidate (P10): Name + Manufacturer + kind — from the
+	// static package and/or already-registered Hangar entries.
+	type HangarSuggestion = { name: string; manufacturer: string; kind: string };
 
+	// P11 (Karte t_aa6cc070): Action-Message under the Filter/Import/Add-Buttons
+	// auto-fades after ~3.5 s (Timeout, NO Blocker-Refactor). All hangar_* note
+	// writes go through hangarNoteSet — old note replaced, removal rescheduled.
 	let hangarItems = $state<HangarItem[]>([]);
 	let hangarLoaded = $state(false);
 	let hangarBusy = $state(false);
 	let hangarNote = $state('');
+	let hangarNoteTimer: ReturnType<typeof setTimeout> | null = null;
+	const HANGAR_NOTE_MS = 3500;
+	function hangarNoteSet(msg = '') {
+		if (hangarNoteTimer) clearTimeout(hangarNoteTimer);
+		hangarNoteTimer = null;
+		hangarNote = msg;
+		if (msg) hangarNoteTimer = setTimeout(() => {
+			hangarNote = '';
+			hangarNoteTimer = null;
+		}, HANGAR_NOTE_MS);
+	}
 	let hangarFilter = $state<'all' | 'pledge' | 'ingame' | 'lti' | 'module'>('all');
 	let hangarSel = $state(0);
 	let hangarView = $state<'list' | 'detail'>('list');
 	let hangarDetail = $state<HangarItem | null>(null);
 
+	// P9 (Karte t_aa6cc070): DAS HAUPT-Suchfeld (input) serves as In-Context-
+	// Filter for the Hangar-List (like Inventory/Detail) — Name/Custom-Name/
+	// Manufacturer/Typ. German Typ-words map to entity_type (schiff→ship …);
+	// base_ship + ship_code go into the haystack so "Cutlass" finds the Modules.
+	// Leerstring = everything (like the other In-Context-Filters).
 	const hangarFiltered = $derived.by(() => {
 		let items = hangarItems;
 		if (hangarFilter === 'pledge') items = items.filter((i) => i.origin === 'pledge');
 		else if (hangarFilter === 'ingame') items = items.filter((i) => i.origin === 'ingame');
 		else if (hangarFilter === 'lti') items = items.filter((i) => i.insurance === 'LTI');
 		else if (hangarFilter === 'module') items = items.filter((i) => i.entity_type === 'module');
+		const q = input.trim().toLowerCase();
+		if (q) {
+			// Typ-Queries: both the raw word AND the mapped word match entity_type.
+			const TYPE_DE: Record<string, string> = { schiff: 'ship', fahrzeug: 'vehicle', fahrzeuge: 'vehicle', modul: 'module', module: 'module' };
+			items = items.filter((i) => {
+				const hay = `${i.name} ${i.custom_name} ${i.manufacturer} ${i.base_ship} ${i.ship_code}`.toLowerCase();
+				if (hay.includes(q)) return true;
+				const mapped = TYPE_DE[q];
+				return mapped != null && i.entity_type.toLowerCase() === mapped;
+			});
+		}
 		return items;
 	});
 
 	async function loadHangar(force = false) {
 		if (hangarLoaded && !force) return;
 		hangarBusy = true;
-		hangarNote = '';
+		hangarNoteSet('');
 		try {
 			hangarItems = await invoke<HangarItem[]>('hangar_list');
 			hangarLoaded = true;
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -267,14 +305,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	async function hangarImportFile(format: 'xplorer' | 'ccugame', file: File) {
 		hangarBusy = true;
-		hangarNote = '';
+		hangarNoteSet('');
 		try {
 			const text = await file.text();
 			const res = await invoke<HangarImportResult>('hangar_import', { format, text });
-			hangarNote = `Import (${res.format}): ${res.imported} neu · ${res.updated} aktualisiert · ${res.skipped} übersprungen`;
+			hangarNoteSet(`Import (${res.format}): ${res.imported} neu · ${res.updated} aktualisiert · ${res.skipped} übersprungen`);
 			await loadHangar(true);
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -301,9 +339,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			a.download = 'architects-overlay-hangar.json';
 			a.click();
 			URL.revokeObjectURL(a.href);
-			hangarNote = 'Export: architects-overlay-hangar.json';
+			hangarNoteSet('Export: architects-overlay-hangar.json');
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -315,9 +353,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke('hangar_delete', { id: item.id });
 			await loadHangar(true);
-			hangarNote = `Gelöscht: ${hangarDisplayName(item)}`;
+			hangarNoteSet(`Gelöscht: ${hangarDisplayName(item)}`);
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -348,6 +386,68 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let hangarEdit = $state(false);
 	let hangarForm = $state<HangarItem>(hangarBlank());
 	let hangarFormPrice = $state('');
+	// P10: current suggestions for the add-form (reactive to Field-Content).
+	let hangarSugs = $derived(hangarNameSuggest());
+
+	// P10 (Karte t_aa6cc070): Autocomplete for the Name-Field on Anlegen —
+	// already-registered Hangar Ships/Fahrvehicles first (In-Hangar-Wissu),
+	// static Ship-Package (src/lib/hangar_ships.ts) fills the rest. A click
+	// fills Name + Manufacturer + Typ in one go (fields, no Preset-Form).
+	function hangarNameSuggest() {
+		const q = hangarForm.name.trim().toLowerCase();
+		const out: HangarSuggestion[] = [];
+		const seen = new Set<string>();
+		const add = (name: string, manufacturer: string, kind: string) => {
+			const key = name.toLowerCase();
+			if (name && !seen.has(key)) {
+				seen.add(key);
+				out.push({ name, manufacturer, kind });
+			}
+		};
+		for (const it of hangarItems) {
+			if (it.entity_type === 'module') continue;
+			const hay = `${it.name} ${it.custom_name}`.toLowerCase();
+			if (!q || hay.includes(q) || it.manufacturer.toLowerCase().includes(q)) add(it.name, it.manufacturer, it.entity_type);
+		}
+		for (const s of suggestShips(q, 12)) add(s.name, s.manufacturer, s.kind);
+		return out.slice(0, 10);
+	}
+	function hangarPickSuggestion(s: HangarSuggestion) {
+		// Selection applies Name + Manufacturer + Typ — empty Manufacturer in
+		// the static package never overwrites a user-filled value.
+		hangarForm = {
+			...hangarForm,
+			name: s.name,
+			manufacturer: s.manufacturer || hangarForm.manufacturer,
+			entity_type: s.kind
+		};
+	}
+	// P10: Basisschiff-Field visible ONLY for entity_type=module OR Snub-Ships
+	// (Snub = fixed Wiki-Category list "Snub ships" — hangar schema has no
+	// ship_category column; documented in src/lib/hangar_ships.ts).
+	const hangarBaseOpen = $derived(hangarForm.entity_type === 'module' || isSnubShip(hangarForm.name));
+	function hangarBaseSuggest() {
+		// Base-Ship-Autocomplete from the ALREADY REGISTERED Hangar entries
+		// (Card: "Autocomplete from those already entered in the Hangar").
+		const q = hangarForm.base_ship.trim().toLowerCase();
+		const out: string[] = [];
+		const seen = new Set<string>();
+		for (const s of hangarShips) {
+			const dn = hangarDisplayName(s);
+			const hay = `${s.name} ${s.custom_name}`.toLowerCase();
+			if ((q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q)) && !seen.has(dn)) {
+				seen.add(dn);
+				out.push(dn);
+				if (out.length >= 10) break;
+			}
+		}
+		return out;
+	}
+	// P10: Reactive Base-Ship-Chips — registered Hangar entries only.
+	const hangarBaseSugs = $derived(hangarBaseOpen ? hangarBaseSuggest() : [] as string[]);
+	function hangarSetBase(name: string) {
+		hangarForm = { ...hangarForm, base_ship: name };
+	}
 
 	function hangarOpenAdd() {
 		hangarForm = hangarBlank();
@@ -372,7 +472,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	async function hangarSaveForm() {
 		hangarBusy = true;
-		hangarNote = '';
+		hangarNoteSet('');
 		try {
 			const name = hangarForm.name.trim();
 			if (!name) throw new Error('Name fehlt');
@@ -399,9 +499,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				const fresh = hangarItems.find((i) => i.id === hangarDetail!.id);
 				if (fresh) hangarDetail = fresh;
 			}
-			hangarNote = msg;
+			hangarNoteSet(msg);
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1858,7 +1958,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				oninput={onInput}
 				placeholder={railMode === 'inventory'
 				? 'Inventar filtern — Standort oder Material …'
-				: phase === 'market'
+				: railMode === 'hangar'
+					? 'Hangar search — Name, Custom-Name, Manufacturer or Base-Ship …'
+					: phase === 'market'
 					? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
 					: inDetail
 					? detailHit?.kind === 'location' || detailHit?.kind === 'terminal'
@@ -1937,11 +2039,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</label>
 							<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
 							<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
-							<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+							{#if hangarBaseOpen}<label>Basisschiff<input bind:value={hangarForm.base_ship} placeholder="Pick from Hangar …" /></label>{/if}
 							<label>Hersteller<input bind:value={hangarForm.manufacturer} /></label>
 							<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" placeholder="z. B. 180" /></label>
 							<label>Datum<input bind:value={hangarForm.purchase_date} placeholder="2025-01-31" /></label>
 						</div>
+						<!-- P10: Autocomplete-Chips for Name + Base-Ship (the latter
+						     only for module/Snub, see hangarBaseOpen). Click fills
+						     Manufacturer + Typ automatically. -->
+						{#if hangarSugs.length}
+						<div class="hf-suggest">
+							{#each hangarSugs as s (s.name)}
+							<button type="button" class="hsug" title="Select — Manufacturer/Typ gets filled" onclick={() => hangarPickSuggestion(s)}>{s.name}{#if s.manufacturer} · {s.manufacturer}{/if}</button>
+							{/each}
+						</div>
+						{/if}
+						{#if hangarBaseOpen}
+						<div class="hf-basesug">
+							<span class="hsug-h">Basisschiff:</span>
+							{#each hangarBaseSugs as n (n)}
+							<button type="button" class="hsug" title="Set Basisschiff" onclick={() => hangarSetBase(n)}>{n}</button>
+							{/each}
+						</div>
+						{/if}
 						<div class="hf-actions">
 							<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
 							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
@@ -1966,7 +2086,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="hprice">{it.purchase_price != null ? `$${it.purchase_price.toFixed(2)}` : ''}</span>
 							</button>
 						{:else}
-							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} — Import oben.</div>
+							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} {input.trim() ? ` · Search: ${input.trim()}` : ''} — Import oben.</div>
 						{/each}
 					</div>
 				{:else if hangarView === 'detail' && hangarDetail}
@@ -1986,7 +2106,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<label>Name<input bind:value={hangarForm.name} required /></label>
 									<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
 									<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
-									<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+									{#if hangarBaseOpen}<label>Basisschiff<input bind:value={hangarForm.base_ship} placeholder="Pick from Hangar …" /></label>{/if}
 									<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" /></label>
 									<label>Datum<input bind:value={hangarForm.purchase_date} /></label>
 								</div>
