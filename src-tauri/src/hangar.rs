@@ -26,8 +26,6 @@
 //!
 //! Kein Org-Tool/API-Anbindung in dieser Karte (out of scope).
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -762,7 +760,7 @@ fn import_items(
 
 /// Alle Hangar-Einträge (Schiffe/Fahrzeuge/Module), nach Typ und Name sortiert.
 #[tauri::command]
-pub fn hangar_list(state: State<'_, Arc<TradeState>>) -> Result<Vec<HangarItem>, String> {
+pub fn hangar_list(state: State<'_, TradeState>) -> Result<Vec<HangarItem>, String> {
     let cache = &state.inner().cache;
     cache
         .with(|conn| {
@@ -777,10 +775,7 @@ pub fn hangar_list(state: State<'_, Arc<TradeState>>) -> Result<Vec<HangarItem>,
 
 /// Eintrag manuell anlegen (für Ingame-Käufe, die in keinem Export auftauchen).
 #[tauri::command]
-pub fn hangar_add(
-    state: State<'_, Arc<TradeState>>,
-    item: HangarItem,
-) -> Result<HangarItem, String> {
+pub fn hangar_add(state: State<'_, TradeState>, item: HangarItem) -> Result<HangarItem, String> {
     if item.name.trim().is_empty() {
         return Err("Name darf nicht leer sein".to_string());
     }
@@ -800,10 +795,7 @@ pub fn hangar_add(
 
 /// Eintrag bearbeiten (Versicherung nachtragen, Custom-Name, Basisschiff …).
 #[tauri::command]
-pub fn hangar_update(
-    state: State<'_, Arc<TradeState>>,
-    item: HangarItem,
-) -> Result<HangarItem, String> {
+pub fn hangar_update(state: State<'_, TradeState>, item: HangarItem) -> Result<HangarItem, String> {
     let id = item.id.ok_or("hangar_update ohne id")?;
     let cache = &state.inner().cache;
     let now = unix_now() as i64;
@@ -827,7 +819,7 @@ pub fn hangar_update(
 
 /// Eintrag löschen.
 #[tauri::command]
-pub fn hangar_delete(state: State<'_, Arc<TradeState>>, id: i64) -> Result<(), String> {
+pub fn hangar_delete(state: State<'_, TradeState>, id: i64) -> Result<(), String> {
     let cache = &state.inner().cache;
     cache
         .with(|conn| {
@@ -841,7 +833,7 @@ pub fn hangar_delete(state: State<'_, Arc<TradeState>>, id: i64) -> Result<(), S
 /// Merge: gleiche pledge_id / (ship_code, name) aktualisiert statt dupliziert.
 #[tauri::command]
 pub fn hangar_import(
-    state: State<'_, Arc<TradeState>>,
+    state: State<'_, TradeState>,
     format: String,
     text: String,
 ) -> Result<HangarImportResult, String> {
@@ -874,7 +866,7 @@ pub fn hangar_import(
 
 /// Eigenes sauberes Export-JSON (alle Felder inkl. vollständigem insurance).
 #[tauri::command]
-pub fn hangar_export(state: State<'_, Arc<TradeState>>) -> Result<String, String> {
+pub fn hangar_export(state: State<'_, TradeState>) -> Result<String, String> {
     let items = hangar_list(state)?;
     serde_json::to_string_pretty(&items).map_err(|e| format!("hangar export: {e}"))
 }

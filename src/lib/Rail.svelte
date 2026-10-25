@@ -9,13 +9,13 @@
 	// transparente Hintergrund des Spotlight-Fensters bleibt unberührt.
 	// Bei schmaler Shell kollabiert sie auf reine Icons (`compact` vom
 	// Elternteil per bind:clientWidth gemessen).
-	type Mode = 'search' | 'market' | 'inventory' | 'hangar' | 'settings';
+	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
 	type Entry = {
 		id: Mode;
 		key: string;
 		label: string;
 		title: string;
-		icon: 'search' | 'market' | 'inventory' | 'hangar' | 'settings';
+		icon: 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
 	};
 
 	let { mode, compact = false, onselect }: { mode: Mode; compact?: boolean; onselect: (m: Mode) => void } =
@@ -25,6 +25,7 @@
 	const ENTRIES: Entry[] = [
 		{ id: 'search', key: 'F1', label: 'Suche', title: 'Suche (F1)', icon: 'search' },
 		{ id: 'market', key: 'F2', label: 'Marktplatz', title: 'Marktplatz (F2)', icon: 'market' },
+		{ id: 'routes', key: 'F6', label: 'Routen', title: 'Handelsrouten (F6)', icon: 'routes' },
 		{ id: 'inventory', key: 'F3', label: 'Inventar', title: 'Inventar — kommt bald (F3)', icon: 'inventory' },
 		{ id: 'hangar', key: 'F4', label: 'Hangar', title: 'Hangar — kommt bald (F4)', icon: 'hangar' },
 		{ id: 'settings', key: 'F12', label: 'Einstellungen', title: 'Einstellungen (F12)', icon: 'settings' }
@@ -52,6 +53,13 @@
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<path d="M3 6h18l-1.5 11a2 2 0 0 1-2 1.7H6.5a2 2 0 0 1-2-1.7L3 6Z" />
 						<path d="M8.5 6V5a3.5 3.5 0 0 1 7 0v1" />
+					</svg>
+				{:else if en.icon === 'routes'}
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="5" cy="19" r="2.2" />
+						<circle cx="19" cy="5" r="2.2" />
+						<path d="M7 19h8a3 3 0 0 0 3-3V7.2" />
+						<path d="m15.9 9.3 2.1-2.1 2.1 2.1" />
 					</svg>
 				{:else if en.icon === 'inventory'}
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

@@ -10,15 +10,17 @@ use std::sync::Arc;
 
 #[cfg(desktop)]
 mod app_settings;
+mod hangar;
 #[cfg(desktop)]
 mod inventory;
-mod hangar;
 #[cfg(desktop)]
 mod ipc_socket;
 #[cfg(desktop)]
 mod overlay;
 #[cfg(desktop)]
 mod providers;
+#[cfg(desktop)]
+mod routes;
 #[cfg(desktop)]
 mod trade;
 #[cfg(desktop)]
@@ -52,6 +54,8 @@ pub fn run() {
             inventory::inventory_add,
             inventory::inventory_update,
             inventory::inventory_delete,
+            routes::get_routes,
+            routes::vehicles_scu,
             app_settings::settings_get,
             app_settings::settings_set_palette,
             app_settings::settings_set_detail_variant,
