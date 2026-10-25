@@ -591,9 +591,7 @@ window.__TAURI_INTERNALS__ = {
 			globalThis.__lastInv = { op: 'delete', id: a.id };
 			return null;
 		}
-		default:
-			return null;
-			case 'vehicles_scu': {
+		case 'vehicles_scu': {
 				// SCU-Kapazitäten (lowercase name → SCU) — Smoke-Daten.
 				return { 'carrack': 62, 'nomad': 24, 'cutlass black': 46 };
 			}
