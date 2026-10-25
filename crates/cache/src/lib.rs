@@ -24,8 +24,8 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use provider::routes::TradeRoute;
 use provider::{Entity, EntityKind, Offer, PricePoint, SearchHit};
-use provider::routes::{TradeRoute};
 use rusqlite::Connection;
 
 /// Reference-data TTLs, from the research doc (patch-cycle data).
@@ -321,11 +321,7 @@ const ROUTE_MATRIX_BUILT_KEY: &str = "route_matrix:built_at";
 
 /// SQLite has no bool — flags are stored as 0/1 integers.
 fn bool_as_int(b: bool) -> i64 {
-    if b {
-        1
-    } else {
-        0
-    }
+    if b { 1 } else { 0 }
 }
 
 /// Columns added to `marketplace_offers` after the initial Phase-1 schema.
@@ -530,9 +526,7 @@ impl Cache {
     pub fn has_entities(&self, kind: EntityKind) -> Result<bool> {
         self.with(|conn| {
             let mut stmt =
-                conn.prepare(
-                    "SELECT 1 FROM entities WHERE kind = ?1 AND source = ?2 LIMIT 1",
-                )?;
+                conn.prepare("SELECT 1 FROM entities WHERE kind = ?1 AND source = ?2 LIMIT 1")?;
             let mut rows = stmt.query([kind.as_str(), SOURCE_UEX])?;
             Ok(rows.next()?.is_some())
         })
@@ -1360,13 +1354,12 @@ impl Cache {
     /// when NEW price/flag data actually landed.
     pub fn terminal_price_stats(&self) -> Result<(u64, u64)> {
         self.with(|conn| {
-            let (count, max_fetched): (i64, i64) =
-                conn.query_row(
-                    "SELECT (SELECT COUNT(*) FROM terminal_prices),
+            let (count, max_fetched): (i64, i64) = conn.query_row(
+                "SELECT (SELECT COUNT(*) FROM terminal_prices),
                      (SELECT COALESCE(MAX(fetched_at), 0) FROM terminal_prices)",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?;
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
             Ok((count as u64, max_fetched as u64))
         })
     }

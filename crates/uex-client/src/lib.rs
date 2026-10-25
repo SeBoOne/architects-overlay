@@ -37,7 +37,9 @@ use provider::{
     DataProvider, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
     MarketplaceFilter, Offer, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
     TerminalPriceGroup,
-    routes::{RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta, TradeRoute},
+    routes::{
+        RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta, TradeRoute,
+    },
 };
 
 use dto::{
@@ -709,19 +711,22 @@ impl UexProvider {
     /// invalidated when this moves — i.e. exactly when new price data
     /// landed, never on TTL expiry alone.
     fn matrix_epoch(&self) -> Result<String> {
-        let (count, max_fetched) =
-            self.cache.terminal_price_stats().map_err(map_cache_err)?;
-        let tf = match
-            self.cache.route_meta_fetched_at(ROUTE_META_TERMINALS).map_err(map_cache_err)?
+        let (count, max_fetched) = self.cache.terminal_price_stats().map_err(map_cache_err)?;
+        let tf = match self
+            .cache
+            .route_meta_fetched_at(ROUTE_META_TERMINALS)
+            .map_err(map_cache_err)?
         {
             Some(ts) => ts,
-            None => 0
+            None => 0,
         };
-        let cf = match
-            self.cache.route_meta_fetched_at(ROUTE_META_COMMODITIES).map_err(map_cache_err)?
+        let cf = match self
+            .cache
+            .route_meta_fetched_at(ROUTE_META_COMMODITIES)
+            .map_err(map_cache_err)?
         {
             Some(ts) => ts,
-            None => 0
+            None => 0,
         };
         Ok(format!("tp:{count}:{max_fetched};tf:{tf};cf:{cf}"))
     }
@@ -729,12 +734,16 @@ impl UexProvider {
     /// Is the Sweep marker older than its TTL (or absent)? → serving is
     /// (possibly) stale and a background revalidation is worthwhile.
     pub fn route_sweep_stale(&self) -> Result<bool> {
-        Ok(match
-            self.cache.route_meta_fetched_at(ROUTE_META_SWEEP).map_err(map_cache_err)?
-        {
-            Some(ts) => now_unix_secs().saturating_sub(ts) >= ROUTES_SWEEP_TTL.as_secs(),
-            None => true
-        })
+        Ok(
+            match self
+                .cache
+                .route_meta_fetched_at(ROUTE_META_SWEEP)
+                .map_err(map_cache_err)?
+            {
+                Some(ts) => now_unix_secs().saturating_sub(ts) >= ROUTES_SWEEP_TTL.as_secs(),
+                None => true,
+            },
+        )
     }
 
     /// Fast-Lane inputs available = the serving lanes answer WITHOUT the
@@ -742,27 +751,37 @@ impl UexProvider {
     /// names (entities). The Composite uses this to decide whether a stale
     //  marker is worth scheduling a background Sweep.
     pub fn route_inputs_present(&self) -> Result<bool> {
-        let (rows_count, _) =
-            self.cache.terminal_price_stats().map_err(map_cache_err)?;
+        let (rows_count, _) = self.cache.terminal_price_stats().map_err(map_cache_err)?;
         let flags_present = self.route_meta_present(ROUTE_META_TERMINALS)?;
-        let names_present =
-            self.cache.has_entities(EntityKind::Terminals).map_err(map_cache_err)?;
+        let names_present = self
+            .cache
+            .has_entities(EntityKind::Terminals)
+            .map_err(map_cache_err)?;
         Ok(rows_count > 0 && flags_present && names_present)
     }
 
     fn sweep_ts(&self) -> Result<u64> {
-        match self.cache.route_meta_get(ROUTE_META_SWEEP).map_err(map_cache_err)? {
+        match self
+            .cache
+            .route_meta_get(ROUTE_META_SWEEP)
+            .map_err(map_cache_err)?
+        {
             Some((ts, _)) => Ok(ts),
-            None => Ok(self.cache.route_matrix_built_at().map_err(map_cache_err)?
-                .unwrap_or(0))
+            None => Ok(self
+                .cache
+                .route_matrix_built_at()
+                .map_err(map_cache_err)?
+                .unwrap_or(0)),
         }
     }
 
     /// (rows of terminal_prices as RoutePriceRow-Vector)
     fn collect_route_rows(&self) -> Result<Vec<RoutePriceRow>> {
         let mut rows: Vec<RoutePriceRow> = Vec::new();
-        for (_terminal_id, points) in
-            self.cache.terminal_price_rows_all().map_err(map_cache_err)?
+        for (_terminal_id, points) in self
+            .cache
+            .terminal_price_rows_all()
+            .map_err(map_cache_err)?
         {
             for p in points {
                 rows.push(RoutePriceRow {
@@ -794,9 +813,12 @@ impl UexProvider {
 
     /// Persist the artifact + its dataset epoch (invalidate-when-new-data).
     fn persist_route_matrix(&self, matrix: &[TradeRoute]) -> Result<()> {
-        self.cache.store_route_matrix(matrix).map_err(map_cache_err)?;
+        self.cache
+            .store_route_matrix(matrix)
+            .map_err(map_cache_err)?;
         let epoch = self.matrix_epoch()?;
-        self.cache.route_matrix_epoch_set(epoch, now_unix_secs())
+        self.cache
+            .route_matrix_epoch_set(epoch, now_unix_secs())
             .map_err(map_cache_err)?;
         Ok(())
     }
@@ -806,12 +828,12 @@ impl UexProvider {
         // opens immediately, the refresh happens in the background
         // (CompositeProvider schedules revalidate_route_data). A TTL expiry
         // must NEVER trigger a blocking re-sweep in the foreground again. ----
-        let (rows_count, _) =
-            self.cache.terminal_price_stats().map_err(map_cache_err)?;
-        let flags_present =
-            self.route_meta_present(ROUTE_META_TERMINALS)?;
-        let names_present =
-            self.cache.has_entities(EntityKind::Terminals).map_err(map_cache_err)?;
+        let (rows_count, _) = self.cache.terminal_price_stats().map_err(map_cache_err)?;
+        let flags_present = self.route_meta_present(ROUTE_META_TERMINALS)?;
+        let names_present = self
+            .cache
+            .has_entities(EntityKind::Terminals)
+            .map_err(map_cache_err)?;
         let inputs_present = rows_count > 0 && flags_present && names_present;
         let sweeping = self.route_sweep_stale()?;
 
@@ -820,16 +842,12 @@ impl UexProvider {
             // directly — precomputated artifact, epoch-guarded.
             if !filters.has_terminal_side_filters() {
                 let cur_epoch = self.matrix_epoch()?;
-                let stored = self
-                    .cache
-                    .route_matrix_epoch_get()
-                    .map_err(map_cache_err)?;
+                let stored = self.cache.route_matrix_epoch_get().map_err(map_cache_err)?;
                 if stored.as_deref() == Some(&cur_epoch) {
                     let matrix = self.cache.route_matrix_rows().map_err(map_cache_err)?;
                     let swept_at = self.sweep_ts()?;
                     return Ok(RouteList {
-                        routes:
-                            provider::routes::routes_from_matrix(&matrix, filters),
+                        routes: provider::routes::routes_from_matrix(&matrix, filters),
                         swept_at,
                         refreshing: sweeping,
                     });
@@ -838,24 +856,20 @@ impl UexProvider {
                 // recompute the MATRIX once from the cached rows (NO network),
                 // persist it, then serve.
                 let terminal_flags = self.load_route_terminal_flags()?;
-                let commodity_flags = self
-                    .ensure_route_commodity_flags()
-                    .await?; // blocking only when the payload is missing
+                let commodity_flags = self.ensure_route_commodity_flags().await?; // blocking only when the payload is missing
                 let terminal_names = self.terminal_names_map()?;
                 let rows = self.collect_route_rows()?;
-                let matrix =
-                    provider::routes::compute_routes_full(
-                        &rows,
-                        &terminal_flags,
-                        &terminal_names,
-                        &commodity_flags,
-                        &RouteFilters::default(),
-                    );
+                let matrix = provider::routes::compute_routes_full(
+                    &rows,
+                    &terminal_flags,
+                    &terminal_names,
+                    &commodity_flags,
+                    &RouteFilters::default(),
+                );
                 self.persist_route_matrix(&matrix)?;
                 let swept_at = self.sweep_ts()?;
                 return Ok(RouteList {
-                    routes:
-                        provider::routes::routes_from_matrix(&matrix, filters),
+                    routes: provider::routes::routes_from_matrix(&matrix, filters),
                     swept_at,
                     refreshing: sweeping,
                 });
@@ -864,21 +878,22 @@ impl UexProvider {
             // rows — the best Buy→Sell pair changes with the filter, the
             // epoch-guarded matrix cannot answer. Still NO sweep, NO API.
             let terminal_flags = self.load_route_terminal_flags()?;
-            let commodity_flags = self
-                .ensure_route_commodity_flags()
-                .await?;
+            let commodity_flags = self.ensure_route_commodity_flags().await?;
             let terminal_names = self.terminal_names_map()?;
             let rows = self.collect_route_rows()?;
-            let routes =
-                provider::routes::compute_routes_full(
-                    &rows,
-                    &terminal_flags,
-                    &terminal_names,
-                    &commodity_flags,
-                    filters,
-                );
+            let routes = provider::routes::compute_routes_full(
+                &rows,
+                &terminal_flags,
+                &terminal_names,
+                &commodity_flags,
+                filters,
+            );
             let swept_at = self.sweep_ts()?;
-            return Ok(RouteList { routes, swept_at, refreshing: sweeping });
+            return Ok(RouteList {
+                routes,
+                swept_at,
+                refreshing: sweeping,
+            });
         }
 
         // ---- Full path: cold/empty cache (nothing to serve) — blocking
@@ -909,14 +924,13 @@ impl UexProvider {
         // Lane (a): compute ONCE (default filters), persist, query locally.
         let routes: Vec<TradeRoute> = match filters.has_terminal_side_filters() {
             false => {
-                let matrix =
-                    provider::routes::compute_routes_full(
-                        &rows,
-                        &terminal_flags,
-                        &terminal_names,
-                        &commodity_flags,
-                        &RouteFilters::default(),
-                    );
+                let matrix = provider::routes::compute_routes_full(
+                    &rows,
+                    &terminal_flags,
+                    &terminal_names,
+                    &commodity_flags,
+                    &RouteFilters::default(),
+                );
                 self.persist_route_matrix(&matrix)?;
                 provider::routes::routes_from_matrix(&matrix, filters)
             }
@@ -926,9 +940,13 @@ impl UexProvider {
                 &terminal_names,
                 &commodity_flags,
                 filters,
-            )
+            ),
         };
-        Ok(RouteList { routes, swept_at, refreshing: false })
+        Ok(RouteList {
+            routes,
+            swept_at,
+            refreshing: false,
+        })
     }
 
     /// Background revalidation (stale-while-revalidate): refresh expired
@@ -944,14 +962,13 @@ impl UexProvider {
         let commodity_flags = self.load_route_commodity_flags()?;
         let terminal_names = self.terminal_names_map()?;
         let rows = self.collect_route_rows()?;
-        let matrix =
-            provider::routes::compute_routes_full(
-                &rows,
-                &terminal_flags,
-                &terminal_names,
-                &commodity_flags,
-                &RouteFilters::default(),
-            );
+        let matrix = provider::routes::compute_routes_full(
+            &rows,
+            &terminal_flags,
+            &terminal_names,
+            &commodity_flags,
+            &RouteFilters::default(),
+        );
         self.persist_route_matrix(&matrix)?;
         Ok(refetched)
     }

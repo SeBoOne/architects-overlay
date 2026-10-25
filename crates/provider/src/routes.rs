@@ -174,7 +174,7 @@ pub struct RouteList {
 }
 
 /// Does this query use terminal-SIDE filters (Start/Target/Autoload/Cargo-
-//  Deck/Boden/Space)? If not, the persisted Profit-Matrix can serve the query
+/// Deck/Boden/Space)? If not, the persisted Profit-Matrix can serve the query
 /// directly; if yes, the rows behind the matrix must be re-scanned (the
 /// filter changes which Buy/Sell pair is „best“ per Ware).
 impl RouteFilters {
@@ -194,23 +194,19 @@ impl RouteFilters {
 /// guarded by the caller ([`RouteFilters::has_terminal_side_filters`]).
 /// `profit_total`/`cost_total` are applied from the stored per-SCU values
 /// (identical formulas to [`compute_routes_full`]).
-pub fn routes_from_matrix(
-    matrix: &[TradeRoute],
-    filters: &RouteFilters,
-) -> Vec<TradeRoute> {
+pub fn routes_from_matrix(matrix: &[TradeRoute], filters: &RouteFilters) -> Vec<TradeRoute> {
     let scu = filters.scu.max(0.0);
     let mut out: Vec<TradeRoute> = matrix
         .iter()
-        .filter(|r| {
-            match filters.commodity.as_deref().filter(|f| !f.is_empty()) {
+        .filter(
+            |r| match filters.commodity.as_deref().filter(|f| !f.is_empty()) {
                 Some(f) => {
                     let f = f.to_lowercase();
-                    r.commodity.to_lowercase().contains(&f)
-                        || r.commodity_id.to_string() == f
+                    r.commodity.to_lowercase().contains(&f) || r.commodity_id.to_string() == f
                 }
                 None => true,
-            }
-        })
+            },
+        )
         .filter(|r| match filters.legality {
             RouteLegality::All => true,
             RouteLegality::Legal => !r.illegal,

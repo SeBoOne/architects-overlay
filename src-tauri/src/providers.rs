@@ -26,7 +26,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
 };
 
 use cache::{Cache, SOURCE_WIKI};
@@ -389,9 +389,8 @@ impl DataProvider for CompositeProvider {
         // the persisted Profit-Matrix. The API load is UNCHANGED (one Sweep
         // per TTL window, marker-guarded); only the FOREGROUND never waits
         // for a Sweep again.
-        let schedule =
-            self.uex.route_sweep_stale().unwrap_or(false)
-                && self.uex.route_inputs_present().unwrap_or(false);
+        let schedule = self.uex.route_sweep_stale().unwrap_or(false)
+            && self.uex.route_inputs_present().unwrap_or(false);
         if schedule && !self.route_refresh_in_flight.swap(true, Ordering::SeqCst) {
             let uex = self.uex.clone();
             let flag = self.route_refresh_in_flight.clone();
