@@ -10,9 +10,9 @@ use std::sync::Arc;
 
 #[cfg(desktop)]
 mod app_settings;
+mod hangar;
 #[cfg(desktop)]
 mod inventory;
-mod hangar;
 #[cfg(desktop)]
 mod ipc_socket;
 #[cfg(desktop)]
