@@ -86,8 +86,7 @@ pub fn is_route_terminal_type(t: Option<&str>) -> bool {
 /// without place name counts as ground — the common case). Chain =
 /// "System > Planet > Moon/Moon > Ort" for the distance-proxy.
 pub fn route_terminal_flags_from_rows(rows: &[TerminalRow]) -> HashMap<u64, RouteTerminalMeta> {
-    rows
-        .iter()
+    rows.iter()
         .filter(|r| is_route_terminal_type(r.r#type.as_deref()))
         .map(|r| {
             let ground = [r.city_name.as_deref(), r.outpost_name.as_deref(), r.poi_name.as_deref()]
@@ -126,7 +125,7 @@ pub fn route_terminal_flags_from_rows(rows: &[TerminalRow]) -> HashMap<u64, Rout
                 },
             )
         })
-        .collect();
+        .collect()
 }
 
 /// Concrete provider for the UEX source.
@@ -1255,10 +1254,22 @@ mod tests {
         ]"#;
         let rows: Vec<TerminalRow> = serde_json::from_str(json).unwrap();
         let flags = route_terminal_flags_from_rows(&rows);
-        assert!(flags.contains_key(436), "commodity terminal keeps its route Flag");
-        assert!(flags.contains_key(500), "commodity_raw (ore sales) keeps its route Flag");
-        assert!(!flags.contains_key(437), "Guns/item shop must NOT get a route Flag");
-        assert!(!flags.contains_key(428), "service terminal must NOT get a route Flag");
+        assert!(
+            flags.contains_key(&436u64),
+            "commodity terminal keeps its route Flag"
+        );
+        assert!(
+            flags.contains_key(&500u64),
+            "commodity_raw (ore sales) keeps its route Flag"
+        );
+        assert!(
+            !flags.contains_key(&437u64),
+            "Guns/item shop must NOT get a route Flag"
+        );
+        assert!(
+            !flags.contains_key(&428u64),
+            "service terminal must NOT get a route Flag"
+        );
     }
 
     /// P3 (Feedback-Runde 4): hybrid-Fetch-Plan — bei Freitext-q laufen die

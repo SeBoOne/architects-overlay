@@ -64,33 +64,34 @@ pub async fn vehicles_scu(
 /// max 12 suggestions, leerer query → leerer List.
 #[tauri::command]
 pub fn location_suggest(
-    state: State<'_, crate::trade::TradeState>,
+    state: tauri::State<'_, crate::trade::TradeState>,
     query: String,
 ) -> Result<Vec<String>, String> {
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Ok(Vec::new());
     }
-    let entities = state.cache
+    let entities = state
+        .cache
         .entities_of(EntityKind::Locations)
         .map_err(|e| format!("Cache-Fehler: {e}"))?;
     let mut starts: Vec<String> = Vec::new();
     let mut contains: Vec<String> = Vec::new();
-    let mut seen = std::collections::HashSet<String>();
+    let mut seen = std::collections::HashSet::new();
     for e in entities {
         let name = e.name.trim();
         let key = name.to_lowercase();
-        if key.is_empty() || seen.contains(key) {
+        if key.is_empty() || seen.contains(&key) {
             continue;
         }
-        seen.insert(key);
-        if key.starts_with(q) {
+        seen.insert(key.clone());
+        if key.starts_with(&q) {
             starts.push(name.to_string());
-        } else if key.contains(q) {
+        } else if key.contains(&q) {
             contains.push(name.to_string());
         }
     }
-    starts.append(contains);
+    starts.append(&mut contains);
     starts.truncate(12);
     Ok(starts)
 }
@@ -108,29 +109,31 @@ mod tests {
 
     #[async_trait::async_trait]
     impl DataProvider for StubProvider {
-        async fn search(&self, _e: provider::SearchEntities, _q: &str)
-            -> provider::Result<Vec<provider::SearchHit>>
-        {
-            Ok(vec![]);
+        async fn search(
+            &self,
+            _e: provider::SearchEntities,
+            _q: &str,
+        ) -> provider::Result<Vec<provider::SearchHit>> {
+            Ok(vec![])
         }
         async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
-            Ok(vec![]);
+            Ok(vec![])
         }
         async fn marketplace_offers(
             &self,
             _f: provider::MarketplaceFilter,
         ) -> provider::Result<Vec<provider::Offer>> {
-            Ok(vec![]);
+            Ok(vec![])
         }
         async fn fetch_entities(&self, _k: EntityKind) -> provider::Result<Vec<provider::Entity>> {
-            Ok(vec![]);
+            Ok(vec![])
         }
         fn name(&self) -> String {
             "stub".into()
         }
     }
 
-    fn entity(id: u64, kind: EntityKind, name: String, subtitle: String) -> Entity {
+    fn entity(id: u64, kind: EntityKind, name: &str, subtitle: &str) -> Entity {
         Entity {
             id,
             kind,
@@ -195,21 +198,25 @@ mod tests {
 
         // starts-with first ("Checkmate Station"); "Commodity Shop ... Checkmate"
         // and "Guns - Checkmate" (Terminals) dorfnet appear — P15c-Kriterium.
-        let sug = location_suggest(state.clone(), "ch").unwrap();
+        let sug = location_suggest(state.clone(), "ch".to_string()).unwrap();
         assert_eq!(sug, vec!["Checkmate Station"]);
 
-        let lev = location_suggest(state.clone(), "lev").unwrap();
+        let lev = location_suggest(state.clone(), "lev".to_string()).unwrap();
         assert_eq!(lev, vec!["Levski"]);
 
         // contains-Position: Freestring-Filters find the inner Name.
-        let forest = location_suggest(state.clone(), "wild forest").unwrap();
+        let forest = location_suggest(state.clone(), "wild forest".to_string()).unwrap();
         assert_eq!(forest, vec!["ARC-L1 Wild Forest Station"]);
 
         // Leerer Query → leeer List (no dump of all locations).
-        assert!(location_suggest(state.clone(), "").unwrap().is_empty());
+        assert!(
+            location_suggest(state.clone(), "".to_string())
+                .unwrap()
+                .is_empty()
+        );
 
         // Case-Insensitiv.
-        let arc = location_suggest(state.clone(), "arc").unwrap();
+        let arc = location_suggest(state.clone(), "arc".to_string()).unwrap();
         assert_eq!(arc, vec!["ARC-L1 Wild Forest Station"]);
     }
 }
