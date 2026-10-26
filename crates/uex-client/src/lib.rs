@@ -132,6 +132,10 @@ pub fn route_terminal_flags_from_rows(rows: &[TerminalRow]) -> HashMap<u64, Rout
 pub struct UexProvider {
     http: UexHttpClient,
     cache: Arc<Cache>,
+    /// Typ-Feld der zuletzt via `/terminals` geholten Zeilen (id → UEX type).
+    /// Wird in `fetch_entities` gesetzt und in `ensure_fresh` als
+    /// Ground-truth-Sidecar persistiert (P15a-Härtung).
+    last_terminal_types: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl UexProvider {
@@ -149,7 +153,11 @@ impl UexProvider {
         min_interval: std::time::Duration,
     ) -> Result<UexProvider> {
         let http = UexHttpClient::new(base_url, api_key, None, min_interval)?;
-        Ok(UexProvider { http, cache })
+        Ok(UexProvider {
+            http,
+            cache,
+            last_terminal_types: std::sync::Mutex::new(HashMap::new()),
+        })
     }
 
     /// Ensure the reference dataset for `kind` is in the local cache (fetch +
@@ -162,6 +170,19 @@ impl UexProvider {
         self.cache
             .store_entities(kind, &entities)
             .map_err(map_cache_err)?;
+        // P15a-Härtung: /terminals bekommt den Ground-truth-Sidecar
+        // `id → UEX type` — ohne ihn ist der Terminal-Typ nach dem Import
+        // nirgends mehr prüfbar und route_meta:terminals könnte nur nach TTL
+        // vertraut werden (Trust-by-TTL, Review t_b3153a53).
+        if kind == EntityKind::Terminals {
+            if let Some(types) = self.last_terminal_types() {
+                let payload = serde_json::to_string(&types)
+                    .map_err(|e| ProviderError::Json(e.to_string()))?;
+                self.cache
+                    .route_meta_set(ROUTE_META_TERMINAL_TYPES, now_unix_secs(), &payload)
+                    .map_err(map_cache_err)?;
+            }
+        }
         Ok(())
     }
 
@@ -414,6 +435,15 @@ impl DataProvider for UexProvider {
             }
             EntityKind::Terminals => {
                 let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
+                // Ground truth vor dem Filter sichern (id → UEX type): auch
+                // Nicht-Trade-Terminals bleiben damit typ-überprüfbar.
+                let types: HashMap<String, String> = rows
+                    .iter()
+                    .map(|r| (r.id.to_string(), r.r#type.clone().unwrap_or_default()))
+                    .collect();
+                if let Ok(mut guard) = self.last_terminal_types.lock() {
+                    *guard = types;
+                }
                 Ok(rows
                     .into_iter()
                     // P2 (Feedback-Runde 4): only terminals whose UEX type
@@ -562,6 +592,14 @@ const ROUTES_COMMODITY_FLAGS_TTL: Duration = TTL_COMMODITIES; // 1 h
 const ROUTE_META_TERMINALS: &str = "route_meta:terminals";
 const ROUTE_META_COMMODITIES: &str = "route_meta:commodities";
 const ROUTE_META_SWEEP: &str = "route_meta:sweep";
+/// P15a-Härtung (Review t_b3153a53): ground truth `terminal id → UEX type`,
+/// beim `/terminals`-Import mitgeschrieben. Der Payload von
+/// `route_meta:terminals` wird beim Laden NIE blind vertraut — jede Flag-ID
+/// wird gegen [`is_route_terminal_type`] + diese Ground truth re-validiert,
+/// Kontamination löst einen kontrollierten Re-Fetch aus (Self-Heal). Legacy-
+/// Caches (Pre-Härtung) haben keinen Sidecar → payload fresh + types fehlen
+/// ⇒ Re-Fetch; danach sind payload und sidecar immer konsistent.
+const ROUTE_META_TERMINAL_TYPES: &str = "route_meta:terminal_types";
 
 impl UexProvider {
     fn route_meta_fresh(&self, key: &str, ttl: Duration) -> Result<bool> {
@@ -572,7 +610,26 @@ impl UexProvider {
     }
 
     async fn ensure_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
-        if !self.route_meta_fresh(ROUTE_META_TERMINALS, ROUTES_TERMINAL_FLAGS_TTL)? {
+        // Trust, aber verifiziere (P15a-Härtung, Review t_b3153a53): TTL-Frische
+        // allein rechtfertigt kein blindes Vertrauen — der geladene Payload
+        // wird beim Load gegen `is_route_terminal_type` + Ground-truth-Sidecar
+        // re-validiert. Kontamination (z. B. Legacy-v0.3.1-Payload mit allen
+        // Terminal-IDs inkl. ITEM-Shops) löst kontrollierten Re-Fetch aus
+        // (Self-Heal; kein manueller Cache-Purge nötig). Gefilterte, aber
+        // nicht kontaminierte Entries (Terminal aus UEX verschwunden) kosten
+        // keinen Request.
+        let (flags, contaminated) = self.load_route_terminal_flags()?;
+        if contaminated {
+            // Beweiszeile für Live-Runs: payload war TTL-frisch und wurde
+            // doch verworfen (Typ-Kontamination oder fehlende ground truth).
+            log::warn!(
+                "routes: kontaminierter route_meta:terminals-Payload verworfen \
+                 (nur commodity/commodity_raw akzeptiert) — Flags werden neu geholt"
+            );
+        }
+        if contaminated
+            || !self.route_meta_fresh(ROUTE_META_TERMINALS, ROUTES_TERMINAL_FLAGS_TTL)?
+        {
             // /terminals liefert ALLE Terminals (auch Nicht-Handel); die
             // Flags werden nur für Commodity-fähige Routen-Terminals gehalten
             // (route_terminal_flags_from_rows — P15a: Items-Shops/Guns etc.
@@ -584,20 +641,79 @@ impl UexProvider {
             self.cache
                 .route_meta_set(ROUTE_META_TERMINALS, now_unix_secs(), &payload)
                 .map_err(map_cache_err)?;
+            // Ground truth MIT dem neuen Payload schreiben (identische Zeilen-
+            // quelle): payload und sidecar sind nach jedem Heal konsistent,
+            // der Heal ist persistent (kein Re-Fetch-Stakkato bei jedem Start).
+            let types: HashMap<String, String> = rows
+                .iter()
+                .map(|r| (r.id.to_string(), r.r#type.clone().unwrap_or_default()))
+                .collect();
+            let types_payload =
+                serde_json::to_string(&types).map_err(|e| ProviderError::Json(e.to_string()))?;
+            self.cache
+                .route_meta_set(ROUTE_META_TERMINAL_TYPES, now_unix_secs(), &types_payload)
+                .map_err(map_cache_err)?;
+            return self.load_route_terminal_flags().map(|(f, _)| f);
         }
-        self.load_route_terminal_flags()
+        Ok(flags)
     }
 
-    fn load_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
-        match self
+    /// Payload laden UND re-validieren: Flag-Einträge werden nur akzeptiert,
+    /// wenn `is_route_terminal_type` gegen die Ground truth
+    /// (`route_meta:terminal_types`) bestätigt ist. Fremde IDs (ITEM/FUEL/…
+    /// aus kontaminierten Legacy-Payloads) erreichen den Sweep nie. Return
+    /// `(gefilterte Flags, kontaminiert)` — kontaminiert löst in
+    /// `ensure_route_terminal_flags` den Self-Heal-Re-Fetch aus.
+    fn load_route_terminal_flags(&self) -> Result<(HashMap<u64, RouteTerminalMeta>, bool)> {
+        let meta = self
             .cache
             .route_meta_get(ROUTE_META_TERMINALS)
+            .map_err(map_cache_err)?;
+        let Some((_, json)) = meta else {
+            return Ok((HashMap::new(), false));
+        };
+        let parsed: HashMap<u64, RouteTerminalMeta> = serde_json::from_str(&json)
+            .map_err(|e| ProviderError::Json(format!("route terminal flags: {e}")))?;
+        let types: HashMap<String, String> = match self
+            .cache
+            .route_meta_get(ROUTE_META_TERMINAL_TYPES)
             .map_err(map_cache_err)?
         {
             Some((_, json)) => serde_json::from_str(&json)
-                .map_err(|e| ProviderError::Json(format!("route terminal flags: {e}"))),
-            None => Ok(HashMap::new()),
+                .map_err(|e| ProviderError::Json(format!("route terminal types: {e}")))?,
+            None => HashMap::new(),
+        };
+        let mut flags = HashMap::new();
+        let mut contaminated = false;
+        for (id, m) in parsed {
+            match types.get(&id.to_string()) {
+                Some(t) if is_route_terminal_type(Some(t.as_str())) => {
+                    flags.insert(id, m);
+                }
+                Some(_) => contaminated = true, // Typ bekannt, aber Nicht-Routen-Typ
+                None => {
+                    if types.is_empty() {
+                        // Legacy-Cache ohne Ground truth (Pre-Härtung): der
+                        // Payload ist ungeprüft nicht vertrauenswürdig.
+                        contaminated = true;
+                    }
+                    // Sonst: Terminal aus UEX verschwunden — Entry verwerfen,
+                    // kein Kontaminations-Verdacht, kein Re-Fetch nötig.
+                }
+            }
         }
+        Ok((flags, contaminated))
+    }
+
+    /// Typ-Feld der zuletzt geholten `/terminals`-Zeilen, wenn ein Frische-
+    /// Lauf in diesem Aufruf stattgefunden hat (sonst `None` → Sidecar muss
+    /// nicht neu geschrieben werden).
+    fn last_terminal_types(&self) -> Option<HashMap<String, String>> {
+        self.last_terminal_types
+            .lock()
+            .map(|g| if g.is_empty() { None } else { Some(g.clone()) })
+            .ok()
+            .flatten()
     }
 
     async fn ensure_route_commodity_flags(&self) -> Result<HashMap<u64, RouteCommodityMeta>> {
@@ -1270,6 +1386,178 @@ mod tests {
             !flags.contains_key(&428u64),
             "service terminal must NOT get a route Flag"
         );
+    }
+
+    /// P15a-Härtung (Fix-Karte t_0f1cac34, Review-Blocker t_b3153a53
+    /// 'Trust-by-TTL'): ein TTL-Frischer route_meta:terminals-Payload wird
+    /// beim Laden NIE blind vertraut — Flag-Einträge für Nicht-Commodity-
+    /// Terminals (hier ITEM-Terminal 126 'Live Fire Weapons - HUR-L2') müssen
+    /// herausgefiltert werden, egal wie frisch fetched_at ist. Kontamination
+    /// wird erkannt (Self-Heal-Auslöser in ensure_route_terminal_flags).
+    #[test]
+    fn p15a_fresh_payload_item_terminal_filtered_on_load() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let now = now_unix_secs(); // payload brutal fresh: 12h-TTL irrelevant
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now,
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp > ArcCorp > Landing Zone"},
+                    "126":{"autoload":false,"cargo_center":false,"ground":true,"chain":"Nyx > Yela > Hoover's Station"}}"#,
+            )
+            .unwrap();
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINAL_TYPES,
+                now,
+                r#"{"436":"commodity","126":"item"}"#,
+            )
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1", // kein Network: Load darf keyn brauchen
+            Duration::from_secs(0),
+        )
+        .unwrap();
+
+        let (flags, contaminated) = provider.load_route_terminal_flags().unwrap();
+        assert!(
+            flags.contains_key(&436u64),
+            "commodity Flag bleibt erhalten"
+        );
+        assert!(
+            !flags.contains_key(&126u64),
+            "TTL-Frische darf die Typfilterung nicht umgehen — ITEM 126 muss raus"
+        );
+        assert!(
+            contaminated,
+            "ITEM-Entry im Payload gilt als Kontamination (Self-Heal)"
+        );
+
+        // Sauberer Payload (nur commodity/commodity_raw) → keine Kontamination,
+        // kein Re-Fetch-Verdacht:
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now,
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp"},"500":{"autoload":false,"cargo_center":false,"ground":true,"chain":"Freyria"}}"#,
+            )
+            .unwrap();
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINAL_TYPES,
+                now,
+                r#"{"436":"commodity","500":"commodity_raw"}"#,
+            )
+            .unwrap();
+        let (flags, contaminated) = provider.load_route_terminal_flags().unwrap();
+        assert!(
+            contaminated == false && flags.len() == 2,
+            "cleaner Payload wird trusted"
+        );
+
+        // Legacy ohne Ground truth (Pre-Härtungs-Cache): fresh, aber ungeprüft
+        // ⇒ gilt als nicht vertrauenswürdig → Self-Heal. Echter Legacy-Cache
+        // hat GAR keinen sidecar → hyperfrischer cache ohne types-Setup.
+        let legacy_cache = Arc::new(Cache::open_in_memory().unwrap());
+        legacy_cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now,
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp"}}"#,
+            )
+            .unwrap();
+        let legacy_provider = UexProvider::with_base_url(
+            legacy_cache,
+            None,
+            "http://127.0.0.1:1",
+            Duration::from_secs(0),
+        )
+        .unwrap();
+        let (flags, contaminated) = legacy_provider.load_route_terminal_flags().unwrap();
+        assert!(
+            flags.is_empty() && contaminated,
+            "Legacy-Payload ohne types heilt selbst"
+        );
+    }
+
+    /// Minimaler, dependency-freier HTTP-Mock (std TcpListener): beantwortet
+    /// GET /terminals mit den Fixture-Zeilen (ids 1,2,436 commodity; 435 item;
+    /// 126 item 'Live Fire Weapons - HUR-L2'; 428 fuel) und liefert die
+    /// Base-URL. Der Thread lebt Test-lebenslang (Testprozess endet danach).
+    fn p15a_mock_server() -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"ok","http_code":200,"data":[
+            {"id":1,"name":"Admin - ARC-L1","type":"commodity","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":2,"name":"Admin - ARC-L2","type":"commodity","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":428,"name":"Landing Services - Checkmate","type":"fuel","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":435,"name":"Medical Shop - Checkmate","type":"item","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":436,"name":"Admin - Checkmate","type":"commodity","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":126,"name":"Live Fire Weapons - HUR-L2","type":"item","star_system_name":"Nyx","planet_name":"Yela","space_station_name":"Hoover's Station"}
+        ]}"#;
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    /// P15a-Härtung: `ensure_route_terminal_flags` healed einen kontaminierten,
+    /// aber TTL-frischen Payload — Re-Fetch über /terminals, neuer Payload und
+    /// Ground-truth-Sidecar enthalten ausschließlich commodity/commodity_raw.
+    #[tokio::test]
+    async fn p15a_contaminated_fresh_payload_self_heals() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let now = now_unix_secs();
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now - 1000, // fresh (< 12h TTL) — TTL allein würde blind trusten
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp"},"126":{"autoload":false,"cargo_center":false,"ground":true,"chain":"Nyx > Yela"}}"#,
+            )
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            &p15a_mock_server(),
+            Duration::from_secs(0),
+        )
+        .unwrap();
+        let flags = provider.ensure_route_terminal_flags().await.unwrap();
+        assert!(
+            !flags.contains_key(&126u64),
+            "ITEM 126 darf nach Self-Heal nicht mehr in den Flags sein"
+        );
+        // payload + sidecar sind geheilt:
+        let (reloaded, contaminated) = provider.load_route_terminal_flags().unwrap();
+        assert!(reloaded.contains_key(&436u64));
+        assert!(reloaded.contains_key(&1u64) && reloaded.contains_key(&2u64)); // commodity fixtures
+        assert!(!contaminated, "Payload ist nach Self-Heal sauber");
+        let (_, sidecar) = cache
+            .route_meta_get(ROUTE_META_TERMINAL_TYPES)
+            .unwrap()
+            .expect("sidecar geschrieben");
+        assert!(
+            sidecar.contains("\"126\":\"item\""),
+            "ground truth enthält auch ITEMs"
+        );
+        assert!(sidecar.contains("\"436\":\"commodity\""));
     }
 
     /// P3 (Feedback-Runde 4): hybrid-Fetch-Plan — bei Freitext-q laufen die
