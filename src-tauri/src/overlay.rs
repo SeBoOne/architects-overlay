@@ -129,15 +129,15 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
 }
 
 /// Create the borderless, always-on-top, taskbar-skipped spotlight window.
-/// Hidden until the game is detected. Initial size = full primary monitor:
-/// on Wayland the client's own geometry (set at map time) is what actually
-/// sticks — compositor windowrule size effects were silently overridden by
-/// the client's initial 660×600 geometry, and post-map resizes don't work on
-/// Wayland at all. The CSS floats the compact palette inside this window.
+/// Hidden until the game is detected. Initial size = full primary monitor —
+/// while the window is unmapped, `set_size` maps to GTK's default-size hint,
+/// so this is the size the FIRST map starts with. A compositor `size` rule
+/// can still override it at map time; the per-show geometry is owned by
+/// `place_on_pointer_monitor` + `reassert_place_after_map` (t_5133f3e9).
+/// The CSS floats the compact palette inside this window.
 fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<WebviewWindow<R>> {
-    // Best-effort monitor size for the initial map. `resizable(false)` keeps
-    // users from accidentally shrinking the overlay; the window is never
-    // meant to be resized by hand.
+    // Best-effort monitor size for the initial map; the real geometry is
+    // decided on every show (cursor monitor), never here.
     let (w, h) = app
         .primary_monitor()
         .ok()
@@ -364,15 +364,21 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
     let _ = receiver.run_on_main_thread(move || {
         if let Some(win) = worker.get_webview_window(SPOTLIGHT_LABEL) {
             if visible {
+                // Pre-map geometry hint: while the window is unmapped,
+                // `set_size`/`set_position` land as GTK default-size/position
+                // for the upcoming map, and the Hyprland geometry dispatch is
+                // queued for whatever window exists. A compositor `size` rule
+                // still wins AT map time (static effect) — which is why the
+                // post-map `reassert_place_after_map` is the actual lever on
+                // Hyprland (t_5133f3e9: rule-pinned 3440×1440 corrected to
+                // 1080×1920 on the transform-3 monitor only via compositor
+                // resize/move dispatch after the map).
+                place_on_pointer_monitor(&win);
                 let _ = win.show();
-                // NOTE: no panel-size re-assert here. Under Hyprland the
-                // client's post-map resize request WINS over the compositor's
-                // `maximize` windowrule, which silently shrank the full-screen
-                // overlay back to the 660×600 panel (practical report 1/3).
-                // The single source of window geometry is
-                // `place_on_pointer_monitor` below (full monitor, Arkanis-
-                // style) — the CSS keeps the visible panel compact inside the
-                // transparent full-screen window.
+                // NOTE: no panel-size re-assert here. The single source of
+                // window geometry is `place_on_pointer_monitor` (full
+                // monitor, Arkanis-style) — the CSS keeps the visible panel
+                // compact inside the transparent full-screen window.
                 // The GTK window is only realized after the first map; shape
                 // the (hidden-at-boot) window only now, when click-through is
                 // safe to apply. On Wayland the compositor may ignore the
@@ -383,6 +389,9 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 }
                 // Multi-monitor: span the full monitor under the pointer.
                 place_on_pointer_monitor(&win);
+                // ...and re-assert it AFTER the (async) map, when Hyprland's
+                // static size/move rules have already fired once.
+                reassert_place_after_map(&win);
                 // Take keyboard focus so the search is immediately typable —
                 // compositors do not move keyboard focus to a newly shown
                 // window, and the game would keep swallowing keystrokes.
@@ -556,8 +565,104 @@ fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
     // window spans the screen, the palette UI floats inside it (CSS keeps the
     // visible shell compact). This also makes the click/keyboard surface
     // predictable across monitor layouts.
+    // tao lever: on X11/XWayland this resizes outright; on Wayland it only
+    // acts pre-map (GTK default-size hint for the upcoming map) and is
+    // silently dropped after map (wire proof t_5133f3e9, WAYLAND_DEBUG:
+    // xdg_toplevel simply has no client->compositor resize request).
     let _ = win.set_size(tauri::PhysicalSize::new(msize.width, msize.height));
     let _ = win.set_position(tauri::PhysicalPosition::new(mpos.x, mpos.y));
+    // Hyprland lever: ask the compositor to do it for us.
+    compositor_geometry((mpos.x, mpos.y), (msize.width, msize.height));
+}
+
+/// Build the two Hyprland Lua dispatcher expressions for a geometry set.
+/// Pure + exact-string tested: negative monitor coordinates (rotated/above
+/// layouts, e.g. HDMI-A-2 at 1825,-1920) must survive formatting verbatim.
+fn geometry_dispatch_lua(pid: u32, pos: (i32, i32), size: (u32, u32)) -> (String, String) {
+    (
+        format!(
+            "hl.dsp.window.resize({{ x = {}, y = {}, window = \"pid:{pid}\" }})",
+            size.0, size.1
+        ),
+        format!(
+            "hl.dsp.window.move({{ x = {}, y = {}, window = \"pid:{pid}\" }})",
+            pos.0, pos.1
+        ),
+    )
+}
+
+/// The real geometry lever on Hyprland: compositor-side resize + move of OUR
+/// OWN window via the control socket (same hyprctl pattern as `compositor_focus`).
+///
+/// Why: Hyprland `size`/`move` window rules are static (they fire on every map,
+/// and hide/show is a re-map) and pin the window to whatever the config says —
+/// a fixed `size {3440,1440}` leaves the overlay wider than a 1080×1920
+/// transform-3 monitor. The client cannot fight that over Wayland protocol
+/// (no client resize after map; `set_maximized`/`set_fullscreen` DO reach the
+/// compositor but are swallowed for a pinned floating window — live wire
+/// evidence t_5133f3e9). Hyprland's own dispatchers do work, targeted by
+/// `pid:` (a selector matching no mapped window is a verified no-op):
+/// `hl.dsp.window.resize` + `hl.dsp.window.move`, coordinates in Hyprland
+/// layout px — the same space `available_monitors()` reports (t_317b9d15),
+/// with `move` absolute so the monitor position IS the window target.
+/// Order: resize first, then move — Hyprland's resize re-anchors the window
+/// (live-observed +1180,-240 shift), the move corrects it.
+#[cfg(target_os = "linux")]
+fn compositor_geometry(pos: (i32, i32), size: (u32, u32)) {
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+        return; // not a Hyprland session: nothing to dispatch to
+    }
+    let (resize_lua, move_lua) = geometry_dispatch_lua(std::process::id(), pos, size);
+    for lua in [resize_lua.as_str(), move_lua.as_str()] {
+        match std::process::Command::new("hyprctl")
+            .args(["dispatch", lua])
+            .output()
+        {
+            Ok(out) => log::info!(
+                "geometry dispatch: out={:?}",
+                String::from_utf8_lossy(&out.stdout).trim()
+            ),
+            Err(err) => log::warn!("geometry dispatch: hyprctl spawn failed: {err}"),
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn compositor_geometry(_pos: (i32, i32), _size: (u32, u32)) {}
+
+/// Re-assert the pointer-monitor geometry AFTER the async Wayland map.
+///
+/// Why this is needed (live proof, card t_5133f3e9): Hyprland window rules
+/// like `size`/`move` are *static* effects — evaluated once per window open
+/// (wiki: "evaluated once when the window is opened and never again"), and
+/// hide/show is unmap/re-map, i.e. a new open: the rule fires on EVERY show
+/// (measured: right after re-show the window is back at the pinned 3440×1440).
+/// Client-side geometry requests before or during that map are overwritten or
+/// protocol-impossible. `place_on_pointer_monitor`'s Hyprland lever (compositor
+/// `window.resize`/`window.move` dispatch) only works once the window is
+/// actually mapped — and the Wayland map is async (same race the
+/// `compositor_focus` retry loop documents), so "after the map" means: delayed.
+fn reassert_place_after_map<R: Runtime>(win: &WebviewWindow<R>) {
+    // Same cadence class as the compositor_focus retry: comfortably past any
+    // map a compositor on this machine has ever needed, short enough that the
+    // resize is invisible between show() and first paint attention.
+    const DELAYS_MS: [u64; 2] = [400, 900];
+    let win = win.clone();
+    std::thread::spawn(move || {
+        for delay in DELAYS_MS {
+            std::thread::sleep(Duration::from_millis(delay));
+            let w = win.clone();
+            // If the overlay was hidden again meanwhile, the pending geometry
+            // becomes the default-size hint for the next map — harmless, but
+            // pointless: stop.
+            if !win.is_visible().unwrap_or(false) {
+                log::info!("reassert: window hidden again -> stop re-place");
+                return;
+            }
+            log::info!("reassert: re-placing after map (+{delay} ms)");
+            let _ = win.run_on_main_thread(move || place_on_pointer_monitor(&w));
+        }
+    });
 }
 
 /// Best-effort keyboard-focus management for the Wayland/Hyprland case:
@@ -699,6 +804,33 @@ mod tests {
         // cursor can legitimately have in layout space on this layout.
         assert!(!contains_point(dp3, (3440, 1919)));
         assert!(!contains_point(hdmi, (3440, 1919)));
+    }
+
+    /// The Hyprland geometry dispatch strings must survive the real Sebo
+    /// layout — negative monitor coords, transform-swapped size — verbatim,
+    /// because they are shipped to the Lua bridge as-is (t_5133f3e9).
+    #[test]
+    fn geometry_dispatch_lua_formats_measured_layout() {
+        // HDMI-A-2: 1080x1920 at 1825,-1920 (transform 3).
+        let (resize, mov) = geometry_dispatch_lua(4242, (1825, -1920), (1080, 1920));
+        assert_eq!(
+            resize,
+            "hl.dsp.window.resize({ x = 1080, y = 1920, window = \"pid:4242\" })"
+        );
+        assert_eq!(
+            mov,
+            "hl.dsp.window.move({ x = 1825, y = -1920, window = \"pid:4242\" })"
+        );
+        // DP-3: 3440x1440 at 0,0 — the identity case (dispatch is a no-op change).
+        let (resize, mov) = geometry_dispatch_lua(4242, (0, 0), (3440, 1440));
+        assert_eq!(
+            resize,
+            "hl.dsp.window.resize({ x = 3440, y = 1440, window = \"pid:4242\" })"
+        );
+        assert_eq!(
+            mov,
+            "hl.dsp.window.move({ x = 0, y = 0, window = \"pid:4242\" })"
+        );
     }
 
     /// The overlay shows exactly when the user wants it AND the game runs:
