@@ -67,6 +67,8 @@ pub struct SettingsSnapshot {
     /// Primary commodity price source ("wiki" | "uex"); wiki first, UEX
     /// fallback. Exposed so the Config-View can A/B the sources.
     pub commodity_source: String,
+    /// K2 (t_5fe8eb4c, P12): font/icon scale in % (50..200, default 100).
+    pub scale: u16,
 }
 
 impl SettingsSnapshot {
@@ -76,6 +78,7 @@ impl SettingsSnapshot {
             detail_variant: s.detail_variant().as_str().to_owned(),
             uex_api_key_set: s.uex_api_key().is_some(),
             commodity_source: s.commodity_source().as_str().to_owned(),
+            scale: s.scale(),
         }
     }
 }
@@ -139,6 +142,27 @@ pub fn settings_set_commodity_source(
         .ok_or_else(|| format!("unknown commodity source: {name}"))?;
     state.set_commodity_source_live(source);
     let s = state.inner.lock().expect("settings lock");
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(&s))
+}
+
+/// K2 (t_5fe8eb4c, P12): Set the overlay font/icon scale in % — the F12-View
+/// chips expose 80/90/100/110/125, the command accepts any whole percent
+/// `SCALE_MIN..SCALE_MAX`. Out-of-range is rejected (clean note for the UI);
+/// a hand-edited config value on the load side is instead normalized by the
+/// settings crate (`norm_scale`), so the app always boots. Persists
+/// immediately and returns the fresh snapshot; the frontend re-applies it
+/// live (`--ui-scale` → Shell zoom), like the palette.
+#[tauri::command]
+pub fn settings_set_scale(
+    state: tauri::State<SettingsState>,
+    pct: u16,
+) -> Result<SettingsSnapshot, String> {
+    if pct < settings::SCALE_MIN || pct > settings::SCALE_MAX {
+        return Err(format!("scale out of range: {pct}"));
+    }
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_scale(pct);
     state.persist(&s);
     Ok(SettingsSnapshot::from_settings(&s))
 }

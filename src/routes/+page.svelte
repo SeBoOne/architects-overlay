@@ -169,6 +169,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		detail_variant: string;
 		uex_api_key_set: boolean;
 		commodity_source: string;
+		// K2 (t_5fe8eb4c, P12): font/icon scale in % (Chips 80–125, backend 50–200).
+		scale: number;
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -537,6 +539,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (typeof document === 'undefined' || !snapshot) return;
 		document.documentElement.dataset.palette = snapshot.palette;
 		document.documentElement.dataset.detailVariant = snapshot.detail_variant;
+		// K2 (t_5fe8eb4c, P12): scale live like the palette — snapshot.scale (%)
+		// becomes the CSS custom property behind the Shell's zoom.
+		document.documentElement.style.setProperty(
+			'--ui-scale', String(snapshot.scale / 100));
 	}
 
 	async function loadSettings() {
@@ -604,6 +610,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			applySettings(cfg);
 		} catch (e) {
 			apiKeyNote = String(e);
+		}
+	}
+
+	// K2 (t_5fe8eb4c, P12): live font/icon scale (F12-View chips 80/90/100/110/125).
+	// settings_set_scale persists and returns the snapshot; without a backend (SSR
+	// or static probe) the CSS property is set directly — same fallback pattern as
+	// localVariant for the Detail-Variante.
+	async function chooseScale(pct: number) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_scale', { pct });
+			applySettings(cfg);
+		} catch (e) {
+			apiKeyNote = String(e);
+			if (typeof document !== 'undefined')
+				document.documentElement.style.setProperty(
+					'--ui-scale', String(pct / 100));
 		}
 	}
 
@@ -1940,8 +1962,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	<div class="shell" class:in-detail={inDetail}>
 		<i class="deco t1"></i><i class="deco t2"></i>
 
-		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F6/F12) — gehört nur zum Overlay -->
-		<Rail mode={mode} compact={palW > 0 && palW < 520} onselect={setMode} />
+		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F6/F12) — gehört nur zum Overlay.
+		     K2 (t_5fe8eb4c): palW ist die VIEWPORT-wide pal-root nuun (width moved
+		     onto .shell); Shell-Box = max(70vw,640px) clamp 94vw ⇒ Palette <520px
+		     only below ~553px viewport → threshold re-based accordingly. -->
+		<Rail mode={mode} compact={palW > 0 && palW < 553} onselect={setMode} />
 
 		<div class="shell-main">
 		<!-- Suchzeile -->
@@ -2219,6 +2244,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								class:is-on={cfg?.commodity_source === 'uex'}
 								onclick={() => chooseSource('uex')}
 							>UEX</button>
+						</div>
+					</section>
+					<section class="cfg-sect">
+						<div class="h">Schriftscale</div>
+						<div class="cfg-chips">
+							{#each [80, 90, 100, 110, 125] as pct}
+								<button
+									type="button"
+									class="chip"
+									class:is-on={cfg?.scale === pct}
+									onclick={() => void chooseScale(pct)}
+								>{pct} %</button>
+							{/each}
 						</div>
 					</section>
 					<section class="cfg-sect">

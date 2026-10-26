@@ -34,9 +34,15 @@ window.isTauri = true;
 window.__TAURI__ = {};
 const stubState = {
 	palette: 'amber', detail_variant: 'c',
-	uex_api_key_set: false, commodity_source: 'wiki'
+	uex_api_key_set: false, commodity_source: 'wiki',
+	// K2 (t_5fe8eb4c, P12): font/icon scale in % — mirrors Settings.scale in the
+	// Rust backend so the probe can A/B the scale live without a Tauri app.
+	scale: 100
 };
 function stubSettings() {
+	// K2: letzter Snapshot als Spiegel — Probes prüfen damit, ob ein Setter
+	// IPC wirklich gefeuert hat (settings_set_scale etc.).
+	globalThis.__lastSettings = { ...stubState };
 	return { ...stubState };
 }
 window.__TAURI_INTERNALS__ = {
@@ -58,6 +64,9 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_set_uex_api_key':
 			case 'settings_set_commodity_source':
 				if (cmd === 'settings_set_commodity_source') stubState.commodity_source = a.name || stubState.commodity_source;
+				return stubSettings();
+			case 'settings_set_scale':
+				if (Number.isInteger(a.pct) && a.pct >= 50 && a.pct <= 200) stubState.scale = a.pct;
 				return stubSettings();
 			case 'sync_status':
 				return {
