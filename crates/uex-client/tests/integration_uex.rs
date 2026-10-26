@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cache::Cache;
-use provider::{DataProvider, EntityKind, MarketplaceFilter, ProviderError, SearchEntities};
+use provider::{
+    DataProvider, Entity, EntityKind, MarketplaceFilter, ProviderError, SearchEntities,
+};
 use uex_client::UexProvider;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -961,4 +963,219 @@ async fn market_resolves_every_fts_hit_of_a_term() {
         vec![9000, 9001, 9002, 9003, 9004],
         "every FTS hit of the term must be resolved to an id_item fetch (old cap was 3)"
     );
+}
+
+/// P15a-Härtung (Fix-Karte t_0f1cac34, Review-Blocker t_b3153a53
+/// 'Trust-by-TTL'): der Routen-Sweep darf einen kontaminierten, aber
+/// TTL-frischen route_meta:terminals-Payload NIEMALS blind vertrauen.
+///
+/// Setup wie die Review-Reproduktion: seedeter Legacy-Payload (v0.3.1-Muster:
+/// Flag-Einträge für ALLE Terminal-IDs — hier commodity 1/2/436 PLUS die
+/// ITEM-Terminals 126 'Live Fire Weapons - HUR-L2' und 435) mit frischem
+/// fetched_at, seedeter Terminal-Entities-Cache (126 enthalten), KEIN
+/// Ground-truth-Sidecar (Pre-Härtungs-Cache).
+///
+/// Erwartet (Abnahmekriterium des Reviewers):
+/// * Self-Heal: /terminals wird re-fetchet — fetched_at ändert sich.
+/// * Sweep refetcht keine Preis-Tabellen für ITEM-Terminals (126/435).
+/// * Routen-Ausgabe nutzt ausschließlich commodity/commodity_raw-Endpoints.
+#[tokio::test]
+async fn p15a_contaminated_route_meta_never_feeds_the_sweep() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/terminals"))
+        .respond_with(json_response(&fixture("routes_terminals.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/commodities"))
+        .respond_with(json_response(&fixture("commodities.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/commodities_prices"))
+        .and(query_param("id_terminal", "1"))
+        .respond_with(json_response(&fixture("routes_prices_1.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/commodities_prices"))
+        .and(query_param("id_terminal", "2"))
+        .respond_with(json_response(&fixture("routes_prices_2.json")))
+        .mount(&server)
+        .await;
+    // 436 ohne Preise, ITEM-126 mit umfangreicher Tabelle: würde sie im
+    // Sweep landen, wäre der Payload kontaminiert (Live-Evidenz der Review:
+    // ITEM-126 mit 70 Preiszeilen refetched).
+    Mock::given(method("GET"))
+        .and(path("/commodities_prices"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items_prices"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let now = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+
+    // Terminal-Entities + Frische-Marker frisch (ensure_fresh bleibt beim
+    // Network-Check still) — wie im Live-Upgrade-Fall.
+    cache
+        .store_entities(
+            EntityKind::Terminals,
+            &[
+                Entity {
+                    id: 1,
+                    kind: EntityKind::Terminals,
+                    name: "Admin - ARC-L1".into(),
+                    code: None,
+                    subtitle: "ArcCorp > ArcCorp > Landing Zone".into(),
+                },
+                Entity {
+                    id: 2,
+                    kind: EntityKind::Terminals,
+                    name: "Admin - ARC-L2".into(),
+                    code: None,
+                    subtitle: "ArcCorp > ArcCorp > Landing Zone".into(),
+                },
+                Entity {
+                    id: 436,
+                    kind: EntityKind::Terminals,
+                    name: "Admin - Checkmate".into(),
+                    code: None,
+                    subtitle: "ArcCorp > ArcCorp > Checkmate Station".into(),
+                },
+                Entity {
+                    id: 126,
+                    kind: EntityKind::Terminals,
+                    name: "Live Fire Weapons - HUR-L2".into(),
+                    code: None,
+                    subtitle: "Nyx > Yela > Hoover's Station".into(),
+                },
+                Entity {
+                    id: 435,
+                    kind: EntityKind::Terminals,
+                    name: "Medical Shop - Checkmate".into(),
+                    code: None,
+                    subtitle: "ArcCorp > ArcCorp > Checkmate Station".into(),
+                },
+            ],
+        )
+        .unwrap();
+
+    // Kontaminierter Legacy-Flag-Payload, TTL-FRISCH (12h-TTL würde blind
+    // trusten): enthält explizit ITEM-Terminal 126.
+    cache
+        .route_meta_set(
+            "route_meta:terminals",
+            now - 600,
+            r#"{"1":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp > ArcCorp > Landing Zone"},
+                "2":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp > ArcCorp > Landing Zone"},
+                "436":{"autoload":true,"cargo_center":false,"ground":false,"chain":"ArcCorp > ArcCorp > Checkmate Station"},
+                "126":{"autoload":false,"cargo_center":false,"ground":false,"chain":"Nyx > Yela > Hoover's Station"},
+                "435":{"autoload":false,"cargo_center":false,"ground":false,"chain":"ArcCorp > ArcCorp > Checkmate Station"}}"#,
+        )
+        .unwrap();
+
+    let before: u64 = cache
+        .route_meta_get("route_meta:terminals")
+        .unwrap()
+        .expect("seeded payload")
+        .0;
+
+    let p = UexProvider::with_base_url(cache.clone(), None, &server.uri(), Duration::ZERO).unwrap();
+    let out = p
+        .trade_routes(&provider::routes::RouteFilters::default())
+        .await
+        .unwrap();
+
+    // 1) Self-Heal: frischer, aber kontaminierter Payload wurde re-fetchet —
+    //    fetched_at hat sich bewegt (Review-Abnahme: 'fetched_at ändert sich').
+    let (after, healed_payload) = cache
+        .route_meta_get("route_meta:terminals")
+        .unwrap()
+        .expect("payload after run");
+    assert_ne!(
+        after, before,
+        "kontaminierter Payload muss re-fetchet werden (Self-Heal)"
+    );
+
+    // 2) Nach Start/Erstlauf sind payload UND Ground truth sauber.
+    let types: std::collections::HashMap<String, String> = serde_json::from_str(
+        &cache
+            .route_meta_get("route_meta:terminal_types")
+            .unwrap()
+            .expect("ground-truth-sidecar geschrieben")
+            .1,
+    )
+    .unwrap();
+    assert_eq!(types.get("126").map(String::as_str), Some("item"));
+    assert_eq!(types.get("436").map(String::as_str), Some("commodity"));
+    let flag_ids: std::collections::HashSet<u64> =
+        serde_json::from_str::<std::collections::HashMap<u64, serde_json::Value>>(&healed_payload)
+            .unwrap()
+            .keys()
+            .copied()
+            .collect();
+    assert!(flag_ids.contains(&1) && flag_ids.contains(&2) && flag_ids.contains(&436));
+    assert!(
+        !flag_ids.contains(&126) && !flag_ids.contains(&435),
+        "ITEM-Terminals dürfen im geheilten Payload nicht vorkommen"
+    );
+
+    // 3) Sweep-Fenster: /commodities_prices wurde NIE für ITEM-Terminals
+    //    aufgerufen (Live-Evidenz der Review war genau das: 236 Tabellen inkl.
+    //    ITEM-126). Stattdessen ausschließlich die commodity-Terminals.
+    let reqs = server.received_requests().await.unwrap();
+    let swept: Vec<u64> = reqs
+        .iter()
+        .filter(|r| r.url.path() == "/commodities_prices")
+        .filter_map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(k, _)| k == "id_terminal")
+                .map(|(_, v)| v.parse::<u64>().unwrap())
+        })
+        .collect();
+    assert!(
+        !swept.contains(&126) && !swept.contains(&435),
+        "ITEM-Terminal-Preis-Tabellen dürfen im Sweep nicht refetched werden: {swept:?}"
+    );
+    let mut swept_unique = swept;
+    swept_unique.sort_unstable();
+    swept_unique.dedup();
+    assert_eq!(
+        swept_unique,
+        vec![1u64, 2u64, 436u64],
+        "Sweep refetcht genau die commodity-Terminals des Payloads"
+    );
+
+    // 4) Routen-Ausgabe: Endpoints ausschließlich commodity/commodity_raw —
+    //    NiX/Hoover ITEM-Shops tauchen nie als Kauf- oder Verkaufsort auf.
+    assert!(!out.routes.is_empty(), "Routen müssen computed werden");
+    for r in &out.routes {
+        assert_ne!(r.buy_terminal_id, 126);
+        assert_ne!(r.sell_terminal_id, 126);
+        assert_ne!(r.buy_terminal_id, 435);
+        assert_ne!(r.sell_terminal_id, 435);
+        assert!(
+            [1u64, 2, 436].contains(&r.buy_terminal_id)
+                && [1u64, 2, 436].contains(&r.sell_terminal_id),
+            "route endpoints must be commodity terminals: {r:?}"
+        );
+    }
 }

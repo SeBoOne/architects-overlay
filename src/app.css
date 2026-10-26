@@ -1461,6 +1461,27 @@ html[data-window="spotlight"] .shell {
 	max-width: 170px;
 }
 
+/* P15c (Karte t_5fbd43b6): Location-Suggest-Panel (Start-/Zielort-Autocomplete —
+   Locations only, never Shops/Terminals; backend location_suggest). */
+.rsug {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px;
+	align-items: center;
+	color: var(--fgdim);
+}
+
+.rsug-lbl {
+	color: var(--fgfaint);
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+}
+
+.rsug-list {
+	color: var(--fgdim);
+}
+
 .rdetail {
 	display: flex;
 	flex-direction: column;

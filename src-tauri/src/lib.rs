@@ -56,6 +56,7 @@ pub fn run() {
             inventory::inventory_delete,
             routes::get_routes,
             routes::vehicles_scu,
+            routes::location_suggest,
             app_settings::settings_get,
             app_settings::settings_set_palette,
             app_settings::settings_set_detail_variant,
