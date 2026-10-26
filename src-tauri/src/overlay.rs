@@ -398,22 +398,65 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
     });
 }
 
-/// Current global pointer position in physical pixels, when the platform can
-/// answer (X11/Wayland-XWayland and Windows). `None` means "unknown" — e.g. a
-/// pure Wayland session without XWayland, or macOS, where the caller falls
-/// back to centering on the primary display.
-fn cursor_position() -> Option<(i32, i32)> {
+/// Hyprland's own global cursor position via `hyprctl -j cursorpos` — in the
+/// compositor's logical layout pixels. This is exactly the coordinate space in
+/// which `available_monitors()` reports its rectangles on Wayland (verified
+/// live against `hyprctl monitors` output, t_317b9d15). Returns `None` when
+/// hyprctl is unavailable (not Hyprland, Lua-bridge rejects the keyword, …).
+#[cfg(target_os = "linux")]
+fn hyprland_cursor_position() -> Option<(i32, i32)> {
+    let out = std::process::Command::new("hyprctl")
+        .args(["-j", "cursorpos"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let x = v.get("x")?.as_f64()?;
+    let y = v.get("y")?.as_f64()?;
+    Some((x.round() as i32, y.round() as i32))
+}
+
+/// Current global pointer position + source label, in the coordinate space of
+/// the monitor rectangles `available_monitors()` will report on this session
+/// (see the per-branch notes). `None` means "unknown" — e.g. a pure Wayland
+/// session without XWayland or Hyprland, or macOS, where the caller falls back
+/// to centering on the current display.
+fn cursor_position() -> Option<(i32, i32, &'static str)> {
     #[cfg(target_os = "linux")]
     {
         use x11rb::connection::Connection;
         use x11rb::protocol::xproto::ConnectionExt;
-        // No XWayland (pure Wayland): there is no global pointer query without
-        // a compositor protocol extension (wlr_foreign_toplevel / zwlr_*).
+        // Hyprland: ask the compositor itself. The X11 answer is NOT usable
+        // here: XWayland's canvas is its own left-to-right arrangement by
+        // output creation order that ignores the Hyprland layout entirely
+        // (measured t_317b9d15: HDMI-A-2 lives at layout [1825,-1920] with
+        // transform 3, but on the X11 canvas it is `1080x1920+3440+0`; a
+        // cursor at layout (1720,720) on DP-3 read as X11 (3440,1919)).
+        // Worse, the X11 pointer only updates when the cursor crosses X
+        // client surfaces — Wayland-side motion leaves it stale. Containment
+        // of X11-space coords against layout-space rects therefore misses
+        // (or randomly hits) monitors whenever monitors are offset or
+        // rotated. The cursorpos answer is exact and needs no transform.
+        if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+            if let Some((x, y)) = hyprland_cursor_position() {
+                return Some((x, y, "hyprland cursorpos"));
+            }
+        }
+        // Non-Hyprland: X11/XWayland query. On a real X11 session the tauri
+        // monitor rects come from the same X screen, so the spaces agree.
+        // Pure Wayland without Hyprland (no DISPLAY): no global pointer query
+        // without a compositor protocol extension (wlr_foreign_toplevel).
         std::env::var_os("DISPLAY")?;
         let (conn, screen_num) = x11rb::connect(None).ok()?;
         let root = conn.setup().roots[screen_num].root;
         let reply = conn.query_pointer(root).ok()?.reply().ok()?;
-        Some((i32::from(reply.root_x), i32::from(reply.root_y)))
+        Some((
+            i32::from(reply.root_x),
+            i32::from(reply.root_y),
+            "x11 query_pointer",
+        ))
     }
     #[cfg(target_os = "windows")]
     {
@@ -423,7 +466,7 @@ fn cursor_position() -> Option<(i32, i32)> {
         // SAFETY: `pt` is a valid, writable POINT on our stack and GetCursorPos
         // writes only into it. Windows-only FFI call, feature-gated.
         if unsafe { GetCursorPos(&mut pt) } != 0 {
-            return Some((pt.x, pt.y));
+            return Some((pt.x, pt.y, "win32 GetCursorPos"));
         }
         return None;
     }
@@ -432,6 +475,17 @@ fn cursor_position() -> Option<(i32, i32)> {
         let _ = (); // macOS, other Unix: deliberately no pointer query.
         return None;
     }
+}
+
+/// Half-open rect containment `x in [x0, x0+w)`, `y in [y0, y0+h)` — pure so
+/// it can be unit-tested against the measured Sebo layout (DP-3 `[0,0]
+/// 3440x1440`, HDMI-A-2 `[1825,-1920] 1080x1920` transform 3). Both operands
+/// are already in the same space by construction: on Hyprland the cursor comes
+/// from `hyprctl cursorpos` and the rects from wl_output (identical layout
+/// space); on X11 sessions both come from the X screen (t_317b9d15).
+fn contains_point(rect: (i32, i32, u32, u32), cursor: (i32, i32)) -> bool {
+    let (x0, y0, w, h) = rect;
+    cursor.0 >= x0 && cursor.0 < x0 + w as i32 && cursor.1 >= y0 && cursor.1 < y0 + h as i32
 }
 
 /// Center the window on the monitor that currently contains the pointer.
@@ -445,28 +499,39 @@ fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
     // the FULL monitor the window currently lives on — falling back to plain
     // centering (the old 660×600 panel behaviour) must never happen again.
     let target = match cursor_position() {
-        Some((cx, cy)) => {
-            let mut target = None;
+        Some((cx, cy, src)) => {
+            let mut chosen = None;
             if let Ok(monitors) = win.available_monitors() {
-                for mon in monitors {
+                chosen = monitors.into_iter().find(|mon| {
                     let pos = mon.position();
                     let size = mon.size();
-                    let contains = cx >= pos.x
-                        && cx < pos.x + size.width as i32
-                        && cy >= pos.y
-                        && cy < pos.y + size.height as i32;
-                    if contains {
-                        target = Some(mon);
-                        break;
-                    }
-                }
+                    contains_point((pos.x, pos.y, size.width, size.height), (cx, cy))
+                });
             }
-            match target {
-                Some(mon) => Some(mon),
-                None => win.primary_monitor().ok().flatten(),
+            if chosen.is_none() {
+                log::info!(
+                    "place: cursor=({cx},{cy}) src={src} contained by no monitor -> primary fallback"
+                );
+                chosen = win.primary_monitor().ok().flatten();
             }
+            if let Some(mon) = &chosen {
+                let pos = mon.position();
+                let size = mon.size();
+                log::info!(
+                    "place: cursor=({cx},{cy}) src={src} -> monitor {:?} {}x{}@{},{}",
+                    mon.name(),
+                    size.width,
+                    size.height,
+                    pos.x,
+                    pos.y
+                );
+            }
+            chosen
         }
-        None => win.current_monitor().ok().flatten(),
+        None => {
+            log::info!("place: cursor unknown -> current monitor");
+            win.current_monitor().ok().flatten()
+        }
     };
 
     let Some(mon) = target else {
@@ -594,6 +659,36 @@ mod tests {
         let app = mock_app();
         app.manage(OverlayState::new());
         app
+    }
+
+    /// Regression fixtures for the monitor placement bug (t_317b9d15): the
+    /// rects are the REAL wl_output boxes measured on Sebo's Hyprland —
+    /// DP-3 `[0,0] 3440x1440` and the rotated HDMI-A-2 `[1825,-1920]
+    /// 1080x1920` (transform 3, hence the swapped logical size and the
+    /// negative y). The cursor values are the matching `hyprctl cursorpos`
+    /// probes from the same live session.
+    #[test]
+    fn contains_point_matches_measured_hyprland_layout() {
+        let dp3 = (0, 0, 3440, 1440);
+        let hdmi = (1825, -1920, 1080, 1920);
+
+        // Pointer warps from the live probe matrix: each must hit its monitor.
+        assert!(contains_point(dp3, (1720, 720))); // DP-3 center
+        assert!(contains_point(dp3, (100, 50))); // DP-3 top-left
+        assert!(contains_point(dp3, (3430, 1430))); // DP-3 bottom-right
+        assert!(contains_point(hdmi, (2365, -960))); // HDMI-A-2 center
+        assert!(contains_point(hdmi, (1900, -1850))); // HDMI-A-2 top-left
+        assert!(contains_point(hdmi, (1825, -1920))); // HDMI-A-2 exact corner
+        assert!(contains_point(hdmi, (2904, -1))); // HDMI-A-2 bottom-right edge
+
+        // Half-open rects: shared edges belong to exactly one monitor.
+        assert!(!contains_point(hdmi, (2905, -1))); // one past right edge
+        assert!(!contains_point(dp3, (3440, 0))); // DP-3 width edge exclusive
+        assert!(!contains_point(hdmi, (2365, 0))); // HDMI height edge exclusive
+        // The stale X11-canvas reading from the bug report is no coordinate a
+        // cursor can legitimately have in layout space on this layout.
+        assert!(!contains_point(dp3, (3440, 1919)));
+        assert!(!contains_point(hdmi, (3440, 1919)));
     }
 
     /// The overlay shows exactly when the user wants it AND the game runs:

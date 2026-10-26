@@ -1,0 +1,20 @@
+== probe dp3_center hypr_cursor={    "x": 1720,    "y": 720}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+   window(own pid) at=[0, 0] size=[3440, 1440] monitor=0 visible=True mapped=True title='SC Architects Spotlight'
+== probe hdmi_center hypr_cursor={    "x": 2365,    "y": -960}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+   window(own pid) at=[1825, -1920] size=[3440, 1440] monitor=1 visible=True mapped=True title='SC Architects Spotlight'
+== probe hdmi_topleft hypr_cursor={    "x": 1900,    "y": -1850}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+   window(own pid) at=[1825, -1920] size=[3440, 1440] monitor=1 visible=True mapped=True title='SC Architects Spotlight'
+== probe dp3_botright hypr_cursor={    "x": 3430,    "y": 1430}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+   window(own pid) at=[0, 0] size=[3440, 1440] monitor=0 visible=True mapped=True title='SC Architects Spotlight'
+== probe dp3_topleft hypr_cursor={    "x": 100,    "y": 50}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+   window(own pid) at=[0, 0] size=[3440, 1440] monitor=0 visible=True mapped=True title='SC Architects Spotlight'
+[2026-10-26][18:09:59][architects_overlay_lib::overlay][INFO] place: cursor=(1720,720) src=hyprland cursorpos -> monitor Some("CU34G2XP") 3440x1440@0,0
+[2026-10-26][18:10:06][architects_overlay_lib::overlay][INFO] place: cursor=(2365,-960) src=hyprland cursorpos -> monitor Some("PHL 243V5") 1080x1920@1825,-1920
+[2026-10-26][18:10:08][architects_overlay_lib::overlay][INFO] place: cursor=(1900,-1850) src=hyprland cursorpos -> monitor Some("PHL 243V5") 1080x1920@1825,-1920
+[2026-10-26][18:10:11][architects_overlay_lib::overlay][INFO] place: cursor=(3430,1430) src=hyprland cursorpos -> monitor Some("CU34G2XP") 3440x1440@0,0
+[2026-10-26][18:10:14][architects_overlay_lib::overlay][INFO] place: cursor=(100,50) src=hyprland cursorpos -> monitor Some("CU34G2XP") 3440x1440@0,0

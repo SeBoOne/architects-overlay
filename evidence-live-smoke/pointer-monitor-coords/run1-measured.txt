@@ -1,0 +1,40 @@
+== probe dp3_center hypr_cursor={    "x": 1720,    "y": 720}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+== probe hdmi_center hypr_cursor={    "x": 2365,    "y": -960}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+== probe hdmi_topleft hypr_cursor={    "x": 1900,    "y": -1850}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+== probe dp3_botright hypr_cursor={    "x": 3430,    "y": 1430}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+== probe dp3_topleft hypr_cursor={    "x": 100,    "y": 50}
+   arch-overlay show: OK visible=true game_running=true click_through=true
+[2026-10-26][18:08:12][architects_overlay_lib::overlay][INFO] place: cursor_x11=(3440,1919)
+[2026-10-26][18:08:12][architects_overlay_lib::overlay][INFO] place: mon name=Some("CU34G2XP") pos=(0,0) size=3440x1440 scale=1
+[2026-10-26][18:08:12][architects_overlay_lib::overlay][INFO] place: mon name=Some("PHL 243V5") pos=(1825,-1920) size=1080x1920 scale=1
+[2026-10-26][18:08:12][architects_overlay_lib::overlay][INFO] place: contains(Some("CU34G2XP"),(3440,1919))=false
+[2026-10-26][18:08:12][architects_overlay_lib::overlay][INFO] place: contains(Some("PHL 243V5"),(3440,1919))=false
+[2026-10-26][18:08:12][architects_overlay_lib::overlay][INFO] place: no monitor contains cursor -> primary fallback
+[2026-10-26][18:08:19][architects_overlay_lib::overlay][INFO] place: cursor_x11=(3440,1919)
+[2026-10-26][18:08:19][architects_overlay_lib::overlay][INFO] place: mon name=Some("CU34G2XP") pos=(0,0) size=3440x1440 scale=1
+[2026-10-26][18:08:19][architects_overlay_lib::overlay][INFO] place: mon name=Some("PHL 243V5") pos=(1825,-1920) size=1080x1920 scale=1
+[2026-10-26][18:08:19][architects_overlay_lib::overlay][INFO] place: contains(Some("CU34G2XP"),(3440,1919))=false
+[2026-10-26][18:08:19][architects_overlay_lib::overlay][INFO] place: contains(Some("PHL 243V5"),(3440,1919))=false
+[2026-10-26][18:08:19][architects_overlay_lib::overlay][INFO] place: no monitor contains cursor -> primary fallback
+[2026-10-26][18:08:22][architects_overlay_lib::overlay][INFO] place: cursor_x11=(3440,1919)
+[2026-10-26][18:08:22][architects_overlay_lib::overlay][INFO] place: mon name=Some("CU34G2XP") pos=(0,0) size=3440x1440 scale=1
+[2026-10-26][18:08:22][architects_overlay_lib::overlay][INFO] place: mon name=Some("PHL 243V5") pos=(1825,-1920) size=1080x1920 scale=1
+[2026-10-26][18:08:22][architects_overlay_lib::overlay][INFO] place: contains(Some("CU34G2XP"),(3440,1919))=false
+[2026-10-26][18:08:22][architects_overlay_lib::overlay][INFO] place: contains(Some("PHL 243V5"),(3440,1919))=false
+[2026-10-26][18:08:22][architects_overlay_lib::overlay][INFO] place: no monitor contains cursor -> primary fallback
+[2026-10-26][18:08:24][architects_overlay_lib::overlay][INFO] place: cursor_x11=(3440,1919)
+[2026-10-26][18:08:24][architects_overlay_lib::overlay][INFO] place: mon name=Some("CU34G2XP") pos=(0,0) size=3440x1440 scale=1
+[2026-10-26][18:08:24][architects_overlay_lib::overlay][INFO] place: mon name=Some("PHL 243V5") pos=(1825,-1920) size=1080x1920 scale=1
+[2026-10-26][18:08:24][architects_overlay_lib::overlay][INFO] place: contains(Some("CU34G2XP"),(3440,1919))=false
+[2026-10-26][18:08:24][architects_overlay_lib::overlay][INFO] place: contains(Some("PHL 243V5"),(3440,1919))=false
+[2026-10-26][18:08:24][architects_overlay_lib::overlay][INFO] place: no monitor contains cursor -> primary fallback
+[2026-10-26][18:08:27][architects_overlay_lib::overlay][INFO] place: cursor_x11=(3440,1919)
+[2026-10-26][18:08:27][architects_overlay_lib::overlay][INFO] place: mon name=Some("CU34G2XP") pos=(0,0) size=3440x1440 scale=1
+[2026-10-26][18:08:27][architects_overlay_lib::overlay][INFO] place: mon name=Some("PHL 243V5") pos=(1825,-1920) size=1080x1920 scale=1
+[2026-10-26][18:08:27][architects_overlay_lib::overlay][INFO] place: contains(Some("CU34G2XP"),(3440,1919))=false
+[2026-10-26][18:08:27][architects_overlay_lib::overlay][INFO] place: contains(Some("PHL 243V5"),(3440,1919))=false
+[2026-10-26][18:08:27][architects_overlay_lib::overlay][INFO] place: no monitor contains cursor -> primary fallback
