@@ -166,6 +166,61 @@ pub struct RouteList {
     pub routes: Vec<TradeRoute>,
     /// Unix-Sekunden des letzten Sweeps (Datenstand-Anzeige).
     pub swept_at: u64,
+    /// Stale-while-revalidate: `true` when the sweep marker is older than
+    /// the Sweep-TTL — the served data is (possibly) veralt and a
+    /// background refresh runs/runs next. UI shows the ↻ marker.
+    #[serde(default)]
+    pub refreshing: bool,
+}
+
+/// Does this query use terminal-SIDE filters (Start/Target/Autoload/Cargo-
+/// Deck/Boden/Space)? If not, the persisted Profit-Matrix can serve the query
+/// directly; if yes, the rows behind the matrix must be re-scanned (the
+/// filter changes which Buy/Sell pair is „best“ per Ware).
+impl RouteFilters {
+    pub fn has_terminal_side_filters(&self) -> bool {
+        self.from.as_deref().filter(|f| !f.is_empty()).is_some()
+            || self.to.as_deref().filter(|f| !f.is_empty()).is_some()
+            || self.autoload.is_some()
+            || self.cargo_deck.is_some()
+            || self.ground_only
+            || self.space_only
+    }
+}
+
+/// Serve a query FROM the persisted Profit-Matrix (no re-scan of the price
+/// rows): Matrix-rows are already the best Buy→Sell pair per Commodity.
+/// Only commodity-Substring- and Legality-Filter apply on this lane —
+/// guarded by the caller ([`RouteFilters::has_terminal_side_filters`]).
+/// `profit_total`/`cost_total` are applied from the stored per-SCU values
+/// (identical formulas to [`compute_routes_full`]).
+pub fn routes_from_matrix(matrix: &[TradeRoute], filters: &RouteFilters) -> Vec<TradeRoute> {
+    let scu = filters.scu.max(0.0);
+    let mut out: Vec<TradeRoute> = matrix
+        .iter()
+        .filter(
+            |r| match filters.commodity.as_deref().filter(|f| !f.is_empty()) {
+                Some(f) => {
+                    let f = f.to_lowercase();
+                    r.commodity.to_lowercase().contains(&f) || r.commodity_id.to_string() == f
+                }
+                None => true,
+            },
+        )
+        .filter(|r| match filters.legality {
+            RouteLegality::All => true,
+            RouteLegality::Legal => !r.illegal,
+            RouteLegality::Illegal => r.illegal,
+        })
+        .map(|r| {
+            let mut out = r.clone();
+            out.profit_total = r.profit_per_scu * scu;
+            out.cost_total = r.buy_price * scu;
+            out
+        })
+        .collect();
+    sort_routes(&mut out, filters.sort);
+    out
 }
 
 /// Filtert + sortiert die Rohzeilen zu Routen. Eine Route entsteht pro Ware

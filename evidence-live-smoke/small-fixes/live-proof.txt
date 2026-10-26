@@ -1,0 +1,56 @@
+Live-Nachweise t_d3617400 (Review t_50c64411) — echtes Tauri-Fenster, keine Stubs
+================================================================================
+
+Setup: Binary aus feature/small-fixes @ f1d7413 via `pnpm tauri build --no-bundle`
+(custom-protocol aktiv). Hyprland 0.56 Wayland (Wayland-Socket, grim-Fenster-Crops,
+uinput-Tastatur/Maus). Isolierte XDG-Data-Dir mit Konsistenz-Kopie der echten
+cache.sqlite3 (sqlite .backup; Quelle read-only): 28 Hangar-/5 Inventarzeilen,
+10724 Entities. Echte DB unveraendert: read-only Counts 28/5 vor und nach allen
+Laeufen, md5 fdf19a0119870b7df0ab7a4513ccea33 identisch zum Baseline.
+
+P8 (Fix f1d7413, Blocker B1): 'gold' mit ~180 ms/Zeichen getippt (uinput-Tap,
+180 ms Delay), dann Feld geleert (Strg+A + Backspace).
+- 17-p8-gold-only-history.png: ZULETZT GESUCHT zeigt exakt EINEN Chip 'gold';
+  keine Praefixe 'g'/'go'/'gol' (OCR-Band-Beweis: 'ZULETZT GESUCHT / gold' >
+  'SCHNELLZUGRIFF / F2 Marktplatz · F6 Routen · F12 Einstellungen · Rechner ·
+  =2*250+15% · Kategorie · :c gold').
+- localStorage (WebKit ItemTable, SQLite-Abfrage): architects-overlay.recentSearches
+  = ["gold"] — genau ein Eintrag.
+- 02-history-after-restart.png: eine neu gestartete App-Instanz zeigt im idle-Pane
+  erneut 'ZULETZT GESUCHT: gold' — der Wert stammt aus dem von der vorigen Instanz
+  auf Disk geschriebenen localStorage (Prozessgrenzen ueberschritten; die alte
+  Instanz wurde spaeter per SIGTERM beendet, PID-Exit verifiziert). Fuer die
+  Kartenansicht wurde der strenge Ablauf benutzt: SIGTERM -> 'APP-EXITED-OK'
+  (PID weg) -> erst dann Neustart (siehe Abschnitt Karten).
+
+Kriterium 4, hangar_add live (11 → 11b → 11c → 12):
+- F4 Hangar, Liste mit echten 28 Eintraegen (11-hangar-list-before.png).
+- Klick '+ Anlegen' (Cursor-Warp + Click, Ziel (2700,247)) → Formular
+  'EINTRAG ANLEGEN' (11b), Name-Feld per Klick gefuellt 'Smoke Avenger' (11c),
+  Speichern-Klick.
+- 12-hangar-added-note.png: Note 'Angelegt: Smoke Avenger' + Liste enthaelt Zeile
+  'Smoke Avenger  INGAME' (OCR full-frame, zwei Fundstellen).
+- DB der Cache-Kopie direkt abgefragt: count(hangar) 28 → 29; Zeile
+  id=31 name='Smoke Avenger' entity_type='ship' origin='ingame'.
+
+Kartenansicht + Persistenz ueber echten Neustart (15 → 16 → 10):
+- Inventar (F3) Liste mit echten Daten (07: CHECKMATE/TURNON/LEVSKI-Gruppen,
+  5 Positionen, Qualitaetsstufen sichtbar).
+- Toggle auf Cards im echten Fenster (Tab x4 + Leertaste auf CARDS-Chip;
+  Focus-Ring per Screenshot verifiziert): Cards-Grid 'CHECKMATE | LEVSKI'
+  nebeneinander (15-cards-on.png); localStorage inventory.cards=1.
+- Echter App-Neustart: SIGTERM → 'APP-EXITED-OK' (Pid weg) → Neustart der
+  App. Neuer Prozess, F3: Cards-Grid OHNE erneuten Toggle weiterhin aktiv
+  (16-cards-after-restart.png), inventory.cards=1. Page-Reload alone reicht
+  nicht als Beweis — hierprozessuebergreifend validiert.
+- Zurueckgeschaltet (Tab x4 + Leertaste): Liste wieder da (10),
+  inventory.cards=0.
+
+Hinweis Kartennamen: 02-history-after-reload.png (alt, byte-identisch zu 01)
+ersetzt durch 02-history-after-restart.png; 08/09 (Cards aus altem Stub-Smoke)
+ersetzt durch 15/16/10 aus dem echten Fenster. Alle md5 der PNGs untereinander
+verschieden (uniq-Pruef durchgefahren).
+
+Gate auf f1d7413 (Nachlauf, Log gate-run.log): cargo fmt --check exit 0,
+cargo check ok, cargo test alle Suiten ok (0 failed), svelte-check 0 errors /
+34 warnings, pnpm build done → GATE-ALL-OK.

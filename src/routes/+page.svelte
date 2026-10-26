@@ -22,7 +22,7 @@
 	// F4 Hangar · F12 Einstellungen — In-App-Keyhandler, die nur greifen, wenn
 	// das Overlay sichtbar+fokussiert ist (compositor_focus beim Show); die Rail
 	// links zeigt die Modi mit F-Key-Label, aktiver Modus in Akzentfarbe.
-	// Market-Modus (F2 / M / Strg+M): DAS Haupt-Suchfeld durchsucht Offers
+	// Market-Modus (F2 / Rail): DAS Haupt-Suchfeld durchsucht Offers
 	// (Name/Typ/Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung,
 	// Alt+Zahl-Badges auf den ersten 10 Offers, Esc/F2 zurück zur Suche.
 	//   - Detail-Tastatur: ↑↓ Zeile, ↵ Auswahl, Esc zurück.
@@ -38,6 +38,9 @@
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
 	import Inventory from '../lib/Inventory.svelte';
+	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
+	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
+	import { suggestShips, isSnubShip } from '../lib/hangar_ships';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -166,6 +169,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		detail_variant: string;
 		uex_api_key_set: boolean;
 		commodity_source: string;
+		// K2 (t_5fe8eb4c, P12): font/icon scale in % (Chips 80–125, backend 50–200).
+		scale: number;
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -179,7 +184,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// ---- Modi (Karte t_315a26cc) --------------------------------------------
 	// Zentraler Mode-State: F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar ·
-	// F12 Einstellungen. Der bestehende Market-Modus (M/Strg+M) ist derselbe
+	// F12 Einstellungen. Der bestehende Market-Modus (F2/Rail) ist derselbe
 	// State — `phase === 'market'` bleibt die Render-Quelle, Config bleibt
 	// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).
 	// P1 t_a39f6811: F6 Handelsrouten — eigener Mode für die Rail/Keyhandler;
@@ -204,6 +209,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Schiffe/Fahrzeuge/Module mit Versicherung — Backend-Tabelle `hangar`
 	// (Schema v4). Import: Hangar-XPLORer JSON (Primärformat) + CCUgame CSV;
 	// Export: eigenes sauberes JSON. Merge über pledge_id / (ship_code, name).
+	// P9 (t_aa6cc070): DAS HAUPT-Suchfeld (input) filtert the Hangar-List.
+	// P11 (t_aa6cc070): Action-Message auto-fade (hangarNoteSet, ~3.5 s).
 	type HangarItem = {
 		id: number | null;
 		name: string;
@@ -224,34 +231,67 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		updated_at: number | null;
 	};
 	type HangarImportResult = { imported: number; updated: number; skipped: number; format: string };
+	// Autocomplete-Candidate (P10): Name + Manufacturer + kind — from the
+	// static package and/or already-registered Hangar entries.
+	type HangarSuggestion = { name: string; manufacturer: string; kind: string };
 
+	// P11 (Karte t_aa6cc070): Action-Message under the Filter/Import/Add-Buttons
+	// auto-fades after ~3.5 s (Timeout, NO Blocker-Refactor). All hangar_* note
+	// writes go through hangarNoteSet — old note replaced, removal rescheduled.
 	let hangarItems = $state<HangarItem[]>([]);
 	let hangarLoaded = $state(false);
 	let hangarBusy = $state(false);
 	let hangarNote = $state('');
+	let hangarNoteTimer: ReturnType<typeof setTimeout> | null = null;
+	const HANGAR_NOTE_MS = 3500;
+	function hangarNoteSet(msg = '') {
+		if (hangarNoteTimer) clearTimeout(hangarNoteTimer);
+		hangarNoteTimer = null;
+		hangarNote = msg;
+		if (msg) hangarNoteTimer = setTimeout(() => {
+			hangarNote = '';
+			hangarNoteTimer = null;
+		}, HANGAR_NOTE_MS);
+	}
 	let hangarFilter = $state<'all' | 'pledge' | 'ingame' | 'lti' | 'module'>('all');
 	let hangarSel = $state(0);
 	let hangarView = $state<'list' | 'detail'>('list');
 	let hangarDetail = $state<HangarItem | null>(null);
 
+	// P9 (Karte t_aa6cc070): DAS HAUPT-Suchfeld (input) serves as In-Context-
+	// Filter for the Hangar-List (like Inventory/Detail) — Name/Custom-Name/
+	// Manufacturer/Typ. German Typ-words map to entity_type (schiff→ship …);
+	// base_ship + ship_code go into the haystack so "Cutlass" finds the Modules.
+	// Leerstring = everything (like the other In-Context-Filters).
 	const hangarFiltered = $derived.by(() => {
 		let items = hangarItems;
 		if (hangarFilter === 'pledge') items = items.filter((i) => i.origin === 'pledge');
 		else if (hangarFilter === 'ingame') items = items.filter((i) => i.origin === 'ingame');
 		else if (hangarFilter === 'lti') items = items.filter((i) => i.insurance === 'LTI');
 		else if (hangarFilter === 'module') items = items.filter((i) => i.entity_type === 'module');
+		const q = input.trim().toLowerCase();
+		if (q) {
+			// Typ-Queries: both the raw word AND the mapped word match entity_type.
+			const TYPE_DE: Record<string, string> = { schiff: 'ship', fahrzeug: 'vehicle', fahrzeuge: 'vehicle', modul: 'module', module: 'module' };
+			items = items.filter((i) => {
+				const hay = `${i.name} ${i.custom_name} ${i.manufacturer} ${i.base_ship} ${i.ship_code}`.toLowerCase();
+				if (hay.includes(q)) return true;
+				const mapped = TYPE_DE[q];
+				return mapped != null && i.entity_type.toLowerCase() === mapped;
+			});
+		}
 		return items;
 	});
 
 	async function loadHangar(force = false) {
 		if (hangarLoaded && !force) return;
 		hangarBusy = true;
-		hangarNote = '';
+		hangarNoteSet('');
 		try {
 			hangarItems = await invoke<HangarItem[]>('hangar_list');
 			hangarLoaded = true;
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -267,14 +307,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	async function hangarImportFile(format: 'xplorer' | 'ccugame', file: File) {
 		hangarBusy = true;
-		hangarNote = '';
+		hangarNoteSet('');
 		try {
 			const text = await file.text();
 			const res = await invoke<HangarImportResult>('hangar_import', { format, text });
-			hangarNote = `Import (${res.format}): ${res.imported} neu · ${res.updated} aktualisiert · ${res.skipped} übersprungen`;
+			hangarNoteSet(`Import (${res.format}): ${res.imported} neu · ${res.updated} aktualisiert · ${res.skipped} übersprungen`);
 			await loadHangar(true);
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -301,9 +341,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			a.download = 'architects-overlay-hangar.json';
 			a.click();
 			URL.revokeObjectURL(a.href);
-			hangarNote = 'Export: architects-overlay-hangar.json';
+			hangarNoteSet('Export: architects-overlay-hangar.json');
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -315,9 +355,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke('hangar_delete', { id: item.id });
 			await loadHangar(true);
-			hangarNote = `Gelöscht: ${hangarDisplayName(item)}`;
+			hangarNoteSet(`Gelöscht: ${hangarDisplayName(item)}`);
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -348,6 +388,68 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let hangarEdit = $state(false);
 	let hangarForm = $state<HangarItem>(hangarBlank());
 	let hangarFormPrice = $state('');
+	// P10: current suggestions for the add-form (reactive to Field-Content).
+	let hangarSugs = $derived(hangarNameSuggest());
+
+	// P10 (Karte t_aa6cc070): Autocomplete for the Name-Field on Anlegen —
+	// already-registered Hangar Ships/Fahrvehicles first (In-Hangar-Wissu),
+	// static Ship-Package (src/lib/hangar_ships.ts) fills the rest. A click
+	// fills Name + Manufacturer + Typ in one go (fields, no Preset-Form).
+	function hangarNameSuggest() {
+		const q = hangarForm.name.trim().toLowerCase();
+		const out: HangarSuggestion[] = [];
+		const seen = new Set<string>();
+		const add = (name: string, manufacturer: string, kind: string) => {
+			const key = name.toLowerCase();
+			if (name && !seen.has(key)) {
+				seen.add(key);
+				out.push({ name, manufacturer, kind });
+			}
+		};
+		for (const it of hangarItems) {
+			if (it.entity_type === 'module') continue;
+			const hay = `${it.name} ${it.custom_name}`.toLowerCase();
+			if (!q || hay.includes(q) || it.manufacturer.toLowerCase().includes(q)) add(it.name, it.manufacturer, it.entity_type);
+		}
+		for (const s of suggestShips(q, 12)) add(s.name, s.manufacturer, s.kind);
+		return out.slice(0, 10);
+	}
+	function hangarPickSuggestion(s: HangarSuggestion) {
+		// Selection applies Name + Manufacturer + Typ — empty Manufacturer in
+		// the static package never overwrites a user-filled value.
+		hangarForm = {
+			...hangarForm,
+			name: s.name,
+			manufacturer: s.manufacturer || hangarForm.manufacturer,
+			entity_type: s.kind
+		};
+	}
+	// P10: Basisschiff-Field visible ONLY for entity_type=module OR Snub-Ships
+	// (Snub = fixed Wiki-Category list "Snub ships" — hangar schema has no
+	// ship_category column; documented in src/lib/hangar_ships.ts).
+	const hangarBaseOpen = $derived(hangarForm.entity_type === 'module' || isSnubShip(hangarForm.name));
+	function hangarBaseSuggest() {
+		// Base-Ship-Autocomplete from the ALREADY REGISTERED Hangar entries
+		// (Card: "Autocomplete from those already entered in the Hangar").
+		const q = hangarForm.base_ship.trim().toLowerCase();
+		const out: string[] = [];
+		const seen = new Set<string>();
+		for (const s of hangarShips) {
+			const dn = hangarDisplayName(s);
+			const hay = `${s.name} ${s.custom_name}`.toLowerCase();
+			if ((q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q)) && !seen.has(dn)) {
+				seen.add(dn);
+				out.push(dn);
+				if (out.length >= 10) break;
+			}
+		}
+		return out;
+	}
+	// P10: Reactive Base-Ship-Chips — registered Hangar entries only.
+	const hangarBaseSugs = $derived(hangarBaseOpen ? hangarBaseSuggest() : [] as string[]);
+	function hangarSetBase(name: string) {
+		hangarForm = { ...hangarForm, base_ship: name };
+	}
 
 	function hangarOpenAdd() {
 		hangarForm = hangarBlank();
@@ -372,7 +474,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	async function hangarSaveForm() {
 		hangarBusy = true;
-		hangarNote = '';
+		hangarNoteSet('');
 		try {
 			const name = hangarForm.name.trim();
 			if (!name) throw new Error('Name fehlt');
@@ -399,9 +501,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				const fresh = hangarItems.find((i) => i.id === hangarDetail!.id);
 				if (fresh) hangarDetail = fresh;
 			}
-			hangarNote = msg;
+			hangarNoteSet(msg);
 		} catch (e) {
-			hangarNote = String(e);
+			hangarNoteSet(String(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -437,6 +539,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (typeof document === 'undefined' || !snapshot) return;
 		document.documentElement.dataset.palette = snapshot.palette;
 		document.documentElement.dataset.detailVariant = snapshot.detail_variant;
+		// K2 (t_5fe8eb4c, P12): scale live like the palette — snapshot.scale (%)
+		// becomes the CSS custom property behind the Shell's zoom.
+		document.documentElement.style.setProperty(
+			'--ui-scale', String(snapshot.scale / 100));
 	}
 
 	async function loadSettings() {
@@ -504,6 +610,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			applySettings(cfg);
 		} catch (e) {
 			apiKeyNote = String(e);
+		}
+	}
+
+	// K2 (t_5fe8eb4c, P12): live font/icon scale (F12-View chips 80/90/100/110/125).
+	// settings_set_scale persists and returns the snapshot; without a backend (SSR
+	// or static probe) the CSS property is set directly — same fallback pattern as
+	// localVariant for the Detail-Variante.
+	async function chooseScale(pct: number) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_scale', { pct });
+			applySettings(cfg);
+		} catch (e) {
+			apiKeyNote = String(e);
+			if (typeof document !== 'undefined')
+				document.documentElement.style.setProperty(
+					'--ui-scale', String(pct / 100));
 		}
 	}
 
@@ -661,6 +783,52 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 	let mFetchedAt = $state(loadMarketFetchedAt());
+
+	// P8 (K5): Search-History — Querystrings of the last searches persistiert
+	// (same localStorage-pattern as fetchedAt above). Root-Cause of the empty
+	// idle-pane "Zuletzt gesucht": searches were never persisted and the
+	// pane showed a static "Keine" — now filled from `recent`.
+	const RECENT_KEY = 'architects-overlay.recentSearches';
+	function loadRecent(): string[] {
+		try {
+			const v = JSON.parse(String(localStorage.getItem(RECENT_KEY) ?? '[]'));
+			return Array.isArray(v) ? v.filter((s) => typeof s === 'string' && s.trim()).slice(0, 8) : [];
+		} catch {
+			return [];
+		}
+	}
+	let recent = $state(loadRecent());
+	function pushRecent(qRaw: string) {
+		const q = qRaw.trim();
+		if (!q) return;
+		// P8-Fix (Review t_50c64411 B1): no history entry may be the Prefix of
+		// a newer one → typing-Fragments of a partial search get dropped.
+		// (old: Dedupe exact-Equals only → prefix of a newer entry kept)
+		recent = [q, ...recent.filter((s) => s !== q && !q.startsWith(s))].slice(0, 8);
+		try {
+			localStorage.setItem(RECENT_KEY, JSON.stringify(recent));
+		} catch {
+			/* localStorage incomplete — In-Memory-Tracking stays active. */
+		}
+	}
+	// P8-Fix (Review t_50c64411 B1): pushRecent must NOT run in runSearch —
+	// runSearch fires on every 180ms debounce-Interval while typing, one
+	// History-entry per Prefix. Only a completed search persistiert:
+	// persistRecent fires after 750ms Typing-Stille (see onInput) or gets
+	// flushed when the search is explicitly left (Detail open/close).
+	let recentTimer: ReturnType<typeof setTimeout> | null = null;
+	function persistRecent() {
+		recentTimer = null;
+		if (phase === 'market' || railMode || inDetail) return;
+		const q = parseQuery();
+		if (!q.isCalc && q.text) pushRecent(q.text);
+	}
+	function flushRecent() {
+		if (recentTimer === null) return;
+		clearTimeout(recentTimer);
+		recentTimer = null;
+		persistRecent();
+	}
 	let f5Msg = $state(''); // kurzer Status-Text aus dem F5-Sync
 	let f5Clear: ReturnType<typeof setTimeout> | null = null;
 
@@ -712,12 +880,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		margin: number;
 		distance: number;
 	};
-	type RoutesResponse = { source: string; swept_at: number; routes: TradeRoute[] };
+	type RoutesResponse = { source: string; swept_at: number; refreshing: boolean; routes: TradeRoute[] };
 
 	let routes_ = $state<TradeRoute[]>([]);
 	let rLoading = $state(false);
 	let rNote = $state<string | null>(null);
 	let rSweptAt = $state(0);
+	let rRefreshing = $state(false);
 	let rSel = $state(0);
 	let rDetail = $state<TradeRoute | null>(null);
 	// Filter (Kartenvorgabe).
@@ -732,6 +901,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let rScu = $state(0);
 	// Schiff aus Hangar → SCU automatisch (UEX /vehicles.scu), oder manuell.
 	let rShipName = $state('');
+	// P15b (Karte t_5fbd43b6): Type-ahead — Tippen kurzwidd die Ship-Selection;
+	// geneueneinerer → auto-Selected (SCU applies automatically).
+	let rShipQ = $state('');
 	let vehicleScuMap = $state<Record<string, number> | null>(null);
 
 	/** Ship → SCU via UEX /vehicles (case-insensitive über name/full/slug). */
@@ -782,15 +954,48 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			});
 			routes_ = resp.routes;
 			rSweptAt = resp.swept_at;
+			rRefreshing = resp.refreshing;
 			rSel = 0;
 		} catch (e) {
 			routes_ = [];
+			rRefreshing = false;
 			rNote = String(e);
 		} finally {
 			rLoadingRef = false;
 			rLoading = false;
 		}
 	}
+
+	// P15c (Karte t_5fbd43b6): Start-/Zielort-Autocomplete — LOCATIONEN only.
+	// Backend `location_suggest` reads EntityKind::Locations (Wiki+UEX merged);
+	// Shops/Terminals (EntityKind::Terminals) dorfnet appear in the list.
+	// geneueneinerer → input auto-completed with the full Location-name.
+	let rFromSug = $state<string[]>([]);
+	let rToSug = $state<string[]>([]);
+	$effect(() => {
+		const qf = rFrom.trim();
+		const qt = rTo.trim();
+		void (async () => {
+			try {
+				const sug = qf ? await invoke<string[]>('location_suggest', { query: qf }) : [];
+				rFromSug = sug;
+				// Autocomplete: exactly one Mate → complete the input (guarded
+				// against equal → no endless self-write).
+				if (sug.length === 1 && sug[0].toLowerCase() !== qf.toLowerCase()) rFrom = sug[0];
+			} catch {
+				rFromSug = [];
+			}
+		})();
+		void (async () => {
+			try {
+				const sug = qt ? await invoke<string[]>('location_suggest', { query: qt }) : [];
+				rToSug = sug;
+				if (sug.length === 1 && sug[0].toLowerCase() !== qt.toLowerCase()) rTo = sug[0];
+			} catch {
+				rToSug = [];
+			}
+		})();
+	});
 
 	// Filter/Sort-Änderung → neu laden (debounced, Text-Filter tippt sich).
 	let rDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -809,6 +1014,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	/** Hangar-Schiffe (keine Module) für die Schiff-Auswahl. */
 	let hangarShips = $derived(hangarItems.filter((i) => i.entity_type !== 'module'));
+
+	// P15b (Karte t_5fbd43b6): Type-ahead — Tippen in dem Schiff-Fild narower die
+	// <select> (Substring über Name/Custom-Name, case-insensitive). Genaw eine
+	// Mate → auto-Selected, SCU auto via applyShipScu.
+	let shipMatches = $derived(
+		rShipQ.trim()
+			? hangarShips.filter((s) => {
+				const q = rShipQ.trim().toLowerCase();
+				return s.name.toLowerCase().includes(q) ||
+					(s.custom_name || '').toLowerCase().includes(q);
+			})
+			: hangarShips
+	);
+	$effect(() => {
+		// P15b: geneueneinerer (exactly one Mate) → auto-Selected + SCU auto.
+		if (phase === 'market' && mTab === 'routes' && shipMatches.length === 1) {
+			const only = shipMatches[0];
+			if (rShipName !== only.name) void applyShipScu(only.name);
+		}
+	});
 	const DIST_LABELS = ['gleiches Terminal', 'gleicher Mond', 'gleicher Planet', 'gleiches System', 'anderes System'];
 
 	function rMove(dir: number) {
@@ -963,6 +1188,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 		if (debounce) clearTimeout(debounce);
 		debounce = setTimeout(() => void (phase === 'market' ? loadMarket() : runSearch()), 180);
+		// P8-Fix: second, much longer debounce = Typing-Stille → only a
+		// completed search reacheth the History (750ms after last keystroke).
+		if (phase !== 'market') {
+			if (recentTimer) clearTimeout(recentTimer);
+			recentTimer = setTimeout(persistRecent, 750);
+		}
 	}
 
 	async function runSearch() {
@@ -1020,6 +1251,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// Präfix-only (z. B. `:c`) hat keinen Freitext → dann alle Treffer der
 		// Kategorie listen (Suchtext leer = Breitensuche).
 		const query = q.text;
+		// P8-Fix: persistiert nicht hier — see persistRecent (750ms Stille).
 		const t0 = performance.now();
 		try {
 			const resp = await invoke<SearchResponse>('search', {
@@ -1107,6 +1339,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// N2: Suchfeld = In-Context-Filter der Detail-Ansicht → mit leerem Filter
 		// starten (alles zeigen); Fokus bleibt im Suchfeld zum sofortigen Filtern.
 		if (debounce) clearTimeout(debounce);
+		flushRecent(); // P8-Fix
 		input = '';
 		focusSearch(false);
 		void loadDetail(flat[idx]);
@@ -1121,6 +1354,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// N2: Filter zurücksetzen — das Feld ist in der Hauptsuche wieder die
 		// Volltextsuche (leer, Ergebnisliste der letzten Suche bleibt stehen).
 		if (debounce) clearTimeout(debounce);
+		flushRecent(); // P8-Fix
 		input = '';
 		focusSearch(true);
 		// Scroll-Position der Liste wiederherstellen (kein Scroll-Back to top).
@@ -1252,7 +1486,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		else enterMarket();
 	}
 
-	// Market-Modus betreten (F2 / M / Strg+M / Rail): P3 — wenn die Market-Daten
+	// Market-Modus betreten (F2 / Rail): P3 — wenn die Market-Daten
 	// älter als 5 Minuten sind, sofortiger Sync im Hintergrund (kein Blocken).
 	function enterMarket() {
 		phase = 'market';
@@ -1636,7 +1870,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			return;
 		}
 		// Config-View: Esc → zurück zur Suche (NICHT Overlay-hide). Alle anderen
-		// Shortcuts (Nav/Alt-Zahlen/Ctrl+M/F5) sind in dieser Ansicht gesperrt —
+		// Shortcuts (Nav/Alt-Zahlen/F2/F5) sind in dieser Ansicht gesperrt —
 		// Eingabe im API-Key-Feld bleibt natürlich erlaubt.
 		if (inConfig) {
 			if (k === 'Escape') {
@@ -1837,8 +2071,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	<div class="shell" class:in-detail={inDetail}>
 		<i class="deco t1"></i><i class="deco t2"></i>
 
-		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F6/F12) — gehört nur zum Overlay -->
-		<Rail mode={mode} compact={palW > 0 && palW < 520} onselect={setMode} />
+		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F6/F12) — gehört nur zum Overlay.
+		     K2 (t_5fe8eb4c): palW ist die VIEWPORT-wide pal-root nuun (width moved
+		     onto .shell); Shell-Box = max(70vw,640px) clamp 94vw ⇒ Palette <520px
+		     only below ~553px viewport → threshold re-based accordingly. -->
+		<Rail mode={mode} compact={palW > 0 && palW < 553} onselect={setMode} />
 
 		<div class="shell-main">
 		<!-- Suchzeile -->
@@ -1858,7 +2095,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				oninput={onInput}
 				placeholder={railMode === 'inventory'
 				? 'Inventar filtern — Standort oder Material …'
-				: phase === 'market'
+				: railMode === 'hangar'
+					? 'Hangar search — Name, Custom-Name, Manufacturer or Base-Ship …'
+					: phase === 'market'
 					? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
 					: inDetail
 					? detailHit?.kind === 'location' || detailHit?.kind === 'terminal'
@@ -1937,11 +2176,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</label>
 							<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
 							<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
-							<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+							{#if hangarBaseOpen}<label>Basisschiff<input bind:value={hangarForm.base_ship} placeholder="Pick from Hangar …" /></label>{/if}
 							<label>Hersteller<input bind:value={hangarForm.manufacturer} /></label>
 							<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" placeholder="z. B. 180" /></label>
 							<label>Datum<input bind:value={hangarForm.purchase_date} placeholder="2025-01-31" /></label>
 						</div>
+						<!-- P10: Autocomplete-Chips for Name + Base-Ship (the latter
+						     only for module/Snub, see hangarBaseOpen). Click fills
+						     Manufacturer + Typ automatically. -->
+						{#if hangarSugs.length}
+						<div class="hf-suggest">
+							{#each hangarSugs as s (s.name)}
+							<button type="button" class="hsug" title="Select — Manufacturer/Typ gets filled" onclick={() => hangarPickSuggestion(s)}>{s.name}{#if s.manufacturer} · {s.manufacturer}{/if}</button>
+							{/each}
+						</div>
+						{/if}
+						{#if hangarBaseOpen}
+						<div class="hf-basesug">
+							<span class="hsug-h">Basisschiff:</span>
+							{#each hangarBaseSugs as n (n)}
+							<button type="button" class="hsug" title="Set Basisschiff" onclick={() => hangarSetBase(n)}>{n}</button>
+							{/each}
+						</div>
+						{/if}
 						<div class="hf-actions">
 							<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
 							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
@@ -1966,7 +2223,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="hprice">{it.purchase_price != null ? `$${it.purchase_price.toFixed(2)}` : ''}</span>
 							</button>
 						{:else}
-							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} — Import oben.</div>
+							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} {input.trim() ? ` · Search: ${input.trim()}` : ''} — Import oben.</div>
 						{/each}
 					</div>
 				{:else if hangarView === 'detail' && hangarDetail}
@@ -1986,7 +2243,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<label>Name<input bind:value={hangarForm.name} required /></label>
 									<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
 									<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
-									<label>Basisschiff (Modul)<input bind:value={hangarForm.base_ship} /></label>
+									{#if hangarBaseOpen}<label>Basisschiff<input bind:value={hangarForm.base_ship} placeholder="Pick from Hangar …" /></label>{/if}
 									<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" /></label>
 									<label>Datum<input bind:value={hangarForm.purchase_date} /></label>
 								</div>
@@ -2096,6 +2353,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								class:is-on={cfg?.commodity_source === 'uex'}
 								onclick={() => chooseSource('uex')}
 							>UEX</button>
+						</div>
+					</section>
+					<section class="cfg-sect">
+						<div class="h">Schriftscale</div>
+						<div class="cfg-chips">
+							{#each [80, 90, 100, 110, 125] as pct}
+								<button
+									type="button"
+									class="chip"
+									class:is-on={cfg?.scale === pct}
+									onclick={() => void chooseScale(pct)}
+								>{pct} %</button>
+							{/each}
 						</div>
 					</section>
 					<section class="cfg-sect">
@@ -2246,8 +2516,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span><b>SCU</b> {rScu || 1}</span>
 								<span><b>Einkauf</b> {fmtPrice(routeMath(rDetail).cost)} aUEC</span>
 								<span><b>Brutto</b> {fmtPrice(routeMath(rDetail).gross)} aUEC</span>
-								<span><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
-								<span><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
+								<span title="Gain = (Sell−Buy) × SCU · absolute"><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
+								<span title="Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)"><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
 								<span><b>Bestand dort</b> {fmtPrice(rDetail.sell_stock)} SCU</span>
 							</div>
 							<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
@@ -2258,17 +2528,34 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{:else}
 						<div class="mbar2">
 							<span class="m-lbl">Schiff</span>
-							<select class="qnum rsel" aria-label="Schiff aus Hangar" onchange={(e) => applyShipScu(e.currentTarget.value)}>
-								<option value="">— manuell —</option>
-								{#each hangarShips as s (s.id)}
-									<option value={s.name}>{s.custom_name || s.name}</option>
-								{/each}
+							<input class="rtext" type="text" placeholder="Type-ahead Schiff" aria-label="Schiff Type-ahead — Tippen shortens the selection" bind:value={rShipQ} />
+							<select class="qnum rsel" aria-label="Schiff aus Hangar (Type-ahead filteret)" onchange={(e) => applyShipScu(e.currentTarget.value)}>
+							<option value="">— manuell —</option>
+							{#each shipMatches as s (s.id)}
+							<option value={s.name}>{s.custom_name || s.name}</option>
+							{/each}
 							</select>
 							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
 							<input class="rtext" placeholder="Ware" aria-label="Ware filtern" bind:value={rCommodity} />
 							<input class="rtext" placeholder="Startort" aria-label="Startort filtern" bind:value={rFrom} />
 							<input class="rtext" placeholder="Zielort" aria-label="Zielort filtern" bind:value={rTo} />
 						</div>
+						{#if rFrom.trim() || rTo.trim()}
+							<div class="rsug" aria-live="polite">
+								{#if rFromSug.length}
+									<span class="rsug-lbl">Startort:</span>
+									<span class="rsug-list">{rFromSug.slice(0, 8).join(' · ')}</span>
+								{:else}
+									<span class="rsug-list">Startort: —</span>
+								{/if}
+								{#if rToSug.length}
+									<span class="rsug-lbl">Zielort:</span>
+									<span class="rsug-list">{rToSug.slice(0, 8).join(' · ')}</span>
+								{:else}
+									<span class="rsug-list">Zielort: —</span>
+								{/if}
+							</div>
+						{/if}
 						<div class="mbar2">
 							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>Alle</button>
 							<button type="button" class="chip" class:is-on={rLegal === 'legal'} onclick={() => (rLegal = 'legal')}>Legal</button>
@@ -2295,6 +2582,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>Distanz ↑</button>
 							<span class="m-spacer"></span>
 							{#if rSweptAt}<span class="chip"><span class="dot"></span>Stand {new Date(rSweptAt * 1000).toLocaleTimeString('de-DE')}</span>{/if}
+							{#if rRefreshing}<span class="chip">↻ Updating…</span>{/if}
 						</div>
 						{#if rLoading && !routes_.length}
 							<div class="center" style="padding: 28px 16px">
@@ -2320,14 +2608,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
 										</div>
 										<div class="m-right">
-											<div class="m-price sell">+{fmtPrice(r.profit_per_scu)}</div>
-											<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · Marge {(r.margin * 100).toFixed(0)} %</div>
+											<div class="m-price sell" title="Gain/SCU = Sell − Buy · absolute aUEC per SCU">+{fmtPrice(r.profit_per_scu)}</div>
+											<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title="Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)">Marge {(r.margin * 100).toFixed(0)} %</span></div>
 										</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{routes_.length} Routen · Gewinn/SCU = Verkauf − Kauf</span>
+								<span>{routes_.length} Routen · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · Marge = relative % (Gain/SCU ÷ Buy)</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{:else}
@@ -2646,10 +2934,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<!-- idle -->
 					<div class="pane-idle">
 						<div class="sect"><div class="h">Zuletzt gesucht</div></div>
-						<div class="recent"><span class="r">Keine — tippe, um zu suchen</span></div>
+						<div class="recent">
+						{#each recent.slice(0, 6) as q (q)}
+							<span class="r" title="This search" onclick={() => { input = q; void runSearch(); }}>{q}</span>
+						{:else}
+							<span class="r">Keine — tippe, um zu suchen</span>
+						{/each}
+					</div>
 						<div class="sect"><div class="h">Schnellzugriff</div></div>
 							<div class="recent">
-								<span class="r"><b>F2</b> Marktplatz · <b>M</b></span>
+								<span class="r"><b>F2</b> Marktplatz · <b>F6</b> Routen</span>
 								<span class="r"><b>F12</b> Einstellungen</span>
 								<span class="r"><b>Rechner</b> · =2*250+15%</span>
 								<span class="r"><b>Kategorie</b> · :c gold</span>
@@ -2689,7 +2983,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
 					<span><kbd>Esc</kbd> zurück</span>
-					<span><kbd>M</kbd> Market</span>
+					<span><kbd>F2</kbd> Marktplatz</span>
 					<span><kbd>F5</kbd> Preise syncen</span>
 				{/if}
 			</div>

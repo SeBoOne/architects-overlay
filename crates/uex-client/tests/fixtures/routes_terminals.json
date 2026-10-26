@@ -1,0 +1,11 @@
+{
+ "status": "ok",
+ "http_code": 200,
+ "data": [
+  {"id": 1, "name": "Admin - ARC-L1", "type": "commodity", "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"},
+  {"id": 2, "name": "Admin - ARC-L2", "type": "commodity", "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"},
+  {"id": 436, "name": "Admin - Checkmate", "type": "commodity", "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "space_station_name": "Checkmate Station"},
+  {"id": 126, "name": "Live Fire Weapons - HUR-L2", "type": "item", "star_system_name": "Nyx", "planet_name": "Yela", "space_station_name": "Hoover's Station"},
+  {"id": 435, "name": "Medical Shop - Checkmate", "type": "item", "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "space_station_name": "Checkmate Station"}
+ ]
+}

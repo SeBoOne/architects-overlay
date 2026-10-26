@@ -13,6 +13,7 @@
 //! [ui]
 //! palette = "amber"        # amber | mfcd | bloom
 //! detail_variant = "c"     # c | a
+//! scale = 100              # K2 P12: 50..200 % (Schrötwerte 80/90/100/110/125)
 //!
 //! [data]
 //! commodity_source = "wiki" # wiki | uex  (commodity PRICE source; wiki
@@ -27,6 +28,19 @@ use serde::{Deserialize, Serialize};
 /// App sub-directory inside the OS config dir.
 const APP_DIR: &str = "architects-overlay";
 const CONFIG_FILE: &str = "config.toml";
+
+/// K2 (t_5fe8eb4c, P12): Overlay font/icon scale in percent. Persisted in the
+/// `ui` section; the frontend applies it as `zoom: var(--ui-scale)` on the
+/// Shell. The UI offers 80/90/100/110/125 chips, the backend accepts any
+/// value inside [`SCALE_MIN`..`SCALE_MAX`] — hand-edited out-of-range values
+/// are normalized (`norm_scale`), never rejected, so the overlay boots.
+pub const SCALE_DEFAULT: u16 = 100;
+pub const SCALE_MIN: u16 = 50;
+pub const SCALE_MAX: u16 = 200;
+
+pub fn norm_scale(pct: u16) -> u16 {
+    pct.clamp(SCALE_MIN, SCALE_MAX)
+}
 
 /// Colour palette of the overlay UI. Rendered as `data-palette` on `<html>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -163,6 +177,11 @@ struct UiSection {
     palette: Option<Palette>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     detail_variant: Option<DetailVariant>,
+    // K2 (t_5fe8eb4c, P12): Schrift-/Icon-Skalierung in Prozent (F12-View).
+    // Normalized via `norm_scale` on load so a hand-edited out-of-range value
+    // cannot break the layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scale: Option<u16>,
 }
 
 /// Settings I/O failures.
@@ -198,6 +217,7 @@ pub struct Settings {
     palette: Palette,
     detail_variant: DetailVariant,
     commodity_source: CommoditySource,
+    scale: u16,
 }
 
 impl Default for Settings {
@@ -208,6 +228,7 @@ impl Default for Settings {
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
+            scale: SCALE_DEFAULT,
         }
     }
 }
@@ -248,6 +269,12 @@ impl Settings {
                 .as_ref()
                 .and_then(|d| d.commodity_source)
                 .unwrap_or_default(),
+            scale: raw
+                .ui
+                .as_ref()
+                .and_then(|u| u.scale)
+                .map(norm_scale)
+                .unwrap_or(SCALE_DEFAULT),
         })
     }
 
@@ -259,6 +286,7 @@ impl Settings {
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
+            scale: SCALE_DEFAULT,
         }
     }
 
@@ -303,6 +331,17 @@ impl Settings {
         self.commodity_source = source;
     }
 
+    /// Overlay font/icon scale in % (K2 P12; default 100).
+    pub fn scale(&self) -> u16 {
+        self.scale
+    }
+
+    /// Set the font scale in memory; out-of-range values are normalized,
+    /// never rejected (persist via [`Settings::save`]).
+    pub fn set_scale(&mut self, pct: u16) {
+        self.scale = norm_scale(pct);
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -313,6 +352,7 @@ impl Settings {
             ui: Some(UiSection {
                 palette: Some(self.palette),
                 detail_variant: Some(self.detail_variant),
+                scale: Some(self.scale),
             }),
             data: Some(DataSection {
                 commodity_source: Some(self.commodity_source),
@@ -399,6 +439,35 @@ mod tests {
         let loaded2 = Settings::load_from(&path).unwrap();
         assert_eq!(loaded2.palette(), Palette::Mfcd);
         assert_eq!(loaded2.detail_variant(), DetailVariant::C);
+    }
+
+    #[test]
+    fn scale_roundtrip_and_clamp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        // Default without a scale entry: 100 %.
+        let mut s = Settings::with_path(path.clone());
+        assert_eq!(s.scale(), SCALE_DEFAULT);
+        s.set_scale(125);
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.scale(), 125);
+
+        // Hand-edited out-of-range value: normalized on load, never rejected.
+        std::fs::write(
+            &path,
+            "[ui]\npalette = \"amber\"\ndetail_variant = \"c\"\nscale = 9000\n",
+        )
+        .unwrap();
+        let clamped = Settings::load_from(&path).unwrap();
+        assert_eq!(clamped.scale(), SCALE_MAX);
+
+        let mut s2 = Settings::load_from(&path).unwrap();
+        s2.set_scale(1);
+        assert_eq!(s2.scale(), SCALE_MIN);
+        s2.save().unwrap();
+        assert_eq!(Settings::load_from(&path).unwrap().scale(), SCALE_MIN);
     }
 
     #[test]

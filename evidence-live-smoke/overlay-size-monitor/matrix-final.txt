@@ -1,0 +1,21 @@
+== case 1-hdmi-center: cursor auf HDMI-A-2 ((2365, -960)) ==
+  warp -> (2365,-960); cursorpos now (2365,-960) out='ok'
+  timeline 1-hdmi-center after show:
+    +0.26s at=[1825, -1920] size=[3440, 1440] mon=1 float=True pin=True class=architects-overlay
+    +0.51s at=[1825, -1920] size=[1080, 1920] mon=1 float=True pin=True class=architects-overlay
+    +0.76s at=[1825, -1920] size=[1080, 1920] mon=1 float=True pin=True class=architects-overlay
+  FINAL: {'at': [1825, -1920], 'size': [1080, 1920], 'monitor': 1, 'floating': True, 'pinned': True, 'class_': 'architects-overlay'}
+== case 2-dp3-center: cursor auf DP-3 ((1720, 720)) ==
+  warp -> (1720,720); cursorpos now (1720,720) out='ok'
+  timeline 2-dp3-center after show:
+    +0.26s at=[0, 0] size=[3440, 1440] mon=0 float=True pin=True class=architects-overlay
+    +0.51s at=[0, 0] size=[3440, 1440] mon=0 float=True pin=True class=architects-overlay
+    +0.76s at=[0, 0] size=[3440, 1440] mon=0 float=True pin=True class=architects-overlay
+  FINAL: {'at': [0, 0], 'size': [3440, 1440], 'monitor': 0, 'floating': True, 'pinned': True, 'class_': 'architects-overlay'}
+== case 3-hdmi-corner: cursor auf HDMI-A-2 ((1900, -1850)) ==
+  warp -> (1900,-1850); cursorpos now (1900,-1850) out='ok'
+  timeline 3-hdmi-corner after show:
+    +0.26s at=[1825, -1920] size=[3440, 1440] mon=1 float=True pin=True class=architects-overlay
+    +0.51s at=[1825, -1920] size=[1080, 1920] mon=1 float=True pin=True class=architects-overlay
+    +0.76s at=[1825, -1920] size=[1080, 1920] mon=1 float=True pin=True class=architects-overlay
+  FINAL: {'at': [1825, -1920], 'size': [1080, 1920], 'monitor': 1, 'floating': True, 'pinned': True, 'class_': 'architects-overlay'}

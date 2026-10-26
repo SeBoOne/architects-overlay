@@ -1,0 +1,8 @@
+{
+ "status": "ok",
+ "http_code": 200,
+ "data": [
+  {"id": 9001, "id_commodity": 1, "id_terminal": 1, "price_buy": 200, "price_sell": 0, "scu_buy_avg": 1000, "scu_sell_avg": 0, "status_buy": 7, "status_sell": 0, "quality": 0, "date_modified": 1792355842, "commodity_name": "Agricium", "terminal_name": "Admin - ARC-L1"},
+  {"id": 9002, "id_commodity": 3, "id_terminal": 1, "price_buy": 250, "price_sell": 0, "scu_buy_avg": 1000, "scu_sell_avg": 0, "status_buy": 7, "status_sell": 0, "quality": 0, "date_modified": 1792355842, "commodity_name": "Agricultural Supplies", "terminal_name": "Admin - ARC-L1"}
+ ]
+}

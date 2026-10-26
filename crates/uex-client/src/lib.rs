@@ -37,7 +37,9 @@ use provider::{
     DataProvider, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
     MarketplaceFilter, Offer, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
     TerminalPriceGroup,
-    routes::{RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta},
+    routes::{
+        RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta, TradeRoute,
+    },
 };
 
 use dto::{
@@ -68,10 +70,74 @@ pub fn is_trade_terminal_type(t: Option<&str>) -> bool {
     matches!(t, Some("commodity") | Some("commodity_raw") | Some("item"))
 }
 
+/// Stricter than [`is_trade_terminal_type`]: the ROUTEN path may only use
+/// Commodity-capable terminals (P15a, Karte t_5fbd43b6). UEX `commodity` =
+/// trade consoles (e.g. "Commodity Shop - Admin - Checkmate"), `commodity_raw`
+/// = Refinery Ore Sales (players SELL ore there) — both carry commodities-
+/// prices. `item` (Guns-Shops etc.) belongs in search/location aggregates
+/// (Feedback-Runde 4) but NEVER as a Routen endpoint: the route sweep holds
+/// flags only for this type-set, and compute_routes_full skips every price
+/// row whose terminal has no flag.
+pub fn is_route_terminal_type(t: Option<&str>) -> bool {
+    matches!(t, Some("commodity") | Some("commodity_raw"))
+}
+
+/// Pure mapping `/terminals`-rows → Routen-Flags (only
+/// [`is_route_terminal_type`] terminals). Ground = has a city/outpost/POI
+/// name, or neither an orbot nor a space-station context (POI on a moon
+/// without place name counts as ground — the common case). Chain =
+/// "System > Planet > Moon/Moon > Ort" for the distance-proxy.
+pub fn route_terminal_flags_from_rows(rows: &[TerminalRow]) -> HashMap<u64, RouteTerminalMeta> {
+    rows.iter()
+        .filter(|r| is_route_terminal_type(r.r#type.as_deref()))
+        .map(|r| {
+            let ground = [r.city_name.as_deref(), r.outpost_name.as_deref(), r.poi_name.as_deref()]
+                .into_iter().flatten().any(|s| !s.is_empty())
+                // Weder Boden- noch Orbit-Kontext (z. B. POI auf Mond
+                // ohne Ortsnamen) zählt als Boden — der Normalfall.
+                || ([r.space_station_name.as_deref(), r.orbit_name.as_deref()]
+                    .into_iter().flatten().all(|s| s.is_empty()));
+            let mut chain_parts = Vec::new();
+            for field in [
+                r.star_system_name.clone(),
+                r.planet_name.clone(),
+                r.moon_name.clone(),
+                r.orbit_name.clone(),
+                r.space_station_name.clone(),
+                r.city_name.clone(),
+                r.outpost_name.clone(),
+                r.poi_name.clone(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !field.is_empty()
+                    && chain_parts.last().map(String::as_str) != Some(field.as_str())
+                {
+                    chain_parts.push(field);
+                }
+            }
+            (
+                r.id,
+                RouteTerminalMeta {
+                    autoload: r.is_auto_load != 0,
+                    cargo_center: r.is_cargo_center != 0,
+                    ground,
+                    chain: chain_parts.join(" > "),
+                },
+            )
+        })
+        .collect()
+}
+
 /// Concrete provider for the UEX source.
 pub struct UexProvider {
     http: UexHttpClient,
     cache: Arc<Cache>,
+    /// Typ-Feld der zuletzt via `/terminals` geholten Zeilen (id → UEX type).
+    /// Wird in `fetch_entities` gesetzt und in `ensure_fresh` als
+    /// Ground-truth-Sidecar persistiert (P15a-Härtung).
+    last_terminal_types: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl UexProvider {
@@ -89,19 +155,44 @@ impl UexProvider {
         min_interval: std::time::Duration,
     ) -> Result<UexProvider> {
         let http = UexHttpClient::new(base_url, api_key, None, min_interval)?;
-        Ok(UexProvider { http, cache })
+        Ok(UexProvider {
+            http,
+            cache,
+            last_terminal_types: std::sync::Mutex::new(HashMap::new()),
+        })
     }
 
-    /// Ensure the reference dataset for `kind` is in the local cache (fetch +
-    /// store when stale). Nop otherwise.
+    /// Ensure the reference dataset for `kind` is usable in the local cache.
+    /// Stale-First: fresh → nop; STALE BUT PRESENT → serve as-is (the
+    /// background sync keeps it warm — the UI must NEVER wait for a refetch
+    /// that could also fail offline); genuinely EMPTY → blocking import.
     async fn ensure_fresh(&self, kind: EntityKind) -> Result<()> {
         if self.cache.is_fresh(kind).map_err(map_cache_err)? {
+            return Ok(());
+        }
+        if self.cache.has_entities(kind).map_err(map_cache_err)? {
+            log::info!(
+                "stale-first: serving stale {kind} reference data (background sync will refresh)"
+            );
             return Ok(());
         }
         let entities = self.fetch_entities(kind).await?;
         self.cache
             .store_entities(kind, &entities)
             .map_err(map_cache_err)?;
+        // P15a-Härtung: /terminals bekommt den Ground-truth-Sidecar
+        // `id → UEX type` — ohne ihn ist der Terminal-Typ nach dem Import
+        // nirgends mehr prüfbar und route_meta:terminals könnte nur nach TTL
+        // vertraut werden (Trust-by-TTL, Review t_b3153a53).
+        if kind == EntityKind::Terminals {
+            if let Some(types) = self.last_terminal_types() {
+                let payload = serde_json::to_string(&types)
+                    .map_err(|e| ProviderError::Json(e.to_string()))?;
+                self.cache
+                    .route_meta_set(ROUTE_META_TERMINAL_TYPES, now_unix_secs(), &payload)
+                    .map_err(map_cache_err)?;
+            }
+        }
         Ok(())
     }
 
@@ -354,6 +445,15 @@ impl DataProvider for UexProvider {
             }
             EntityKind::Terminals => {
                 let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
+                // Ground truth vor dem Filter sichern (id → UEX type): auch
+                // Nicht-Trade-Terminals bleiben damit typ-überprüfbar.
+                let types: HashMap<String, String> = rows
+                    .iter()
+                    .map(|r| (r.id.to_string(), r.r#type.clone().unwrap_or_default()))
+                    .collect();
+                if let Ok(mut guard) = self.last_terminal_types.lock() {
+                    *guard = types;
+                }
                 Ok(rows
                     .into_iter()
                     // P2 (Feedback-Runde 4): only terminals whose UEX type
@@ -502,6 +602,14 @@ const ROUTES_COMMODITY_FLAGS_TTL: Duration = TTL_COMMODITIES; // 1 h
 const ROUTE_META_TERMINALS: &str = "route_meta:terminals";
 const ROUTE_META_COMMODITIES: &str = "route_meta:commodities";
 const ROUTE_META_SWEEP: &str = "route_meta:sweep";
+/// P15a-Härtung (Review t_b3153a53): ground truth `terminal id → UEX type`,
+/// beim `/terminals`-Import mitgeschrieben. Der Payload von
+/// `route_meta:terminals` wird beim Laden NIE blind vertraut — jede Flag-ID
+/// wird gegen [`is_route_terminal_type`] + diese Ground truth re-validiert,
+/// Kontamination löst einen kontrollierten Re-Fetch aus (Self-Heal). Legacy-
+/// Caches (Pre-Härtung) haben keinen Sidecar → payload fresh + types fehlen
+/// ⇒ Re-Fetch; danach sind payload und sidecar immer konsistent.
+const ROUTE_META_TERMINAL_TYPES: &str = "route_meta:terminal_types";
 
 impl UexProvider {
     fn route_meta_fresh(&self, key: &str, ttl: Duration) -> Result<bool> {
@@ -511,94 +619,171 @@ impl UexProvider {
         }
     }
 
-    async fn ensure_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
-        if !self.route_meta_fresh(ROUTE_META_TERMINALS, ROUTES_TERMINAL_FLAGS_TTL)? {
-            // /terminals liefert ALLE Terminals (auch Nicht-Handel); die
-            // Flags werden nur für Trade-Terminals gehalten.
-            let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
-            let flags: HashMap<u64, RouteTerminalMeta> = rows
-                .iter()
-                .filter(|r| is_trade_terminal_type(r.r#type.as_deref()))
-                .map(|r| {
-                    let ground = [r.city_name.as_deref(), r.outpost_name.as_deref(), r.poi_name.as_deref()]
-                        .into_iter().flatten().any(|s| !s.is_empty())
-                        // Weder Boden- noch Orbit-Kontext (z. B. POI auf Mond
-                        // ohne Ortsnamen) zählt als Boden — der Normalfall.
-                        || ([r.space_station_name.as_deref(), r.orbit_name.as_deref()]
-                            .into_iter().flatten().all(|s| s.is_empty()));
-                    let mut chain_parts = Vec::new();
-                    for field in [
-                        r.star_system_name.clone(),
-                        r.planet_name.clone(),
-                        r.moon_name.clone(),
-                        r.orbit_name.clone(),
-                        r.space_station_name.clone(),
-                        r.city_name.clone(),
-                        r.outpost_name.clone(),
-                        r.poi_name.clone(),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    {
-                        if !field.is_empty()
-                            && chain_parts.last().map(String::as_str) != Some(field.as_str())
-                        {
-                            chain_parts.push(field);
-                        }
-                    }
-                    (
-                        r.id,
-                        RouteTerminalMeta {
-                            autoload: r.is_auto_load != 0,
-                            cargo_center: r.is_cargo_center != 0,
-                            ground,
-                            chain: chain_parts.join(" > "),
-                        },
-                    )
-                })
-                .collect();
-            let payload =
-                serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
-            self.cache
-                .route_meta_set(ROUTE_META_TERMINALS, now_unix_secs(), &payload)
-                .map_err(map_cache_err)?;
+    /// Is a route_meta payload PRESENT at all (any age)? Stale-but-present
+    /// data is SERVED (stale-first); only a missing payload forces the
+    /// blocking fetch. TTL-based refresh happens in the background
+    /// ([`revalidate_route_data]).
+    fn route_meta_present(&self, key: &str) -> Result<bool> {
+        match self.cache.route_meta_get(key).map_err(map_cache_err)? {
+            Some((_, payload)) => Ok(!payload.is_empty()),
+            None => Ok(false),
         }
-        self.load_route_terminal_flags()
     }
 
-    fn load_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
-        match self
+    async fn fetch_route_terminal_flags(&self) -> Result<()> {
+        // /terminals liefert ALLE Terminals (auch Nicht-Handel); die Flags
+        // werden nur fuer Commodity-faehige Routen-Terminals gehalten
+        // (route_terminal_flags_from_rows -- P15a, Review t_b3153a53: Items-Shops/
+        // Guns etc. dürfen nicht als Routen-Endpoints auftauchen).
+        let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
+        let flags: HashMap<u64, RouteTerminalMeta> = route_terminal_flags_from_rows(&rows);
+        let payload =
+            serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
+        self.cache
+            .route_meta_set(ROUTE_META_TERMINALS, now_unix_secs(), &payload)
+            .map_err(map_cache_err)?;
+        // Ground truth MIT dem neuen Payload schreiben (identische Zeilen-
+        // quelle): payload und sidecar sind nach jedem Heal konsistent,
+        // der Heal ist persistent (kein Re-Fetch-Stakkato bei jedem Start).
+        let types: HashMap<String, String> = rows
+            .iter()
+            .map(|r| (r.id.to_string(), r.r#type.clone().unwrap_or_default()))
+            .collect();
+        let types_payload =
+            serde_json::to_string(&types).map_err(|e| ProviderError::Json(e.to_string()))?;
+        self.cache
+            .route_meta_set(ROUTE_META_TERMINAL_TYPES, now_unix_secs(), &types_payload)
+            .map_err(map_cache_err)?;
+        Ok(())
+    }
+
+    /// TTL-Expired -> refresh, otherwise nop. Background-only (stale-first
+    /// serving never waits for this).
+    async fn refresh_route_terminal_flags(&self) -> Result<()> {
+        if !self.route_meta_fresh(ROUTE_META_TERMINALS, ROUTES_TERMINAL_FLAGS_TTL)? {
+            self.fetch_route_terminal_flags().await?;
+        }
+        Ok(())
+    }
+
+    async fn ensure_route_terminal_flags(&self) -> Result<HashMap<u64, RouteTerminalMeta>> {
+        // Stale-First (K1) + Trust, aber verifiziere (P15a-Haertung, Review
+        // t_b3153a53): der geladene Payload dient sofort, wird aber beim Load
+        // gegen `is_route_terminal_type` + Ground-truth-Sidecar
+        // (`route_meta:terminal_types`) re-validiert. Kontamination (z. B.
+        // Legacy-v0.3.1-Payload mit allen Terminal-IDs inkl. ITEM-Shops) loest
+        // kontrollierten Re-Fetch aus (Self-Heal; kein manueller Cache-Purge).
+        // TTL-Refresh blockiert hier nicht -- er laeuft im Hintergrund via
+        // [`revalidate_route_data`].
+        let (flags, contaminated) = self.load_route_terminal_flags()?;
+        if contaminated {
+            // Beweiszeile fuer Live-Runs: payload war TTL-frisch und wurde
+            // doch verworfen (Typ-Kontamination oder fehlende ground truth).
+            log::warn!(
+                "routes: kontaminierter route_meta:terminals-Payload verworfen \
+                 (nur commodity/commodity_raw akzeptiert) -- Flags werden neu geholt"
+            );
+        }
+        if contaminated || !self.route_meta_present(ROUTE_META_TERMINALS)? {
+            self.fetch_route_terminal_flags().await?;
+            return self.load_route_terminal_flags().map(|(f, _)| f);
+        }
+        Ok(flags)
+    }
+
+    /// Payload laden UND re-validieren: Flag-Einträge werden nur akzeptiert,
+    /// wenn `is_route_terminal_type` gegen die Ground truth
+    /// (`route_meta:terminal_types`) bestätigt ist. Fremde IDs (ITEM/FUEL/…
+    /// aus kontaminierten Legacy-Payloads) erreichen den Sweep nie. Return
+    /// `(gefilterte Flags, kontaminiert)` — kontaminiert löst in
+    /// `ensure_route_terminal_flags` den Self-Heal-Re-Fetch aus.
+    fn load_route_terminal_flags(&self) -> Result<(HashMap<u64, RouteTerminalMeta>, bool)> {
+        let meta = self
             .cache
             .route_meta_get(ROUTE_META_TERMINALS)
+            .map_err(map_cache_err)?;
+        let Some((_, json)) = meta else {
+            return Ok((HashMap::new(), false));
+        };
+        let parsed: HashMap<u64, RouteTerminalMeta> = serde_json::from_str(&json)
+            .map_err(|e| ProviderError::Json(format!("route terminal flags: {e}")))?;
+        let types: HashMap<String, String> = match self
+            .cache
+            .route_meta_get(ROUTE_META_TERMINAL_TYPES)
             .map_err(map_cache_err)?
         {
             Some((_, json)) => serde_json::from_str(&json)
-                .map_err(|e| ProviderError::Json(format!("route terminal flags: {e}"))),
-            None => Ok(HashMap::new()),
+                .map_err(|e| ProviderError::Json(format!("route terminal types: {e}")))?,
+            None => HashMap::new(),
+        };
+        let mut flags = HashMap::new();
+        let mut contaminated = false;
+        for (id, m) in parsed {
+            match types.get(&id.to_string()) {
+                Some(t) if is_route_terminal_type(Some(t.as_str())) => {
+                    flags.insert(id, m);
+                }
+                Some(_) => contaminated = true, // Typ bekannt, aber Nicht-Routen-Typ
+                None => {
+                    if types.is_empty() {
+                        // Legacy-Cache ohne Ground truth (Pre-Härtung): der
+                        // Payload ist ungeprüft nicht vertrauenswürdig.
+                        contaminated = true;
+                    }
+                    // Sonst: Terminal aus UEX verschwunden — Entry verwerfen,
+                    // kein Kontaminations-Verdacht, kein Re-Fetch nötig.
+                }
+            }
         }
+        Ok((flags, contaminated))
+    }
+
+    /// Typ-Feld der zuletzt geholten `/terminals`-Zeilen, wenn ein Frische-
+    /// Lauf in diesem Aufruf stattgefunden hat (sonst `None` → Sidecar muss
+    /// nicht neu geschrieben werden).
+    fn last_terminal_types(&self) -> Option<HashMap<String, String>> {
+        self.last_terminal_types
+            .lock()
+            .map(|g| if g.is_empty() { None } else { Some(g.clone()) })
+            .ok()
+            .flatten()
+    }
+
+    async fn fetch_route_commodity_flags(&self) -> Result<()> {
+        let rows: Vec<CommodityRow> = self.http.get("/commodities", &[]).await?;
+        let flags: HashMap<u64, RouteCommodityMeta> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.id,
+                    RouteCommodityMeta {
+                        illegal: r.is_illegal != 0,
+                        sellable: r.is_sellable != 0,
+                        buyable: r.is_buyable != 0,
+                    },
+                )
+            })
+            .collect();
+        let payload =
+            serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
+        self.cache
+            .route_meta_set(ROUTE_META_COMMODITIES, now_unix_secs(), &payload)
+            .map_err(map_cache_err)?;
+        Ok(())
+    }
+
+    async fn refresh_route_commodity_flags(&self) -> Result<()> {
+        if !self.route_meta_fresh(ROUTE_META_COMMODITIES, ROUTES_COMMODITY_FLAGS_TTL)? {
+            self.fetch_route_commodity_flags().await?;
+        }
+        Ok(())
     }
 
     async fn ensure_route_commodity_flags(&self) -> Result<HashMap<u64, RouteCommodityMeta>> {
-        if !self.route_meta_fresh(ROUTE_META_COMMODITIES, ROUTES_COMMODITY_FLAGS_TTL)? {
-            let rows: Vec<CommodityRow> = self.http.get("/commodities", &[]).await?;
-            let flags: HashMap<u64, RouteCommodityMeta> = rows
-                .iter()
-                .map(|r| {
-                    (
-                        r.id,
-                        RouteCommodityMeta {
-                            illegal: r.is_illegal != 0,
-                            sellable: r.is_sellable != 0,
-                            buyable: r.is_buyable != 0,
-                        },
-                    )
-                })
-                .collect();
-            let payload =
-                serde_json::to_string(&flags).map_err(|e| ProviderError::Json(e.to_string()))?;
-            self.cache
-                .route_meta_set(ROUTE_META_COMMODITIES, now_unix_secs(), &payload)
-                .map_err(map_cache_err)?;
+        // Stale-First: old payload serves; the background revalidation
+        // refreshes it on its TTL.
+        if !self.route_meta_present(ROUTE_META_COMMODITIES)? {
+            self.fetch_route_commodity_flags().await?;
         }
         match self
             .cache
@@ -653,34 +838,79 @@ impl UexProvider {
         Ok(refetched)
     }
 
-    async fn trade_routes_impl(&self, filters: &RouteFilters) -> Result<RouteList> {
-        // Referenzdaten frisch halten (Commodities + Terminals, eigene TTLs).
-        self.ensure_fresh(EntityKind::Commodities).await?;
-        self.ensure_fresh(EntityKind::Terminals).await?;
-        let terminal_flags = self.ensure_route_terminal_flags().await?;
-        let commodity_flags = self.ensure_route_commodity_flags().await?;
+    // ---- Stale-First serving + precomputated Profit-Matrix (K1) ----
 
-        // Sweep: bei Frische kein Netzwerk; sonst nur nachziehen, was stale ist.
-        let swept_at = match self
+    /// Dataset EPOCH of the price data: terminal-price (count, max
+    /// fetched_at) + the two flag timestamps. The matrix artifact is ONLY
+    /// invalidated when this moves — i.e. exactly when new price data
+    /// landed, never on TTL expiry alone.
+    fn matrix_epoch(&self) -> Result<String> {
+        let (count, max_fetched) = self.cache.terminal_price_stats().map_err(map_cache_err)?;
+        let tf = match self
+            .cache
+            .route_meta_fetched_at(ROUTE_META_TERMINALS)
+            .map_err(map_cache_err)?
+        {
+            Some(ts) => ts,
+            None => 0,
+        };
+        let cf = match self
+            .cache
+            .route_meta_fetched_at(ROUTE_META_COMMODITIES)
+            .map_err(map_cache_err)?
+        {
+            Some(ts) => ts,
+            None => 0,
+        };
+        Ok(format!("tp:{count}:{max_fetched};tf:{tf};cf:{cf}"))
+    }
+
+    /// Is the Sweep marker older than its TTL (or absent)? → serving is
+    /// (possibly) stale and a background revalidation is worthwhile.
+    pub fn route_sweep_stale(&self) -> Result<bool> {
+        Ok(
+            match self
+                .cache
+                .route_meta_fetched_at(ROUTE_META_SWEEP)
+                .map_err(map_cache_err)?
+            {
+                Some(ts) => now_unix_secs().saturating_sub(ts) >= ROUTES_SWEEP_TTL.as_secs(),
+                None => true,
+            },
+        )
+    }
+
+    /// Fast-Lane inputs available = the serving lanes answer WITHOUT the
+    /// network: terminal-price rows + terminal flag payload + terminal
+    /// names (entities). The Composite uses this to decide whether a stale
+    //  marker is worth scheduling a background Sweep.
+    pub fn route_inputs_present(&self) -> Result<bool> {
+        let (rows_count, _) = self.cache.terminal_price_stats().map_err(map_cache_err)?;
+        let flags_present = self.route_meta_present(ROUTE_META_TERMINALS)?;
+        let names_present = self
+            .cache
+            .has_entities(EntityKind::Terminals)
+            .map_err(map_cache_err)?;
+        Ok(rows_count > 0 && flags_present && names_present)
+    }
+
+    fn sweep_ts(&self) -> Result<u64> {
+        match self
             .cache
             .route_meta_get(ROUTE_META_SWEEP)
             .map_err(map_cache_err)?
         {
-            Some((ts, _)) if now_unix_secs().saturating_sub(ts) < ROUTES_SWEEP_TTL.as_secs() => ts,
-            _ => {
-                self.sweep_route_terminals(&terminal_flags).await?;
-                now_unix_secs()
-            }
-        };
+            Some((ts, _)) => Ok(ts),
+            None => Ok(self
+                .cache
+                .route_matrix_built_at()
+                .map_err(map_cache_err)?
+                .unwrap_or(0)),
+        }
+    }
 
-        // Rohzeilen aus dem Cache → provider-reine Berechnung.
-        let terminal_names: HashMap<u64, String> = self
-            .cache
-            .entities_of(EntityKind::Terminals)
-            .map_err(map_cache_err)?
-            .into_iter()
-            .map(|e| (e.id, e.name))
-            .collect();
+    /// (rows of terminal_prices as RoutePriceRow-Vector)
+    fn collect_route_rows(&self) -> Result<Vec<RoutePriceRow>> {
         let mut rows: Vec<RoutePriceRow> = Vec::new();
         for (_terminal_id, points) in self
             .cache
@@ -702,14 +932,191 @@ impl UexProvider {
                 });
             }
         }
-        let routes = provider::routes::compute_routes_full(
+        Ok(rows)
+    }
+
+    fn terminal_names_map(&self) -> Result<HashMap<u64, String>> {
+        Ok(self
+            .cache
+            .entities_of(EntityKind::Terminals)
+            .map_err(map_cache_err)?
+            .into_iter()
+            .map(|e| (e.id, e.name))
+            .collect())
+    }
+
+    /// Persist the artifact + its dataset epoch (invalidate-when-new-data).
+    fn persist_route_matrix(&self, matrix: &[TradeRoute]) -> Result<()> {
+        self.cache
+            .store_route_matrix(matrix)
+            .map_err(map_cache_err)?;
+        let epoch = self.matrix_epoch()?;
+        self.cache
+            .route_matrix_epoch_set(epoch, now_unix_secs())
+            .map_err(map_cache_err)?;
+        Ok(())
+    }
+
+    async fn trade_routes_impl(&self, filters: &RouteFilters) -> Result<RouteList> {
+        // ---- Stale-First fast lanes: serve what the CACHE has — the UI
+        // opens immediately, the refresh happens in the background
+        // (CompositeProvider schedules revalidate_route_data). A TTL expiry
+        // must NEVER trigger a blocking re-sweep in the foreground again. ----
+        let (rows_count, _) = self.cache.terminal_price_stats().map_err(map_cache_err)?;
+        let flags_present = self.route_meta_present(ROUTE_META_TERMINALS)?;
+        let names_present = self
+            .cache
+            .has_entities(EntityKind::Terminals)
+            .map_err(map_cache_err)?;
+        let inputs_present = rows_count > 0 && flags_present && names_present;
+        let sweeping = self.route_sweep_stale()?;
+
+        if inputs_present {
+            // (a) No terminal-SIDE filter: the persisted Profit-Matrix answers
+            // directly — precomputated artifact, epoch-guarded.
+            if !filters.has_terminal_side_filters() {
+                let cur_epoch = self.matrix_epoch()?;
+                let stored = self.cache.route_matrix_epoch_get().map_err(map_cache_err)?;
+                if stored.as_deref() == Some(&cur_epoch) {
+                    let matrix = self.cache.route_matrix_rows().map_err(map_cache_err)?;
+                    let swept_at = self.sweep_ts()?;
+                    return Ok(RouteList {
+                        routes: provider::routes::routes_from_matrix(&matrix, filters),
+                        swept_at,
+                        refreshing: sweeping,
+                    });
+                }
+                // Epoch moved (new price data since the last artifact) →
+                // recompute the MATRIX once from the cached rows (NO network),
+                // persist it, then serve.
+                let (terminal_flags, _) = self.load_route_terminal_flags()?;
+                let commodity_flags = self.ensure_route_commodity_flags().await?; // blocking only when the payload is missing
+                let terminal_names = self.terminal_names_map()?;
+                let rows = self.collect_route_rows()?;
+                let matrix = provider::routes::compute_routes_full(
+                    &rows,
+                    &terminal_flags,
+                    &terminal_names,
+                    &commodity_flags,
+                    &RouteFilters::default(),
+                );
+                self.persist_route_matrix(&matrix)?;
+                let swept_at = self.sweep_ts()?;
+                return Ok(RouteList {
+                    routes: provider::routes::routes_from_matrix(&matrix, filters),
+                    swept_at,
+                    refreshing: sweeping,
+                });
+            }
+            // (b) Terminal-SIDE filters: re-scan the CURRENT (possibly stale)
+            // rows — the best Buy→Sell pair changes with the filter, the
+            // epoch-guarded matrix cannot answer. Still NO sweep, NO API.
+            let (terminal_flags, _) = self.load_route_terminal_flags()?;
+            let commodity_flags = self.ensure_route_commodity_flags().await?;
+            let terminal_names = self.terminal_names_map()?;
+            let rows = self.collect_route_rows()?;
+            let routes = provider::routes::compute_routes_full(
+                &rows,
+                &terminal_flags,
+                &terminal_names,
+                &commodity_flags,
+                filters,
+            );
+            let swept_at = self.sweep_ts()?;
+            return Ok(RouteList {
+                routes,
+                swept_at,
+                refreshing: sweeping,
+            });
+        }
+
+        // ---- Full path: cold/empty cache (nothing to serve) — blocking
+        // import of the reference data + one Sweep, then persist the matrix. ----
+        self.ensure_fresh(EntityKind::Commodities).await?;
+        self.ensure_fresh(EntityKind::Terminals).await?;
+        let terminal_flags = self.ensure_route_terminal_flags().await?;
+        let commodity_flags = self.ensure_route_commodity_flags().await?;
+
+        // Sweep: bei Frische kein Netzwerk; sonst nur nachziehen, was stale
+        // ist.
+        let swept_at = match self
+            .cache
+            .route_meta_get(ROUTE_META_SWEEP)
+            .map_err(map_cache_err)?
+        {
+            Some((ts, _)) if now_unix_secs().saturating_sub(ts) < ROUTES_SWEEP_TTL.as_secs() => ts,
+            _ => {
+                self.sweep_route_terminals(&terminal_flags).await?;
+                now_unix_secs()
+            }
+        };
+
+        let terminal_names = self.terminal_names_map()?;
+        let rows = self.collect_route_rows()?;
+        // Persist the precomputated artifact (unfiltered base — serves later
+        // default queries without any row-scan; epoch guards invalidation).
+        // Lane (a): compute ONCE (default filters), persist, query locally.
+        let routes: Vec<TradeRoute> = match filters.has_terminal_side_filters() {
+            false => {
+                let matrix = provider::routes::compute_routes_full(
+                    &rows,
+                    &terminal_flags,
+                    &terminal_names,
+                    &commodity_flags,
+                    &RouteFilters::default(),
+                );
+                self.persist_route_matrix(&matrix)?;
+                provider::routes::routes_from_matrix(&matrix, filters)
+            }
+            true => provider::routes::compute_routes_full(
+                &rows,
+                &terminal_flags,
+                &terminal_names,
+                &commodity_flags,
+                filters,
+            ),
+        };
+        Ok(RouteList {
+            routes,
+            swept_at,
+            refreshing: false,
+        })
+    }
+
+    /// Background revalidation (stale-while-revalidate): refresh expired
+    /// reference flags, sweep every terminal whose price table expired,
+    /// rebuild the Profit-Matrix artifact. NEVER the foreground — the
+    /// CompositeProvider schedules this on a live view open. Rate-limit
+    /// unchanged: at most one Sweep per TTL window (marker-guarded).
+    pub async fn revalidate_route_data(&self) -> Result<usize> {
+        self.refresh_route_terminal_flags().await?;
+        self.refresh_route_commodity_flags().await?;
+        let (terminal_flags, _) = self.load_route_terminal_flags()?;
+        let refetched = self.sweep_route_terminals(&terminal_flags).await?;
+        let commodity_flags = self.load_route_commodity_flags()?;
+        let terminal_names = self.terminal_names_map()?;
+        let rows = self.collect_route_rows()?;
+        let matrix = provider::routes::compute_routes_full(
             &rows,
             &terminal_flags,
             &terminal_names,
             &commodity_flags,
-            filters,
+            &RouteFilters::default(),
         );
-        Ok(RouteList { routes, swept_at })
+        self.persist_route_matrix(&matrix)?;
+        Ok(refetched)
+    }
+
+    fn load_route_commodity_flags(&self) -> Result<HashMap<u64, RouteCommodityMeta>> {
+        match self
+            .cache
+            .route_meta_get(ROUTE_META_COMMODITIES)
+            .map_err(map_cache_err)?
+        {
+            Some((_, json)) => serde_json::from_str(&json)
+                .map_err(|e| ProviderError::Json(format!("route commodity flags: {e}"))),
+            None => Ok(HashMap::new()),
+        }
     }
 
     /// Schiffs-SCU-Kapazitäten aus UEX `/vehicles` (Case-insensitive
@@ -1205,6 +1612,221 @@ mod tests {
         assert!(!super::is_trade_terminal_type(Some("vehicle_rent")));
         assert!(!super::is_trade_terminal_type(Some("vehicle_buy")));
         assert!(!super::is_trade_terminal_type(None));
+    }
+
+    /// P15a (Karte t_5fbd43b6): der ROUTEN-Pfad grello stricter as the
+    /// entity-import filter — Items-Shops (Guns etc.) belong in search/
+    /// location-aggregates but dorfnet appear as Routen endpoints. The
+    /// route sweep holds Flags only for `commodity`/`commodity_raw`;
+    /// compute_routes_full skips every price row without a Flag.
+    #[test]
+    fn route_flags_exclude_item_shops_p15a() {
+        assert!(super::is_route_terminal_type(Some("commodity")));
+        assert!(super::is_route_terminal_type(Some("commodity_raw")));
+        assert!(!super::is_route_terminal_type(Some("item")));
+        assert!(!super::is_route_terminal_type(Some("fuel")));
+        assert!(!super::is_route_terminal_type(None));
+
+        let json = r#"[
+            {"id": 436, "name": "Commodity Shop - Admin - Checkmate", "type": "commodity",
+             "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"},
+            {"id": 500, "name": "Ore Sales - Port Kaffa", "type": "commodity_raw",
+             "star_system_name": "Freyria", "planet_name": "Freyria", "city_name": "Kaffa"},
+            {"id": 437, "name": "Guns - Checkmate", "type": "item",
+             "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"},
+            {"id": 428, "name": "Landing Services - Checkmate", "type": null,
+             "star_system_name": "ArcCorp", "planet_name": "ArcCorp", "city_name": "Landing Zone"}
+        ]"#;
+        let rows: Vec<TerminalRow> = serde_json::from_str(json).unwrap();
+        let flags = route_terminal_flags_from_rows(&rows);
+        assert!(
+            flags.contains_key(&436u64),
+            "commodity terminal keeps its route Flag"
+        );
+        assert!(
+            flags.contains_key(&500u64),
+            "commodity_raw (ore sales) keeps its route Flag"
+        );
+        assert!(
+            !flags.contains_key(&437u64),
+            "Guns/item shop must NOT get a route Flag"
+        );
+        assert!(
+            !flags.contains_key(&428u64),
+            "service terminal must NOT get a route Flag"
+        );
+    }
+
+    /// P15a-Härtung (Fix-Karte t_0f1cac34, Review-Blocker t_b3153a53
+    /// 'Trust-by-TTL'): ein TTL-Frischer route_meta:terminals-Payload wird
+    /// beim Laden NIE blind vertraut — Flag-Einträge für Nicht-Commodity-
+    /// Terminals (hier ITEM-Terminal 126 'Live Fire Weapons - HUR-L2') müssen
+    /// herausgefiltert werden, egal wie frisch fetched_at ist. Kontamination
+    /// wird erkannt (Self-Heal-Auslöser in ensure_route_terminal_flags).
+    #[test]
+    fn p15a_fresh_payload_item_terminal_filtered_on_load() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let now = now_unix_secs(); // payload brutal fresh: 12h-TTL irrelevant
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now,
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp > ArcCorp > Landing Zone"},
+                    "126":{"autoload":false,"cargo_center":false,"ground":true,"chain":"Nyx > Yela > Hoover's Station"}}"#,
+            )
+            .unwrap();
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINAL_TYPES,
+                now,
+                r#"{"436":"commodity","126":"item"}"#,
+            )
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1", // kein Network: Load darf keyn brauchen
+            Duration::from_secs(0),
+        )
+        .unwrap();
+
+        let (flags, contaminated) = provider.load_route_terminal_flags().unwrap();
+        assert!(
+            flags.contains_key(&436u64),
+            "commodity Flag bleibt erhalten"
+        );
+        assert!(
+            !flags.contains_key(&126u64),
+            "TTL-Frische darf die Typfilterung nicht umgehen — ITEM 126 muss raus"
+        );
+        assert!(
+            contaminated,
+            "ITEM-Entry im Payload gilt als Kontamination (Self-Heal)"
+        );
+
+        // Sauberer Payload (nur commodity/commodity_raw) → keine Kontamination,
+        // kein Re-Fetch-Verdacht:
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now,
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp"},"500":{"autoload":false,"cargo_center":false,"ground":true,"chain":"Freyria"}}"#,
+            )
+            .unwrap();
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINAL_TYPES,
+                now,
+                r#"{"436":"commodity","500":"commodity_raw"}"#,
+            )
+            .unwrap();
+        let (flags, contaminated) = provider.load_route_terminal_flags().unwrap();
+        assert!(
+            contaminated == false && flags.len() == 2,
+            "cleaner Payload wird trusted"
+        );
+
+        // Legacy ohne Ground truth (Pre-Härtungs-Cache): fresh, aber ungeprüft
+        // ⇒ gilt als nicht vertrauenswürdig → Self-Heal. Echter Legacy-Cache
+        // hat GAR keinen sidecar → hyperfrischer cache ohne types-Setup.
+        let legacy_cache = Arc::new(Cache::open_in_memory().unwrap());
+        legacy_cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now,
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp"}}"#,
+            )
+            .unwrap();
+        let legacy_provider = UexProvider::with_base_url(
+            legacy_cache,
+            None,
+            "http://127.0.0.1:1",
+            Duration::from_secs(0),
+        )
+        .unwrap();
+        let (flags, contaminated) = legacy_provider.load_route_terminal_flags().unwrap();
+        assert!(
+            flags.is_empty() && contaminated,
+            "Legacy-Payload ohne types heilt selbst"
+        );
+    }
+
+    /// Minimaler, dependency-freier HTTP-Mock (std TcpListener): beantwortet
+    /// GET /terminals mit den Fixture-Zeilen (ids 1,2,436 commodity; 435 item;
+    /// 126 item 'Live Fire Weapons - HUR-L2'; 428 fuel) und liefert die
+    /// Base-URL. Der Thread lebt Test-lebenslang (Testprozess endet danach).
+    fn p15a_mock_server() -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"ok","http_code":200,"data":[
+            {"id":1,"name":"Admin - ARC-L1","type":"commodity","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":2,"name":"Admin - ARC-L2","type":"commodity","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":428,"name":"Landing Services - Checkmate","type":"fuel","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":435,"name":"Medical Shop - Checkmate","type":"item","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":436,"name":"Admin - Checkmate","type":"commodity","star_system_name":"ArcCorp","planet_name":"ArcCorp","city_name":"Landing Zone"},
+            {"id":126,"name":"Live Fire Weapons - HUR-L2","type":"item","star_system_name":"Nyx","planet_name":"Yela","space_station_name":"Hoover's Station"}
+        ]}"#;
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    /// P15a-Härtung: `ensure_route_terminal_flags` healed einen kontaminierten,
+    /// aber TTL-frischen Payload — Re-Fetch über /terminals, neuer Payload und
+    /// Ground-truth-Sidecar enthalten ausschließlich commodity/commodity_raw.
+    #[tokio::test]
+    async fn p15a_contaminated_fresh_payload_self_heals() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let now = now_unix_secs();
+        cache
+            .route_meta_set(
+                ROUTE_META_TERMINALS,
+                now - 1000, // fresh (< 12h TTL) — TTL allein würde blind trusten
+                r#"{"436":{"autoload":true,"cargo_center":false,"ground":true,"chain":"ArcCorp"},"126":{"autoload":false,"cargo_center":false,"ground":true,"chain":"Nyx > Yela"}}"#,
+            )
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            &p15a_mock_server(),
+            Duration::from_secs(0),
+        )
+        .unwrap();
+        let flags = provider.ensure_route_terminal_flags().await.unwrap();
+        assert!(
+            !flags.contains_key(&126u64),
+            "ITEM 126 darf nach Self-Heal nicht mehr in den Flags sein"
+        );
+        // payload + sidecar sind geheilt:
+        let (reloaded, contaminated) = provider.load_route_terminal_flags().unwrap();
+        assert!(reloaded.contains_key(&436u64));
+        assert!(reloaded.contains_key(&1u64) && reloaded.contains_key(&2u64)); // commodity fixtures
+        assert!(!contaminated, "Payload ist nach Self-Heal sauber");
+        let (_, sidecar) = cache
+            .route_meta_get(ROUTE_META_TERMINAL_TYPES)
+            .unwrap()
+            .expect("sidecar geschrieben");
+        assert!(
+            sidecar.contains("\"126\":\"item\""),
+            "ground truth enthält auch ITEMs"
+        );
+        assert!(sidecar.contains("\"436\":\"commodity\""));
     }
 
     /// P3 (Feedback-Runde 4): hybrid-Fetch-Plan — bei Freitext-q laufen die

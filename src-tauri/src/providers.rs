@@ -26,7 +26,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicU8, Ordering},
 };
 
 use cache::{Cache, SOURCE_WIKI};
@@ -75,10 +75,16 @@ const SEARCH_LIMIT: u32 = 25;
 /// Composite provider: wiki locations + wiki commodity prices, UEX for
 /// everything else. See the module docs for the fallback policy.
 pub struct CompositeProvider {
-    uex: UexProvider,
+    // Arc'd: the Stale-While-Revalidate background revalidation (K1
+    // Cache-Architectur) captures this handle to schedule the Sweep
+    // outside the request path.
+    uex: Arc<UexProvider>,
     wiki: WikiProvider,
     source: SourceSwitch,
     cache: Arc<Cache>,
+    /// Guard against stacking Sweeps: set while a background
+    /// revalidation is running (at most one per TTL window).
+    route_refresh_in_flight: Arc<AtomicBool>,
 }
 
 impl CompositeProvider {
@@ -89,10 +95,11 @@ impl CompositeProvider {
         cache: Arc<Cache>,
     ) -> Self {
         CompositeProvider {
-            uex,
+            uex: Arc::new(uex),
             wiki,
             source,
             cache,
+            route_refresh_in_flight: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -375,6 +382,26 @@ impl DataProvider for CompositeProvider {
         // unabhängig vom Primary-Source-Switch (wiki|uex) kommt der
         // Routen-Sweep immer aus dem UEX-Datensatz — die Wiki-Preis-Daten
         // tragen keine Terminal-Flags/Bestände und keinen Voll-Sweep.
+        //
+        // Stale-While-Revalidate (K1 Cache-Architectur): if the Sweep marker
+        // expired but the cache can serve old data, the Sweep is scheduled
+        // HERE — on a background task — and the view opens immediately from
+        // the persisted Profit-Matrix. The API load is UNCHANGED (one Sweep
+        // per TTL window, marker-guarded); only the FOREGROUND never waits
+        // for a Sweep again.
+        let schedule = self.uex.route_sweep_stale().unwrap_or(false)
+            && self.uex.route_inputs_present().unwrap_or(false);
+        if schedule && !self.route_refresh_in_flight.swap(true, Ordering::SeqCst) {
+            let uex = self.uex.clone();
+            let flag = self.route_refresh_in_flight.clone();
+            _ = tokio::spawn(async move {
+                match uex.revalidate_route_data().await {
+                    Ok(n) => log::info!("routes revalidate: sweeped {n} terminals"),
+                    Err(e) => log::warn!("routes revalidate failed: {e}"),
+                }
+                flag.store(false, Ordering::SeqCst);
+            });
+        }
         self.uex.trade_routes(filters).await
     }
 
