@@ -2388,8 +2388,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<!-- K6 P1-Akzeptanz: Quelle auf UEX ohne Key → klarer Hinweis. -->
 						{#if cfg?.commodity_source === 'uex' && !cfg?.uex_api_key_set}
 							<div class="cfg-src-warn" role="alert">
-								UEX-Quelle ohne API-Key: UEX-Preise können nicht abgerufen werden
-								— Fallback Wiki. Key unten setzen.
+								UEX API-Key nicht gesetzt — UEX-Lesezugriff funktioniert derzeit
+								ohne Key; falls UEX ablehnt (HTTP 403), greift automatisch der
+								Wiki-Fallback. Key unten setzen.
 							</div>
 						{/if}
 						<!-- K6 P2 (b): Confirm nach Umschalten (Timeout 3 s). -->
@@ -2849,7 +2850,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="d-src" role="note">
 									Quelle: {d.source.toUpperCase()}
 									{#if d.source.includes('uex') && cfg && !cfg.uex_api_key_set}
-										· <span class="warn">kein UEX-API-Key — UEX-Anteil kann nicht geladen werden</span>
+										· <span class="warn">kein UEX-API-Key — UEX anonym geladen; bei Ablehnung Wiki-Fallback</span>
 									{/if}
 								</div>
 
