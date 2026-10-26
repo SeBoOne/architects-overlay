@@ -56,6 +56,14 @@ tauri-plugin-global-shortcut = "2.4.1"
 # Already in the dependency tree (pulled by global-shortcut), so no extra
 # build cost on Linux.
 x11rb = "0.13"
+# WM-Class-Pinning (t_68c09e76): GDK schreibt die WM_CLASS-Klasse beim
+# Display-Open aus dem prgname GROSS um (`architects-overlay` →
+# `Architects-overlay`, empirisch verifiziert). Hyprland matcht Regeln
+# case-sensitiv. Wir erzwingen die dokumentierte Klasse direkt vor dem
+# ersten Map (Realize liest sie beim XSetClassHint) — FFI, weil das sichere
+# gdk-Bindung pre-init panikt und post-init der Zeitpunkt egal ist.
+gdk-sys = "0.18"
+glib = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 # Cursor position (GetCursorPos) for pointer-monitor placement on Windows.

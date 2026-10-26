@@ -76,6 +76,25 @@ pub fn run() {
                 )?;
             }
 
+            #[cfg(all(desktop, target_os = "linux", debug_assertions))]
+            log::info!(
+                "WM_CLASS probe: prgname={:?} gdk_program_class={:?}",
+                glib::prgname().map(|s| s.to_string()),
+                unsafe { std::ffi::CStr::from_ptr(gdk_sys::gdk_get_program_class()) }
+                    .to_string_lossy()
+                    .into_owned(),
+            );
+
+            // Pin the WM_CLASS to the documented lowercase class BEFORE the
+            // first window map (verified live mechanism, t_68c09e76): GDK
+            // overwrites any pre-init preset with its capitalized-prgname
+            // default at display open — but window realize re-reads the
+            // global program class when writing XSetClassHint. setup() runs
+            // after display open and before any window maps, so this is the
+            // one point where the pin actually lands.
+            #[cfg(all(desktop, target_os = "linux"))]
+            pin_wm_class();
+
             #[cfg(desktop)]
             {
                 // Settings first — the frontend reads its snapshot at boot to
@@ -102,6 +121,33 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
+}
+
+/// Pin the X11/WM_CLASS window identity to exactly the documented lowercase
+/// class `architects-overlay` (root-cause fix, review finding t_159d16a2 →
+/// card t_68c09e76).
+///
+/// tao creates Linux windows as `gtk::ApplicationWindow`. GDK derives the
+/// WM_CLASS *class* from the program name, capitalizing its first letter
+/// (`architects-overlay` → `Architects-overlay`) at display open — it
+/// overwrites any preset made earlier there. Window realize, however,
+/// re-reads the global program class when writing XSetClassHint. That
+/// mechanism was established empirically on the live session (pre-init pin:
+/// no effect; setup-time pin before first map: `hyprctl clients` finally
+/// showed lowercase class, rules applied, focus dispatch `ok`).
+///
+/// Hyprland windowrules and `focuswindow class:…` match case-sensitively,
+/// so the mismatch silently killed float/pin AND the keyboard-focus bridge —
+/// the overlay ran as a normal tiled client. Call this from `setup`, after
+/// display open and before any window maps. Both setters only store strings;
+/// the unsafe FFI call passes a NUL-terminated C string into a function
+/// documented to strdup it (the safe gdk binding would panic pre-init).
+#[cfg(all(desktop, target_os = "linux"))]
+fn pin_wm_class() {
+    let class = overlay::SPOTLIGHT_WM_CLASS;
+    glib::set_prgname(Some(class));
+    let c_class = std::ffi::CString::new(class).expect("class contains no NUL");
+    unsafe { gdk_sys::gdk_set_program_class(c_class.as_ptr()) };
 }
 
 /// The source switch handed to the composite provider. This MUST be a CLONE
