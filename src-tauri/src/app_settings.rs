@@ -58,8 +58,18 @@ impl SettingsState {
 
 /// Frontend-facing snapshot. The API key is intentionally only a boolean —
 /// the raw value never leaves the backend.
+///
+/// Wire contract (t_9b385831, v0.3.3): field names serialize as written
+/// (snake_case). The frontend reads them snake_case (`cfg.uex_api_key_set`,
+/// `cfg.commodity_source`, `cfg.detail_variant`). A `rename_all = "camelCase"`
+/// here silently renamed those three fields to `uexApiKeySet`/
+/// `commoditySource`/`detailVariant` on the wire: the frontend saw
+/// `undefined` for every underscore field — the API-key status was forever
+/// "nicht gesetzt" and the price-source chips never highlighted, even though
+/// the backend persisted both correctly. The serialization test below pins
+/// the exact key set; single-word fields (palette, scale) never broke, which
+/// is why the failure looked partial.
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
     pub palette: String,
     pub detail_variant: String,
@@ -170,6 +180,43 @@ pub fn settings_set_scale(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression (t_9b385831, v0.3.3 P1): the snapshot's JSON keys are the
+    /// frontend contract. The frontend reads `cfg.uex_api_key_set`,
+    /// `cfg.commodity_source`, `cfg.detail_variant` (snake_case). A stray
+    /// `rename_all = "camelCase"` made every underscore field `undefined` in
+    /// the UI — API-key status stuck at "nicht gesetzt", source chips never
+    /// active — while single-word fields (palette, scale) kept working.
+    #[test]
+    fn snapshot_json_keys_match_frontend_snake_case_contract() {
+        let snap = SettingsSnapshot::from_settings(&Settings::with_path(std::path::PathBuf::from(
+            "/dev/null",
+        )));
+        let keys: Vec<String> = {
+            let v = serde_json::to_value(&snap).unwrap();
+            let map = v.as_object().expect("snapshot serializes as object");
+            map.keys().cloned().collect()
+        };
+        for required in [
+            "palette",
+            "detail_variant",
+            "uex_api_key_set",
+            "commodity_source",
+            "scale",
+        ] {
+            assert!(
+                keys.iter().any(|k| k == required),
+                "frontend expects key '{required}', wire has {keys:?}"
+            );
+        }
+        // No camelCase aliases may reappear: they read as undefined in the UI.
+        for forbidden in ["uexApiKeySet", "commoditySource", "detailVariant"] {
+            assert!(
+                !keys.iter().any(|k| k == forbidden),
+                "wire key '{forbidden}' is invisible to the frontend (snake_case contract)"
+            );
+        }
+    }
 
     /// Regression (t_c3d46cff): the switch handed to the composite provider
     /// (lib.rs clones `state.source_switch`) MUST be the same instance the
