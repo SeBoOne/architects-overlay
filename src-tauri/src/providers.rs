@@ -16,6 +16,10 @@
 //! * a non-empty wiki price table wins as a whole — no per-terminal mixing,
 //!   so the table always shows ONE consistent snapshot of one source;
 //! * gaps (wiki empty / NotFound / fetch error) fall back to the UEX table;
+//! * with primary `uex` the UEX table wins as long as it answers (also
+//!   empty lists); a UEX FETCH FAILURE (403/timeout/offline) falls back to
+//!   the wiki table — matching the UI promise 'UEX primär (Wiki-Fallback)'
+//!   (K6 t_9b385831 P2; the earlier pure-UEX behavior contradicted it);
 //! * a CONFLICT (both sources have prices) is resolved in favor of the
 //!   primary source — both describe the same UEX terminal ids, so mixing
 //!   would be defensible, but one-source tables avoid half-updated rows
@@ -345,8 +349,23 @@ impl DataProvider for CompositeProvider {
                 Ok(Self::merge_prices(wiki, uex))
             }
             CommoditySource::Uex => {
-                // Pure-UEX path (A/B switch); wiki ignored entirely.
-                self.uex.prices(commodity).await
+                // K6 (t_9b385831, P2): UEX primaer (A/B switch); Wiki als
+                // Fehler-Fallback. Die UI verspricht 'UEX primaer
+                // (Wiki-Fallback)' (Confirm-Toast + Key-Hinweis) — der
+                // reine UEX-Pfad ohne Fallback widersprach dem und
+                // fuehrte bei UEX-Ablehnung (HTTP 403, z.B. ungueltiger
+                // Key) zu einer Fehlerseite ohne Preise (Live-Beleg
+                // Screenshot 26 aus Run433). Nur echten Fehler abfangen:
+                // erfolgreiche UEX-Antworten (auch leere Listen) bleiben
+                // autoritativ.
+                match self.uex.prices(commodity).await {
+                    Ok(v) => Ok(v),
+                    Err(e) => {
+                        log::warn!("uex prices failed for {commodity:?}: {e} — wiki fallback");
+                        let wiki = self.wiki_prices(commodity).await;
+                        if wiki.is_empty() { Err(e) } else { Ok(wiki) }
+                    }
+                }
             }
         }
     }
