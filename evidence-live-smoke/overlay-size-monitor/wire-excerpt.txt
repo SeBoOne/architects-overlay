@@ -1,0 +1,22 @@
+# WAYLAND_DEBUG-Auszug, finale Instanz (PID 985101), show auf HDMI-A-2
+[18:50:47.917632] {Default Queue}  -> xdg_surface#41.get_toplevel(new id xdg_toplevel#42)
+[18:50:47.917638] {Default Queue}  -> xdg_toplevel#42.set_app_id("architects-overlay")
+[18:50:47.928862] {Default Queue} xdg_toplevel#42.configure(3440, 1440, array[24])
+[18:50:48.220817] {Default Queue} xdg_toplevel#42.configure(3440, 1440, array[24])
+[18:50:48.327232] {Default Queue} xdg_toplevel#42.configure(1080, 1920, array[24])
+[18:50:48.824266] {Default Queue} xdg_toplevel#42.configure(1080, 1920, array[24])
+[18:50:50.028058] {Default Queue} xdg_toplevel#42.configure(1080, 1920, array[24])
+[18:50:52.648422] {Default Queue}  -> xdg_surface#36.get_toplevel(new id xdg_toplevel#49)
+[18:50:52.648431] {Default Queue}  -> xdg_toplevel#49.set_app_id("architects-overlay")
+[18:50:52.666833] {Default Queue} xdg_toplevel#49.configure(3440, 1440, array[24])
+[18:50:52.951551] {Default Queue} xdg_toplevel#49.configure(3440, 1440, array[24])
+[18:50:53.058578] {Default Queue} xdg_toplevel#49.configure(1080, 1920, array[24])
+[18:50:53.554825] {Default Queue} xdg_toplevel#49.configure(1080, 1920, array[24])
+[18:50:54.758694] {Default Queue} xdg_toplevel#49.configure(1080, 1920, array[24])
+
+# Probe-Build (ipc_socket-Experiment, verworfen) — transkribiert aus demselben Live-Run:
+[18:39:17.290714]  -> xdg_toplevel#49.set_maximized()
+[18:39:17.594242] xdg_toplevel#49.configure(3440, 1440, array[24])
+[18:39:18.285487]  -> xdg_toplevel#49.set_maximized()
+[18:39:19.486918]  -> xdg_toplevel#49.set_fullscreen(nil)
+# clients danach unveraendert: fullscreenClient=0, size=[3440,1440]
