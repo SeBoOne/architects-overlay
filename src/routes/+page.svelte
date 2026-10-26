@@ -619,6 +619,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					? 'Preisquelle umgestellt: UEX primär (Wiki-Fallback) — gilt ab sofort.'
 					: 'Preisquelle umgestellt: Wiki primär (UEX-Fallback) — gilt ab sofort.'
 			);
+			// K6 P2d (t_9b385831): Statusbar-Chip ('syncLabel' liest status.provider)
+			// sofort konsistent machen. Ohne diesen Refresh aktualisiert der Chip
+			// erst beim nächsten Preis-Sync (im Live-Smoke Run433 als 'minimal
+			// verzögert' beobachtet). sync_status wertet den live geflippten
+			// SourceSwitch aus (providers.rs name()) — kein Restart/Reload nötig.
+			try {
+				status = await invoke<SyncStatus>('sync_status');
+			} catch {
+				// Chip-Refresh ist best-effort: Der Flip selbst ist bereits
+				// persistiert und wirkt auf die nächste Preisabfrage ohnehin.
+			}
 		} catch (e) {
 			apiKeyNote = String(e);
 		}
