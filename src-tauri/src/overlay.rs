@@ -36,14 +36,22 @@ use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutEvent, Sho
 /// in the game while the overlay was open).
 pub const SPOTLIGHT_LABEL: &str = "spotlight";
 
-/// WM window class Hyprland et al. see for the spotlight window. Derived from
-/// `tauri.conf.json` → `identifier` (`com.sebo.architects-overlay`).
+/// WM window class Hyprland et al. see for the spotlight window. NOT derived
+/// from `tauri.conf.json` → `identifier` (a common misconception): tao creates
+/// the window via GTK, and GDK takes the WM_CLASS class from the program
+/// name, capitalizing its first letter (`architects-overlay` →
+/// `Architects-overlay`) unless prgname/program-class are set explicitly.
+/// `lib.rs::pin_wm_class` (called from `setup`, before the first map) pins
+/// it to exactly this constant, so Hyprland rules
+/// (`class:^(architects-overlay)$`) and `focuswindow class:…` match — both
+/// are case-sensitive (root cause: card t_68c09e76).
 pub const SPOTLIGHT_WM_CLASS: &str = "architects-overlay";
 
-/// Spotlight panel size in logical px. Asserted again after every map, because
-/// some compositors (Hyprland) may float the window at their own default size
-/// (observed 1720×1410) instead of honouring the build-time `inner_size`
-/// (review B2).
+/// Fallback panel size in logical px, used only as the initial `inner_size`
+/// when the primary monitor can't be queried. NOT a post-map size assertion —
+/// since the layout fix the single source of window geometry is
+/// `place_on_pointer_monitor` (full monitor); a post-map 660×600 re-assert
+/// used to shrink the compositor-sized overlay back down (review B2 lesson).
 const PANEL_W: f64 = 660.;
 const PANEL_H: f64 = 600.;
 
@@ -440,6 +448,8 @@ fn cursor_position() -> Option<(i32, i32)> {
 /// pointer position is unknown or no monitor contains it. Physical-coordinate
 /// math throughout (monitor position/size are physical; so is the pointer).
 fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
+    #[cfg(debug_assertions)]
+    log::info!("place: cursor_position()={:?}", cursor_position());
     // Pointer query is best-effort (X11 needs DISPLAY+XAUTHORITY; a bare
     // Wayland session has no global pointer query). Without it we still span
     // the FULL monitor the window currently lives on — falling back to plain

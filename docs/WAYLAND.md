@@ -35,23 +35,53 @@ bind = CTRL SHIFT, U, exec, arch-overlay toggle
 bind = CTRL SHIFT, O, exec, arch-overlay clickthrough
 ```
 
-## Fensterregeln (optional)
+## Fensterregeln (Hyprland)
 
-Damit Hyprland das Overlay wie gewünscht behandelt (floating, always on top,
-ggf. input-transparent per Regel statt per App-API):
+Seit 0.3.2 pinnt die App ihre WM-Klasse selbst auf exakt `architects-overlay`
+(kleingeschrieben): `lib.rs::pin_wm_class` wird in `setup` (nach GTK-Init,
+vor dem ersten Fenster-Map) aufgerufen und setzt GDK-Programmklasse und
+prgname explizit. Grund: tao erzeugt Linux-Fenster über GTK, und GDK schreibt
+die WM_CLASS beim Display-Open aus dem prgname groß (`Architects-overlay`) —
+erst das Window-Realize liest die (dann gepinnte) globale Programmklasse.
+Hyprland matcht `windowrulev2`-Matcher case-sensitiv — alle Regeln unten
+passen deshalb zur realen app_id, wie sie `hyprctl clients -j` zeigt.
+
+Die Overlay-Geometrie verwaltet die App selbst: jedes Show spannt das Fenster
+auf den kompletten Monitor unter dem Pointer (`place_on_pointer_monitor`), die
+CSS zeichnet die sichtbare Shell kompakt darin (feste Breite
+`min(max(0.70·vw, 640), 0.94·vw)`, Max-Höhe 84 vh, innerer Scroll). Eine
+feste `size`-Regel ist deshalb überflüssig bis kontraproduktiv — früheres
+`size 660 600` ist obsolet.
+
+### hyprland.conf (ini)
 
 ```ini
 windowrulev2 = float, class:^(architects-overlay)$
 windowrulev2 = pin, class:^(architects-overlay)$
-windowrulev2 = size 660 600, class:^(architects-overlay)$
+windowrulev2 = nodecorate, class:^(architects-overlay)$
+# Das Spiel (Wine/Proton, fullscreen) fordert den Fokus ständig zurück —
+# stay_focused hält die Palette im Fokus, solange sie sichtbar ist.
+windowrulev2 = stay_focused, class:^(architects-overlay)$
 # Input-Transparenz erzwingen, solange die App nicht in den Fokus-Modus schaltet:
-windowrulev2 = noinput, class:^(architects-overlay)$
+# windowrulev2 = noinput, class:^(architects-overlay)$
 ```
 
-Die App erzwingt die Panel-Größe 660×600 außerdem selbst nach jedem Map
-(`set_size` in `overlay::apply_visibility`) — die `size`-Regel ist nur die
-Absicherung auf Compositor-Seite, falls ein Mapping dennoch mit einer
-Standardgröße (z. B. 1720×1410) startet.
+### hyprland.lua (Omarchy, wie in `~/.config/hypr/hyprland.lua`)
+
+```lua
+hl.window_rule({
+  match = { class = "architects-overlay" },
+  float = true,
+  pin = true,
+  decorate = false,
+  rounding = 0,
+  no_blur = true,
+  stay_focused = true,
+})
+```
+
+Verifikation nach dem Setzen: `hyprctl clients -j` muss für das Spotlight-Fenster
+`floating=true`, `pinned=true` und Vollmonitor-Größe zeigen.
 
 Hinweis: `noinput` macht das Fenster pauschal klick-durchlässig. Wer den
 Fokus-Modus (Klicken im Overlay) nutzen will, lässt die Regel weg und steuert
