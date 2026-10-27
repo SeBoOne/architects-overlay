@@ -123,7 +123,50 @@ pub struct RouteFilters {
     pub sort: RouteSort,
 }
 
-/// Eine fertige Route: bester Einkauf → bester Verkauf einer Ware.
+/// UEX-Enrichment (Integrations-Entscheidung Option b, t_ce154aa5): die lokale
+/// Routen-Matrix (K1) bleibt OWNER der Profit-/Sortier-Logik — vom UEX
+/// `/commodities_routes`-Response werden NUR die ergänzenden Felder übernommen
+/// (Volumen/Nachfrage/Scarcity/Zeitstempel + Terminal-/Fraktions-/Score-Meta)
+/// und den Routen-Zeilen als Zusatzinfo beigemischt. UEX-eigene Profit-/Marge-/
+/// ROI-Felder sind BEWUSST NICHT enthalten — die Anzeige/Sortierung rechnet
+/// weiter rein aus `sell_price − buy_price` (K1). Ist das Enrichment fehlend
+/// (UEX-Ausfall, Cache leer), bleibt die Route voll funktionsfähig.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RouteEnrichment {
+    /// `score` — UEX-Gesamtgüte (nur Anzeige, KEINE Sortierung).
+    pub uex_score: i64,
+    /// `scu_origin` — verfügbare SCU am Einkaufsterminal (Volumen).
+    pub scu_origin: f64,
+    /// `scu_destination` — verfügbare SCU am Verkaufsterminal (Volumen).
+    pub scu_destination: f64,
+    /// `scu_reachable` — mit typischem Frachter erreichbare SCU (Volumen).
+    pub scu_reachable: f64,
+    /// `status_origin` bzw. `status_destination` — Lagerbestand 0..=7
+    /// (Scarcity/Nachfrage-Anzeige, nicht Filter).
+    pub status_origin: u8,
+    pub status_destination: u8,
+    /// `container_sizes_*` — CSV der nutzbaren Container (Origin/Destination).
+    pub container_sizes_origin: String,
+    pub container_sizes_destination: String,
+    /// `price_*_users_rows` — Anzahl Community-Preismeldungen (Nachfragetiefe).
+    pub user_price_origin_rows: u64,
+    pub user_price_dest_rows: u64,
+    /// `game_version_*` — Spielversion des Preisdatensatzes (gamedou geflickt).
+    pub game_version_origin: Option<String>,
+    pub game_version_destination: Option<String>,
+    /// `*_faction_name` — Fraktionsname (null bei Inter-System-Zielen).
+    pub faction_origin: Option<String>,
+    pub faction_destination: Option<String>,
+    /// `has_quantum_marker_*` — Quantenmarker vorhanden.
+    pub has_quantum_marker_origin: bool,
+    pub has_quantum_marker_destination: bool,
+    /// `date_added` — Unix-Timestamp der Routen-Erfassung.
+    pub date_added: u64,
+}
+
+/// Eine fertige Route: bester Einkauf → bester Verkauf einer Ware. Das optionale
+/// UEX-Enrichment (Option b) hängt als Zusatzinfo dran — es ist NIE
+/// sortierungs- oder profitrelevant.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TradeRoute {
     pub commodity_id: u64,
@@ -157,6 +200,11 @@ pub struct TradeRoute {
     pub margin: f64,
     /// Entfernung als Hierarchie-Proxy 0..=4 (siehe Modulkommentar).
     pub distance: u8,
+    /// Optionaler UEX-Enrichment-Block (Volumen/Nachfrage/Meta). Wird beim
+    /// Servieren aus dem `route_enrichment`-Cache beigemischt; wenn der Cache
+    /// leer/UEX down ist, ist es `None` und die Route bleibt voll lauffähig.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enrichment: Option<RouteEnrichment>,
 }
 
 /// Ergebnis der Berechnung: Routen (bereits gefiltert + sortiert) plus
@@ -407,6 +455,7 @@ pub fn compute_routes_full(
                 0.0
             },
             distance: hierarchy_distance(&b.chain, &s.chain),
+            enrichment: None,
         });
     }
 
@@ -779,5 +828,77 @@ mod tests {
         assert_eq!(hierarchy_distance("A > B > C > D", "A > B > X > E"), 2); // gleicher Planet
         assert_eq!(hierarchy_distance("A > B > C > D", "A > Y > X > E"), 3); // anderer Planet
         assert_eq!(hierarchy_distance("A > B > C > D", "Q > Y > X > E"), 4); // anderes System
+    }
+
+    /// t_65a91d5b C3b: das optionale Enrichment-Feld ist serde-default-None —
+    /// Alt-JSON (ohne Feld) und Neu-JSON (mit Feld) deserialisieren beide.
+    #[test]
+    fn trade_route_enrichment_serde_default_none_and_roundtrip() {
+        let base = TradeRoute {
+            commodity_id: 47,
+            commodity: "Laranite".into(),
+            illegal: false,
+            buy_terminal_id: 1,
+            buy_terminal: "Admin - ARC-L1".into(),
+            buy_chain: "Stanton > ArcCorp > Arc-L1".into(),
+            buy_price: 7400.0,
+            buy_terminal_autoload: false,
+            buy_terminal_cargo_deck: false,
+            buy_terminal_ground: false,
+            sell_terminal_id: 274,
+            sell_terminal: "TDD - Hurston".into(),
+            sell_chain: "Stanton > Hurston > Lorville".into(),
+            sell_price: 9300.0,
+            sell_terminal_autoload: false,
+            sell_terminal_cargo_deck: false,
+            sell_terminal_ground: true,
+            sell_stock: 0.0,
+            profit_per_scu: 1900.0,
+            profit_total: 190000.0,
+            cost_total: 740000.0,
+            margin: 0.2567,
+            distance: 3,
+            enrichment: None,
+        };
+        // Ohne Enrichment-Feld (Alt-JSON) → None.
+        let json = serde_json::to_string(&base).unwrap();
+        assert!(
+            !json.contains("enrichment"),
+            "None enrichment must serialize without the field: {json}"
+        );
+        let back: TradeRoute = serde_json::from_str(&json).unwrap();
+        assert!(back.enrichment.is_none());
+        // Mit Enrichment-Feld → Roundtrip.
+        let mut enriched = base.clone();
+        enriched.enrichment = Some(RouteEnrichment {
+            uex_score: 953,
+            scu_origin: 2.0,
+            scu_destination: 1387.0,
+            scu_reachable: 2.0,
+            status_origin: 2,
+            status_destination: 5,
+            container_sizes_origin: "1,2,4,8".into(),
+            container_sizes_destination: "1,2,4".into(),
+            user_price_origin_rows: 1,
+            user_price_dest_rows: 3,
+            game_version_origin: Some("4.10.2".into()),
+            game_version_destination: None,
+            faction_origin: Some("UEE".into()),
+            faction_destination: None,
+            has_quantum_marker_origin: true,
+            has_quantum_marker_destination: false,
+            date_added: 1_793_092_627,
+        });
+        let json2 = serde_json::to_string(&enriched).unwrap();
+        assert!(json2.contains("\"enrichment\":{\"uex_score\":953"));
+        let back2: TradeRoute = serde_json::from_str(&json2).unwrap();
+        let e = back2.enrichment.expect("enrichment must roundtrip");
+        assert_eq!(e.uex_score, 953);
+        assert_eq!(e.scu_destination, 1387.0);
+        assert_eq!(e.status_destination, 5);
+        assert_eq!(e.faction_destination, None);
+        // Profit-Felder sind von Enrichment unberührt (K1 bleibt Owner).
+        assert_eq!(back2.profit_per_scu, 1900.0);
+        assert_eq!(back2.buy_price, 7400.0);
     }
 }

@@ -312,3 +312,105 @@ async fn live_market_wts_term_sorts_complete_item_set() {
         prices[0]
     );
 }
+
+/// t_65a91d5b C3b: LIVE-Beweis des Enrichments gegen den echten UEX-API —
+/// seedet eine kleine Routen-Matrix (2 reale Dreifach-Routen), ruft
+/// `refresh_route_enrichment()` gegen api.uexcorp.uk auf und prüft, dass der
+/// `/commodities_routes`-Response (PLURAL!) an der exakten Route hängt
+/// (Volumen/Status/Score/Fraktion/Container). Schreib den VOLLEN Diff als
+/// JSON raus (vorher/nachher) für den Task-Beleg.
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored --nocapture"]
+async fn live_route_enrichment_before_after() {
+    use provider::routes::{RouteEnrichment, TradeRoute};
+
+    fn matrix_route(id: u64, name: &str, dest: u64) -> TradeRoute {
+        TradeRoute {
+            commodity_id: id,
+            commodity: name.into(),
+            illegal: false,
+            buy_terminal_id: 1, // ARC-L1 (echtes UEX-Terminal)
+            buy_terminal: "Admin - ARC-L1".into(),
+            buy_chain: "Stanton > ArcCorp > ArcCorp Lagrange Point 1".into(),
+            buy_price: 7400.0,
+            buy_terminal_autoload: false,
+            buy_terminal_cargo_deck: false,
+            buy_terminal_ground: false,
+            sell_terminal_id: dest,
+            sell_terminal: format!("Dest {dest}").into(),
+            sell_chain: "Stanton > Dest".into(),
+            sell_price: 9000.0,
+            sell_terminal_autoload: false,
+            sell_terminal_cargo_deck: false,
+            sell_terminal_ground: true,
+            sell_stock: 0.0,
+            profit_per_scu: 1600.0,
+            profit_total: 160000.0,
+            cost_total: 740000.0,
+            margin: 0.21,
+            distance: 3,
+            enrichment: None,
+        }
+    }
+
+    fn display(r: &TradeRoute) -> String {
+        match &r.enrichment {
+            Some(e) => serde_json::to_string(e).unwrap(),
+            None => "null".into(),
+        }
+    }
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    // Zwei ECHTE Dreifach-Routen (je Commodity — Matrix-PK ist id_commodity):
+    // Laranite 47 → Term 12 und Waste 79 → Term 274 (Sample-A live verifiziert).
+    let matrix = vec![
+        matrix_route(47, "Laranite", 12),
+        matrix_route(79, "Waste", 274),
+    ];
+    cache.store_route_matrix(&matrix).unwrap();
+
+    let p = UexProvider::with_base_url(
+        cache.clone(),
+        None,
+        "https://api.uexcorp.uk/2.0",
+        Duration::from_millis(300),
+    )
+    .unwrap();
+
+    eprintln!("\n=== C3b LIVE Enrichment: VORHER (nur K1-Matrix, enrichment null) ===");
+    for r in &matrix {
+        eprintln!(
+            "{} (c{}) → dest {}: profit {:.0}",
+            r.commodity, r.commodity_id, r.sell_terminal_id, r.profit_per_scu
+        );
+        eprintln!("  enrichment = {}", display(&r));
+    }
+
+    let ok = p.refresh_route_enrichment().await.expect("live enrichment");
+    eprintln!(
+        "\n=== refresh_route_enrichment → {} Routen enriched ===",
+        ok
+    );
+    assert!(
+        ok >= 2,
+        "erwarte enrichment für beide gesetzten Routen, got {ok}"
+    );
+
+    let rows = cache.route_enrichment_rows().unwrap();
+    eprintln!("\n=== NACHHER (Enrichment-Cache, JSON) ===");
+    for key in ["47:1:12", "79:1:274"] {
+        let key = key.to_string();
+        let e: RouteEnrichment = rows.get(&key).cloned().expect("route {key} enrich'd");
+        eprintln!("{key}: {}", serde_json::to_string(&e).unwrap());
+        assert!(e.scu_reachable > 0.0, "Volumen muss gesetzt sein: {key}");
+        assert_eq!(
+            e.game_version_origin.as_deref().is_some(),
+            true,
+            "game_version origin"
+        );
+        assert!(
+            e.scu_origin > 0.0 || e.scu_destination > 0.0,
+            "SCU-Volumen belegt: {key}"
+        );
+    }
+}
