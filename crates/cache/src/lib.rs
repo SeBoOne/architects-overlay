@@ -24,7 +24,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use provider::routes::TradeRoute;
+use provider::routes::{RouteEnrichment, TradeRoute};
 use provider::{Entity, EntityKind, Offer, PricePoint, SearchHit};
 use rusqlite::Connection;
 
@@ -250,6 +250,19 @@ CREATE TABLE IF NOT EXISTS route_matrix (
   distance          INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (id_commodity)
 );
+-- Route-Enrichment (v7, Integrations-Entscheidung Option b, t_ce154aa5):
+-- additive, ERWEITERT die Matrix, ersetzt sie nicht. Ein JSON-Payload pro
+-- (Commodity, Best-Buy, Best-Sell) — the exact route triple a served route
+-- enrichs. Lives NEXT TO the matrix (NOT inside it) so a UEX enrichment
+-- outage (missing table / stale / empty) leaves the profit-matrix fully
+-- functional: serving just skips the enrichment block. TTL like other UEX
+-- price data (30 min). `route_enrichment:fetched_at` in `meta` is the set
+-- freshness marker; the payload rows carry their own fetched_at for tooling.
+CREATE TABLE IF NOT EXISTS route_enrichment (
+  route_key TEXT PRIMARY KEY,
+  payload   TEXT    NOT NULL,
+  fetched_at INTEGER NOT NULL
+);
 -- Hangar (v4): user-owned private data — pledge/ingame ships, vehicles and
 -- modules. `origin` distinguishes pledge vs ingame purchases; `insurance`
 -- carries the pledge's insurance (LTI/Standard/…) and is NULL for ingame.
@@ -318,6 +331,9 @@ const MARKETPLACE_META_KEY: &str = "fetched_at:marketplace";
 /// the epoch VALUE describes the price dataset the matrix was built from.
 const ROUTE_MATRIX_EPOCH_KEY: &str = "route_matrix:epoch";
 const ROUTE_MATRIX_BUILT_KEY: &str = "route_matrix:built_at";
+/// Frische-Marker des Enrichment-Satzes (v7, Option b) — `meta`-Key; die
+/// Payload-Rows liegen in der `route_enrichment`-Tabelle.
+const ROUTE_ENRICHMENT_META_KEY: &str = "route_enrichment:fetched_at";
 
 /// SQLite has no bool — flags are stored as 0/1 integers.
 fn bool_as_int(b: bool) -> i64 {
@@ -381,7 +397,13 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   row or freshness marker is touched by this migration. The matrix lives
 ///   in the DB, so it survives instance- AND update-boundaries; it is only
 ///   rebuilt on new price data (epoch invalidation), never by re-fetching.
-pub const SCHEMA_VERSION: i64 = 6;
+/// * v7 — UEX-Enrichment (t_ce154aa5, Option b): neue Tabelle
+///   `route_enrichment` (additiv neben der Profit-Matrix — ein JSON-Payload
+///   pro Routen-Dreifach (Commodity, Best-Buy, Best-Sell); optional/verzierend,
+///   eine fehlende/leere Tabelle lässt die Matrix unverändert serven). Rein
+///   additiv — `CREATE TABLE IF NOT EXISTS` im SCHEMA, keine Bestandsdaten
+///   betroffen.
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -1453,6 +1475,9 @@ impl Cache {
                     cost_total: 0.0,
                     margin: row.get(19)?,
                     distance: row.get::<_, i64>(20)? as u8,
+                    // Enrichment wird beim SERVieren beigemischt — die Matrix
+                    // speichert es nicht (additiv, siehe RouteEnrichment).
+                    enrichment: None,
                 })
             };
             let rows = stmt.query_map([], map)?;
@@ -1491,6 +1516,88 @@ impl Cache {
 
     pub fn route_matrix_built_at(&self) -> Result<Option<u64>> {
         self.meta_get(&ROUTE_MATRIX_BUILT_KEY)
+    }
+
+    // ----------------- Route-Enrichment (v7, Option b) ------------------
+    //
+    // Additiv neben der Profit-Matrix: der UEX-Enrichment-Block pro
+    // Routen-Dreifach (commodity_id, buy_terminal_id, sell_terminal_id),
+    // gespeichert als JSON-Payload hinter einem `route_key`. Stale-First wie
+    // der Rest: eine vorhandene (auch alte) Tabelle wird serviert, ein
+    // fehlender/leerer Bestand heißt einfach "kein Enrichment" — die Matrix
+    // funktioniert unverändert (Enrichment ist optional/verzierend).
+
+    /// Fracht-Key des Enrichment-Rows: das exakte Routen-Dreifach.
+    pub fn route_enrichment_key(
+        commodity_id: u64,
+        buy_terminal_id: u64,
+        sell_terminal_id: u64,
+    ) -> String {
+        format!("{commodity_id}:{buy_terminal_id}:{sell_terminal_id}")
+    }
+
+    /// Ist der Enrichment-Satz jünger als `ttl` (30 min wie andere
+    /// UEX-Preisdaten)? Fehlender Marker ⇒ nicht frisch.
+    pub fn route_enrichment_fresh(&self, ttl: Duration) -> Result<bool> {
+        let Some(ts) = self.meta_get(ROUTE_ENRICHMENT_META_KEY)? else {
+            return Ok(false);
+        };
+        Ok(now_unix().saturating_sub(ts) < ttl.as_secs())
+    }
+
+    /// Ersetzt den kompletten Enrichment-Satz (Snapshot-Semantik, eine
+    /// Transaktion — alte Zeilen bleiben bis zum Commit sichtbar, nie leer).
+    /// Schreibt zusätzlich den Frische-Marker in `meta`.
+    pub fn store_route_enrichment(&self, rows: &[(String, RouteEnrichment)]) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM route_enrichment", [])?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO route_enrichment (route_key, payload, fetched_at)
+                     VALUES (?1, ?2, ?3)",
+                )?;
+                let now = now_unix() as i64;
+                for (key, e) in rows {
+                    let payload = serde_json::to_string(e)
+                        .map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
+                    stmt.execute(rusqlite::params![key, payload, now])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (ROUTE_ENRICHMENT_META_KEY, now_unix().to_string()),
+            )?;
+            tx.commit()
+        })
+    }
+
+    /// Lädt den kompletten Enrichment-Satz (stale-first: auch alte Rows
+    /// kommen zurück — der CALLER entscheidet Frische via
+    /// [`Cache::route_enrichment_fresh`]). Key = [`Cache::route_enrichment_key`].
+    pub fn route_enrichment_rows(
+        &self,
+    ) -> Result<std::collections::HashMap<String, RouteEnrichment>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT route_key, payload FROM route_enrichment")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            let mut out = std::collections::HashMap::new();
+            for r in rows {
+                let (key, payload) = r?;
+                match serde_json::from_str::<RouteEnrichment>(&payload) {
+                    Ok(e) => {
+                        out.insert(key, e);
+                    }
+                    Err(err) => {
+                        log::warn!("route enrichment payload {key} unparsable: {err}");
+                    }
+                }
+            }
+            Ok(out)
+        })
     }
 
     /// Raw string value from `meta` (numeric values use [`meta_get`]).
@@ -2392,5 +2499,89 @@ mod tests {
         let cache = Cache::open(&path).unwrap();
         assert!(cache.is_fresh(EntityKind::Terminals).unwrap());
         assert_eq!(cache.count_entities(EntityKind::Terminals).unwrap(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // t_65a91d5b C3b — Route-Enrichment (v7, additive)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn route_enrichment_store_and_load_roundtrip() {
+        let cache = Cache::open_in_memory().unwrap();
+        let key = Cache::route_enrichment_key(47, 1, 274);
+        assert_eq!(key, "47:1:274");
+        let e = RouteEnrichment {
+            uex_score: 953,
+            scu_origin: 2.0,
+            scu_destination: 1387.0,
+            scu_reachable: 2.0,
+            status_origin: 2,
+            status_destination: 5,
+            container_sizes_origin: "1,2,4,8".into(),
+            container_sizes_destination: "1,2,4".into(),
+            user_price_origin_rows: 1,
+            user_price_dest_rows: 3,
+            game_version_origin: Some("4.10.2".into()),
+            game_version_destination: None,
+            faction_origin: Some("UEE".into()),
+            faction_destination: None,
+            has_quantum_marker_origin: true,
+            has_quantum_marker_destination: false,
+            date_added: 1_793_092_627,
+        };
+        cache
+            .store_route_enrichment(&[(key.clone(), e.clone())])
+            .unwrap();
+        let loaded = cache.route_enrichment_rows().unwrap();
+        let back = loaded.get(&key).expect("enrichment row must roundtrip");
+        assert_eq!(back.uex_score, 953);
+        assert_eq!(back.scu_destination, 1387.0);
+        assert_eq!(back.status_destination, 5);
+        assert_eq!(back.faction_destination, None);
+        assert_eq!(back.game_version_origin.as_deref(), Some("4.10.2"));
+        assert!(back.has_quantum_marker_origin);
+        assert!(!back.has_quantum_marker_destination);
+        // Frische-Marker: frisch nach Store, abgelaufen nach Rewind.
+        assert!(
+            cache.route_enrichment_fresh(TTL_PRICES).unwrap(),
+            "fresh right after store"
+        );
+        let old = now_unix() - TTL_PRICES.as_secs() - 1;
+        cache
+            .with(|conn| {
+                conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = ?2",
+                    [old.to_string(), ROUTE_ENRICHMENT_META_KEY.to_string()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            !cache.route_enrichment_fresh(TTL_PRICES).unwrap(),
+            "marker expired ⇒ not fresh"
+        );
+        // Stale-First: auch nach Ablauf werden die Rows noch serviert.
+        assert!(cache.route_enrichment_rows().unwrap().contains_key(&key));
+    }
+
+    #[test]
+    fn route_enrichment_empty_after_never_stored() {
+        let cache = Cache::open_in_memory().unwrap();
+        assert!(!cache.route_enrichment_fresh(TTL_PRICES).unwrap());
+        assert!(cache.route_enrichment_rows().unwrap().is_empty());
+    }
+
+    #[test]
+    fn route_enrichment_replaces_previous_set() {
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .store_route_enrichment(&[("a".into(), RouteEnrichment::default())])
+            .unwrap();
+        cache
+            .store_route_enrichment(&[("b".into(), RouteEnrichment::default())])
+            .unwrap();
+        let map = cache.route_enrichment_rows().unwrap();
+        assert!(!map.contains_key("a"), "old set must be replaced");
+        assert!(map.contains_key("b"));
     }
 }

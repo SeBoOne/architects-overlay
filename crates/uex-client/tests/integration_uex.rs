@@ -11,6 +11,7 @@ use std::time::Duration;
 use cache::Cache;
 use provider::{
     DataProvider, Entity, EntityKind, MarketplaceFilter, ProviderError, SearchEntities,
+    routes::{RouteEnrichment, RouteFilters},
 };
 use uex_client::UexProvider;
 use wiremock::matchers::{method, path, query_param};
@@ -1178,4 +1179,77 @@ async fn p15a_contaminated_route_meta_never_feeds_the_sweep() {
             "route endpoints must be commodity terminals: {r:?}"
         );
     }
+}
+
+/// t_65a91d5b C3b: simulierter UEX-Ausfall des `/commodities_routes`-Endpoints
+/// (PLURAL) — das Enrichment darf die bestehende Map NICHT überschreiben und
+/// darf als Fehler die Revalidation/Matrix NICHT sinken lassen. Der Code
+/// gibt `Ok(0)` zurück (0 Routen geholt) und lässt den alten Bestand stehen
+/// (stale-first). Genau das ist das Abnahmekriterium „Matrix bleibt\".
+#[tokio::test]
+async fn enrichment_outage_keeps_existing_map_and_does_not_fail() {
+    // UEX-Komplettausfall auf dem Enrichment-Endpoint: 500 auf /commodities_routes.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/commodities_routes"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("boom"))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/commodities"))
+        .respond_with(json_response(&fixture("commodities.json")))
+        .mount(&server)
+        .await;
+    // Revalidation braucht auch /terminals + leere Preis-Tabellen (keine
+    // Routen-Daten) — damit der Verlauf bis zum Enrichment tatsächlich Ok
+    // zurückgibt und der Enrichment-Fehler der einzige nicht-triviale ist.
+    Mock::given(method("GET"))
+        .and(path("/terminals"))
+        .respond_with(json_response(&fixture("routes_terminals.json")))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/commodities_prices"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/items_prices"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider =
+        UexProvider::with_base_url(cache.clone(), None, &server.uri(), Duration::ZERO).unwrap();
+
+    // Bereits vorhandener, TTL-frischer Enrichment-Bestand für die Matrix-Route.
+    let key = "47:1:274";
+    cache
+        .store_route_enrichment(&[(
+            key.into(),
+            RouteEnrichment {
+                uex_score: 953,
+                scu_reachable: 2.0,
+                ..RouteEnrichment::default()
+            },
+        )])
+        .unwrap();
+
+    // Enrichment-Refresh gegen den toten Endpoint: Ok(0), kein Fehler.
+    let n = provider.refresh_route_enrichment().await.unwrap();
+    assert_eq!(n, 0, "outage must report 0 enriched, not error");
+
+    // Der alte Bestand ist UNVERÄNDERT (stale-first: nichts überschreiben).
+    let rows = cache.route_enrichment_rows().unwrap();
+    assert_eq!(rows.len(), 1, "old map must survive the outage");
+    assert_eq!(rows.get(key).unwrap().uex_score, 953);
+
+    // Revalidation schlägt am Enrichment NICHT fehl (Fehler wird geloggt) —
+    // alle anderen Pfade sind gemockt (Ok auch bei down).
+    let _ = provider.revalidate_route_data().await.unwrap();
 }

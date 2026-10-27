@@ -1044,6 +1044,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// rung/Sortierung serverseitig im Backend. BEWUSST ohne Mindest-/Maximal-
 	// bestand-Filter (Unterschied zu Arkanis).
 	type RouteSort = 'profit_desc' | 'profit_asc' | 'distance_asc' | 'total_profit_desc' | 'margin_desc';
+	type RouteEnrichment = {
+		uex_score: number;
+		scu_origin: number;
+		scu_destination: number;
+		scu_reachable: number;
+		status_origin: number;
+		status_destination: number;
+		container_sizes_origin: string;
+		container_sizes_destination: string;
+		user_price_origin_rows: number;
+		user_price_dest_rows: number;
+		game_version_origin: string | null;
+		game_version_destination: string | null;
+		faction_origin: string | null;
+		faction_destination: string | null;
+		has_quantum_marker_origin: boolean;
+		has_quantum_marker_destination: boolean;
+		date_added: number;
+	};
 	type TradeRoute = {
 		commodity_id: number;
 		commodity: string;
@@ -1068,6 +1087,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		cost_total: number;
 		margin: number;
 		distance: number;
+		enrichment?: RouteEnrichment;
 	};
 	type RoutesResponse = { source: string; swept_at: number; refreshing: boolean; routes: TradeRoute[] };
 
@@ -2905,9 +2925,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										onclick={() => { rSel = i; openRouteDetail(); }}
 									>
 										<div class="m-main">
-											<div class="m-title">{r.commodity} {r.illegal ? '⚠' : ''}</div>
-											<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
-										</div>
+																						<div class="m-title">{r.commodity} {r.illegal ? '⚠' : ''}</div>
+																						<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
+																						{#if r.enrichment && (r.enrichment.scu_reachable > 0 || r.enrichment.scu_destination > 0)}
+																							<div class="r-chip" title="UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo, nicht sortierrelevant">
+																								<span class="r-chip-vol">≋ {r.enrichment.scu_reachable > 0 ? fmt(Math.round(r.enrichment.scu_reachable)) : fmt(Math.round(r.enrichment.scu_destination))} SCU</span>
+																								{#if r.enrichment.status_destination > 0}
+																									<span class="r-chip-stock" title="Nachfrage-Level Verkauf (1–7)">{r.enrichment.status_destination}</span>
+																								{/if}
+																							</div>
+																						{/if}
+																					</div>
 										<div class="m-right">
 											<div class="m-price sell" title="Gain/SCU = Sell − Buy · absolute aUEC per SCU">+{fmtPrice(r.profit_per_scu)}</div>
 											<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title="Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)">Marge {(r.margin * 100).toFixed(0)} %</span></div>

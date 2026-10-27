@@ -3,7 +3,26 @@
 
 use std::path::PathBuf;
 
-use uex_client::private::{CommodityRow, ItemPriceRow, ListingRow, PriceRow, TerminalRow};
+use uex_client::private::{
+    CommodityRouteRow, CommodityRow, ItemPriceRow, ListingRow, PriceRow, TerminalRow,
+};
+
+/// t_65a91d5b C3b: eine echte `/commodities_routes`-Captur (PLURAL!, Origin
+/// Terminal 1) deserialisiert in die Wire-DTO — die 76-Feld-Rows inkl.
+/// `null`-Feldern dürfen nicht reißen.
+#[test]
+fn commodities_routes_fixture_deserializes() {
+    let rows: Vec<CommodityRouteRow> = envelope_data("commodities_routes_terminal_origin_1.json");
+    assert_eq!(rows.len(), 2);
+    let first = &rows[0];
+    // Origin ist bei beiden der gefilterte Terminal (1).
+    assert_eq!(first.id_terminal_origin, 1);
+    // Kern-Felder abgedeckt (die Mapping-Zuordnung prüfen die Lib-Tests).
+    let row = &rows[1];
+    assert!(row.id_terminal_destination > 0);
+    // Score kann negativ sein (UEX-Bewertungsskala).
+    let _ = row.score;
+}
 
 fn fixture(name: &str) -> serde_json::Value {
     let path: PathBuf = [env!("CARGO_MANIFEST_DIR"), "tests", "fixtures", name]

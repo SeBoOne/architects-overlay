@@ -38,13 +38,14 @@ use provider::{
     MarketplaceFilter, Offer, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
     TerminalPriceGroup,
     routes::{
-        RouteCommodityMeta, RouteFilters, RouteList, RoutePriceRow, RouteTerminalMeta, TradeRoute,
+        RouteCommodityMeta, RouteEnrichment, RouteFilters, RouteList, RoutePriceRow,
+        RouteTerminalMeta, TradeRoute,
     },
 };
 
 use dto::{
-    CategoryRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow, StarSystemRow,
-    TerminalRow, VehicleRow,
+    CategoryRow, CommodityRouteRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow,
+    StarSystemRow, TerminalRow, VehicleRow,
 };
 
 /// Search result page size served from the cache.
@@ -980,11 +981,11 @@ impl UexProvider {
                 if stored.as_deref() == Some(&cur_epoch) {
                     let matrix = self.cache.route_matrix_rows().map_err(map_cache_err)?;
                     let swept_at = self.sweep_ts()?;
-                    return Ok(RouteList {
-                        routes: provider::routes::routes_from_matrix(&matrix, filters),
+                    return self.route_list(
+                        provider::routes::routes_from_matrix(&matrix, filters),
                         swept_at,
-                        refreshing: sweeping,
-                    });
+                        sweeping,
+                    );
                 }
                 // Epoch moved (new price data since the last artifact) →
                 // recompute the MATRIX once from the cached rows (NO network),
@@ -1002,11 +1003,11 @@ impl UexProvider {
                 );
                 self.persist_route_matrix(&matrix)?;
                 let swept_at = self.sweep_ts()?;
-                return Ok(RouteList {
-                    routes: provider::routes::routes_from_matrix(&matrix, filters),
+                return self.route_list(
+                    provider::routes::routes_from_matrix(&matrix, filters),
                     swept_at,
-                    refreshing: sweeping,
-                });
+                    sweeping,
+                );
             }
             // (b) Terminal-SIDE filters: re-scan the CURRENT (possibly stale)
             // rows — the best Buy→Sell pair changes with the filter, the
@@ -1023,11 +1024,7 @@ impl UexProvider {
                 filters,
             );
             let swept_at = self.sweep_ts()?;
-            return Ok(RouteList {
-                routes,
-                swept_at,
-                refreshing: sweeping,
-            });
+            return self.route_list(routes, swept_at, sweeping);
         }
 
         // ---- Full path: cold/empty cache (nothing to serve) — blocking
@@ -1076,16 +1073,143 @@ impl UexProvider {
                 filters,
             ),
         };
+        self.route_list(routes, swept_at, false)
+    }
+
+    /// Baut die [`RouteList`] und mischt das UEX-Enrichment (Option b) bei:
+    /// fehlender/leerer Enrichment-Cache ⇒ Routen unenriched, unverändert
+    /// profit-/sortier-relevant (Enrichment ist optional/verzierend).
+    fn route_list(
+        &self,
+        mut routes: Vec<TradeRoute>,
+        swept_at: u64,
+        refreshing: bool,
+    ) -> Result<RouteList> {
+        self.attach_route_enrichment(&mut routes)?;
         Ok(RouteList {
             routes,
             swept_at,
-            refreshing: false,
+            refreshing,
         })
+    }
+
+    /// TTL des Enrichment-Satzes (wie andere UEX-Preisdaten).
+    const ROUTES_ENRICHMENT_TTL: Duration = TTL_PRICES; // 30 min
+    /// Hintergrund-Enrichment (Option b, t_ce154aa5): holt für jede Matrix-
+    /// Route den passenden UEX `/commodities_routes`-Datensatz (PLURAL!) und
+    /// legt die ergänzenden Felder als `route_enrichment`-Map ab. Fehler sind
+    /// NICHT fatal — das Enrichment ist optional/verzierend: ein UEX-Ausfall
+    /// lässt den bestehenden Bestand einfach stehen (stale-first) oder leer.
+    /// Nur wenn der TTL-Frische-Marker abgelaufen ist, wird neu geholt (kein
+    /// Request-Stakkato; genau eine Refetch-Runde pro TTL-Fenster).
+    pub async fn refresh_route_enrichment(&self) -> Result<usize> {
+        if self
+            .cache
+            .route_enrichment_fresh(Self::ROUTES_ENRICHMENT_TTL)
+            .map_err(map_cache_err)?
+        {
+            return Ok(0);
+        }
+        // Enrichment-Basis: die bestehende Profit-Matrix (Default-Best-Pair je
+        // Commodity) — exakt die Routen, die der View standardmäßig zeigt.
+        let matrix = self.cache.route_matrix_rows().map_err(map_cache_err)?;
+        if matrix.is_empty() {
+            return Ok(0);
+        }
+        let mut out: Vec<(String, RouteEnrichment)> = Vec::new();
+        let mut ok = 0usize;
+        for r in &matrix {
+            let key = cache::Cache::route_enrichment_key(
+                r.commodity_id,
+                r.buy_terminal_id,
+                r.sell_terminal_id,
+            );
+            let rows: Vec<CommodityRouteRow> = match self
+                .http
+                .get(
+                    "/commodities_routes",
+                    &[
+                        ("id_commodity".to_string(), r.commodity_id.to_string()),
+                        (
+                            "id_terminal_origin".to_string(),
+                            r.buy_terminal_id.to_string(),
+                        ),
+                        (
+                            "id_terminal_destination".to_string(),
+                            r.sell_terminal_id.to_string(),
+                        ),
+                        ("limit".to_string(), "500".to_string()),
+                    ],
+                )
+                .await
+            {
+                Ok(rows) => rows,
+                Err(e) => {
+                    log::warn!(
+                        "routes enrichment {} ({}→{}): {e}",
+                        r.commodity,
+                        r.buy_terminal_id,
+                        r.sell_terminal_id
+                    );
+                    continue;
+                }
+            };
+            if let Some(row) = rows.into_iter().find(|row| {
+                row.id_commodity == r.commodity_id
+                    && row.id_terminal_origin == r.buy_terminal_id
+                    && row.id_terminal_destination == r.sell_terminal_id
+            }) {
+                out.push((key, map_route_enrichment(row)));
+                ok += 1;
+            }
+        }
+        if ok == 0 {
+            // Nichts geholt (z. B. UEX komplett down) → Bestand NICHT
+            // überschreiben — stale-first: die alte Map bleibt serviert.
+            log::warn!(
+                "routes enrichment: 0/{} Routen geholt — bestehende Map bleibt",
+                matrix.len()
+            );
+            return Ok(0);
+        }
+        self.cache
+            .store_route_enrichment(&out)
+            .map_err(map_cache_err)?;
+        log::info!("routes enrichment: {} Routen enriched", ok);
+        Ok(ok)
+    }
+
+    /// Beimischen beim Servieren: hängt für jede Route den passenden
+    /// Enrichment-Block an (Key = Commodity/Buy/Sell-Dreifach). Fehlt er
+    /// (Filter änderten das Paar, Cache leer, UEX-Ausfall) bleibt die Route
+    /// unenriched und voll funktionsfähig — Enrichment ist optional.
+    fn attach_route_enrichment(&self, routes: &mut [TradeRoute]) -> Result<()> {
+        let map = self.load_route_enrichment()?;
+        if map.is_empty() {
+            return Ok(());
+        }
+        for r in routes.iter_mut() {
+            let key = cache::Cache::route_enrichment_key(
+                r.commodity_id,
+                r.buy_terminal_id,
+                r.sell_terminal_id,
+            );
+            if let Some(e) = map.get(&key) {
+                r.enrichment = Some(e.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn load_route_enrichment(&self) -> Result<std::collections::HashMap<String, RouteEnrichment>> {
+        self.cache.route_enrichment_rows().map_err(map_cache_err)
     }
 
     /// Background revalidation (stale-while-revalidate): refresh expired
     /// reference flags, sweep every terminal whose price table expired,
-    /// rebuild the Profit-Matrix artifact. NEVER the foreground — the
+    /// rebuild the Profit-Matrix artifact, refresh the UEX-Enrichment (Option
+    /// b — optional/verzierend, ein Fehler hier bricht die Matrix NICHT).
+    /// NEVER the foreground — the
     /// CompositeProvider schedules this on a live view open. Rate-limit
     /// unchanged: at most one Sweep per TTL window (marker-guarded).
     pub async fn revalidate_route_data(&self) -> Result<usize> {
@@ -1104,6 +1228,11 @@ impl UexProvider {
             &RouteFilters::default(),
         );
         self.persist_route_matrix(&matrix)?;
+        // Enrichment optional: ein Fehler (UEX down) darf die Revalidation
+        // nicht als Ganzes sinken lassen — die Matrix ist servierbar ohne es.
+        if let Err(e) = self.refresh_route_enrichment().await {
+            log::warn!("routes enrichment refresh failed (matrix unaffected): {e}");
+        }
         Ok(refetched)
     }
 
@@ -1369,6 +1498,33 @@ fn map_cache_err(e: CacheError) -> ProviderError {
     ProviderError::Cache(e.to_string())
 }
 
+/// Map a `/commodities_routes` wire-row onto the seam [`RouteEnrichment`]
+/// (Option b, t_ce154aa5). NUR die ergänzenden Felder — Preise/Marge/ROI/
+/// Profit des UEX-Responses werden BEWUSST verworfen (K1 bleibt Owner der
+/// Profit-/Sortier-Logik; UEX-profit ist eine Blackbox-Metrik, siehe
+/// Research §3.4).
+fn map_route_enrichment(r: CommodityRouteRow) -> RouteEnrichment {
+    RouteEnrichment {
+        uex_score: r.score,
+        scu_origin: r.scu_origin,
+        scu_destination: r.scu_destination,
+        scu_reachable: r.scu_reachable,
+        status_origin: r.status_origin,
+        status_destination: r.status_destination,
+        container_sizes_origin: r.container_sizes_origin,
+        container_sizes_destination: r.container_sizes_destination,
+        user_price_origin_rows: r.price_origin_users_rows,
+        user_price_dest_rows: r.price_destination_users_rows,
+        game_version_origin: r.game_version_origin,
+        game_version_destination: r.game_version_destination,
+        faction_origin: r.origin_faction_name,
+        faction_destination: r.destination_faction_name,
+        has_quantum_marker_origin: r.has_quantum_marker_origin != 0,
+        has_quantum_marker_destination: r.has_quantum_marker_destination != 0,
+        date_added: r.date_added,
+    }
+}
+
 /// Map a `/commodities_prices` row (commodity- OR terminal-scoped — same wire
 /// shape) onto the seam [`PricePoint`]. `fallback_commodity` is used when the
 /// row omits the name (ageing API rows); the terminal name falls back to a
@@ -1438,8 +1594,8 @@ fn map_item_price_point(r: ItemPriceRow, fallback_item: &str) -> PricePoint {
 /// Re-export of wire DTOs for integration tests only. Not part of the API.
 pub mod private {
     pub use crate::dto::{
-        CategoryRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow, StarSystemRow,
-        TerminalRow,
+        CategoryRow, CommodityRouteRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow,
+        StarSystemRow, TerminalRow,
     };
     pub use crate::http::DEFAULT_BASE_URL;
 }
@@ -1882,5 +2038,119 @@ mod tests {
         let plans = provider.build_market_plans(&f, &[]);
         assert_eq!(plans.len(), 1);
         assert!(plans[0].contains(&("id_item".to_string(), "7".to_string())));
+    }
+
+    /// t_65a91d5b C3b: `map_route_enrichment` übernimmt NUR die ergänzenden
+    /// Felder des UEX `/commodities_routes`-Rows — Preis/Marge/ROI/Profit des
+    /// Wire-Rows sind NICHT im Enrichment (K1 bleibt Owner der Profit-Logik).
+    #[test]
+    fn map_route_enrichment_takes_only_complementary_fields() {
+        use crate::dto::CommodityRouteRow;
+        let row: CommodityRouteRow = serde_json::from_str(
+            r#"{
+                "id": 8425, "id_commodity": 47,
+                "id_terminal_origin": 1, "id_terminal_destination": 274,
+                "price_origin": 7400, "price_destination": 9300,
+                "price_margin": 20.43, "price_roi": 25.68, "profit": 3800,
+                "score": 953, "scu_origin": 2, "scu_destination": 1387,
+                "scu_reachable": 2, "status_origin": 2, "status_destination": 5,
+                "container_sizes_origin": "1,2,4,8",
+                "container_sizes_destination": "1,2,4",
+                "price_origin_users_rows": 1, "price_destination_users_rows": 3,
+                "game_version_origin": "4.10.2", "game_version_destination": "4.10.2",
+                "origin_faction_name": "UEE", "destination_faction_name": null,
+                "has_quantum_marker_origin": 1, "has_quantum_marker_destination": 0,
+                "date_added": 1793092627
+            }"#,
+        )
+        .unwrap();
+        let e = map_route_enrichment(row);
+        assert_eq!(e.uex_score, 953);
+        assert_eq!(e.scu_origin, 2.0);
+        assert_eq!(e.scu_destination, 1387.0);
+        assert_eq!(e.scu_reachable, 2.0);
+        assert_eq!(e.status_origin, 2);
+        assert_eq!(e.status_destination, 5);
+        assert_eq!(e.container_sizes_origin, "1,2,4,8");
+        assert_eq!(e.user_price_dest_rows, 3);
+        assert_eq!(e.game_version_origin.as_deref(), Some("4.10.2"));
+        assert_eq!(e.faction_origin.as_deref(), Some("UEE"));
+        assert_eq!(e.faction_destination, None);
+        assert!(e.has_quantum_marker_origin);
+        assert!(!e.has_quantum_marker_destination);
+        assert_eq!(e.date_added, 1_793_092_627);
+    }
+
+    /// t_65a91d5b C3b: Enrichment-Attach beim Servieren — nur das exakte
+    /// Routen-Dreifach (Commodity, Buy, Sell) bekommt seinen Block; andere
+    /// Routen bleiben unenriched (kein Mismatch), leere Map = No-Op.
+    #[test]
+    fn attach_route_enrichment_matches_exact_triple_and_noops_on_empty() {
+        fn make_route(comm: u64, buy: u64, sell: u64) -> TradeRoute {
+            TradeRoute {
+                commodity_id: comm,
+                commodity: "Laranite".into(),
+                illegal: false,
+                buy_terminal_id: buy,
+                buy_terminal: "b".into(),
+                buy_chain: String::new(),
+                buy_price: 1.0,
+                buy_terminal_autoload: false,
+                buy_terminal_cargo_deck: false,
+                buy_terminal_ground: false,
+                sell_terminal_id: sell,
+                sell_terminal: "s".into(),
+                sell_chain: String::new(),
+                sell_price: 2.0,
+                sell_terminal_autoload: false,
+                sell_terminal_cargo_deck: false,
+                sell_terminal_ground: false,
+                sell_stock: 0.0,
+                profit_per_scu: 1.0,
+                profit_total: 1.0,
+                cost_total: 1.0,
+                margin: 0.0,
+                distance: 1,
+                enrichment: None,
+            }
+        }
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let e = RouteEnrichment {
+            uex_score: 953,
+            scu_reachable: 2.0,
+            ..RouteEnrichment::default()
+        };
+        cache
+            .store_route_enrichment(&[("47:1:274".into(), e.clone())])
+            .unwrap();
+
+        let mut routes = vec![make_route(47, 1, 274), make_route(47, 1, 999)];
+        provider.attach_route_enrichment(&mut routes).unwrap();
+        assert!(routes[0].enrichment.is_some());
+        assert_eq!(routes[0].enrichment.as_ref().unwrap().uex_score, 953);
+        assert!(
+            routes[1].enrichment.is_none(),
+            "anderes Dreifach muss unenriched bleiben"
+        );
+
+        // Leere Map → No-Op, kein Fehler.
+        let empty = Arc::new(Cache::open_in_memory().unwrap());
+        let p2 = UexProvider::with_base_url(
+            empty.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let mut noop = vec![make_route(1, 1, 2)];
+        p2.attach_route_enrichment(&mut noop).unwrap();
+        assert!(noop[0].enrichment.is_none());
     }
 }

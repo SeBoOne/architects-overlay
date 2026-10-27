@@ -1,0 +1,32 @@
+C3b Handelsrouten-Enrichment (Option b) — LIVE-BEWEIS
+Dec 2026 (t_65a91d5b); Gate: fmt/check/test/svelte-check/build
+
+ENDPOINT (PLURAL): GET https://api.uexcorp.uk/2.0/commodities_routes
+  Parameter: id_commodity + id_terminal_origin + id_terminal_destination + limit=500
+  Kein API-Key (live ok); Cache-Control 30 min; max 500 rows (research t_9c33139c/t_851c9b2d)
+
+VORHER (K1-Matrix, enrichment null — UEX-profit NICHT verwendet):
+  Laranite c47: profit_per_scu 1600 (sell 9000 - buy 7400)  enrichment = null
+  Waste    c79: profit_per_scu 1600                          enrichment = null
+
+NACHHER (refresh_route_enrichment → 2 Routen enriched):
+  47:1:12  = {"uex_score":422,"scu_origin":2.0,"scu_destination":2.0,"scu_reachable":2.0,
+              "status_origin":2,"status_destination":1,"container_sizes_origin":"8,16,24,32",
+              "container_sizes_destination":"1,2,4,8,16,24,32","user_price_origin_rows":5,
+              "user_price_dest_rows":0,"game_version_origin":"4.10.2",
+              "game_version_destination":"4.10.2","faction_origin":"United Empire of Earth",
+              "faction_destination":"United Empire of Earth","has_quantum_marker_origin":true,
+              "has_quantum_marker_destination":true,"date_added":1793103414}
+  79:1:274 = {"uex_score":-33,... "scu_reachable":7.0, ...}   (Score negativ OK, UEX-Skala)
+
+PRUEFUNGEN:
+  - Plural-Endpoint live: ok
+  - UEX-profit/Marge/ROI NICHT in sort/display (fehlen strukturell in RouteEnrichment)
+  - Enrichment optional bei UEX-Ausfall: wiremock-Test enrichment_outage_keeps_existing_map_and_does_not_fail
+    -> Ok(0), alte Map bleibt, Revalidation nicht gesunken
+  - Cache additiv: Schema v7, route_enrichment Tabelle + meta route_enrichment:fetched_at TTL 30min
+  - UI: Volumen-Chip (scu_reachable/scu_destination) + Nachfrage-Level in Routen-Zeile
+
+TESTBEFUND: cargo test --workspace => alle ok (inkl. 21 integration_uex + 20 live-konforme)
+LIVE test: cargo test -p uex_client --test live_api -- --ignored --nocapture live_route_enrichment_before_after
+=> test result: ok. 1 passed (echte UEX-API)

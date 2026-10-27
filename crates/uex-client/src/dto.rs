@@ -37,6 +37,14 @@ where
     Ok(Option::<u8>::deserialize(d)?.unwrap_or(0))
 }
 
+/// Same for `i64` (can be negative — e.g. UEX route `score`).
+pub(crate) fn de_i64_null_to_zero<'de, D>(d: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<i64>::deserialize(d)?.unwrap_or(0))
+}
+
 /// Same for `u16` (quality).
 pub(crate) fn de_u16_null_to_zero<'de, D>(d: D) -> Result<u16, D::Error>
 where
@@ -322,6 +330,69 @@ pub struct StarSystemRow {
     pub code: Option<String>,
 }
 
+/// `/commodities_routes` row (PLURAL! — der echte Endpoint, t_9c33139c /
+/// t_851c9b2d). Für die UEX-Enrichment-Schicht (Option b) werden NUR die
+/// ergänzenden Felder übernommen — Preise/Marge/ROI/Profit sind BEWUSST NICHT
+/// dabei (die lokale K1-Matrix bleibt Owner der Profit-Logik).
+///
+/// Null-Härtung wie überall: UEX sendet bei unbekannten Werten explizites
+/// `null` (nicht ein fehlendes Feld), `#[serde(default)]` deckt nur fehlende
+/// Felder ab. Alle numerischen Felder laufen deshalb durch die
+/// `de_*_null_to_zero`-Deserializer (Serde-Regel, UEX-live belegt).
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)] // Wire-DTO: nur die Enrichment-relevanten Felder werden gelesen
+pub struct CommodityRouteRow {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default)]
+    pub id_commodity: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_terminal_origin: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_terminal_destination: u64,
+    /// `score` — UEX-Gesamtgüte (Anzeige; nie Sortierung).
+    #[serde(default, deserialize_with = "de_i64_null_to_zero")]
+    pub score: i64,
+    /// Volumen: verfügbare SCU je Seite + erreichbare SCU.
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub scu_origin: f64,
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub scu_destination: f64,
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub scu_reachable: f64,
+    /// Scarcity/Nachfrage: Lagerbestand-Level 0..=7.
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub status_origin: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub status_destination: u8,
+    /// Container-CSV ("1,2,4,8,16,24,32").
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub container_sizes_origin: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub container_sizes_destination: String,
+    /// Nachfragetiefe: Anzahl Community-Preismeldungen.
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub price_origin_users_rows: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub price_destination_users_rows: u64,
+    #[serde(default)]
+    pub game_version_origin: Option<String>,
+    #[serde(default)]
+    pub game_version_destination: Option<String>,
+    #[serde(default)]
+    pub origin_faction_name: Option<String>,
+    #[serde(default)]
+    pub destination_faction_name: Option<String>,
+    /// 1 = Quantenmarker vorhanden.
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub has_quantum_marker_origin: u8,
+    #[serde(default, deserialize_with = "de_u8_null_to_zero")]
+    pub has_quantum_marker_destination: u8,
+    /// Unix-Timestamp der Routen-Erfassung.
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub date_added: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,5 +582,75 @@ mod tests {
         assert_eq!(env.status, "missing_required_input");
         assert_eq!(env.message.as_deref(), Some("Missing required input"));
         assert!(env.data.is_none());
+    }
+
+    /// t_65a91d5b C3b: `/commodities_routes`-Wire-Row (echtes Sample-Feld,
+    /// inkl. expliziter `null`s auf numerischen Feldern) deserialisiert und
+    /// das Enrichment-Mapping übernimmt NUR die ergänzenden Felder.
+    #[test]
+    fn commodity_route_row_tolerates_nulls_and_full_schema() {
+        let row: CommodityRouteRow = serde_json::from_str(
+            r#"{
+                "id": 474, "id_commodity": 79,
+                "id_terminal_origin": 1, "id_terminal_destination": 274,
+                "score": -33, "price_origin": 229, "price_destination": 210,
+                "price_margin": -9.04762, "price_roi": -8.29694, "profit": -133,
+                "scu_origin": 7, "scu_destination": 7, "scu_reachable": 7,
+                "status_origin": 2, "status_destination": 1,
+                "container_sizes_origin": "1,2,4,8,16,24,32",
+                "container_sizes_destination": "1,2,4,8,16,24",
+                "price_origin_users_rows": 0, "price_destination_users_rows": 3,
+                "game_version_origin": "4.10.2", "game_version_destination": "4.10.2",
+                "origin_faction_name": "United Empire of Earth",
+                "destination_faction_name": null,
+                "has_quantum_marker_origin": 1, "has_quantum_marker_destination": 0,
+                "date_added": 1793092627,
+                "commodity_name": "Waste", "commodity_slug": "waste"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(row.id_terminal_origin, 1);
+        assert_eq!(row.id_terminal_destination, 274);
+        assert_eq!(row.score, -33);
+        assert_eq!(row.scu_reachable, 7.0);
+        assert_eq!(row.status_origin, 2);
+        assert_eq!(row.price_destination_users_rows, 3);
+        // Explizites null auf destination_faction_name → None, kein Fehler.
+        assert_eq!(row.destination_faction_name, None);
+        assert_eq!(
+            row.origin_faction_name.as_deref(),
+            Some("United Empire of Earth")
+        );
+        assert_eq!(row.has_quantum_marker_origin, 1);
+    }
+
+    /// t_65a91d5b C3b: `null`-Werte auf den numerischen Enrichment-Feldern
+    /// (UEX sendet `null` statt 0, wenn unbekannt) dürfen das Mapping nicht
+    /// reißen — Serde-Regel (explizites null ≠ fehlendes Feld).
+    #[test]
+    fn commodity_route_row_nulls_map_to_zero() {
+        let row: CommodityRouteRow = serde_json::from_str(
+            r#"{
+                "id": 475, "id_commodity": 79,
+                "id_terminal_origin": 1, "id_terminal_destination": 276,
+                "score": null, "scu_origin": null, "scu_destination": null,
+                "scu_reachable": null, "status_origin": null, "status_destination": null,
+                "container_sizes_origin": null, "container_sizes_destination": null,
+                "price_origin_users_rows": null, "price_destination_users_rows": null,
+                "game_version_origin": null, "game_version_destination": null,
+                "origin_faction_name": null, "destination_faction_name": null,
+                "has_quantum_marker_origin": null, "has_quantum_marker_destination": null,
+                "date_added": null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(row.score, 0);
+        assert_eq!(row.scu_reachable, 0.0);
+        assert_eq!(row.status_origin, 0);
+        assert_eq!(row.container_sizes_origin, "");
+        assert_eq!(row.price_origin_users_rows, 0);
+        assert_eq!(row.date_added, 0);
+        assert_eq!(row.has_quantum_marker_destination, 0);
+        assert_eq!(row.game_version_origin, None);
     }
 }
