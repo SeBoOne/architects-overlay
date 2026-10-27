@@ -1421,6 +1421,31 @@ html[data-window="spotlight"] .shell {
 	white-space: nowrap;
 }
 
+/* RB2 (t_9b42249a): Route mit Budget, aber Menge 0 (Budget reicht nicht für
+   1 SCU) — ausgegraut, mit dezentem Hinweis statt Profit. */
+.mrow.is-rbzero {
+	opacity: 0.45;
+	filter: saturate(0.4);
+}
+.mrow.is-rbzero .m-price,
+.mrow.is-rbzero .m-meta {
+	color: var(--fgfaint);
+}
+.r-hint {
+	font: 500 9.5px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+	margin-top: 2px;
+}
+/* Budget-Menge-Chip: gleiche Form wie der Enrichment-Volumen-Chip (Option b),
+   aber in der Warenfarbe des Budgets — kennzeichnet Menge ≠ Schiffskapazität. */
+.r-chip-menge {
+	color: var(--buy);
+	border: 1px solid color-mix(in srgb, var(--buy) 40%, transparent);
+	border-radius: 4px;
+	padding: 2px 6px;
+	white-space: nowrap;
+}
+
 .m-right {
 	text-align: right;
 	white-space: nowrap;
@@ -1522,6 +1547,19 @@ html[data-window="spotlight"] .shell {
 	color: var(--fgdim);
 }
 
+/* RB1 (Karte t_723939ff): Filter-Reset-Link im Routen-Filterbar. */
+.rta-clear {
+	color: var(--fgfaint);
+	font: 500 12px/1.4 var(--font-mono);
+	cursor: pointer;
+	text-decoration: underline;
+	text-underline-offset: 2px;
+	margin-left: 8px;
+}
+.rta-clear:hover {
+	color: var(--accent);
+}
+
 .rdetail {
 	display: flex;
 	flex-direction: column;
@@ -1599,6 +1637,90 @@ html[data-window="spotlight"] .shell {
 	font-weight: 700;
 	letter-spacing: 0.08em;
 	margin-right: 4px;
+}
+
+/* RB3 (t_4e581d1d): „Nächst beste Alternativrouten“ im Routen-Detail — gleiche
+   Ware, sortiert nach Gewinn/SCU; Ein-Klick-Wechsel auf die Alternative. */
+.rd-alt {
+	border-bottom: 1px solid var(--lineb);
+	padding: 10px 16px 12px;
+}
+.rd-alt-head {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	margin-bottom: 2px;
+}
+.rd-alt-title {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--fgdim);
+}
+.rd-alt-sub {
+	font: 500 10px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+}
+.rd-alt-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
+	text-align: left;
+	background: var(--panel2);
+	border: 1px solid var(--lineb);
+	border-radius: 4px;
+	padding: 8px 12px;
+	margin-top: 6px;
+	cursor: pointer;
+	color: var(--fg);
+	font: inherit;
+}
+.rd-alt-row:hover,
+.rd-alt-row:focus-visible {
+	border-color: var(--accent);
+	outline: none;
+}
+.rd-alt-row.is-rbzero {
+	opacity: 0.45;
+	filter: saturate(0.4);
+}
+.rd-alt-main {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 8px;
+	min-width: 0;
+}
+.rd-alt-term {
+	font: 600 12px/1.4 var(--font-mono);
+}
+.rd-alt-right {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 2px;
+	text-align: right;
+	white-space: nowrap;
+}
+.rd-alt-gain {
+	font: 600 13px/1.35 var(--font-mono);
+	color: var(--sell);
+}
+.rd-alt-row.is-rbzero .rd-alt-gain,
+.rd-alt-row.is-rbzero .rd-alt-meta {
+	color: var(--fgfaint);
+}
+.rd-alt-meta {
+	font: 500 10px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+}
+.rd-alt-none {
+	font: 500 10.5px/1.5 var(--font-mono);
+	font-style: italic;
+	color: var(--fgfaint);
+	padding: 4px 2px 2px;
 }
 
 .md-head {

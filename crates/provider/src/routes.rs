@@ -124,7 +124,31 @@ pub struct RouteFilters {
     pub space_only: bool,
     /// SCU-Kapazität (Schiff aus Hangar oder manuell) für den Absolutgewinn.
     pub scu: f64,
+    /// Budget (aUEC) — RB2 (Karte t_9b42249a). Wenn gesetzt (Some(>0)),
+    /// wird die kaufbare Menge pro Route auf
+    /// min(Schiff-SCU, floor(Budget / Kaufpreis pro SCU)) gedeckelt und
+    /// `profit_total`/`cost_total` entsprechend neu gerechnet. None oder
+    /// 0 = Vollkapazität (Verhalten wie heute).
+    pub budget: Option<f64>,
     pub sort: RouteSort,
+}
+
+/// RB2: kaufbare Menge = min(freier Schiffscapacity in SCU, floor(Budget /
+/// Kaufpreis pro SCU)). Ohne Budget (None/≤0) = volle Kapazität; Kaufpreis
+/// ≤ 0 kann nicht bezahlt werden → Menge 0.
+pub fn buyable_quantity(ship_scu: f64, budget: Option<f64>, buy_price: f64) -> f64 {
+    let capacity = ship_scu.max(0.0);
+    match budget {
+        Some(b) if b > 0.0 => {
+            if buy_price <= 0.0 {
+                return 0.0;
+            }
+            let affordable = (b / buy_price).floor();
+            capacity.min(affordable)
+        }
+        // None oder ≤ 0: kein Budget gesetzt → Vollkapazität wie heute.
+        _ => capacity,
+    }
 }
 
 /// UEX-Enrichment (Integrations-Entscheidung Option b, t_ce154aa5): die lokale
@@ -196,9 +220,16 @@ pub struct TradeRoute {
     pub sell_stock: f64,
     /// Gewinn pro SCU = sell_price − buy_price (> 0 garantiert).
     pub profit_per_scu: f64,
-    /// Absolutgewinn = profit_per_scu × SCU-Kapazität.
+    /// Kaufbare Menge in SCU für die aktuelle Abfrage: ohne Budget = volle
+    /// Schiffscapacity (`filters.scu`), mit Budget = min(SCU,
+    /// floor(Budget / buy_price)). RB2 — die Menge, mit der `profit_total`
+    /// und `cost_total` gerechnet werden; Menge 0 = mit dem Budget ist
+    /// kein einziger SCU kaufbar (Route ausgegraut/sortiert ans Ende).
+    #[serde(default)]
+    pub quantity: f64,
+    /// Absolutgewinn = profit_per_scu × quantity (budget-capped).
     pub profit_total: f64,
-    /// Einkaufskosten für die volle Kapazität (Brutto-Basis).
+    /// Einkaufskosten = buy_price × quantity (budget-capped).
     pub cost_total: f64,
     /// Marge = profit_per_scu / buy_price (0..∞), gerundet auf 4 Stellen.
     pub margin: f64,
@@ -266,12 +297,18 @@ pub fn routes_from_matrix(matrix: &[TradeRoute], filters: &RouteFilters) -> Vec<
         })
         .map(|r| {
             let mut out = r.clone();
-            out.profit_total = r.profit_per_scu * scu;
-            out.cost_total = r.buy_price * scu;
+            let qty = buyable_quantity(scu, filters.budget, r.buy_price);
+            out.quantity = qty;
+            out.profit_total = r.profit_per_scu * qty;
+            out.cost_total = r.buy_price * qty;
             out
         })
         .collect();
-    sort_routes(&mut out, filters.sort);
+    sort_routes(
+        &mut out,
+        filters.sort,
+        filters.budget.map_or(false, |b| b > 0.0),
+    );
     out
 }
 
@@ -431,6 +468,9 @@ pub fn compute_routes_full(
                 .cloned()
                 .unwrap_or_else(|| format!("Terminal {id}"))
         };
+        // RB2: kaufbare Menge = min(SCU, floor(Budget/buy_price)); ohne
+        // Budget = volle Kapazität. Profit/Kosten mit derselben Menge.
+        let qty = buyable_quantity(scu, filters.budget, buy.buy_price);
         out.push(TradeRoute {
             commodity_id: buy.commodity_id,
             commodity: name,
@@ -451,8 +491,11 @@ pub fn compute_routes_full(
             sell_terminal_ground: s.ground,
             sell_stock: sell.sell_stock,
             profit_per_scu: profit,
-            profit_total: profit * scu,
-            cost_total: buy.buy_price * scu,
+            // RB2: kaufbare Menge = min(SCU, floor(Budget/buy_price)); ohne
+            // Budget = volle Kapazität. Profit/Kosten mit derselben Menge.
+            quantity: qty,
+            profit_total: profit * qty,
+            cost_total: buy.buy_price * qty,
             margin: if buy.buy_price > 0.0 {
                 (profit / buy.buy_price * 1000.0).round() / 1000.0
             } else {
@@ -463,32 +506,61 @@ pub fn compute_routes_full(
         });
     }
 
-    sort_routes(&mut out, filters.sort);
+    sort_routes(
+        &mut out,
+        filters.sort,
+        filters.budget.map_or(false, |b| b > 0.0),
+    );
     out
 }
 
 /// Sortiert in place nach der gewählten Reihenfolge.
-fn sort_routes(routes: &mut [TradeRoute], sort: RouteSort) {
+///
+/// RB2: Ist ein Budget gesetzt (ein/mehrere Routen mit Menge 0 — mit dem
+/// Budget ist nicht einmal 1 SCU kaufbar), sinken diese Routen RANGLOS ans
+/// Ende der Liste (unabhängig von der Sortierwahl); sie werden im UI
+/// ausgegraut. Ohne Budget bleibt das Verhalten wie heute (keine
+/// Menge-Sonderbehandlung).
+fn sort_routes(routes: &mut [TradeRoute], sort: RouteSort, budget_active: bool) {
+    // Budget-Versenkung: bei gesetztem Budget sinkt jede Route mit Menge ≤ 0
+    // (nicht einmal 1 SCU kaufbar) RANGLOS ans Ende — der Menge-0-Flag als
+    // Primary-Key (false=oben < true=unten), danach die eigentliche Sortierung.
+    fn zero_rank(budget_active: bool, r: &TradeRoute) -> u8 {
+        if budget_active && r.quantity <= 0.0 {
+            1
+        } else {
+            0
+        }
+    }
+    let z = |r: &TradeRoute| zero_rank(budget_active, r);
+    let cmp_rank = |a: &TradeRoute, b: &TradeRoute| z(a).cmp(&z(b));
     match sort {
         RouteSort::ProfitDesc => routes.sort_by(|a, b| {
-            b.profit_per_scu
-                .total_cmp(&a.profit_per_scu)
-                .then_with(|| a.commodity.cmp(&b.commodity))
+            cmp_rank(a, b).then_with(|| {
+                b.profit_per_scu
+                    .total_cmp(&a.profit_per_scu)
+                    .then_with(|| a.commodity.cmp(&b.commodity))
+            })
         }),
         RouteSort::ProfitAsc => routes.sort_by(|a, b| {
-            a.profit_per_scu
-                .total_cmp(&b.profit_per_scu)
-                .then_with(|| a.commodity.cmp(&b.commodity))
+            cmp_rank(a, b).then_with(|| {
+                a.profit_per_scu
+                    .total_cmp(&b.profit_per_scu)
+                    .then_with(|| a.commodity.cmp(&b.commodity))
+            })
         }),
         RouteSort::DistanceAsc => routes.sort_by(|a, b| {
-            a.distance
-                .cmp(&b.distance)
-                .then_with(|| b.profit_per_scu.total_cmp(&a.profit_per_scu))
+            cmp_rank(a, b).then_with(|| {
+                a.distance
+                    .cmp(&b.distance)
+                    .then_with(|| b.profit_per_scu.total_cmp(&a.profit_per_scu))
+            })
         }),
-        RouteSort::TotalProfitDesc => {
-            routes.sort_by(|a, b| b.profit_total.total_cmp(&a.profit_total))
+        RouteSort::TotalProfitDesc => routes
+            .sort_by(|a, b| cmp_rank(a, b).then_with(|| b.profit_total.total_cmp(&a.profit_total))),
+        RouteSort::MarginDesc => {
+            routes.sort_by(|a, b| cmp_rank(a, b).then_with(|| b.margin.total_cmp(&a.margin)))
         }
-        RouteSort::MarginDesc => routes.sort_by(|a, b| b.margin.total_cmp(&a.margin)),
         RouteSort::Natural => {} // Originalliste (keine explizite Sortierung)
     }
 }
@@ -901,6 +973,7 @@ mod tests {
             sell_terminal_ground: true,
             sell_stock: 0.0,
             profit_per_scu: 1900.0,
+            quantity: 0.0,
             profit_total: 190000.0,
             cost_total: 740000.0,
             margin: 0.2567,
@@ -947,5 +1020,181 @@ mod tests {
         // Profit-Felder sind von Enrichment unberührt (K1 bleibt Owner).
         assert_eq!(back2.profit_per_scu, 1900.0);
         assert_eq!(back2.buy_price, 7400.0);
+    }
+
+    // ---- RB2 (Karte t_9b42249a): Budget-Eingabe in die Profit-Rechnung. ----
+
+    #[test]
+    fn budget_caps_quantity_and_profit() {
+        // Schiff 100 SCU, Kaufpreis 10/SCU, Budget 250 → kaufbare Menge
+        // = min(100, floor(250/10)=25) = 25; Profit = 25 × Gewinn/SCU.
+        let rows = vec![
+            row(1, 10, "Laranite", 10.0, 0.0),
+            row(1, 20, "Laranite", 0.0, 70.0),
+        ];
+        let t = meta_map(&[
+            (
+                10,
+                flags(false, false, true, "Stanton > Crusader > Yela > A"),
+            ),
+            (
+                20,
+                flags(false, false, true, "Stanton > Hurston > Arial > B"),
+            ),
+        ]);
+        let mut f = base_filters();
+        f.scu = 100.0;
+        f.budget = Some(250.0);
+        let routes = compute(&rows, &t, &Default::default(), &f);
+        assert_eq!(routes.len(), 1);
+        let r = &routes[0];
+        assert_eq!(r.quantity, 25.0);
+        assert_eq!(r.profit_per_scu, 60.0);
+        assert_eq!(r.profit_total, 60.0 * 25.0);
+        assert_eq!(r.cost_total, 10.0 * 25.0);
+    }
+
+    #[test]
+    fn budget_above_capacity_uses_full_capacity() {
+        let rows = vec![
+            row(1, 10, "Laranite", 10.0, 0.0),
+            row(1, 20, "Laranite", 0.0, 70.0),
+        ];
+        let t = meta_map(&[
+            (
+                10,
+                flags(false, false, true, "Stanton > Crusader > Yela > A"),
+            ),
+            (
+                20,
+                flags(false, false, true, "Stanton > Hurston > Arial > B"),
+            ),
+        ]);
+        let mut f = base_filters();
+        f.scu = 100.0;
+        f.budget = Some(1_000_000.0); // > 100 SCU × 10 = Kapazität
+        let routes = compute(&rows, &t, &Default::default(), &f);
+        let r = &routes[0];
+        assert_eq!(r.quantity, 100.0);
+        assert_eq!(r.profit_total, 60.0 * 100.0);
+    }
+
+    #[test]
+    fn empty_budget_keeps_full_capacity_behavior() {
+        let rows = vec![
+            row(1, 10, "Laranite", 10.0, 0.0),
+            row(1, 20, "Laranite", 0.0, 70.0),
+        ];
+        let t = meta_map(&[
+            (
+                10,
+                flags(false, false, true, "Stanton > Crusader > Yela > A"),
+            ),
+            (
+                20,
+                flags(false, false, true, "Stanton > Hurston > Arial > B"),
+            ),
+        ]);
+        // None (leer) und Some(0) → beide volle Kapazität wie heute.
+        let mut f = base_filters();
+        f.scu = 100.0;
+        assert_eq!(
+            compute(&rows, &t, &Default::default(), &f)[0].quantity,
+            100.0
+        );
+        f.budget = Some(0.0);
+        assert_eq!(
+            compute(&rows, &t, &Default::default(), &f)[0].quantity,
+            100.0
+        );
+        f.budget = None;
+        assert_eq!(
+            compute(&rows, &t, &Default::default(), &f)[0].quantity,
+            100.0
+        );
+    }
+
+    #[test]
+    fn budget_zero_quantity_route_sinks_and_is_grayed() {
+        // Zwei Waren: eine mit Budget kaufbar, eine mit Budget NICHT (Menge 0).
+        let rows = vec![
+            // WIDOW buy 5000 → floor(4000/5000)=0 → Menge 0.
+            row(1, 10, "Widow", 5000.0, 0.0),
+            row(1, 20, "Widow", 0.0, 8000.0),
+            // Laranite buy 100 → floor(4000/100)=40 → kaufbar.
+            row(2, 30, "Laranite", 100.0, 0.0),
+            row(2, 40, "Laranite", 0.0, 300.0),
+        ];
+        let t = meta_map(&[
+            (
+                10,
+                flags(false, false, true, "Stanton > Crusader > Yela > A"),
+            ),
+            (
+                20,
+                flags(false, false, true, "Stanton > Hurston > Arial > B"),
+            ),
+            (
+                30,
+                flags(false, false, true, "Stanton > Crusader > Yela > C"),
+            ),
+            (
+                40,
+                flags(false, false, true, "Stanton > Hurston > Arial > D"),
+            ),
+        ]);
+        let mut f = base_filters();
+        f.scu = 100.0;
+        f.budget = Some(4000.0);
+        // ProfitDesc: Laranite (Gewinn/SCU 200) > Widow (Gewinn/SCU 3000),
+        // aber Widow hat Menge 0 → sinkt ans Ende.
+        let routes = compute(&rows, &t, &Default::default(), &f);
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].commodity, "Laranite", "Menge>0 muss oben stehen");
+        assert_eq!(routes[1].commodity, "Widow", "Menge 0 muss unten stehen");
+        assert_eq!(routes[1].quantity, 0.0);
+        assert_eq!(routes[1].profit_total, 0.0);
+    }
+
+    #[test]
+    fn budget_quantity_serde_roundtrip() {
+        // quantity ist Teil des Wire-Formats (Frontend will die Menge anzeigen)
+        // und serde-default (Alt-JSON ohne Feld deserialisiert weiter).
+        let base = TradeRoute {
+            commodity_id: 1,
+            commodity: "Laranite".into(),
+            illegal: false,
+            buy_terminal_id: 1,
+            buy_terminal: "A".into(),
+            buy_chain: String::new(),
+            buy_price: 10.0,
+            buy_terminal_autoload: false,
+            buy_terminal_cargo_deck: false,
+            buy_terminal_ground: false,
+            sell_terminal_id: 2,
+            sell_terminal: "B".into(),
+            sell_chain: String::new(),
+            sell_price: 70.0,
+            sell_terminal_autoload: false,
+            sell_terminal_cargo_deck: false,
+            sell_terminal_ground: false,
+            sell_stock: 0.0,
+            profit_per_scu: 60.0,
+            quantity: 25.0,
+            profit_total: 1500.0,
+            cost_total: 250.0,
+            margin: 6.0,
+            distance: 1,
+            enrichment: None,
+        };
+        let back: TradeRoute =
+            serde_json::from_str(&serde_json::to_string(&base).unwrap()).unwrap();
+        assert_eq!(back.quantity, 25.0);
+        assert_eq!(back.profit_total, 1500.0);
+        // Alt-JSON ohne quantity-Feld → default 0.0 (kein Fehler).
+        let mut bare = serde_json::to_value(&base).unwrap();
+        bare.as_object_mut().unwrap().remove("quantity");
+        let back2: TradeRoute = serde_json::from_value(bare).unwrap();
+        assert_eq!(back2.quantity, 0.0);
     }
 }

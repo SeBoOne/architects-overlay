@@ -149,8 +149,9 @@ async def main():
         detail = await js("!!document.querySelector('.rdetail')")
         check("route-detail-opens", bool(detail))
         math_txt = (await js("document.querySelector('.rd-math') ? document.querySelector('.rd-math').innerText : ''")).replace("\n", " ")
-        # SCU=1 (manuell 0): Gewinn 6200-3200 = 3000 (de-DE: "3.000")
-        check("route-detail-math-scu1", "3.000" in math_txt and "3.200" in math_txt and "6.200" in math_txt, math_txt)
+        # P15b/RB1: genau 1 Hangar-Schiff (Nomad) → Ship-Typeahead auto-selektiert
+        # beim Laden → SCU=24, also Gewinn (6200-3200)*24 = 72000 ("72.000").
+        check("route-detail-math-scu24", "72.000" in math_txt and "76.800" in math_txt and "148.800" in math_txt, math_txt)
         await shot("02-route-detail.png")
         await key("Escape")  # Detail zu
         await asyncio.sleep(0.4)
@@ -158,11 +159,14 @@ async def main():
         check("esc-closes-detail", bool(gone))
 
         # ---- Schiff aus Hangar → SCU automatisch (Nomad = 24) ----
-        await js("(function(){var s=document.querySelector('.rsel');"
-                 "var set=Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype,'value').set;"
-                 "set.call(s,'Nomad');"
-                 "s.dispatchEvent(new Event('change',{bubbles:true}));"
-                 "return s.value;})()")
+        # RB1 t_723939ff: Schiff = EIN Typeahead-Feld (kein separates <select>).
+        await set_input('input[aria-label="Schiff Type-ahead — Tippen filtert, ↵ übernimmt"]', "nomad")
+        await asyncio.sleep(0.8)
+        # Fokus explizit wieder aufs Typeahead (Svelte setzt den Fokus nach
+        # Moduswechsel ggf. aufs Suchfeld zurück) — dann erst die Tasten.
+        await js("document.querySelector('input[aria-label=\"Schiff Type-ahead — Tippen filtert, ↵ übernimmt\"]').focus()")
+        await key("ArrowDown")
+        await key("Enter")
         await asyncio.sleep(1.2)
         scu_val = await js("document.querySelector('input[aria-label=\"SCU-Kapazität\"]').value")
         check("ship-from-hangar-sets-scu", scu_val == "24", scu_val)

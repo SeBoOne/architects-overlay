@@ -1471,6 +1471,10 @@ impl Cache {
                     sell_terminal_ground: b(16)?,
                     sell_stock: row.get(17)?,
                     profit_per_scu: row.get(18)?,
+                    // Matrix speichert pro-SCU-Basiswerte; quantity/profit/
+                    // cost werden beim SERVieren aus den Query-Filtern
+                    // (SCU + Budget) neu gerechnet (routes_from_matrix).
+                    quantity: 0.0,
                     profit_total: 0.0,
                     cost_total: 0.0,
                     margin: row.get(19)?,
