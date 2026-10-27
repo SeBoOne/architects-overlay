@@ -41,6 +41,17 @@ function hangarUpsertStub(item) {
 
 window.isTauri = true;
 window.__TAURI__ = {};
+/* M2a Mein Shop (t_f1543d2a): Fixtures zur Laufzeit überschreibbar —
+   die Probe setzt window.__SHOP_*__ zwischen Szenarien, der Stub liest
+   sie bei jedem invoke-Aufruf (kein Reload nötig). */
+window.__SHOP_OFFERS__ = window.__SHOP_OFFERS__ || [];
+window.__SHOP_TRADES__ = window.__SHOP_TRADES__ || [];
+window.__SHOP_OFFERS_FAIL__ = !!window.__SHOP_OFFERS_FAIL__;
+window.__SHOP_TRADES_FAIL__ = !!window.__SHOP_TRADES_FAIL__;
+window.__SHOP_OFFERS_SOURCE__ = window.__SHOP_OFFERS_SOURCE__ || 'live';
+window.__SHOP_TRADES_SOURCE__ = window.__SHOP_TRADES_SOURCE__ || 'live';
+window.__SHOP_OFFERS_NOTE__ = window.__SHOP_OFFERS_NOTE__ || null;
+window.__SHOP_TRADES_NOTE__ = window.__SHOP_TRADES_NOTE__ || null;
 const stubState = {
 	palette: 'amber', detail_variant: 'c',
 	uex_api_key_set: false, commodity_source: 'wiki',
@@ -48,6 +59,7 @@ const stubState = {
 	// Rust backend so the probe can A/B the scale live without a Tauri app.
 	scale: 100
 };
+window.__stubState = stubState;
 function stubSettings() {
 	// K2: letzter Snapshot als Spiegel — Probes prüfen damit, ob ein Setter
 	// IPC wirklich gefeuert hat (settings_set_scale etc.).
@@ -71,6 +83,10 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_set_palette':
 			case 'settings_set_detail_variant':
 			case 'settings_set_uex_api_key':
+				// M2a-Probe: Setter spiegelt den Zustand (analog
+				// commodity_source) — ohne Spiegel bliebe der Key-Status im
+				// Smoke-Harness permanent aus.
+				stubState.uex_api_key_set = a.key != null && String(a.key).trim() !== '';
 			case 'settings_set_commodity_source':
 				if (cmd === 'settings_set_commodity_source') stubState.commodity_source = a.name || stubState.commodity_source;
 				return stubSettings();
@@ -112,6 +128,34 @@ window.__TAURI_INTERNALS__ = {
 			}
 			case 'hangar_export':
 				return JSON.stringify(window.__HANGAR_DATA__, null, 2);
+			case 'get_my_offers': {
+				// M2a Mein Shop — eigener Offers-Read (username-gefiltert).
+				// Wire-Feldnamen wie get_marketplace (snake_case über IPC).
+				if (window.__SHOP_OFFERS_FAIL__) throw new Error('HTTP 429 · Rate-Limit erreicht');
+				return {
+					source: window.__SHOP_OFFERS_SOURCE__,
+					fetched_at: Math.floor(Date.now() / 1000),
+					offers: window.__SHOP_OFFERS__,
+					note: window.__SHOP_OFFERS_NOTE__,
+					key_set: stubState.uex_api_key_set
+				};
+			}
+			case 'get_my_trades': {
+				// M2a Mein Shop — Trade-Verlauf (user-scoped).
+				if (window.__SHOP_TRADES_FAIL__) throw new Error('HTTP 403 · UEX nicht erreichbar');
+				return {
+					source: window.__SHOP_TRADES_SOURCE__,
+					fetched_at: Math.floor(Date.now() / 1000),
+					trades: window.__SHOP_TRADES__,
+					note: window.__SHOP_TRADES_NOTE__,
+					key_set: stubState.uex_api_key_set
+				};
+			}
+			case 'open_marketplace_listing':
+				// Nur Tracken — kein echtes Browserfenster im Headless-Smoke.
+				return 'https://uexcorp.space/marketplace/item/info/' + encodeURIComponent(a.slug || '');
+			case 'open_marketplace_trades':
+				return 'https://uexcorp.space/marketplace/';
 			case 'get_prices': {
 				const name = String(a.commodity || '');
 				const now = Math.floor(Date.now() / 1000);
