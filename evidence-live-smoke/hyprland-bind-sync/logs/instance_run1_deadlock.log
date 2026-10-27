@@ -1,0 +1,8 @@
+
+(architects-overlay:1693396): libayatana-appindicator-WARNING **: 10:50:58.977: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+[ao-sync] drift no-op: System-Binds entsprechen bereits den gespeicherten Kürzeln
+[ao-sync] TOGGLE-CMD ein: combo="Ctrl+Alt+Y"
+[ao-sync] TOGGLE-CMD validiert: Ctrl+Alt+Y
+[ao-sync] TOGGLE-CMD rebind ok
+[ao-sync] TOGGLE-CMD persistiert
+[ao-sync] TOGGLE-CMD rufe sync_slot

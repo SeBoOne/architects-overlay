@@ -1,0 +1,17 @@
+
+(architects-overlay:2575393): libayatana-appindicator-WARNING **: 11:09:54.303: libayatana-appindicator is deprecated. Please use libayatana-appindicator-glib in newly written code.
+[ao-sync] drift OK: Sync arch-overlay toggle: CTRL + ALT + Y — hyprctl nicht erreichbar, Verifikation entfällt (Backup: /home/sebo/.config/omarchy/omasettings.json.bak-2026-10-27)
+[ao-sync] TOGGLE-CMD ein: combo="Ctrl+Shift+U"
+[ao-sync] TOGGLE-CMD validiert: Ctrl+Shift+U
+[ao-sync] TOGGLE-CMD rebind ok
+[ao-sync] TOGGLE-CMD persistiert
+[ao-sync] TOGGLE-CMD rufe sync_slot
+[ao-sync] sync_slot ein: Ctrl+Shift+U consent=true
+[ao-sync] slot OK: Sync arch-overlay toggle: CTRL + SHIFT + U — hyprctl nicht erreichbar, Verifikation entfällt (Backup: /home/sebo/.config/omarchy/omasettings.json.bak-2026-10-27)
+[ao-sync] TOGGLE-CMD ein: combo="Ctrl+Alt+Y"
+[ao-sync] TOGGLE-CMD validiert: Ctrl+Alt+Y
+[ao-sync] TOGGLE-CMD rebind ok
+[ao-sync] TOGGLE-CMD persistiert
+[ao-sync] TOGGLE-CMD rufe sync_slot
+[ao-sync] sync_slot ein: Ctrl+Alt+Y consent=true
+[ao-sync] slot OK: Sync arch-overlay toggle: CTRL + ALT + Y — hyprctl nicht erreichbar, Verifikation entfällt (Backup: /home/sebo/.config/omarchy/omasettings.json.bak-2026-10-27)
