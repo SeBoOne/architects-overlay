@@ -1084,6 +1084,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		sell_terminal_ground: boolean;
 		sell_stock: number;
 		profit_per_scu: number;
+		quantity: number;
 		profit_total: number;
 		cost_total: number;
 		margin: number;
@@ -1109,6 +1110,40 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let rPlace = $state<'any' | 'ground' | 'space'>('any');
 	let rSort = $state<RouteSort>('profit_desc');
 	let rScu = $state(0);
+	// RB2 (Karte t_9b42249a): Budget (aUEC) — kappt die kaufbare Menge je
+	// Route auf min(Schiff-SCU, floor(Budget / Kaufpreis pro SCU)). Leer
+	// (kein Budget) = Vollkapazität wie heute. Persistiert in localStorage
+	// (überlebt Neustart).
+	let rBudget = $state<string | number>('');
+	const RBUDGET_KEY = 'architects-overlay.routes.budget';
+	// RB2: Zahl > 0 = Budget aktiv → Menge je Route gekappt. Svelte-Number-
+	// Input liefert je nach Zustand '' (leer), string (aus localStorage) oder
+	// number (getippt) — normalisieren, statt roh zu trimmen.
+	function rBudgetStr(): string {
+		if (typeof rBudget === 'number') return Number.isFinite(rBudget) ? String(rBudget) : '';
+		return rBudget ?? '';
+	}
+	function rBudgetNum(): number | null {
+		const s = rBudgetStr().trim();
+		if (s === '') return null;
+		const n = Number(s);
+		return Number.isFinite(n) ? n : null;
+	}
+	const rBudgetActive = $derived((rBudgetNum() ?? 0) > 0);
+	try {
+		const v = localStorage.getItem(RBUDGET_KEY);
+		if (v != null) rBudget = v;
+	} catch {
+		/* localStorage unvollständig — leer starten. */
+	}
+	// Persistenz: Jede Änderung am Budget-Input sofort sichern.
+	$effect(() => {
+		try {
+			localStorage.setItem(RBUDGET_KEY, rBudgetStr());
+		} catch {
+			/* localStorage unvollständig — nur In-Memory. */
+		}
+	});
 	// Schiff aus Hangar → SCU automatisch (UEX /vehicles.scu), oder manuell.
 	let rShipName = $state('');
 	// P15b (Karte t_5fbd43b6): Type-ahead — Tippen kurzwidd die Ship-Selection;
@@ -1159,8 +1194,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					ground_only: rPlace === 'ground',
 					space_only: rPlace === 'space',
 					scu: Number(rScu) || 0,
+					budget: rBudgetNum(),
 					sort: rSort
-				}
+					}
 			});
 			routes_ = resp.routes;
 			rSweptAt = resp.swept_at;
@@ -1213,7 +1249,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	$effect(() => {
 		// Reaktive Abhängigkeiten: alle Filter + Sort; mTab steuert den Start.
-		rCommodity; rFrom; rTo; rLegal; rAutoload; rCargo; rPlace; rSort; rScu;
+		rCommodity; rFrom; rTo; rLegal; rAutoload; rCargo; rPlace; rSort; rScu; rBudget;
 		if (phase === 'market' && mTab === 'routes') {
 			void loadHangar(); // Schiff-Auswahl aus dem Hangar (SCU auto)
 			queueRoutes();
@@ -1261,12 +1297,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function openRouteDetail() {
 		if (routes_.length) rDetail = routes_[rSel] ?? null;
 	}
-	/** Gewinn = Einheit * Preisdifferenz * SCU — Plausibilitäts-Check im Smoke. */
+	/** Gewinn = Einheit * Preisdifferenz * Menge (RB2: budget-gekappt). */
 	function routeMath(r: TradeRoute) {
-		const scu = rScu || 1; // ohne Schiff/SCU-Angabe: Einzel-SCU rechnen
+		// RB2: Budget aktiv → Menge = Backend `quantity` (budget-gekappt, kann 0
+		// sein = nicht bezahlbar). Ohne Budget → SCU-Kapazität wie heute.
+		const scu = rBudgetActive ? Math.max(Number(r.quantity) || 0, 0) : (rScu || 1);
 		const cost = r.buy_price * scu;
 		const gross = r.sell_price * scu;
-		return { cost, gross, profit: gross - cost };
+		return { qty: scu, cost, gross, profit: gross - cost };
 	}
 
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
@@ -2809,7 +2847,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								</div>
 								<div class="md-price">
 									<div class="v sell">+{fmtPrice(rDetail.profit_total)}</div>
-									<div class="u">aUEC Gewinn bei {rScu || 1} SCU</div>
+									<div class="u">aUEC Gewinn bei {routeMath(rDetail).qty} SCU</div>
 								</div>
 							</div>
 							<div class="rd-leg">
@@ -2838,10 +2876,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								</div>
 							</div>
 							<div class="rd-math">
-								<span><b>SCU</b> {rScu || 1}</span>
+								<span><b>Menge</b> {fmtQty(routeMath(rDetail).qty)} SCU</span>
 								<span><b>Einkauf</b> {fmtPrice(routeMath(rDetail).cost)} aUEC</span>
 								<span><b>Brutto</b> {fmtPrice(routeMath(rDetail).gross)} aUEC</span>
-								<span title="Gain = (Sell−Buy) × SCU · absolute"><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
+								<span title="Gain = (Sell−Buy) × Menge · absolute"><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
 								<span title="Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)"><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
 								<span><b>Bestand dort</b> {fmtPrice(rDetail.sell_stock)} SCU</span>
 							</div>
@@ -2855,13 +2893,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<span class="m-lbl">Schiff</span>
 							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder="Type-ahead Schiff" ariaLabel="Schiff Type-ahead — Tippen filtert, ↵ übernimmt" onselect={(v: string) => applyShipScu(v)} />
 							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
+							<span class="m-lbl">Budget</span>
+							<input class="qnum" type="number" min="0" step="any" placeholder="aUEC" aria-label="Budget (aUEC) — kappt kaufbare Menge" bind:value={rBudget} />
 							<span class="m-lbl">Ware</span>
 							<input class="rtext" placeholder="Ware" aria-label="Ware filtern" bind:value={rCommodity} />
 							<span class="m-lbl">Start</span>
 							<RoutesTypeahead bind:value={rFrom} options={fromOpts} placeholder="Startort" ariaLabel="Startort Type-ahead — Tippen filtert, ↵ übernimmt" />
 							<span class="m-lbl">Ziel</span>
 							<RoutesTypeahead bind:value={rTo} options={toOpts} placeholder="Zielort" ariaLabel="Zielort Type-ahead — Tippen filtert, ↵ übernimmt" />
-							<a class="rta-clear" role="button" tabindex="0" title="Filter zurücksetzen" onclick={() => { rShipQ = ''; rScu = 0; rCommodity = ''; rFrom = ''; rTo = ''; }}>Filter ×</a>
+							<a class="rta-clear" role="button" tabindex="0" title="Filter zurücksetzen" onclick={() => { rShipQ = ''; rScu = 0; rCommodity = ''; rFrom = ''; rTo = ''; rBudget = ''; }}>Filter ×</a>
 						</div>
 						<div class="mbar2">
 							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>Alle</button>
@@ -2907,25 +2947,30 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										role="option"
 										aria-selected={i === rSel}
 										class:is-sel={i === rSel}
+										class:is-rbzero={rBudgetActive && r.quantity <= 0}
 										data-route-idx={i}
 										onclick={() => { rSel = i; openRouteDetail(); }}
-									>
-										<div class="m-main">
-																					<div class="m-title">{r.commodity} {r.illegal ? '⚠' : ''}</div>
-																					<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
-																					{#if r.enrichment && (r.enrichment.scu_reachable > 0 || r.enrichment.scu_destination > 0)}
-																						<div class="r-chip" title="UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo, nicht sortierrelevant">
-																							<span class="r-chip-vol">≋ {r.enrichment.scu_reachable > 0 ? fmt(Math.round(r.enrichment.scu_reachable)) : fmt(Math.round(r.enrichment.scu_destination))} SCU</span>
-																							{#if r.enrichment.status_destination > 0}
-																								<span class="r-chip-stock" title="Nachfrage-Level Verkauf (1–7)">{r.enrichment.status_destination}</span>
-																							{/if}
-																						</div>
-																					{/if}
-																				</div>
-										<div class="m-right">
-											<div class="m-price sell" title="Gain/SCU = Sell − Buy · absolute aUEC per SCU">+{fmtPrice(r.profit_per_scu)}</div>
-											<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title="Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)">Marge {(r.margin * 100).toFixed(0)} %</span></div>
-										</div>
+										>
+									<div class="m-main">
+										<div class="m-title">{r.commodity} {r.illegal ? '⚠' : ''}</div>
+										<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
+										{#if r.enrichment && (r.enrichment.scu_reachable > 0 || r.enrichment.scu_destination > 0)}
+											<div class="r-chip" title="UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo, nicht sortierrelevant">
+												<span class="r-chip-vol">≋ {r.enrichment.scu_reachable > 0 ? fmt(Math.round(r.enrichment.scu_reachable)) : fmt(Math.round(r.enrichment.scu_destination))} SCU</span>
+												{#if r.enrichment.status_destination > 0}
+												<span class="r-chip-stock" title="Nachfrage-Level Verkauf (1–7)">{r.enrichment.status_destination}</span>
+												{/if}
+											</div>
+										{/if}
+										{#if rBudgetActive}
+										<div class="r-chip r-chip-menge" title="RB2: mit diesem Budget kaufbare Menge (min SCHIFF-SCU, floor Budget ÷ Kaufpreis)">Menge {fmtQty(r.quantity)} SCU</div>
+										{/if}
+									</div>
+									<div class="m-right">
+										<div class="m-price sell" title="Gain/SCU = Sell − Buy · absolute aUEC per SCU">+{fmtPrice(r.profit_per_scu)}</div>
+										<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title="Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)">Marge {(r.margin * 100).toFixed(0)} %</span></div>
+										{#if rBudgetActive && r.quantity <= 0}<div class="r-hint">Budget zu niedrig für 1 SCU</div>{/if}
+									</div>
 									</div>
 								{/each}
 							</div>
