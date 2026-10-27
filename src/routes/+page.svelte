@@ -116,6 +116,45 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 	};
 
+	// M2a (Read-Phase): „Mein Shop" — eigene Offers + letzte Trades.
+	// Mirrors provider::Trade (seam-DTO) + IPC-Responses.
+	type Trade = {
+		id: number;
+		terminal_id: number;
+		commodity_id: number;
+		operation: MarketOp;
+		scu: number;
+		price: number;
+		date_added: number;
+		commodity: string;
+		terminal: string;
+		vehicle: string | null;
+		fleet_name: string | null;
+		organization: string | null;
+	};
+	type OwnOffersResponse = {
+		source: 'cache' | 'live' | 'offline';
+		fetched_at: number;
+		offers: Offer[];
+		note: string | null;
+		key_set: boolean;
+	};
+	type TradesResponse = {
+		source: 'cache' | 'live' | 'offline';
+		fetched_at: number;
+		trades: Trade[];
+		note: string | null;
+		key_set: boolean;
+	};
+	const SHOP_USER_KEY = 'architects-overlay.shop.username';
+	function loadShopUser(): string {
+		try {
+			return (localStorage.getItem(SHOP_USER_KEY) || '').trim();
+		} catch {
+			return '';
+		}
+	}
+
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	// Tray "Config öffnen" → Backend-Event (siehe overlay::TRAY_OPEN_CONFIG_EVENT).
 	const overlayTrayOpenConfig = 'tray-open-config';
@@ -356,7 +395,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// P1 t_a39f6811: F6 Handelsrouten — eigener Mode für die Rail/Keyhandler;
 	// intern bleibt es der Market-Phase mit mTab='routes'.
 	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
-	let mTab = $state<'offers' | 'routes'>('offers');
+	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
+	let mTab = $state<'offers' | 'routes' | 'shop'>('offers');
 	let railMode = $state<'inventory' | 'hangar' | null>(null);
 	let mode = $derived<Mode>(
 		railMode ??
@@ -1038,6 +1078,92 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const top = Math.max(visOffers.length - 1, 0);
 		if (mSel > top || (visOffers.length === 0 && mSel !== 0)) mSel = top;
 	});
+
+	// ---- Mein Shop (M2a, Read-Phase): eigene Offers + letzte 5 Trades -----
+	let shopUser = $state(loadShopUser());
+	let myOffers = $state<Offer[]>([]);
+	let myTrades = $state<Trade[]>([]);
+	let shopLoading = $state(false);
+	let shopSource = $state<'cache' | 'live' | 'offline'>('live');
+	let shopNote = $state<string | null>(null);
+	let shopKeySet = $state(true);
+	let shopErr = $state<string | null>(null);
+	function persistShopUser(v: string) {
+		shopUser = v;
+		try {
+			if (v.trim()) localStorage.setItem(SHOP_USER_KEY, v.trim());
+			else localStorage.removeItem(SHOP_USER_KEY);
+		} catch {
+			/* localStorage incomplete — In-Memory bleibt aktiv. */
+		}
+	}
+	async function loadShop(bg = false) {
+		shopLoading = !bg;
+		shopErr = null;
+		shopNote = null;
+		// Eigene Offers brauchen den username-Filter; ohne key kein Abschnitt.
+		// Beide Reads parallel — unabhängig voneinander, ein Fehler reißt den
+		// anderen nicht mit.
+		const results = await Promise.allSettled([
+			invoke<OwnOffersResponse>('get_my_offers', { username: shopUser.trim() }),
+			invoke<TradesResponse>('get_my_trades')
+		]);
+		shopLoading = false;
+
+		// Offers
+		if (results[0].status === 'fulfilled') {
+			const r = results[0].value;
+			myOffers = r.offers;
+			shopSource = r.source;
+			shopKeySet = r.key_set;
+			if (r.note) shopNote = r.note;
+		} else {
+			myOffers = [];
+			shopErr = String(results[0].reason);
+		}
+		// Trades (unabhängig vom Offers-Ergebnis)
+		if (results[1].status === 'fulfilled') {
+			const r = results[1].value;
+			myTrades = r.trades;
+			shopKeySet = shopKeySet || r.key_set;
+			if (r.note && !shopNote) shopNote = r.note;
+		} else if (!shopErr) {
+			shopErr = String(results[1].reason);
+		}
+	}
+	// Beim Betreten des Mein-Shop-Tabs laden (stale-first im Backend).
+	$effect(() => {
+		if (phase === 'market' && mTab === 'shop') void loadShop(true);
+	});
+	// Status einer eigenen Listung aus der Expiry ableiten (UEX liefert auf
+	// marketplace_listings kein eigenes Status-Feld): ohne Ende → „aktiv",
+	// Zukunft → „läuft ab", Vergangenheit → „abgelaufen".
+	function shopStatus(o: Offer): string {
+		if (!o.expires) return 'aktiv';
+		if (o.expires <= Math.floor(Date.now() / 1000)) return 'abgelaufen';
+		return 'läuft ab ' + new Date(o.expires * 1000).toLocaleDateString('de-DE');
+	}
+	// Letzte 5 Trades (neueste zuerst) — die letzten-5-Logik liegt laut
+	// Entscheidung in der UI; der Cache liefert den vollen Verlauf.
+	const recentTrades = $derived(
+		[...myTrades].sort((a, b) => b.date_added - a.date_added).slice(0, 5)
+	);
+	async function openListingDeepLink(slug: string | null) {
+		try {
+			// Leerer Slug → Marketplace-Startseite (Backend-Doku). Kein iframe —
+			// Systembrowser via tauri-plugin-opener, nichts Schreibendes.
+			await invoke<string>('open_marketplace_listing', { slug: slug ?? '' });
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
+	async function openMyShopDeepLink() {
+		try {
+			await invoke<string>('open_marketplace_trades');
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
 
 	// ---- Handelsrouten (Karte t_128b7547) ------------------------------------
 	// Separater Tab im Marktmodus (Design-Empfehlung der Karte). Datenquelle:
@@ -2866,6 +2992,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="mtabs" role="tablist">
 					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
 					<button type="button" role="tab" aria-selected={mTab === 'routes'} class="chip" class:is-on={mTab === 'routes'} onclick={() => (mTab = 'routes')}>Handelsrouten</button>
+				<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
 				</div>
 			{/if}
 			{#if offerDetail}
@@ -3117,6 +3244,141 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{:else}
 							<div class="row-empty" style="padding: 28px 16px">Keine Routen für diese Filter.</div>
+						{/if}
+					{/if}
+				{:else if mTab === 'shop'}
+					<div class="mbar">
+						<span class="m-lbl">UEX-Username</span>
+						<input
+							class="rtext"
+							placeholder="z. B. sebo_one"
+							aria-label="UEX-Benutzername — filtert deine eigenen Offers"
+							title="UEX-Benutzername aus den Settings/GitHub-Account"
+							bind:value={shopUser}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') {
+									persistShopUser(shopUser);
+									void loadShop();
+								}
+							}}
+						/>
+						<span
+							class="btn"
+							onclick={() => {
+								persistShopUser(shopUser);
+								void loadShop();
+							}}
+						>Laden</span>
+						<span class="m-spacer"></span>
+						{#if shopLoading}<span class="chip">↻ …</span>{/if}
+						{#if shopSource === 'offline'}
+							<span class="chip warn"><span class="dot"></span>Offline-Snapshot</span>
+						{:else if shopSource === 'cache'}
+							<span class="chip"><span class="dot"></span>Cache</span>
+						{/if}
+					</div>
+					{#if !cfg?.uex_api_key_set}
+						<div class="pane-error" style="margin: 10px 0">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
+								<div class="sm">Eigene Offers + Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
+								<span class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</span>
+							</div>
+						</div>
+					{:else if shopLoading}
+						<div class="center">
+							<span class="spin"></span>
+							<div class="big" style="margin-top: 12px">Lade Mein Shop …</div>
+							<div class="sm">Eigene Offers + letzte Trades vom UEX-Client.</div>
+						</div>
+					{:else if shopErr && !myOffers.length && !myTrades.length}
+						<div class="pane-error">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
+								<div class="sm">{shopErr}</div>
+								<span class="btn" onclick={() => void loadShop()}>Erneut versuchen</span>
+								<span class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+							</div>
+						</div>
+					{:else}
+						{#if shopNote}
+							<div class="row-empty" style="padding: 10px 16px">{shopNote}</div>
+						{/if}
+						<div class="mbar2" style="margin-top: 10px">
+							<span class="m-lbl">Eigene Offers ({myOffers.length})</span>
+							<span class="m-spacer"></span>
+							<span class="chip" title="Marketplace auf uexcorp.space öffnen" onclick={() => void openListingDeepLink(null)}>Im Browser öffnen ↗</span>
+						</div>
+						{#if myOffers.length}
+							<div class="mlist">
+								{#each myOffers as o, i (o.id)}
+									<div
+										class="mrow"
+										role="option"
+										aria-selected={false}
+										class:is-sel={false}
+										data-shop-offer-idx={i}
+										title="Listung auf uexcorp.space öffnen (nur Lesen)"
+										onclick={() => void openListingDeepLink(o.slug)}
+									>
+										<div class="m-op {o.operation}">{o.operation === 'sell' ? 'WTS' : 'WTB'}</div>
+										<div class="m-main">
+											<div class="m-title">{o.title}</div>
+											<div class="m-sub">{o.location || '—'}{o.region ? ' · ' + o.region : ''} · {shopStatus(o)}</div>
+										</div>
+										<div class="m-right">
+											<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
+											<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+							<div class="m-foot">
+								<span>Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen.</span>
+								<span class="src">UEX Corp</span>
+							</div>
+						{:else}
+							<div class="row-empty" style="padding: 14px 16px">
+								{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Benutzername oben eintragen und Laden drücken.'}
+							</div>
+						{/if}
+						<div class="mbar2" style="margin-top: 14px">
+							<span class="m-lbl">Letzte 5 Trades</span>
+							<span class="m-spacer"></span>
+							<span class="chip" title="Trade-Verlauf auf uexcorp.space öffnen" onclick={openMyShopDeepLink}>Verlauf im Browser ↗</span>
+						</div>
+						{#if recentTrades.length}
+							<div class="mlist">
+								{#each recentTrades as t (t.id)}
+									<div
+										class="mrow"
+										role="option"
+										title="Trade-Verlauf auf uexcorp.space öffnen"
+										onclick={openMyShopDeepLink}
+									>
+										<div class="m-op {t.operation}">{t.operation === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-main">
+											<div class="m-title">{t.commodity}</div>
+											<div class="m-sub">
+												{t.terminal}
+												{t.vehicle ? ' · ' + t.vehicle : ''}
+												{t.fleet_name ? ` · Flotte „${t.fleet_name}“` : ''}
+												{t.organization ? ` · ${t.organization}` : ''}
+											</div>
+										</div>
+										<div class="m-right">
+											<div class="m-price {t.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(t.price)} <span class="m-meta">/SCU</span></div>
+											<div class="m-meta">{fmtQty(t.scu)} SCU · {new Date(t.date_added * 1000).toLocaleDateString('de-DE')}</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+							<div class="m-foot">
+								<span>Zeige {recentTrades.length} von {myTrades.length} Trades · Einzeltrade-Deep-Link bei UEX nicht dokumentiert → Verlauf im Browser.</span>
+								<span class="src">UEX Corp</span>
+							</div>
+						{:else}
+							<div class="row-empty" style="padding: 14px 16px">Noch keine Trades im Verlauf.</div>
 						{/if}
 					{/if}
 				{:else if mLoading && !offers.length}
