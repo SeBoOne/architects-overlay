@@ -7,6 +7,11 @@
 //! * responses always carry `{"status": …, "data": …}`; status `"ok"` OR the
 //!   API's string-coded error names (`requests_limit_reached`, …);
 //! * marketplace `price` arrives as a **string** (`"400000"`), parsed to f64;
+//! * `/marketplace_listings` sends explicit `null` (not missing fields) for
+//!   optional u64 columns (`id_item`, `id_category`, `id_star_system`,
+//!   `in_stock`, `date_added`) — mapped to 0 via `de_u64_null_to_zero`
+//!   (live bug t_cbd4a605: `invalid type: null, expected a integer` broke
+//!   the entire offers fetch);
 //! * `/items` requires `id_category` (or `id_company`/`uuid`) — no bulk list;
 //! * optional fields default via `#[serde(default)]`; a missing price means
 //!   "not traded" (0), identical to UEX's explicit `0`.
@@ -46,6 +51,19 @@ where
     D: serde::Deserializer<'de>,
 {
     Ok(Option::<u64>::deserialize(d)?.unwrap_or(0))
+}
+
+/// Same for `Option<u64>`, but normalizes an explicit `null` to `Some(0)`.
+/// serde's built-in `Option` mapping (null → None) looks tidy but loses the
+/// UEX semantic: `null` and `0` both mean "no expiry / not set", and 0 is the
+/// sentinel every consumer (sort, display) already treats as "none". Mapping
+/// null → None instead would re-introduce `invalid type: null, expected u64`
+/// as soon as the field is narrowed to a plain `u64`.
+pub(crate) fn de_opt_u64_null_to_zero<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(Option::<u64>::deserialize(d)?.unwrap_or(0)))
 }
 
 /// `null` → `""` for plain string fields. The live `/marketplace_listings`
@@ -221,13 +239,18 @@ pub struct ListingRow {
     pub title: String,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub description: String,
-    #[serde(default)]
+    /// `#[serde(default)]` alone does NOT cover an explicit `null` (live
+    /// bug t_cbd4a605: `/marketplace_listings` sends `null` for these u64
+    /// fields, e.g. deleted/unresolved items — deserializing `null` into a
+    /// bare `u64` failed the whole fetch with
+    /// `invalid type: null, expected a integer`). null maps to 0.
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
     pub id_item: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
     pub id_category: u64,
     /// Star system the listing is placed in (0 = unknown) — resolved to a
     /// region name via `/star_systems`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
     pub id_star_system: u64,
     /// "buy" | "sell".
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
@@ -243,7 +266,7 @@ pub struct ListingRow {
     pub currency: String,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub unit: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
     pub in_stock: u64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub location: String,
@@ -256,9 +279,10 @@ pub struct ListingRow {
     /// `""` — kept as String so both shapes deserialize. Not used in Phase 2.
     #[serde(default)]
     pub hours_expiration: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
     pub date_added: u64,
-    #[serde(default)]
+    /// null and `0` mean "no expiry" (see `de_opt_u64_null_to_zero`).
+    #[serde(default, deserialize_with = "de_opt_u64_null_to_zero")]
     pub date_expiration: Option<u64>,
     /// Permalink slug on uexcorp.space (deep-link target).
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
@@ -407,6 +431,66 @@ mod tests {
         assert_eq!(row.slug, "");
         assert_eq!(row.id_star_system, 0);
         assert_eq!(row.quality, None);
+    }
+
+    #[test]
+    fn listing_row_tolerates_explicit_null_u64_fields() {
+        // Regression (t_cbd4a605, live Run433/434 Marktplatz):
+        // 'Ungültige Antwort: invalid type: null, expected a integer' —
+        // /marketplace_listings sends explicit `null` (not a missing field)
+        // for id_item/id_category/id_star_system/in_stock/date_added on
+        // rows with unresolved items. `#[serde(default)]` only covers
+        // *missing* fields; every such row failed the whole fetch. The
+        // crafted fixture mirrors the observed wire shape: numbers where
+        // the API has data, explicit nulls where it has none, price as
+        // string (UEX sends prices as strings for precision).
+        let row: ListingRow = serde_json::from_str(
+            r#"{
+                "id": 181224,
+                "title": null,
+                "description": null,
+                "id_item": null,
+                "id_category": null,
+                "id_star_system": null,
+                "operation": "sell",
+                "type": "item",
+                "price": null,
+                "currency": null,
+                "unit": null,
+                "in_stock": null,
+                "location": null,
+                "user_name": "sebo_one",
+                "quality": null,
+                "hours_expiration": null,
+                "date_added": null,
+                "date_expiration": null,
+                "slug": null
+            }"#,
+        )
+        .expect("explicit-null u64 fields must not fail the fetch");
+        assert_eq!(row.id, 181224);
+        assert_eq!(row.id_item, 0, "null id_item must map to 0");
+        assert_eq!(row.id_category, 0, "null id_category must map to 0");
+        assert_eq!(row.id_star_system, 0, "null star system must map to 0");
+        assert_eq!(row.in_stock, 0, "null in_stock must map to 0");
+        assert_eq!(row.date_added, 0, "null date_added must map to 0");
+        // 0 is the established "no expiry" sentinel (UI: falsy).
+        assert_eq!(row.date_expiration, Some(0));
+        assert_eq!(row.title, "");
+        assert_eq!(row.price, "");
+        // A normal row with real numbers keeps its values untouched.
+        let ok: ListingRow = serde_json::from_str(
+            r#"{"id": 179901, "operation": "sell", "type": "item",
+               "id_item": 465, "id_category": 12, "id_star_system": 55,
+               "price": "400000", "in_stock": 8, "date_added": 1792551295,
+               "date_expiration": 1797738895, "slug": "x-UKCqAtSM3p"}"#,
+        )
+        .unwrap();
+        assert_eq!(ok.id_item, 465);
+        assert_eq!(ok.id_category, 12);
+        assert_eq!(ok.in_stock, 8);
+        assert_eq!(ok.date_added, 1_792_551_295);
+        assert_eq!(ok.date_expiration, Some(1_797_738_895));
     }
 
     #[test]

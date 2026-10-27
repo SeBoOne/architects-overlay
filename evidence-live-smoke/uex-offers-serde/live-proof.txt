@@ -1,0 +1,61 @@
+Live-Smoke t_cbd4a605 — Marktplatz UEX-Offers 'invalid type: null, expected u64'
+Datum: 2026-10-27 (CET) | Build: feature/fix-uex-offers-serde aus 65f0caf (tauri build --no-bundle)
+
+SETUP
+- Isolierte Instanzen unter /tmp/ao7 (eigene XDG data/config/cache + RT /tmp/ao7/rt mit
+  Symlinks wayland-1 + hypr), Fake-Game /tmp/ao7/StarCitizen.exe (sleep-Copy) für Game-Gate,
+  Fenster auf Workspace 12 (user view ws20 nie berührt; reale Instanz 2237629 nur als PID bestätigt).
+- Treiber: scripts/drive.py (uinput Tasten/Maus, grim-Fenster-Crop), OCR-Bänder
+  (magick Gray/resize 200-300% / -negate + tesseract psm 6 + TSV-Koordinaten /2),
+  Gegenprobe per SQLite-Direktabfrage der isolierten cache.sqlite3.
+
+VORHER (Baseline, alter Build 65f0caf, frische Isoliat-Daten, UEX-Modus ohne Key):
+- OCR 02-baseline-uex-offers.png (Window 3440x1440, TSV-Box bei y~630/684):
+    "Marketplace nicht erreichbar"
+    "Ungültige Antwort: invalid type: null, expected u64"
+    "ERNEUT VERSUCHEN"
+  Zoom-Beleg zb7.png (Crop 1200x170+1560+300): identisch per OCR + vision bestätigt.
+- offer-Listenbereich (Listentext x~560-2900, y~400-760) leer — keine Snapshot-Fallback-Zeilen.
+
+ROOT-CAUSE-PROBE (RED):
+- Crafted Fixture (explizite null für id_item/id_category/id_star_system/in_stock/date_added,
+  price/location/user_name/slug null) gegen DTO-Code VOR Fix:
+    thread 'dto::tests::listing_row_tolerates_explicit_null_u64_fields' panicked at src/dto.rs:446:
+    explicit-null u64 fields must not fail the fetch: Error("invalid type: null, expected u64", line: 5, column: 31)
+  -> Zeile 5 = "id_item": null. Exakt die Live-Meldung.
+
+FIX:
+- crates/uex-client/src/dto.rs ListingRow: alle optionalen u64-Felder
+  (id_item, id_category, id_star_system, in_stock, date_added) auf
+  #[serde(default, deserialize_with = "de_u64_null_to_zero")]; date_expiration auf
+  de_opt_u64_null_to_zero (null == 0 == "kein Ablauf", etabliertes Sentinel; UI prift
+  `#if offerDetail.expires` falsy für 0). `id` bleibt Pflicht (PK, Dedupe).
+- Regressionstest listing_row_tolerates_explicit_null_u64_fields: Crafted Fixture
+  (null überall) + Gegenprobe Zahlenreihe (Werte bleiben erhalten).
+
+NACHHER (Fix-Build, identisches Isoli-Setup, frische Daten):
+- OCR 11-fixed-uex-offers.png (TSV-Boxen y~816-1204): Offer-Liste gefüllt:
+    Carinite (Pure) X11 | Admin - Seraphim - Stanton - allengugugu
+    Strata Backpack Lodestar | Lorville - Stanton - TrippleRed Genesis
+    DCP Armor Arms Jungle Camo | Lorville - Stanton - TrippleRed Genesis
+    Antium Core Sand | Lorville - Stanton - TrippleRed Genesis
+    CHIRON AA SUPPORT | Admin - Seraphim - Stanton - flores480
+    MaxLift AA Support Tractor Beam | Admin - Seraphim - Stanton - flores480
+    Savrilium 2.67, 976q | levski - jarvis212121svg
+  Zoom zf6.png: 8 Offer-Zeilen + keine Fehlermeldung (vision bestätigt).
+- DB-Gegenprobe (isolierte cache.sqlite3): select count(*) from marketplace_offers -> 1000
+  (volles Fetch-Fenster im Snapshot gespeichert; VORHER: Fetch komplett fehlgeschlagen, 0 Zeilen).
+- Stichproben-Rows ok: (168844,'Umbra',0,0,expires 1793690680), (168887,'WTB 2x FR-76 - 1.200.000',0,2,...).
+- Offer-Detail via Return: 12-fixed-offer-detail.png (Detailansicht, kein Fehlerbanner).
+
+GATES (Fix-Workspace, CARGO_TARGET_DIR=/tmp/ao6serde_build):
+- cargo fmt --check OK; cargo check --workspace OK; cargo test --workspace: 22 Suites ok 0 failed
+  (log /tmp/ao6_gate_rust.log); svelte-check 0 errors (34 pre-level warnings, parent 34 identisch);
+  pnpm build ok; pnpm tauri build --no-bundle -> target release architects-overlay
+  (log /tmp/ao6_gate_fe.log).
+
+HYGIENE
+- Echte Instanz 2237629 nie angefasst (PID-only-Checks); echte ~/.local/share/com.sebo.architects-overlay
+  nie als Ziel verwendet (Launch-Versuch ohne XDG-Variablen execs verwarf vor App-Start, verifiziert).
+- Isoli-Instanzen per EXAKTER PID beendet (2811200/2811078 baseline, 2920781/2920658 fix),
+  Fake-Game PID 2882997/2882855 killt + rm; Hypr-View ws20 nie verlassen.
