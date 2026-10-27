@@ -176,6 +176,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		shortcut_toggle: string;
 		shortcut_click_through: string;
 		global_shortcuts_active: boolean;
+		// C2b (t_1adbc017): Consent (persistiert) + Compositor-Ist + Sync-Note.
+		shortcuts_sync_omarchy: boolean;
+		hyprland_session: boolean;
+		omasettings_available: boolean;
+		sync_note: string;
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -300,6 +305,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			scNoteFor = field;
 			scNote = String(err);
 			scPreview = '';
+		}
+	}
+	// C2b: Consent-Chip "Tastenkürzel mit System (Omarchy) synchronisieren".
+	// Erstanlass persistiert die Zustimmung; erst ab true führt die App die
+	// zwei arch-overlay-Binds im OmaSettings-Store (Backup vor erstem
+	// Schreibvorgang, Verifikation per hyprctl binds + Lua-Check im Backend).
+	async function toggleOmarchySync() {
+		const on = !(cfg?.shortcuts_sync_omarchy ?? false);
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_shortcuts_sync', { on });
+			applySettings(cfg);
+			cfgConfirm(cfg.sync_note || (on
+				? 'Compositor-Sync aktiv — Kürzel ändern jetzt auch die Hyprland-Binds.'
+				: 'Compositor-Sync deaktiviert.'));
+		} catch (err) {
+			cfgConfirm(`Compositor-Sync: ${String(err)}`);
 		}
 	}
 	let shortcutFields = $derived([
@@ -2588,12 +2609,47 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						     globale Kürzel gesperrt. -->
 						<div class="cfg-sc-note">
 							Intern belegt (nicht wählbar): F1–F6, F12, Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
-							{#if cfg && !cfg.global_shortcuts_active}
+							{#if cfg && cfg.hyprland_session}
+								<!-- C2b (t_1adbc017): Hyprland führt die Kürzel als
+								     Compositor-Binds. OmaSettings-Pfad nur mit
+								     einmaliger Zustimmung; ohne Plugin bleibt der
+								     dokumentierte manuelle Weg (nichts wird geschrieben). -->
+								{#if cfg.omasettings_available}
+									<div class="cfg-sc-row">
+										<button
+											type="button"
+											class="chip"
+											class:is-on={cfg.shortcuts_sync_omarchy}
+											onclick={() => void toggleOmarchySync()}
+										>{cfg.shortcuts_sync_omarchy ? '✓' : '○'} Tastenkürzel mit System (Omarchy) synchronisieren</button>
+									</div>
+									{#if cfg.shortcuts_sync_omarchy}
+										<div class="cfg-sc-ok" role="status">
+											Hyprland-Binds werden aus den gespeicherten Kürzeln geführt
+											(<span class="src">omasettings keys</span> ·
+											<span class="src">arch-overlay toggle</span>) — Änderungen wirken sofort.
+										</div>
+									{:else}
+										<div class="cfg-sc-warn" role="status">
+											Gespeicherte Kürzel sind die kanonische Quelle, aber die
+											Hyprland-Binds werden noch nicht daraus geführt.
+										</div>
+									{/if}
+								{:else}
+									<div class="cfg-sc-warn" role="status">
+										OmaSettings-Plugin nicht gefunden — Binds manuell anlegen
+										(<span class="src">arch-overlay toggle</span>, Anleitung: docs/WAYLAND.md).
+										Die App verändert keine fremde Hyprland-Konfiguration.
+									</div>
+								{/if}
+								{#if cfg.sync_note}
+									<div class="cfg-note" role="status">{cfg.sync_note}</div>
+								{/if}
+							{:else if cfg && !cfg.global_shortcuts_active}
 								<div class="cfg-sc-warn" role="status">
-									Globale Kürzel <b>nicht OS-seitig registriert</b> (Wayland): die
-									gespeicherten Kombinationen sind die kanonische Quelle und werden
-									über die Compositor-Bindung (<span class="src">arch-overlay toggle</span>)
-								aktiv — Bindgenerierung folgt (C2b).
+									Globale Kürzel <b>nicht OS-seitig registriert</b> (reines Wayland ohne Hyprland):
+									die gespeicherten Kombinationen bleiben die kanonische Quelle; Compositor-Binds
+									manuell nach docs/WAYLAND.md anlegen.
 								</div>
 							{:else if cfg}
 								<div class="cfg-sc-ok" role="status">Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart.</div>

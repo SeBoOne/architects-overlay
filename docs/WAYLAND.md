@@ -27,6 +27,61 @@ arch-overlay clickthrough  # Click-through <-> Fokus-Modus
 arch-overlay state         # aktuellen Zustand anzeigen
 ```
 
+## Bind-Sync über OmaSettings (Omarchy-Pfad, C2b)
+
+In den Einstellungen (F12 → Tastenkürzel) gibt es den Consent-Chip
+**„Tastenkürzel mit System (Omarchy) synchronisieren“** (Default aus).
+Ist er aktiv und läuft Hyprland mit dem OmaSettings-Plugin
+(`~/.config/omarchy/plugins/io.github.twiking.omasettings/bin/omasettings`),
+führt die App genau zwei Binds des Users:
+
+| Kürzel (Settings) | Bind-Kommando | OmaSettings-Beschreibung |
+| --- | --- | --- |
+| Overlay-Toggle | `arch-overlay toggle` | Architects Overlay: Palette ein-/ausblenden |
+| Click-through | `arch-overlay clickthrough` | Architects Overlay: Click-through umschalten |
+
+Ablauf bei Änderung oder Start-Drift (Store ≠ Settings):
+
+1. Backup `~/.config/omarchy/omasettings.json.bak-<YYYY-MM-DD>` (einmal pro Tag, vor dem ersten Schreibvorgang).
+2. Änderungen laufen **nur** über das Plugin-CLI (positionale Argumente, nie Flags, nie direktes JSON-Editing):
+   `omasettings keys remove "<ALT>"` → (nur falls der alte Bind schon deaktiviert war) `omasettings keys disable "<ALT>"` → `omasettings keys add "<NEU>" "<Beschreibung>" "<Kommando>"`.
+   Das Plugin aktualisiert dadurch Store + `~/.config/hypr/bindings.lua` (Marker-Block `-- >>> omasettings bindings`) und ruft selbst `hyprctl reload` auf.
+3. Verifikation: `hyprctl binds -j` muss den Bind mit korrekter Taste + Modmaske zeigen (SHIFT=1, CTRL=4, ALT=8, SUPER=64) und `assert(loadfile(bindings.lua))` muss durchgehen; Fehltreffer melden die App direkt in der Settings-Note.
+
+Das Kürzelformat der Settings (`Ctrl+Shift+U`) wird 1:1 in die
+Hyprland-Keysym-Schreibweise übersetzt (`CTRL + SHIFT + U`; `Enter`→`RETURN`,
+`PageUp`→`PAGE_UP`, `ArrowUp`→`UP`, `Quote`→`APOSTROPHE` … — live gegen
+Hyprland 0.56 mit `hyprctl eval 'hl.bind(...)'` validiert).
+
+Fremde Binds bleiben unangetastet: Nur die zwei `arch-overlay …`-Einträge
+werden ersetzt; ein alter Combo, den OmaSettings bereits deaktiviert hatte,
+bleibt deaktiviert (= altes Kürzel tot), ein vorher nicht deaktivierter wird
+nicht nachträglich stummgeschaltet.
+
+## Manueller Weg ohne OmaSettings-Plugin (generisches Hyprland)
+
+Findet die App das Plugin nicht, schreibt sie **nichts** in fremde
+Konfigurationen. Die Binds dann selbst anlegen (ini-Syntax):
+
+```ini
+# ~/.config/hypr/hyprland.conf (bzw. bindings.conf)
+bind = CTRL SHIFT, U, exec, arch-overlay toggle
+bind = CTRL SHIFT, O, exec, arch-overlay clickthrough
+```
+
+Lua-Syntax (Hyprland ≥ 0.55, ohne OmaSettings-Helfer):
+
+```lua
+hl.bind("CTRL + SHIFT + U", hl.dsp.exec_cmd("arch-overlay toggle"),
+        { description = "Architects Overlay: Palette ein-/ausblenden" })
+hl.bind("CTRL + SHIFT + O", hl.dsp.exec_cmd("arch-overlay clickthrough"),
+        { description = "Architects Overlay: Click-through umschalten" })
+```
+
+Nach `hyprctl reload` gegentesten: `hyprctl binds -j | grep arch-overlay` —
+der Eintrag muss die neue Taste/modmask zeigen; `arch-overlay state` antwortet
+auf `$XDG_RUNTIME_DIR/architects-overlay.sock`.
+
 ## Hyprland-Keybinds
 
 ```ini

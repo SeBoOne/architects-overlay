@@ -52,6 +52,16 @@ impl SettingsState {
     /// C2a (t_6565fe8b): the canonical shortcut strings. overlay::init reads
     /// them at startup; the setter commands write them. Single source of
     /// truth for both the OS registration and C2b's compositor binds.
+    /// C2b: full shortcut state (combos + consent) for the sync gates.
+    pub fn shortcut_state(&self) -> (String, String, bool) {
+        let s = self.inner.lock().expect("settings lock");
+        (
+            s.shortcut_toggle().to_owned(),
+            s.shortcut_click_through().to_owned(),
+            s.shortcut_sync_omarchy(),
+        )
+    }
+
     pub fn shortcut_combos(&self) -> (String, String) {
         let s = self.inner.lock().expect("settings lock");
         (
@@ -64,6 +74,22 @@ impl SettingsState {
         if let Err(e) = settings.save() {
             log::warn!("settings: persist failed: {e}");
         }
+    }
+}
+
+/// C2b (t_1adbc017): letzte Bind-Sync-Meldung fuer die Settings-UI (deutsch,
+/// 1:1 sichtbar nach dem K6-Muster). Kein persistierter Zustand — die
+/// Wahrheit liegt im OmaSettings-Store, die Note ist die Rueckmeldung des
+/// letzten Sync-Versuchs dieser App-Instanz.
+#[derive(Debug, Default)]
+pub struct SyncNote(pub std::sync::Mutex<String>);
+
+impl SyncNote {
+    pub fn set(&self, msg: impl Into<String>) {
+        *self.0.lock().expect("sync note lock") = msg.into();
+    }
+    pub fn take(&self) -> String {
+        self.0.lock().expect("sync note lock").clone()
     }
 }
 
@@ -98,10 +124,23 @@ pub struct SettingsSnapshot {
     /// hat (Wayland: false, dort greift der Compositor-Pfad; C2b bindet aus
     /// den Soll-Werten). Soll-Ist wie beim Preisquellen-Feedback (K6).
     pub global_shortcuts_active: bool,
+    /// C2b: persistierter Consent (einmalige Zustimmung, Default false).
+    pub shortcuts_sync_omarchy: bool,
+    /// C2b: Ist-Zustand der Compositor-Anbindung. Nur wenn BEIDES true ist,
+    /// greift der OmaSettings-Pfad: Hyprland-Session aktiv
+    /// (HYPRLAND_INSTANCE_SIGNATURE) und Plugin-Bin vorhanden. Sonst bleibt
+    /// die App lesend/passiv und verweist auf docs/WAYLAND.md.
+    pub hyprland_session: bool,
+    pub omasettings_available: bool,
+    /// C2b: Rueckmeldung des letzten Sync-Versuchs (leer = nichts getan).
+    pub sync_note: String,
 }
 
 impl SettingsSnapshot {
-    fn from_settings(s: &Settings, global_shortcuts_active: bool) -> Self {
+    /// C2b: Compositor-Fakten werden live am Snapshot-Hang berechnet — ein
+    /// stat()-Aufruf, kein Schreibvorgang; die UI zeigt dadurch immer den
+    /// IST-Zustand der Anbindung (Soll-Ist-Muster K6).
+    fn from_settings(s: &Settings, global_shortcuts_active: bool, sync_note: &str) -> Self {
         SettingsSnapshot {
             palette: s.palette().as_str().to_owned(),
             detail_variant: s.detail_variant().as_str().to_owned(),
@@ -111,6 +150,10 @@ impl SettingsSnapshot {
             shortcut_toggle: s.shortcut_toggle().to_owned(),
             shortcut_click_through: s.shortcut_click_through().to_owned(),
             global_shortcuts_active,
+            shortcuts_sync_omarchy: s.shortcut_sync_omarchy(),
+            hyprland_session: crate::hyprland_sync::hyprland_session_active(),
+            omasettings_available: crate::hyprland_sync::OmarchyPaths::detect().is_some(),
+            sync_note: sync_note.to_owned(),
         }
     }
 }
@@ -133,11 +176,99 @@ fn validate_shortcut_input(
     Ok(canonical)
 }
 
+/// C2b: gate + execute one slot's compositor sync. Gates (card mechanism 6):
+/// consent flag AND live Hyprland session AND plugin binary — without ALL
+/// three, nothing is ever written. Result lands in the UI note; a failed
+/// sync never rolls back the persisted combo (that would silently lose the
+/// user's new value — the note names the manual recovery instead).
+fn sync_slot(
+    state: &SettingsState,
+    note: &SyncNote,
+    canonical: &str,
+    command: &str,
+    description: &str,
+) {
+    if !state.shortcut_state().2 {
+        return; // no consent — compositor config stays untouched
+    }
+    if !crate::hyprland_sync::hyprland_session_active() {
+        return;
+    }
+    let Some(paths) = crate::hyprland_sync::OmarchyPaths::detect() else {
+        note.set("Compositor-Sync: Hyprland läuft, aber das OmaSettings-Plugin wurde nicht gefunden. Manuelles Anlegen der Binds: docs/WAYLAND.md.");
+        return;
+    };
+    match crate::hyprland_sync::sync_combo(&paths, canonical, command, description) {
+        Ok(outcome) if outcome.changed => {
+            log::info!("hyprland bind sync: {}", outcome.note);
+            note.set(outcome.note);
+        }
+        Ok(_) => {
+            // store already matched — nothing written, nothing to report
+        }
+        Err(err) => {
+            log::warn!("hyprland bind sync failed: {err}");
+            note.set(format!("Compositor-Sync fehlgeschlagen: {err}"));
+        }
+    }
+}
+
+/// C2b: drift sync for BOTH slots (used on consent-enable and at app start).
+fn sync_all(state: &SettingsState, note: &SyncNote) {
+    if !state.shortcut_state().2 || !crate::hyprland_sync::hyprland_session_active() {
+        return;
+    }
+    let Some(paths) = crate::hyprland_sync::OmarchyPaths::detect() else {
+        note.set("Compositor-Sync: Hyprland läuft, aber das OmaSettings-Plugin wurde nicht gefunden. Manuelles Anlegen der Binds: docs/WAYLAND.md.");
+        return;
+    };
+    let (toggle, click, _) = state.shortcut_state();
+    match crate::hyprland_sync::startup_sync_drift(&paths, &toggle, &click) {
+        Ok(outcomes) => {
+            if outcomes.is_empty() {
+                note.set(
+                    "Compositor-Sync aktiv — System-Binds entsprechen den gespeicherten Kürzeln.",
+                );
+            }
+            for o in outcomes {
+                log::info!("hyprland bind sync: {}", o.note);
+                note.set(o.note);
+            }
+        }
+        Err(err) => {
+            log::warn!("hyprland bind sync failed: {err}");
+            note.set(format!("Compositor-Sync fehlgeschlagen: {err}"));
+        }
+    }
+}
+
+/// C2b (t_1adbc017): startup drift check, called from lib.rs setup thread
+/// after a short delay. Consent-gated: without `[shortcuts] sync_omarchy =
+/// true` this returns before touching anything.
+pub fn startup_hypr_sync<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+    let (Some(state), Some(note)) = (
+        app.try_state::<SettingsState>(),
+        app.try_state::<SyncNote>(),
+    ) else {
+        return;
+    };
+    sync_all(&state, &note);
+}
+
 /// Read the current settings snapshot.
 #[tauri::command]
-pub fn settings_get(state: tauri::State<SettingsState>, app: tauri::AppHandle) -> SettingsSnapshot {
+pub fn settings_get(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+) -> SettingsSnapshot {
     let s = state.inner.lock().expect("settings lock");
-    SettingsSnapshot::from_settings(&s, crate::overlay::global_shortcuts_active(&app))
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
 }
 
 /// Set the colour palette (amber | mfcd | bloom). Persists immediately.
@@ -145,6 +276,7 @@ pub fn settings_get(state: tauri::State<SettingsState>, app: tauri::AppHandle) -
 pub fn settings_set_palette(
     state: tauri::State<SettingsState>,
     app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
     name: String,
 ) -> Result<SettingsSnapshot, String> {
     let palette = Palette::from_name(&name).ok_or_else(|| format!("unknown palette: {name}"))?;
@@ -154,6 +286,7 @@ pub fn settings_set_palette(
     Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
     ))
 }
 
@@ -162,6 +295,7 @@ pub fn settings_set_palette(
 pub fn settings_set_detail_variant(
     state: tauri::State<SettingsState>,
     app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
     name: String,
 ) -> Result<SettingsSnapshot, String> {
     let variant =
@@ -172,6 +306,7 @@ pub fn settings_set_detail_variant(
     Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
     ))
 }
 
@@ -181,12 +316,17 @@ pub fn settings_set_detail_variant(
 pub fn settings_set_uex_api_key(
     state: tauri::State<SettingsState>,
     app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
     key: Option<String>,
 ) -> SettingsSnapshot {
     let mut s = state.inner.lock().expect("settings lock");
     s.set_uex_api_key(key.filter(|k| !k.trim().is_empty()));
     state.persist(&s);
-    SettingsSnapshot::from_settings(&s, crate::overlay::global_shortcuts_active(&app))
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
 }
 
 /// Set the primary commodity price source (wiki | uex). Persists immediately
@@ -196,6 +336,7 @@ pub fn settings_set_uex_api_key(
 pub fn settings_set_commodity_source(
     state: tauri::State<SettingsState>,
     app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
     name: String,
 ) -> Result<SettingsSnapshot, String> {
     let source = CommoditySource::from_name(&name)
@@ -206,6 +347,7 @@ pub fn settings_set_commodity_source(
     Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
     ))
 }
 
@@ -220,6 +362,7 @@ pub fn settings_set_commodity_source(
 pub fn settings_set_scale(
     state: tauri::State<SettingsState>,
     app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
     pct: u16,
 ) -> Result<SettingsSnapshot, String> {
     if pct < settings::SCALE_MIN || pct > settings::SCALE_MAX {
@@ -231,6 +374,7 @@ pub fn settings_set_scale(
     Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
     ))
 }
 
@@ -248,6 +392,7 @@ pub fn settings_set_scale(
 pub fn settings_set_shortcut_toggle(
     state: tauri::State<SettingsState>,
     app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
     combo: String,
 ) -> Result<SettingsSnapshot, String> {
     let peer = state
@@ -259,11 +404,22 @@ pub fn settings_set_shortcut_toggle(
     let canonical = validate_shortcut_input(&combo, &peer, "Click-through")?;
     crate::overlay::rebind_shortcut(&app, crate::overlay::ShortcutKind::Toggle, &canonical)?;
     let mut s = state.inner.lock().expect("settings lock");
-    s.set_shortcut_toggle(canonical);
+    s.set_shortcut_toggle(canonical.clone());
     state.persist(&s);
+    // C2b: persistierter Soll-Wert wird Compositor-Bind (Consent-Gates in
+    // sync_slot). Fehler hier schlagen NICHT auf die Kürzel-Änderung zurück —
+    // das Kürzel ist gültig gespeichert, die Note zeigt den Sync-Fehler.
+    sync_slot(
+        &state,
+        &sync,
+        &canonical,
+        crate::hyprland_sync::TOGGLE_COMMAND,
+        crate::hyprland_sync::TOGGLE_DESCRIPTION,
+    );
     Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
     ))
 }
 
@@ -273,6 +429,7 @@ pub fn settings_set_shortcut_toggle(
 pub fn settings_set_shortcut_click_through(
     state: tauri::State<SettingsState>,
     app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
     combo: String,
 ) -> Result<SettingsSnapshot, String> {
     let peer = state
@@ -284,12 +441,53 @@ pub fn settings_set_shortcut_click_through(
     let canonical = validate_shortcut_input(&combo, &peer, "Overlay-Toggle")?;
     crate::overlay::rebind_shortcut(&app, crate::overlay::ShortcutKind::ClickThrough, &canonical)?;
     let mut s = state.inner.lock().expect("settings lock");
-    s.set_shortcut_click_through(canonical);
+    s.set_shortcut_click_through(canonical.clone());
     state.persist(&s);
+    // C2b: wie beim Toggle-Feld — Sync nach Persistenz, Consent-gegate't.
+    sync_slot(
+        &state,
+        &sync,
+        &canonical,
+        crate::hyprland_sync::CLICK_COMMAND,
+        crate::hyprland_sync::CLICK_DESCRIPTION,
+    );
     Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
     ))
+}
+
+/// C2b: EINMALIGE Zustimmung umschalten ("Tastenkürzel mit System (Omarchy)
+/// synchronisieren"). An = App darf die zwei `arch-overlay …`-Binds im
+/// OmaSettings-Store führen (Backup vor erstem Schreibvorgang, Verifikation
+/// via hyprctl binds + Lua-Syntaxcheck — alles in hyprland_sync). Beim
+/// Einschalten wird sofort drift-synchronisiert, damit Store und gespeicherte
+/// Kürzel nicht mehr auseinanderlaufen. Aus = App lässt die Systemkonfig in
+/// Ruhe (fremde Binds bleiben, wie sie sind).
+#[tauri::command]
+pub fn settings_set_shortcuts_sync(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    on: bool,
+) -> SettingsSnapshot {
+    {
+        let mut s = state.inner.lock().expect("settings lock");
+        s.set_shortcut_sync_omarchy(on);
+        state.persist(&s);
+    }
+    if on {
+        sync_all(&state, &sync);
+    } else {
+        sync.set("Compositor-Sync deaktiviert — gespeicherte Kürzel bleiben aktiv, Systems-Binds werden nicht mehr verändert.");
+    }
+    let s = state.inner.lock().expect("settings lock");
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
 }
 
 #[cfg(test)]
@@ -307,6 +505,7 @@ mod tests {
         let snap = SettingsSnapshot::from_settings(
             &Settings::with_path(std::path::PathBuf::from("/dev/null")),
             true,
+            "",
         );
         let keys: Vec<String> = {
             let v = serde_json::to_value(&snap).unwrap();
@@ -324,6 +523,12 @@ mod tests {
             "shortcut_toggle",
             "shortcut_click_through",
             "global_shortcuts_active",
+            // C2b (t_1adbc017): Consent-Flag + Compositor-Ist + Sync-Note —
+            // dieselbe Snake-Case-Vertrag; camelCase wäre im UI unsichtbar.
+            "shortcuts_sync_omarchy",
+            "hyprland_session",
+            "omasettings_available",
+            "sync_note",
         ] {
             assert!(
                 keys.iter().any(|k| k == required),
@@ -337,6 +542,17 @@ mod tests {
                 "wire key '{forbidden}' is invisible to the frontend (snake_case contract)"
             );
         }
+    }
+
+    /// C2b (t_1adbc017): the sync note is a single shared slot — the last
+    /// operation's feedback wins, which is what the UI shows (K6 pattern).
+    #[test]
+    fn sync_note_last_write_wins() {
+        let note = SyncNote::default();
+        assert_eq!(note.take(), "");
+        note.set("erste Meldung");
+        note.set("zweite Meldung");
+        assert_eq!(note.take(), "zweite Meldung");
     }
 
     /// Regression (t_c3d46cff): the switch handed to the composite provider
