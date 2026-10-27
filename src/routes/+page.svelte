@@ -38,6 +38,7 @@
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
 	import Inventory from '../lib/Inventory.svelte';
+	import RoutesTypeahead from '../lib/RoutesTypeahead.svelte';
 	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
 	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
 	import { suggestShips, isSnubShip } from '../lib/hangar_ships';
@@ -1175,10 +1176,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
-	// P15c (Karte t_5fbd43b6): Start-/Zielort-Autocomplete — LOCATIONEN only.
-	// Backend `location_suggest` reads EntityKind::Locations (Wiki+UEX merged);
-	// Shops/Terminals (EntityKind::Terminals) dorfnet appear in the list.
-	// geneueneinerer → input auto-completed with the full Location-name.
+	// RB1 (Karte t_723939ff): Start-/Zielort-Typeahead — Ort = EIN Eingabefeld
+	// mit Dropdown. Backend `location_suggest` liest EntityKind::Locations
+	// (Wiki+UEX merged); Shops/Terminals (EntityKind::Terminals) erscheinen
+	// NICHT in der Liste. Auswahl übernimmt der Typeahead (Enter/Klick).
 	let rFromSug = $state<string[]>([]);
 	let rToSug = $state<string[]>([]);
 	$effect(() => {
@@ -1188,9 +1189,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			try {
 				const sug = qf ? await invoke<string[]>('location_suggest', { query: qf }) : [];
 				rFromSug = sug;
-				// Autocomplete: exactly one Mate → complete the input (guarded
-				// against equal → no endless self-write).
-				if (sug.length === 1 && sug[0].toLowerCase() !== qf.toLowerCase()) rFrom = sug[0];
 			} catch {
 				rFromSug = [];
 			}
@@ -1199,12 +1197,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			try {
 				const sug = qt ? await invoke<string[]>('location_suggest', { query: qt }) : [];
 				rToSug = sug;
-				if (sug.length === 1 && sug[0].toLowerCase() !== qt.toLowerCase()) rTo = sug[0];
 			} catch {
 				rToSug = [];
 			}
 		})();
 	});
+	let fromOpts = $derived(rFromSug.map((n) => ({ value: n, label: n })));
+	let toOpts = $derived(rToSug.map((n) => ({ value: n, label: n })));
 
 	// Filter/Sort-Änderung → neu laden (debounced, Text-Filter tippt sich).
 	let rDebounce: ReturnType<typeof setTimeout> | null = null;
@@ -1235,6 +1234,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					(s.custom_name || '').toLowerCase().includes(q);
 			})
 			: hangarShips
+	);
+	// RB1: Typeahead-Kandidaten für das Schiff-Eingabefeld (Wert = echter
+	// Ship-Name für applyShipScu, Label = Custom-Name falls gesetzt).
+	let shipTypeaheadOpts = $derived(
+		shipMatches.map((s) => ({ value: s.name, label: s.custom_name || s.name }))
 	);
 	$effect(() => {
 		// P15b: geneueneinerer (exactly one Mate) → auto-Selected + SCU auto.
@@ -2849,34 +2853,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{:else}
 						<div class="mbar2">
 							<span class="m-lbl">Schiff</span>
-							<input class="rtext" type="text" placeholder="Type-ahead Schiff" aria-label="Schiff Type-ahead — Tippen shortens the selection" bind:value={rShipQ} />
-							<select class="qnum rsel" aria-label="Schiff aus Hangar (Type-ahead filteret)" onchange={(e) => applyShipScu(e.currentTarget.value)}>
-							<option value="">— manuell —</option>
-							{#each shipMatches as s (s.id)}
-							<option value={s.name}>{s.custom_name || s.name}</option>
-							{/each}
-							</select>
+							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder="Type-ahead Schiff" ariaLabel="Schiff Type-ahead — Tippen filtert, ↵ übernimmt" onselect={(v: string) => applyShipScu(v)} />
 							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
+							<span class="m-lbl">Ware</span>
 							<input class="rtext" placeholder="Ware" aria-label="Ware filtern" bind:value={rCommodity} />
-							<input class="rtext" placeholder="Startort" aria-label="Startort filtern" bind:value={rFrom} />
-							<input class="rtext" placeholder="Zielort" aria-label="Zielort filtern" bind:value={rTo} />
+							<span class="m-lbl">Start</span>
+							<RoutesTypeahead bind:value={rFrom} options={fromOpts} placeholder="Startort" ariaLabel="Startort Type-ahead — Tippen filtert, ↵ übernimmt" />
+							<span class="m-lbl">Ziel</span>
+							<RoutesTypeahead bind:value={rTo} options={toOpts} placeholder="Zielort" ariaLabel="Zielort Type-ahead — Tippen filtert, ↵ übernimmt" />
+							<a class="rta-clear" role="button" tabindex="0" title="Filter zurücksetzen" onclick={() => { rShipQ = ''; rScu = 0; rCommodity = ''; rFrom = ''; rTo = ''; }}>Filter ×</a>
 						</div>
-						{#if rFrom.trim() || rTo.trim()}
-							<div class="rsug" aria-live="polite">
-								{#if rFromSug.length}
-									<span class="rsug-lbl">Startort:</span>
-									<span class="rsug-list">{rFromSug.slice(0, 8).join(' · ')}</span>
-								{:else}
-									<span class="rsug-list">Startort: —</span>
-								{/if}
-								{#if rToSug.length}
-									<span class="rsug-lbl">Zielort:</span>
-									<span class="rsug-list">{rToSug.slice(0, 8).join(' · ')}</span>
-								{:else}
-									<span class="rsug-list">Zielort: —</span>
-								{/if}
-							</div>
-						{/if}
 						<div class="mbar2">
 							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>Alle</button>
 							<button type="button" class="chip" class:is-on={rLegal === 'legal'} onclick={() => (rLegal = 'legal')}>Legal</button>
