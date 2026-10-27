@@ -1,13 +1,21 @@
-# GitHub Actions — Windows-Build & Gitea-Release-Upload (architects-overlay)
+# GitHub Actions — Windows- & macOS-Build & Gitea-Release-Upload (architects-overlay)
 #
-# Geplanter Weg aus docs/CI-WINDOWS.md §8: Windows-Builds über einen
-# GitHub-Actions-Mirror statt über einen eigenen Windows-PC. GitHub stellt
-# managed windows-latest-Runner (auch für private Repos); die NSIS/MSI-Assets
-# werden zurück auf die Gitea-Release (git.sebo-home.de) hochgeladen.
+# Geplanter Weg aus docs/CI-WINDOWS.md §8: Builds über einen GitHub-Actions-Mirror
+# statt über eigene Hardware. GitHub stellt managed Runner (auch für private
+# Repos); die Bundle-Assets werden zurück auf die Gitea-Release
+# (git.sebo-home.de) hochgeladen.
 #
 # Trigger:
 #   push auf main  -> Windows-Bundle als CI-Artifact (Sanity)
-#   Tag v*         -> Windows-Bundle + Upload als Assets der Gitea-Release
+#   Tag v*         -> Windows- + macOS-Bundle + Upload als Assets der
+#                     Gitea-Release
+#   workflow_dispatch -> manueller Trockenlauf (genutzt für den macOS-Job,
+#                     siehe C4 t_ee85f9d7)
+#
+# macOS-Kosten-Gate (C4 t_ee85f9d7): der macOS-Job läuft NUR bei einem v*-Tag
+# oder einem manuellen workflow_dispatch (Trockenlauf) — NICHT bei jedem push
+# auf main. macOS-Minuten kosten ein Vielfaches der Linux/Windows-Minuten;
+# aarch64 first (macos-latest ist heute arm64 / Apple Silicon).
 #
 # Unterschiede zur Gitea-Variante (.gitea/workflows/build.yml):
 #   - runs-on: windows-latest  (GitHub-managed; kein if: false)
@@ -23,7 +31,7 @@
 # zählt nur .gitea/workflows/). Aktivierung/erster Run erst in einem späteren
 # Task, sobald der Push-Mirror auf GitHub eingerichtet ist.
 
-name: windows-build
+name: desktop-build
 
 on:
   push:
@@ -31,6 +39,10 @@ on:
       - main
     tags:
       - 'v*'
+  # Manueller Trockenlauf — der macOS-Job (kostenintensiv) läuft NUR hier
+  # oder an einem v*-Tag. workflow_dispatch stößt den Windows-Job ebenfalls
+  # an, was harmlos ist (derselbe Build wie bei push auf main).
+  workflow_dispatch:
 
 jobs:
   windows:
@@ -131,5 +143,108 @@ jobs:
               Write-Host "Release-Asset: $($f.FullName)"
             }
           }
+        env:
+          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
+
+  # macOS-Build — C4 t_ee85f9d7. aarch64 first: macos-latest ist heute ein
+  # arm64-Runner (Apple Silicon / macos-26-arm64), das Rust-Target ist
+  # aarch64-apple-darwin. Die Bundles (…/macos/*.app + …/dmg/*.dmg) gehen an
+  # die Gitea-Release. KOSTEN-GATE: der Job läuft nur an v*-Tags oder per
+  # workflow_dispatch (macOS-Minuten kosten deutlich mehr) — niemals bei
+  # jedem push auf main.
+  macos:
+    name: macOS (macos-latest, aarch64) — .app/.dmg
+    runs-on: macos-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # setup-node v4 braucht pnpm im PATH, um den Cache-Pfad zu ermitteln
+      # (\"Could not get pnpm cache folder path\") — erst installieren.
+      - name: pnpm bereitstellen (gepinnt)
+        run: npm install -g pnpm@12.14.0
+
+      - name: Node 22 (gepinnt)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Rust-Toolchain (gepinnt, MSRV ist 1.90)
+        uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          # aarch64 first (C4): Apple-Silicon-Hardware, das Standard-Target
+          # für moderne Macs. Ein x86_64-Universalbinary ist erstmal NICHT
+          # gebaut (Rosetta-Lauf ist für den Start ohnehin kompatibel) — die
+          # Wahl ist im PR dokumentiert.
+          targets: aarch64-apple-darwin
+
+      - name: Toolchain-Versionen anzeigen
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -v
+          pnpm -v
+          rustc -V
+          cargo -V
+          rustup target list --installed
+
+      - name: Dependencies installieren
+        run: pnpm install --frozen-lockfile
+
+      - name: Frontend bauen (vite → ./build)
+        run: pnpm build
+
+      - name: Tauri-Bundle bauen (.app + .dmg)
+        id: bundle
+        run: pnpm tauri build
+
+      - name: Artefakte hochladen (CI-Artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-bundle
+          path: |
+            target/release/bundle/macos/*.app
+            target/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+
+      - name: Gitea-Release an Tag (v*) befüllen (macOS-Assets)
+        if: startsWith(github.ref, 'refs/tags/v')
+        # Bash statt PowerShell: macOS-Runner haben jq+curl im PATH. Upload an
+        # die Gitea-API (git.sebo-home.de) — Auth via GITEA_TOKEN, NICHT
+        # GITHUB_TOKEN (der ist auf github.com scoped).
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          instance='https://git.sebo-home.de'
+          # Gitea-Ziel-Repo explizit pinnen: GITHUB_REPOSITORY waere auf GitHub
+          # owner/name des Mirror-Repos und liesse die Release-API ins Leere laufen.
+          repo='sebo/architects-overlay'
+          api="${instance}/api/v1"
+          auth="Authorization: token $GITEA_TOKEN"
+
+          # Release zum Tag suchen; fehlt es (z. B. macOS-Job schneller als der
+          # Linux-Job auf Gitea), selbst anlegen — sonst fehlen hier Assets.
+          ID="$(curl -sS -H "$auth" "$api/repos/${repo}/releases/tags/${TAG}" | jq -r '.id // empty' 2>/dev/null || true)"
+          if [ -z "${ID}" ]; then
+            ID="$(curl -fsS -X POST -H "$auth" -H 'Content-Type: application/json' \
+              -d "{\"tag_name\":\"${TAG}\",\"name\":\"Architects Overlay ${TAG}\",\"body\":\"Automatischer CI-Build.\"}" \
+              "$api/repos/${repo}/releases" | jq -r '.id')"
+          fi
+
+          # Assets anhängen. Ein Duplikat-Upload (z. B. Re-Tag) wird als Warnung
+          # übersprungen — die Artefakte liegen eh im Run.
+          for f in target/release/bundle/dmg/*.dmg; do
+            [ -f "$f" ] || continue
+            if ! curl -fsS -X POST -H "$auth" -F "attachment=@${f}" \
+              "$api/repos/${repo}/releases/${ID}/assets" >/dev/null; then
+              echo "WARN: Asset-Upload fehlgeschlagen (uebersprungen): ${f}"
+            else
+              echo "Release-Asset: ${f}"
+            fi
+          done
         env:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}

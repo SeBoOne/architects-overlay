@@ -19,7 +19,7 @@
 //! The socket lives in `$XDG_RUNTIME_DIR` (per-session tmpfs, never on disk)
 //! with mode 0700, so it is a purely local, same-user control plane.
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod imp {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::fs::PermissionsExt;
@@ -134,10 +134,11 @@ mod imp {
 
 /// Windows/macOS: kein lokales Socket-Control-Plane. Das Konzept ist ein
 /// reines Wayland-Fallback (unter Windows funktioniert der `global-shortcut`
-/// Plugin-Pfad); der Build braucht daher nur einen No-op, damit die
-/// Windows-Pipeline (GitHub Actions windows-latest) kompiliert.
-#[cfg(unix)]
+/// Plugin-Pfad, unter macOS ebenfalls); der Build braucht daher nur einen
+/// No-op, damit die Windows-Pipeline (GitHub Actions windows-latest) und der
+/// macOS-Job (GitHub Actions macos-latest) kompilieren.
+#[cfg(target_os = "linux")]
 pub use imp::init;
 
-#[cfg(not(unix))]
+#[cfg(not(target_os = "linux"))]
 pub fn init(_app: &tauri::AppHandle) {}
