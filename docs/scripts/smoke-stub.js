@@ -12,6 +12,15 @@
    dump_real_import_for_smoke mit ARCH_HANGAR_DUMP, echter Parser+Merge
    gegen /tmp/HangarExport) — hier wird nur die IPC-Grenze gestubbt. */
 window.__HANGAR_DATA__ = window.__HANGAR_DATA__ || [];
+/* RB1: Pool der Location-Namen für den location_suggest-Stub — NUR
+   EntityKind::Locations (wie das echte Backend), keine Shops/Terminals.
+   Names typbar für Schiff/Startort/Zielort-Typeahead im Smoke. */
+window.__locPool = [
+	{ name: 'Mining Claim #QR4-25Q', kind: 'location', subtitle: 'Stanton > Crusader > Yela > Bashak Fields' },
+	{ name: 'Checkmate Station', kind: 'location', subtitle: 'Pyro > Monox > Monox Lagrange Point 4 > Checkmate Station' },
+	{ name: 'Levski', kind: 'location', subtitle: 'Stanton > Nyx > Delamar > Levski' },
+	{ name: 'Grim HEX', kind: 'location', subtitle: 'Stanton > Yela > Asteroid Belt > Grim HEX' }
+];
 function hangarSave() { /* In-Memory; kein Persistenz-Nachweis nötig */ }
 function hangarNextId() {
   return window.__HANGAR_DATA__.reduce((m, i) => Math.max(m, i.id || 0), 0) + 1;
@@ -600,7 +609,22 @@ window.__TAURI_INTERNALS__ = {
 			globalThis.__lastInv = { op: 'delete', id: a.id };
 			return null;
 		}
-		case 'vehicles_scu': {
+		case 'location_suggest': {
+				// RB1: Spiegel des Backend location_suggest — NUR Locations
+				// (EntityKind::Locations), nie Shops/Terminals. Starts-first,
+				// contains-danach, max 12. Nutzt dieselben Locations wie `search`
+				// (__locPool), damit echte Namen typbar sind.
+				const q = String((a && a.query) || '').trim().toLowerCase();
+				if (!q) return [];
+				const locNames = (globalThis.__locPool || [])
+					.filter((l) => l.kind === 'location')
+					.map((l) => String(l.name).trim())
+					.filter((n, i, arr) => n && arr.indexOf(n) === i);
+				const starts = locNames.filter((n) => n.toLowerCase().startsWith(q));
+				const contains = locNames.filter((n) => n.toLowerCase().includes(q) && !starts.includes(n));
+				return starts.concat(contains).slice(0, 12);
+			}
+			case 'vehicles_scu': {
 				// SCU-Kapazitäten (lowercase name → SCU) — Smoke-Daten.
 				return { 'carrack': 62, 'nomad': 24, 'cutlass black': 46 };
 			}
