@@ -4,7 +4,7 @@
 //! clickthrough | state. Intended for desktop-session keybinds, primarily on
 //! Wayland where global shortcuts are unreliable (see docs/WAYLAND.md).
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 mod imp {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
@@ -52,15 +52,16 @@ mod imp {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn main() {
     imp::main();
 }
 
 /// Windows/macOS: der Socket-Client ist Teil des Wayland-Fallback-Konzepts
 /// (keine Unix-Domain-Sockets dort); er wird mit einem Hinweis beendet, damit
-/// die Windows-Pipeline (GitHub Actions windows-latest) kompiliert.
-#[cfg(not(unix))]
+/// die Windows-Pipeline (GitHub Actions windows-latest) und der macOS-Job
+/// (GitHub Actions macos-latest) kompilieren.
+#[cfg(not(target_os = "linux"))]
 fn main() {
     eprintln!("arch-overlay: control socket is Unix-only (Wayland fallback concept)");
     std::process::exit(1);

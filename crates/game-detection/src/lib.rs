@@ -8,6 +8,12 @@
 //!   surfaces as a wine process whose `cmdline` still names `StarCitizen.exe`
 //!   (or the RSI launcher / Spectre).
 //! - Windows: shells out to `tasklist` and matches known image names.
+//! - macOS: shells out to `ps -ax -o command=` and matches the same known
+//!   tokens. There is no native macOS Star Citizen client; the branch exists
+//!   so the overlay builds/behaves cleanly on Apple silicon and would still
+//!   spot an SC process running under a compatibility layer (CrossOver etc.)
+//!   whose command line names the Windows executables. Clean no-op match:
+//!   without such a process the poll simply reports "not running".
 //!
 //! No telemetry: results are used locally only to show/hide the overlay window.
 
@@ -41,6 +47,8 @@ pub struct ProcEntry {
 pub fn is_game_running() -> bool {
     let procs = if cfg!(target_os = "windows") {
         windows_procs()
+    } else if cfg!(target_os = "macos") {
+        macos_procs()
     } else {
         linux_procs()
     };
@@ -140,6 +148,36 @@ fn windows_procs() -> Vec<ProcEntry> {
     out
 }
 
+/// macOS: run `ps -ax -o command=` and collect the raw command lines.
+///
+/// Compiled on every platform (so the Linux dev host type-checks it) but only
+/// *executed* on macOS, where it is selected from `is_game_running` via
+/// `cfg!(target_os = "macos")`. There is no native Star Citizen client for
+/// macOS; this branch exists so the build stays clean on Apple silicon and a
+/// compatibility-layer SC process (CrossOver etc.) is still spotted — same
+/// substring matcher as the other backends.
+fn macos_procs() -> Vec<ProcEntry> {
+    let mut out: Vec<ProcEntry> = Vec::new();
+    if cfg!(test) {
+        return out;
+    }
+    // `ps -ax -o command=` → one command line per process, no header (the
+    // trailing `=` suppresses the "COMMAND" header row).
+    if let Ok(output) = Command::new("ps").args(["-ax", "-o", "command="]).output() {
+        if let Ok(stdout) = String::from_utf8(output.stdout) {
+            for line in stdout.split('\n') {
+                let line = line.trim();
+                if !line.is_empty() {
+                    out.push(ProcEntry {
+                        cmdline: line.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +186,20 @@ mod tests {
         ProcEntry {
             cmdline: cmdline.to_string(),
         }
+    }
+
+    #[test]
+    fn matches_macos_ps_style_command_line() {
+        // `ps -ax -o command=` output style — the same tokens matched by the
+        // /proc and tasklist backends, so the macOS poller shares one matcher.
+        let lines = [
+            "  PID TT  STAT      TIME COMMAND",
+            "  123 ??  Ss    0:00.01 /usr/libexec/logd",
+            "  456 ??  S      2:30.12 /Applications/StarCitizen.app/Contents/MacOS/StarCitizen.exe",
+            "  789 ??  S      0:01.02 launchd",
+        ];
+        let procs: Vec<ProcEntry> = lines.iter().map(|l| proc(l)).collect();
+        assert!(scan_candidates(&procs));
     }
 
     #[test]
