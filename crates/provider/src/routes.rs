@@ -77,6 +77,9 @@ pub enum RouteSort {
     TotalProfitDesc,
     /// Marge (Gewinn / Einkaufskosten) absteigend.
     MarginDesc,
+    /// Neutral: keine explizite Sortierung — Originalliste (Provider-Reihenfolge)
+    /// unverändert. Deckt den neutralen Zustand des dynamischen Gewinn/SCU-Schalters.
+    Natural,
 }
 
 impl RouteSort {
@@ -87,6 +90,7 @@ impl RouteSort {
             RouteSort::DistanceAsc => "distance_asc",
             RouteSort::TotalProfitDesc => "total_profit_desc",
             RouteSort::MarginDesc => "margin_desc",
+            RouteSort::Natural => "natural",
         }
     }
 }
@@ -485,6 +489,7 @@ fn sort_routes(routes: &mut [TradeRoute], sort: RouteSort) {
             routes.sort_by(|a, b| b.profit_total.total_cmp(&a.profit_total))
         }
         RouteSort::MarginDesc => routes.sort_by(|a, b| b.margin.total_cmp(&a.margin)),
+        RouteSort::Natural => {} // Originalliste (keine explizite Sortierung)
     }
 }
 
@@ -819,6 +824,48 @@ mod tests {
             compute(&rows, &t, &Default::default(), &f)[0].commodity,
             "Rich"
         );
+    }
+
+    /// t_5b6d908f P3: „Profit absolut absteigend" ist redundant zu „Gewinn/SCU
+    /// absteigend" — profit_total = profit_per_scu × SCU mit FESTEM SCU ist eine
+    /// monotone Skalierung, die Rangfolge ist identisch. Belag: vollständige
+    /// Sequenz (commodity + profit_per_scu) über mehrere Waren mit unterschied-
+    /// lichen Gewinnen unter beiden Sortierungen.
+    #[test]
+    fn profit_total_desc_ranking_identical_to_profit_per_scu_desc() {
+        use std::collections::HashMap;
+        let rows = vec![
+            row(11, 10, "Alpha", 100.0, 0.0),
+            row(11, 20, "Alpha", 0.0, 1100.0), // gain 1000
+            row(12, 10, "Beta", 200.0, 0.0),
+            row(12, 20, "Beta", 0.0, 700.0), // gain 500
+            row(13, 10, "Gamma", 50.0, 0.0),
+            row(13, 20, "Gamma", 0.0, 930.0), // gain 880
+            row(14, 10, "Delta", 80.0, 0.0),
+            row(14, 20, "Delta", 0.0, 420.0), // gain 340
+        ];
+        let t = meta_map(&[
+            (10, flags(false, false, true, "S > Crusader > Yela > A")),
+            (20, flags(false, false, true, "S > Crusader > Yela > B")),
+        ]);
+        let order = |sort: RouteSort| -> Vec<(String, f64)> {
+            let mut f = base_filters();
+            f.scu = 250.0; // festes SCU für die ganze Query
+            f.sort = sort;
+            compute(&rows, &t, &HashMap::new(), &f)
+                .into_iter()
+                .map(|r| (r.commodity.clone(), r.profit_per_scu))
+                .collect()
+        };
+        let per_scu = order(RouteSort::ProfitDesc);
+        let abs_total = order(RouteSort::TotalProfitDesc);
+        assert_eq!(per_scu, abs_total);
+        // Erwartete Reihenfolge: Alpha(1000) → Gamma(880) → Beta(500) → Delta(340)
+        let names: Vec<&str> = per_scu.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["Alpha", "Gamma", "Beta", "Delta"]);
+        // Neutral (Natural) lässt die Originalliste unverändert → NICHT Gewinn-absteigend.
+        let neutral = order(RouteSort::Natural);
+        assert_ne!(neutral, per_scu);
     }
 
     #[test]

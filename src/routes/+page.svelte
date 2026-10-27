@@ -1043,7 +1043,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// UEX-Sweep über alle Commodity-Terminals (Backend `get_routes`), Filte-
 	// rung/Sortierung serverseitig im Backend. BEWUSST ohne Mindest-/Maximal-
 	// bestand-Filter (Unterschied zu Arkanis).
-	type RouteSort = 'profit_desc' | 'profit_asc' | 'distance_asc' | 'total_profit_desc' | 'margin_desc';
+	type RouteSort = 'profit_desc' | 'profit_asc' | 'distance_asc' | 'margin_desc' | 'natural';
 	type RouteEnrichment = {
 		uex_score: number;
 		scu_origin: number;
@@ -1900,6 +1900,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		void loadMarket();
 	}
 
+	// P2 (t_5b6d908f): Ein einziger Gewinn/SCU-Schalter (3-Zustand) statt zwei
+	// Sortier-Chips — neutral → absteigend → aufsteigend → neutral. 'natural'
+	// (Backend RouteSort::Natural) lässt die Liste in der Originalliste stehen.
+	function cycleProfitSort() {
+		if (rSort === 'profit_desc') rSort = 'profit_asc';
+		else if (rSort === 'profit_asc') rSort = 'natural';
+		else rSort = 'profit_desc';
+	}
+
 	function setOp(o: 'all' | MarketOp) {
 		mOp = o;
 		mMshown = M_PAGE;
@@ -2108,12 +2117,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const t = e.target;
 			const inStepper = t instanceof HTMLInputElement && t.type === 'number';
 			const onChip = t instanceof HTMLButtonElement;
-			// Tab: ANGEBOTE ⇄ ROUTEN (separater Routen-Tab, Karte t_128b7547).
-			if (k === 'Tab') {
-				mTab = mTab === 'offers' ? 'routes' : 'offers';
-				e.preventDefault();
-				return;
-			}
 			if (mTab === 'routes') {
 				if (k === 'Escape') {
 					if (rDetail) rDetail = null;
@@ -2896,9 +2899,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						</div>
 						<div class="mbar2">
 							<span class="m-lbl">Sort</span>
-							<button type="button" class="chip" class:is-on={rSort === 'profit_desc'} onclick={() => (rSort = 'profit_desc')}>Gewinn/SCU ↓</button>
-							<button type="button" class="chip" class:is-on={rSort === 'profit_asc'} onclick={() => (rSort = 'profit_asc')}>Gewinn/SCU ↑</button>
-							<button type="button" class="chip" class:is-on={rSort === 'total_profit_desc'} onclick={() => (rSort = 'total_profit_desc')}>Profit absolut ↓</button>
+							<button
+								type="button"
+								class="chip"
+								class:is-on={rSort === 'profit_desc' || rSort === 'profit_asc'}
+								onclick={cycleProfitSort}
+								title="Gewinn/SCU umschalten: neutral → absteigend → aufsteigend → neutral"
+							>Gewinn/SCU{rSort === 'profit_desc' ? ' ↓' : rSort === 'profit_asc' ? ' ↑' : ''}</button>
 							<button type="button" class="chip" class:is-on={rSort === 'margin_desc'} onclick={() => (rSort = 'margin_desc')}>Marge ↓</button>
 							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>Distanz ↑</button>
 							<span class="m-spacer"></span>

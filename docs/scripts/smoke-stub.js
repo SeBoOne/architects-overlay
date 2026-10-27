@@ -638,6 +638,7 @@ window.__TAURI_INTERNALS__ = {
 				else if (sort === 'total_profit_desc') routes.sort((x, y) => y.profit_total - x.profit_total);
 				else if (sort === 'margin_desc') routes.sort((x, y) => y.margin - x.margin);
 				else if (sort === 'distance_asc') routes.sort((x, y) => x.distance - y.distance);
+				else if (sort === 'natural') { /* Originalliste (Provider-Reihenfolge) */ }
 				else routes.sort((x, y) => y.profit_per_scu - x.profit_per_scu);
 				return { source: 'stub', swept_at: now, routes };
 			}
