@@ -1639,6 +1639,90 @@ html[data-window="spotlight"] .shell {
 	margin-right: 4px;
 }
 
+/* RB3 (t_4e581d1d): „Nächst beste Alternativrouten“ im Routen-Detail — gleiche
+   Ware, sortiert nach Gewinn/SCU; Ein-Klick-Wechsel auf die Alternative. */
+.rd-alt {
+	border-bottom: 1px solid var(--lineb);
+	padding: 10px 16px 12px;
+}
+.rd-alt-head {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	margin-bottom: 2px;
+}
+.rd-alt-title {
+	font: 700 9.5px/1 var(--font-mono);
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--fgdim);
+}
+.rd-alt-sub {
+	font: 500 10px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+}
+.rd-alt-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	width: 100%;
+	text-align: left;
+	background: var(--panel2);
+	border: 1px solid var(--lineb);
+	border-radius: 4px;
+	padding: 8px 12px;
+	margin-top: 6px;
+	cursor: pointer;
+	color: var(--fg);
+	font: inherit;
+}
+.rd-alt-row:hover,
+.rd-alt-row:focus-visible {
+	border-color: var(--accent);
+	outline: none;
+}
+.rd-alt-row.is-rbzero {
+	opacity: 0.45;
+	filter: saturate(0.4);
+}
+.rd-alt-main {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 8px;
+	min-width: 0;
+}
+.rd-alt-term {
+	font: 600 12px/1.4 var(--font-mono);
+}
+.rd-alt-right {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 2px;
+	text-align: right;
+	white-space: nowrap;
+}
+.rd-alt-gain {
+	font: 600 13px/1.35 var(--font-mono);
+	color: var(--sell);
+}
+.rd-alt-row.is-rbzero .rd-alt-gain,
+.rd-alt-row.is-rbzero .rd-alt-meta {
+	color: var(--fgfaint);
+}
+.rd-alt-meta {
+	font: 500 10px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+}
+.rd-alt-none {
+	font: 500 10.5px/1.5 var(--font-mono);
+	font-style: italic;
+	color: var(--fgfaint);
+	padding: 4px 2px 2px;
+}
+
 .md-head {
 	display: flex;
 	align-items: flex-start;
