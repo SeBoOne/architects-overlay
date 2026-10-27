@@ -345,6 +345,7 @@ async fn live_route_enrichment_before_after() {
             sell_terminal_ground: true,
             sell_stock: 0.0,
             profit_per_scu: 1600.0,
+            quantity: 0.0,
             profit_total: 160000.0,
             cost_total: 740000.0,
             margin: 0.21,

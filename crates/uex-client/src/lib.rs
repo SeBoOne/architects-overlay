@@ -2107,6 +2107,7 @@ mod tests {
                 sell_terminal_ground: false,
                 sell_stock: 0.0,
                 profit_per_scu: 1.0,
+                quantity: 0.0,
                 profit_total: 1.0,
                 cost_total: 1.0,
                 margin: 0.0,
