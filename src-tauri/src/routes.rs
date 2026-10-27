@@ -63,7 +63,15 @@ pub async fn vehicles_scu(
 /// LOKALEN Routen-Datensatz (kein neuer UEX-Call — nur Cache-Lesung). Im
 /// Routen-Detail der gewählten Ware: Kauforte (Preis aufsteigend) links,
 /// Verkaufsorte (Preis absteigend) rechts, aktuelle Kombi markiert.
-#[tauri::command]
+///
+/// rename_all = "snake_case" (RF2 t_71e2f03d): Tauri v2 mappt top-level
+/// Command-Args per Default camelCase (→ JS `commodityId`), die Svelte-
+/// Komponente sendet aber `commodity_id` (snake, wie alle Filter-Payloads).
+/// Ohne dieses Attribut ist `commodity_id` NIE angebunden → invoke rejected →
+/// „keine Alternativorte", obwohl die Stammdaten da sind. Der zugehörige
+/// IPC-Regressiontest (`get_route_locations_ipc_accepts_snake_case_commodity_arg`)
+/// dispatcht den Command über die ECHTE IPC-Schicht.
+#[tauri::command(rename_all = "snake_case")]
 pub async fn get_route_locations(
     state: tauri::State<'_, crate::trade::TradeState>,
     commodity_id: u64,
@@ -138,6 +146,37 @@ mod tests {
         }
         async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
             Ok(vec![])
+        }
+        async fn route_locations(
+            &self,
+            commodity_id: u64,
+        ) -> provider::Result<Option<provider::routes::RouteCommodityLocations>> {
+            Ok(Some(provider::routes::RouteCommodityLocations {
+                commodity_id,
+                commodity: "Gold".into(),
+                buys: vec![provider::routes::RouteLocation {
+                    terminal_id: 1,
+                    terminal: "HDMS-Anderson".into(),
+                    chain: "Stanton > Hurston".into(),
+                    price: 24000.0,
+                    stock: 500.0,
+                    status: 3,
+                    autoload: false,
+                    cargo_deck: false,
+                    ground: true,
+                }],
+                sells: vec![provider::routes::RouteLocation {
+                    terminal_id: 2,
+                    terminal: "Port Olisar".into(),
+                    chain: "Stanton > Crusader".into(),
+                    price: 31000.0,
+                    stock: 1000.0,
+                    status: 4,
+                    autoload: true,
+                    cargo_deck: false,
+                    ground: false,
+                }],
+            }))
         }
         async fn marketplace_offers(
             &self,
@@ -238,5 +277,60 @@ mod tests {
         // Case-Insensitiv.
         let arc = location_suggest(state.clone(), "arc".to_string()).unwrap();
         assert_eq!(arc, vec!["ARC-L1 Wild Forest Station"]);
+    }
+
+    /// RF2 (t_71e2f03d): REAL-IPC-Regressiontest. Der F2-UI-Probe (smoke-stub)
+    /// hat `get_route_locations` mit handgemachten Dummies beantwortet und damit
+    /// die echte Tauri-Argument-Abbildung übersprungen. Der Live-App schickt
+    /// Svelte aber `{ commodity_id }` (snake_case) — Tauri v2 erwartet für
+    /// top-level Command-Args per Default camelCase (`commodityId`). Bei NUR
+    /// dieser einen Mehrwort-Arg wurde sie nie getroffen → invoke rejected
+    /// → Frontend-Catch → „keine Alternativorte", obwohl die Stammdaten da sind.
+    /// Der Test dispatcht den registrierten Command über die ECHTE IPC-Schicht
+    /// (get_ipc_response) mit exakt dem Frontend-Payload und erzwingt damit,
+    /// dass jeder künftige Wahr-Snake-Arg freiwillig per rename_all gekoppelt
+    /// sein muss.
+    #[test]
+    fn get_route_locations_ipc_accepts_snake_case_commodity_arg() {
+        use tauri::Manager;
+        use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
+
+        let app = mock_builder()
+            .invoke_handler(tauri::generate_handler![super::get_route_locations])
+            .manage(crate::trade::TradeState {
+                provider: Arc::new(StubProvider),
+                cache: Arc::new(Cache::open_in_memory().unwrap()),
+                tracker: Arc::new(crate::trade::SyncTracker::default()),
+                wiki_sync: None,
+            })
+            .build(tauri::test::mock_context(noop_assets()))
+            .unwrap();
+
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+
+        // Exakt das Argument-Objekt, das die Svelte-Komponente (`+page.svelte`)
+        // für `get_route_locations`, { commodity_id: cur.commodity_id } sendet.
+        let body: tauri::ipc::InvokeBody = serde_json::json!({ "commodity_id": 33 }).into();
+        let req = tauri::webview::InvokeRequest {
+            cmd: "get_route_locations".into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: "tauri://localhost".parse().unwrap(),
+            body,
+            headers: Default::default(),
+            invoke_key: INVOKE_KEY.to_string(),
+        };
+
+        let res = get_ipc_response(&webview, req);
+        // Wenn Tauri das snake_case-Arg nicht abbildet, schlägt die IPC-Args-
+        // Deserialisierung fehl → `res` ist ein serde_json-Err "missing field".
+        let ok = res.expect("get_route_locations({commodity_id}) muss über echte IPC ok sein");
+        let locs: provider::routes::RouteCommodityLocations = ok.deserialize().unwrap();
+        assert_eq!(locs.commodity_id, 33);
+        assert_eq!(locs.buys.len(), 1);
+        assert_eq!(locs.buys[0].terminal, "HDMS-Anderson");
+        assert_eq!(locs.sells[0].terminal, "Port Olisar");
     }
 }

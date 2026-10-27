@@ -200,15 +200,16 @@ async def main():
         # Stub liefert buys/sells getrennt; die Spalten-Reihenfolge im DOM ist
         # KAUF → VERKAUF (Template). Wir prüfen anhand der Preise: Kauforte
         # steigen auf, Verkaufsorte fallen ab.
-        # Kauforte: Checkmate(4750) < Tram(4800) < Grim(4800) < Anderson(4850).
-        # Verkaufsorte: Orbituary(6280) > Bai(6250) > Olisare(6200).
-        check("f2-gold-multiple-buy-4", len(buy_col["rows"]) >= 4, json.dumps(buy_col["rows"]))
-        check("f2-gold-multiple-sell-3", len(sell_col["rows"]) >= 3, json.dumps(sell_col["rows"]))
-        # Markierte Kombination: die Route kauft bei Checkmate, verkauft bei Bai Hang.
+        # RF2 (t_71e2f03d): Werte real (Preise in aUEC, ~24k/30k) — bester
+        # Kauf Cousin Crow's 24045, bester Verkauf TDD-Area18 31000.
+        check("f2-gold-multiple-buy", len(buy_col["rows"]) >= 5, json.dumps(buy_col["rows"]))
+        check("f2-gold-multiple-sell", len(sell_col["rows"]) >= 4, json.dumps(sell_col["rows"]))
+        # Markierte Kombination: die Route kauft bei Cousin Crow's, verkauft bei
+        # TDD-Area18 (höchster Profit). Header nur bis zur Leerzeile nehmen.
         sel_buy = [r for r in buy_col["rows"] if r["selected"]]
         sel_sell = [r for r in sell_col["rows"] if r["selected"]]
-        check("f2-selected-buy-highlight", len(sel_buy) == 1 and "Checkmate" in sel_buy[0]["term"], json.dumps(sel_buy))
-        check("f2-selected-sell-highlight", len(sel_sell) == 1 and "Bai Hang" in sel_sell[0]["term"], json.dumps(sel_sell))
+        check("f2-selected-buy-highlight", len(sel_buy) == 1 and "Cousin Crow" in sel_buy[0]["term"], json.dumps(sel_buy))
+        check("f2-selected-sell-highlight", len(sel_sell) == 1 and "Area 18" in sel_sell[0]["term"], json.dumps(sel_sell))
         await shot("02-f2-gold-alt-table-highlight.png")
 
         # Ein Klick auf einen Kauf/Verkaufsort setzt Start/Ziel im Filter.
