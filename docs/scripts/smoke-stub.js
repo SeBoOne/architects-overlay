@@ -660,15 +660,15 @@ window.__TAURI_INTERNALS__ = {
 					R(4, 'Altruciatoxin', true, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 3200, false, false, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6200, true, true, false, 120, 2)
 				];
 				// F2 (t_96120e79): GOLD als Beleg „an vielen Orten gekauft/verkauft".
-				// Die Routen werden NUR bei passendem Ware-Filter ergänzt — so bleibt
-				// das unbefilterte Fixture (3 Routen) für die älteren RB1/RB2-Proben
-				// unverändert; die __RB3_EXTRA__-Flag-Gate (t_4e581d1d) ist entfernt.
-				// Die Alternativ-Tabelle liest den neuen `get_route_locations`-Endpkt.
+				// Werte real (RF2 t_71e2f03d): commodity_id 33, Preise/Standorte aus
+				// der Live-Cache-DB. Die Routen werden NUR bei passendem Ware-Filter
+				// ergänzt — so bleibt das unbefilterte Fixture (3 Routen) für die
+				// älteren RB1/RB2-Proben unverändert.
 				const extraGold = [
-					R(60, 'Gold', false, [432, 'Grim HEX'], 'Stanton > Crusader > Yela > Grim HEX', 4800, true, true, false, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 6200, false, true, false, 400, 2),
-					R(60, 'Gold', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 4750, true, true, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6250, true, true, false, 350, 2),
-					R(60, 'Gold', false, [430, 'Tram & Myers'], 'Stanton > Crusader > Yela > Port Olisare', 4800, false, true, true, [431, 'Orbituary'], 'Stanton > Crusader > Daymar > Orbituary', 6280, true, true, false, 300, 2),
-					R(60, 'Gold', false, [438, 'HDMS-Anderson'], 'Stanton > Crusader > Yela > Yela Prime', 4850, true, false, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6230, true, true, false, 250, 2)
+					R(33, 'Gold', false, [338, 'Cousin Crow\'s - Providence Platform - Orison'], 'Stanton > Crusader > Orison', 24045, true, true, true, [89, 'TDD - Trade and Development Division - Area 18'], 'Stanton > ArcCorp > Area 18', 31000, false, true, false, 400, 2),
+					R(33, 'Gold', false, [12, 'Commodity Shop - HDMS-Anderson'], 'Stanton > Hurston > Aberdeen', 24360, true, false, true, [443, 'Commodity Shop - Admin - Pyro Gateway (Nyx)'], 'Nyx > Pyro Gateway (Nyx system)', 31000, true, true, false, 350, 2),
+					R(33, 'Gold', false, [49, 'Commodity Shop - HDMS-Norgaard'], 'Stanton > Hurston > Aberdeen', 24360, false, true, true, [436, 'Commodity Shop - Admin - ARC-L1'], 'Stanton > ArcCorp > ARC-L1 Wide Forest Station', 30000, true, true, false, 300, 2),
+					R(33, 'Gold', false, [2, 'Commodity Shop - Admin - CRU-L5'], 'Stanton > Crusader > CRU-L5 Beautiful Glen Station', 26492, true, true, false, [90, 'CBD - Central Business District - Lorville'], 'Stanton > Hurston > Lorville', 30000, true, true, false, 250, 2)
 				];
 				const extraDrink = [
 					R(27, 'Distilled Spirits', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1427, true, true, true, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 2280, true, true, true, 300, 2)
@@ -725,17 +725,20 @@ window.__TAURI_INTERNALS__ = {
 							LOC(431, 'Orbituary', 'Stanton > Crusader > Daymar > Orbituary', 6250, 800, 4, true, true, false)
 						]
 					},
-					60: { // Gold — Sebos Beleg: viele Standorte, nicht nur Anderson
+					33: { // Gold — Sebos Beleg (RF2 t_71e2f03d): Preise/Standorte real aus der
+						// Live-Cache-DB ~/.local/share/com.sebo.architects-overlay/cache.sqlite3
 						buys: [
-							LOC(436, 'Checkmate Admin', 'Stanton > Crusader > Yela > Daymar', 4750, 3500, 6, true, true, true),
-							LOC(430, 'Tram & Myers', 'Stanton > Crusader > Yela > Port Olisare', 4800, 3000, 5, false, true, true),
-							LOC(432, 'Grim HEX', 'Stanton > Crusader > Yela > Grim HEX', 4800, 2800, 5, true, true, false),
-							LOC(438, 'HDMS-Anderson', 'Stanton > Crusader > Yela > Yela Prime', 4850, 2500, 4, true, false, true)
+							LOC(338, 'Cousin Crow\'s - Providence Platform - Orison', 'Stanton > Crusader > Orison', 24045, 600, 5, true, true, true),
+							LOC(12, 'Commodity Shop - HDMS-Anderson', 'Stanton > Hurston > Aberdeen', 24360, 500, 4, true, false, true),
+							LOC(49, 'Commodity Shop - HDMS-Norgaard', 'Stanton > Hurston > Aberdeen', 24360, 450, 4, false, true, true),
+							LOC(2, 'Commodity Shop - Admin - CRU-L5', 'Stanton > Crusader > CRU-L5 Beautiful Glen Station', 26492, 400, 4, true, true, false),
+							LOC(51, 'Commodity Shop - Shubin Mining Facility SCD-1', 'Stanton > Crusader > Daymar', 27550, 380, 3, false, true, true)
 						],
 						sells: [
-							LOC(431, 'Orbituary', 'Stanton > Crusader > Daymar > Orbituary', 6280, 3000, 6, true, true, false),
-							LOC(428, 'Bai Hang', 'Stanton > Crusader > Yela > Yela Prime', 6250, 3500, 5, true, true, false),
-							LOC(437, 'Port Olisare', 'Stanton > Crusader > Yela > Yela Prime', 6200, 4000, 5, false, true, false)
+							LOC(89, 'TDD - Trade and Development Division - Area 18', 'Stanton > ArcCorp > Area 18', 31000, 900, 6, false, true, false),
+							LOC(443, 'Commodity Shop - Admin - Pyro Gateway (Nyx)', 'Nyx > Pyro Gateway (Nyx system)', 31000, 850, 5, true, true, false),
+							LOC(436, 'Commodity Shop - Admin - ARC-L1', 'Stanton > ArcCorp > ARC-L1 Wide Forest Station', 30000, 800, 5, true, true, false),
+							LOC(90, 'CBD - Central Business District - Lorville', 'Stanton > Hurston > Lorville', 30000, 700, 4, true, true, false)
 						]
 					},
 					27: { // Distilled Spirits
