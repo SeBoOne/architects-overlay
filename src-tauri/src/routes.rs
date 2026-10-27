@@ -59,6 +59,22 @@ pub async fn vehicles_scu(
     Ok(map)
 }
 
+/// Alternativ-Tabelle (F2): alle Kauf-/Verkaufsorte einer Ware aus dem
+/// LOKALEN Routen-Datensatz (kein neuer UEX-Call — nur Cache-Lesung). Im
+/// Routen-Detail der gewählten Ware: Kauforte (Preis aufsteigend) links,
+/// Verkaufsorte (Preis absteigend) rechts, aktuelle Kombi markiert.
+#[tauri::command]
+pub async fn get_route_locations(
+    state: tauri::State<'_, crate::trade::TradeState>,
+    commodity_id: u64,
+) -> Result<Option<provider::routes::RouteCommodityLocations>, String> {
+    state
+        .provider
+        .route_locations(commodity_id)
+        .await
+        .map_err(friendly)
+}
+
 /// Autocomplete Start-/Zielort (P15c, Karte t_5fbd43b6): Locations ONLY
 /// (EntityKind::Locations — Wiki+UEX merged: "Checkmate", "Levski",
 /// "ARC-L1 Wild Forest Station" …). NEVER Shops/Terminals: those live as

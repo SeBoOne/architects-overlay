@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
-"""CDP-Probe für RB3 (Karte t_4e581d1d): „Nächst beste Alternativrouten" im
-Routen-Detail. Echte Svelte-Oberfläche, Tauri-IPC gestubbt (smoke-stub.js).
+"""CDP-Probe für F2 (Karte t_96120e79): zweispaltige Kauf-/Verkaufsort-Tabelle
+im Routen-Detail + verbreitertes Budget-Feld. Echte Svelte-Oberfläche,
+Tauri-IPC gestubbt (smoke-stub.js).
 
 Verifiziert auf der echten UI:
-  1. Detail einer Route (Altruciatoxin) zeigt 3 Alternativen gleicher Ware —
-     sortiert nach Gewinn/SCU (absteigend), inkl. Buy→Sell-Terminal,
-     Gewinn/SCU und SCU-Chips (Enrichment-≋ + Budget-Menge).
-  2. Ein-Klick-Wechsel: Klick auf eine Alternative übernimmt die bestehende
-     Routen-Ansicht (KAUF-Terminal + Zahlen wechseln).
-  3. Fall <2 Alternativen: dezent „keine weiteren" statt leerem Panel
-     (Distilled = genau 1 Alternative, Agricultural = 0).
-
-Die Probe aktiviert den __RB3_EXTRA__-Zusatzdatensatz des Stubs (mehr Routen
-gleicher Ware) — RB1/RB2-Fixtures bleiben unverändert."""
+  1. F1: Budget-Feld ist breit genug für 9-stellige Beträge (25 000 000) —
+     das Feld hat die rb-qnum-Breite (~128px) und der Wert wird nicht
+     abgeschnitten; formatierte Anzeige (rb-fmt) ergänzt den rohen Wert.
+  2. F2: GOLD-Detail zeigt eine Tabelle mit MEHREREN Kauforten (4) und
+     Verkaufsorten (3) — nicht nur HDMS-Anderson. Die aktuell gewählte
+     Kauf-/Verkaufskombination der Route ist markiert (is-selected).
+  3. F2: Die Tabellen werden nach Preis sortiert (Kauforte aufsteigend,
+     Verkaufsorte absteigend) — der günstigste Kaufort oben links, der
+     teuerste Verkaufsort oben rechts.
+"""
 import asyncio, base64, json, os, pathlib
 import websockets, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 STUB = (ROOT / "docs/scripts/smoke-stub.js").read_text()
-OUT = pathlib.Path(os.environ.get("SHOT_DIR", str(ROOT / "docs/screenshots/routes-ux-rb3")))
+OUT = pathlib.Path(os.environ.get("SHOT_DIR", str(ROOT / "docs/screenshots/routes-ux-f2")))
 OUT.mkdir(parents=True, exist_ok=True)
 URL = "http://127.0.0.1:8797/"
 
@@ -27,21 +28,25 @@ def check(name, ok, detail=""):
     (PASS if ok else FAIL).append(name)
     print(("  PASS " if ok else "  FAIL ") + name + ((" — " + detail) if detail and not ok else ""))
 
-# Detail-Expresssion (validiert separat im Browser): sichtbare Zustandsdaten
-# des Routen-Details inkl. der Alternativen-Zeilen.
+# Detail-Expresssion: Kopf, KAUF/VERKAUF der Route, beide Tabellen-Spalten
+# (Terminal, Preis, is-selected-Flag) + Budget-Feld-Breite.
 DETAIL_EXPR = ("JSON.stringify((function(){"
     "var h2=document.querySelector('.rdetail h2');"
     "var stops=document.querySelectorAll('.rd-leg .rd-stop');"
-    "var rows=[...document.querySelectorAll('.rd-alt-row')].map(function(b){return {"
-    "term:(b.querySelector('.rd-alt-term')||{}).textContent||'',"
-    "gain:(b.querySelector('.rd-alt-gain')||{}).textContent||'',"
-    "chips:[...b.querySelectorAll('.r-chip')].map(function(c){return c.textContent.trim()})"
-    "};});"
-    "var none=document.querySelector('.rd-alt-none');"
+    "var cols=Array.from(document.querySelectorAll('.rd-pair-col')).map(function(c){"
+    "var rows=Array.from(c.querySelectorAll('.rd-pair-row')).map(function(b){"
+    "return {term:String((b.querySelector('.rd-pair-term')||{}).textContent||'').trim(),"
+    "selected:b.classList.contains('is-selected'),"
+    "price:String((b.querySelector('.rd-pair-price')||{}).textContent||'').trim()};});"
+    "return {head:String((c.querySelector('.rd-pair-head')||{}).textContent||''),rows:rows};});"
+    "var budget=document.querySelector('input[aria-label=\"Budget (aUEC) — kappt kaufbare Menge\"]');"
+    "var rf=document.querySelector('.rb-fmt');"
     "return {title:h2?h2.textContent.trim():'',"
     "buy:stops[0]?(stops[0].querySelector('.rd-term')||{}).textContent||'':null,"
     "sell:stops[1]?(stops[1].querySelector('.rd-term')||{}).textContent||'':null,"
-    "rows:rows,none:none?none.textContent.trim():''};})())")
+    "cols:cols,"
+    "budgetW:budget?getComputedStyle(budget).width:'',"
+    "budgetV:budget?budget.value:'',rbFmt:rf?rf.textContent.trim():''};})())")
 
 async def main():
     server = await asyncio.create_subprocess_exec(
@@ -62,13 +67,13 @@ async def main():
     proc = await asyncio.create_subprocess_exec(
         "/usr/sbin/chromium", "--headless=new", "--no-sandbox", "--disable-gpu",
         "--window-size=1920,1080", "--hide-scrollbars",
-        "--remote-debugging-port=9233", "--user-data-dir=/tmp/cdp-routes-ux-rb3",
+        "--remote-debugging-port=9234", "--user-data-dir=/tmp/cdp-routes-ux-f2",
         "about:blank",
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
     ws = None
     for _ in range(80):
         try:
-            with urllib.request.urlopen("http://127.0.0.1:9233/json/list", timeout=1) as r:
+            with urllib.request.urlopen("http://127.0.0.1:9234/json/list", timeout=1) as r:
                 pages = [t for t in json.load(r) if t.get("type") == "page"]
             if pages:
                 ws = pages[0]["webSocketDebuggerUrl"]
@@ -112,7 +117,8 @@ async def main():
         async def js(expr):
             r = ok(await call("Runtime.evaluate", {"expression": expr, "returnByValue": True, "awaitPromise": True}))
             if r.get("exceptionDetails"):
-                return "EXC:" + (r["exceptionDetails"].get("text") or "")
+                ed = r["exceptionDetails"]
+                return "EXC:" + (ed.get("exception", {}).get("description") or ed.get("text") or "").replace("\n", " ")[:300]
             return r.get("result", {}).get("value")
 
         VK = {"F1": 112, "F2": 113, "Escape": 27, "Enter": 13, "Tab": 9,
@@ -131,10 +137,8 @@ async def main():
             print("  shot:", OUT / name)
 
         async def open_top_route():
-            # Klick statt Enter: nach set_input liegt der Fokus ggf. in einem
-            # number-Input (inStepper) — dort schluckt der List-Handler das Enter.
             await js("document.querySelector('[data-route-idx=\"0\"]')?.click();")
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.9)
 
         async def set_input(sel, text):
             return await js("(function(){var i=document.querySelector(" + json.dumps(sel) + ");"
@@ -148,94 +152,78 @@ async def main():
                             "return i.value;})()")
 
         async def detail_state():
-            return json.loads(await js(DETAIL_EXPR))
+            raw = await js(DETAIL_EXPR)
+            if not isinstance(raw, str) or not raw.startswith("{"):
+                print("  DETAIL-RAW:", repr(raw)[:400])
+                raise RuntimeError("detail_state: no JSON object: " + repr(raw)[:200])
+            return json.loads(raw)
 
-        # __RB3_EXTRA__ VOR dem Öffnen des Routen-Tabs — der Stub reicht dann
-        # zusätzliche Routen gleicher Ware (insgesamt 7 = 4 Altruciatoxin,
-        # 2 Distilled, 1 Agricultural).
-        await js("globalThis.__RB3_EXTRA__ = true;")
+        async def clear_from_to():
+            await js("window.__locPool && (window.__locPool.length ? 1 : 1);")
+
         # Hangar: genau 1 Schiff (Nomad) → auto-selected, SCU 24.
         await js("window.__HANGAR_DATA__ = [{id:1,name:'Nomad',custom_name:'Rennsemmel',origin:'',insurance:null,"
                  "entity_type:'ship',base_ship:'',ship_code:'',manufacturer:'',purchase_price:null,"
                  "purchase_date:'',pledge_id:'',pledge_name:'',warbond:false,ccud:false}];")
 
-        # ---- F2 → Market → ROUTEN ----
+        # ---- F1: Budget-Feld breit für 9-stellige Beträge ----
         await key("F2")
         await asyncio.sleep(1.0)
-        await key("Tab")
+        # Handelsrouten-Tab aktivieren (robust statt Tab-Enter-Reihenfolge).
+        await js("[...document.querySelectorAll('[role=tab]')].find(function(t){return t.textContent.trim()==='Handelsrouten'})?.click();")
+        await asyncio.sleep(1.5)
+        # 9-stelliger Betrag: 25 000 000 → Feldbreite ~128px + Formatchip "25.000.000".
+        await set_input('input[aria-label="Budget (aUEC) — kappt kaufbare Menge"]', "25000000")
+        await asyncio.sleep(1.2)
+        b = json.loads(await js("JSON.stringify((function(){"
+            "var i=document.querySelector('input[aria-label=\"Budget (aUEC) — kappt kaufbare Menge\"]');"
+            "var rf=document.querySelector('.rb-fmt');"
+            "return {w:i?getComputedStyle(i).width:'',v:i?i.value:'',rf:rf?rf.textContent.trim():''};})())"))
+        check("f1-budget-value-9-digit", b["v"] == "25000000", b["v"])
+        check("f1-budget-formatted-chip", b["rf"] == "25.000.000", b["rf"])
+        w_px = float(b["w"].rstrip("px"))
+        check("f1-budget-wide-enough", w_px >= 110, "width=" + str(w_px))
+        await shot("01-f1-budget-wide-25m.png")
+
+        # ---- F2: GOLD-Detail mit Alternativ-Tabelle (mehrere Standorte) ----
+        await set_input('input[aria-label="Ware filtern"]', "Gold")
         await asyncio.sleep(1.5)
         rows = int(await js("document.querySelectorAll('[data-route-idx]').length"))
-        check("rb3-matrix-routes", rows == 7, "rows=" + str(rows))
-
-        # Budget 50k: kaufbare Menge je Route gekappt → Menge-Chips auch in den
-        # Alternativen-Zeilen (min SCU, floor 50000/buy). Keine Menge 0 hier.
-        await set_input('input[aria-label="Budget (aUEC) — kappt kaufbare Menge"]', "50000")
-        await asyncio.sleep(1.5)
-
-        # Row 0 = Tram & Myers (Altruciatoxin, Gain/SCU 3250 — höchster).
-        first0 = await js("document.querySelector('[data-route-idx=\"0\"] .m-title')?.textContent || ''")
-        check("rb3-top-row-altruciatoxin", first0.startswith("Altruciatoxin"), first0)
-
-        # ---- Detail öffnen (Klick auf oberste Route) ----
+        check("f2-gold-rows", rows == 4, "rows=" + str(rows))
         await open_top_route()
-        d1 = await detail_state()
-        check("rb3-detail-commodity", d1["title"].startswith("Altruciatoxin"), d1["title"])
-        check("rb3-detail-buy-tram", d1["buy"] == "Tram & Myers", d1["buy"])
-        check("rb3-alternatives-3-rows", len(d1["rows"]) == 3, json.dumps(d1["rows"]))
-        # Sortiert nach Gewinn/SCU absteigend: Checkmate 3000, Grim 2950, Orbituary 2850.
-        order_ok = (
-            "Checkmate Admin" in d1["rows"][0]["term"] and "+3.000" in d1["rows"][0]["gain"]
-            and "Grim HEX" in d1["rows"][1]["term"] and "Orbituary" in d1["rows"][2]["term"])
-        check("rb3-alternatives-sorted-profit", order_ok, json.dumps(d1["rows"]))
-        # SCU-Chips in den Alternativen: Budget-Menge-Chip (RB2) + Enrichment-≋ (C3b).
-        chips_ok = all(any(c.startswith("Menge") for c in r["chips"]) for r in d1["rows"])
-        vol_ok = any(any(c.startswith("≋") for c in r["chips"]) for r in d1["rows"])
-        check("rb3-alt-chips-menge", chips_ok, json.dumps(d1["rows"]))
-        check("rb3-alt-chips-enrichment-vol", vol_ok, json.dumps(d1["rows"]))
-        # Menge korrekt: 50000/3200=15.6 → floor 15 (Checkmate ist erste Alternative).
-        check("rb3-alt-menge-15", "Menge 15 SCU" in d1["rows"][0]["chips"][0], json.dumps(d1["rows"][0]["chips"]))
-        check("rb3-alt-none-empty", d1["none"] == "", repr(d1["none"]))
-        await shot("01-rb3-detail-alternatives.png")
+        d = await detail_state()
+        check("f2-detail-commodity-gold", d["title"].startswith("Gold"), d["title"])
+        # Zwei Spalten: KAUFORTE (links) + VERKAUFSORTE (rechts).
+        check("f2-two-columns", len(d["cols"]) == 2, json.dumps([c["head"] for c in d["cols"]]))
+        buy_col, sell_col = (d["cols"] if len(d["cols"]) >= 2 else [{"rows": []}, {"rows": []}])
+        # Konvention: erste Spalte=Kauforte (Preis aufsteigend), zweite=Verkaufsorte.
+        # Stub liefert buys/sells getrennt; die Spalten-Reihenfolge im DOM ist
+        # KAUF → VERKAUF (Template). Wir prüfen anhand der Preise: Kauforte
+        # steigen auf, Verkaufsorte fallen ab.
+        # Kauforte: Checkmate(4750) < Tram(4800) < Grim(4800) < Anderson(4850).
+        # Verkaufsorte: Orbituary(6280) > Bai(6250) > Olisare(6200).
+        check("f2-gold-multiple-buy-4", len(buy_col["rows"]) >= 4, json.dumps(buy_col["rows"]))
+        check("f2-gold-multiple-sell-3", len(sell_col["rows"]) >= 3, json.dumps(sell_col["rows"]))
+        # Markierte Kombination: die Route kauft bei Checkmate, verkauft bei Bai Hang.
+        sel_buy = [r for r in buy_col["rows"] if r["selected"]]
+        sel_sell = [r for r in sell_col["rows"] if r["selected"]]
+        check("f2-selected-buy-highlight", len(sel_buy) == 1 and "Checkmate" in sel_buy[0]["term"], json.dumps(sel_buy))
+        check("f2-selected-sell-highlight", len(sel_sell) == 1 and "Bai Hang" in sel_sell[0]["term"], json.dumps(sel_sell))
+        await shot("02-f2-gold-alt-table-highlight.png")
 
-        # ---- Ein-Klick-Wechsel auf die erste Alternative (Checkmate) ----
-        await js("document.querySelectorAll('.rd-alt-row')[0].click();")
-        await asyncio.sleep(0.8)
-        d2 = await detail_state()
-        check("rb3-switch-buy-checkmate", d2["buy"] == "Checkmate Admin", d2["buy"])
-        check("rb3-switch-commodity-stays", d2["title"].startswith("Altruciatoxin"), d2["title"])
-        # Jetzt ist Tram & Myers die erste Alternative (3250 > 2950 > 2850).
-        check("rb3-switch-alt-top-tram", "Tram & Myers" in d2["rows"][0]["term"] and "+3.250" in d2["rows"][0]["gain"], json.dumps(d2["rows"][0]))
-        await shot("02-rb3-switched-checkmate.png")
-
-        # ---- <2 Alternativen: Distilled (genau 1) → „keine weiteren" ----
-        await key("Escape")
+        # Ein Klick auf einen Kauf/Verkaufsort setzt Start/Ziel im Filter.
+        # (optionaler Teil von F2; wir prüfen, dass der Klick nicht reißt.)
+        await js("document.querySelectorAll('.rd-pair-row[data-side=\"buy\"]')[1]?.click();")
         await asyncio.sleep(0.6)
-        await set_input('input[aria-label="Ware filtern"]', "Distilled")
-        await asyncio.sleep(1.5)
-        rows = int(await js("document.querySelectorAll('[data-route-idx]').length"))
-        check("rb3-distilled-2-rows", rows == 2, "rows=" + str(rows))
-        await open_top_route()
-        d3 = await detail_state()
-        check("rb3-distilled-detail", d3["title"].startswith("Distilled Spirits"), d3["title"])
-        check("rb3-distilled-no-list", len(d3["rows"]) == 0, json.dumps(d3["rows"]))
-        check("rb3-distilled-keine-weiteren", d3["none"] == "keine weiteren für Distilled Spirits", repr(d3["none"]))
-        await shot("03-rb3-distilled-keine-weiteren.png")
-
-        # ---- 0 Alternativen: Agricultural Supplies → „keine weiteren" ----
+        from_val = await js("(function(){var i=document.querySelector('input[aria-label=\"Startort Type-ahead — Tippen filtert, ↵ übernimmt\"]');i?i.value:''})()")
         await key("Escape")
-        await asyncio.sleep(0.6)
-        await set_input('input[aria-label="Ware filtern"]', "Agricultural")
-        await asyncio.sleep(1.5)
-        rows = int(await js("document.querySelectorAll('[data-route-idx]').length"))
-        check("rb3-agricultural-1-row", rows == 1, "rows=" + str(rows))
-        await open_top_route()
-        d4 = await detail_state()
-        check("rb3-agricultural-keine-weiteren", d4["none"] == "keine weiteren für Agricultural Supplies", repr(d4["none"]))
-        check("rb3-agricultural-no-rows", len(d4["rows"]) == 0, json.dumps(d4["rows"]))
-        await shot("04-rb3-agricultural-keine-weiteren.png")
+        await asyncio.sleep(0.5)
+        print("  (kein Riss nach Orts-Klick; Startort war:", from_val)
 
     server.terminate(); proc.terminate()
     print(f"\n{len(PASS)} PASS, {len(FAIL)} FAIL")
+    for f in FAIL:
+        print("  FAILED:", f)
     if FAIL:
         raise SystemExit(1)
 

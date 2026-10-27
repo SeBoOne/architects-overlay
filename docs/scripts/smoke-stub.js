@@ -649,28 +649,41 @@ window.__TAURI_INTERNALS__ = {
 					profit_total: (sell - buy) * qty(budget, f.scu, buy),
 					cost_total: buy * qty(budget, f.scu, buy), margin: Math.round((sell - buy) / buy * 10000) / 10000, distance: dist
 				});
+				// F2 (t_96120e79): Beleg „Gold an vielen Orten" — GOLD wird an 4
+				// Terminals gekauft, an 3 verkauft; Altruciatoxin an 3/2.
+				// Die __RB3_EXTRA__-Flag-Gate (t_4e581d1d) ist entfernt — die
+				// Zusatz-Daten sind jetzt immer da, die Alternativ-Ansicht liest
+				// sie über den neuen `get_route_locations`-Endpoint.
 				let routes = [
 					R(27, 'Distilled Spirits', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1427, true, true, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 2320, true, true, false, 900, 2),
 					R(3, 'Agricultural Supplies', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1108, true, true, true, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 1780, false, true, false, 4000, 2),
 					R(4, 'Altruciatoxin', true, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 3200, false, false, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6200, true, true, false, 120, 2)
 				];
-				// RB3 (t_4e581d1d): Zusatz-Routen gleicher Ware für die Alternativ-Probe —
-				// nur aktiv, wenn die Probe __RB3_EXTRA__ setzt (RB1/RB2-Fixtures bleiben)
-				// unverändert: 3 Zeilen). Enrichment nur hier, damit der ≋-Volumen-Chip
-				// in den Alternativen belegt werden kann.
-				if (globalThis.__RB3_EXTRA__) {
-					const enr = (scu_reachable, status_destination) => ({ scu_reachable, scu_destination: 0, status_destination });
-					routes = routes.concat([
+				// F2 (t_96120e79): GOLD als Beleg „an vielen Orten gekauft/verkauft".
+				// Die Routen werden NUR bei passendem Ware-Filter ergänzt — so bleibt
+				// das unbefilterte Fixture (3 Routen) für die älteren RB1/RB2-Proben
+				// unverändert; die __RB3_EXTRA__-Flag-Gate (t_4e581d1d) ist entfernt.
+				// Die Alternativ-Tabelle liest den neuen `get_route_locations`-Endpkt.
+				const extraGold = [
+					R(60, 'Gold', false, [432, 'Grim HEX'], 'Stanton > Crusader > Yela > Grim HEX', 4800, true, true, false, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 6200, false, true, false, 400, 2),
+					R(60, 'Gold', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 4750, true, true, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6250, true, true, false, 350, 2),
+					R(60, 'Gold', false, [430, 'Tram & Myers'], 'Stanton > Crusader > Yela > Port Olisare', 4800, false, true, true, [431, 'Orbituary'], 'Stanton > Crusader > Daymar > Orbituary', 6280, true, true, false, 300, 2),
+					R(60, 'Gold', false, [438, 'HDMS-Anderson'], 'Stanton > Crusader > Yela > Yela Prime', 4850, true, false, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6230, true, true, false, 250, 2)
+				];
+				const extraDrink = [
+					R(27, 'Distilled Spirits', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1427, true, true, true, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 2280, true, true, true, 300, 2)
+				];
+				if (f.commodity && String(f.commodity).toLowerCase().includes('gold')) routes = routes.concat(extraGold);
+				else if (f.commodity) {
+					// Altruciatoxin bekommt seine 2 Zusatz-Routen (für die Detail-
+					// Tabelle mit mehreren Kauforten); Distilled die zweite Verkaufs-
+					// Variante — unter Beibehalten von Altruciatoxin/Distilled im
+					// Filter-Kontext (die Basis-Route bleibt zudem immer drin).
+					if (String(f.commodity).toLowerCase().includes('altruc')) routes = routes.concat([
 						R(4, 'Altruciatoxin', true, [430, 'Tram & Myers'], 'Stanton > Crusader > Yela > Port Olisare', 3100, false, true, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6350, true, true, false, 90, 2),
-						R(4, 'Altruciatoxin', true, [432, 'Grim HEX'], 'Stanton > Crusader > Yela > Grim HEX', 3300, true, true, false, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6250, true, true, false, 60, 2),
-						R(4, 'Altruciatoxin', true, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 3200, false, false, true, [431, 'Orbituary'], 'Stanton > Crusader > Daymar > Orbituary', 6050, true, true, false, 200, 1),
-						R(27, 'Distilled Spirits', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1427, true, true, true, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 2280, true, true, true, 300, 2)
+						R(4, 'Altruciatoxin', true, [432, 'Grim HEX'], 'Stanton > Crusader > Yela > Grim HEX', 3300, true, true, false, [431, 'Orbituary'], 'Stanton > Crusader > Daymar > Orbituary', 6250, true, true, false, 60, 2)
 					]);
-					for (const r of routes) {
-						if (r.commodity_id === 4 && r.buy_terminal_id !== 436) r.enrichment = enr(2400, 5);
-						if (r.commodity_id === 4 && r.sell_terminal_id === 431) r.enrichment = enr(800, 3);
-						if (r.commodity_id === 27 && r.sell_terminal_id === 437) r.enrichment = enr(1500, 4);
-					}
+					if (String(f.commodity).toLowerCase().includes('distilled')) routes = routes.concat(extraDrink);
 				}
 				if (f.commodity) routes = routes.filter((r) => r.commodity.toLowerCase().includes(String(f.commodity).toLowerCase()));
 				if (f.from) routes = routes.filter((r) => (r.buy_terminal + ' ' + r.buy_chain).toLowerCase().includes(String(f.from).toLowerCase()));
@@ -692,6 +705,51 @@ window.__TAURI_INTERNALS__ = {
 				else if (sort === 'natural') { /* Originalliste (Provider-Reihenfolge, RA) */ }
 				else routes.sort((x, y) => sink(x, y) || (y.profit_per_scu - x.profit_per_scu));
 				return { source: 'stub', swept_at: now, routes };
+			}
+			case 'get_route_locations': {
+				// F2 (t_96120e79): Alternativ-Tabelle — Kauforte/Verkaufsorte einer
+				// Ware aus dem lokalen Routen-Datensatz. Jede Zeile = ein Terminal
+				// mit Preis (buy>0 bzw. sell>0), Bestand und Nachfrage-Level.
+				const cid = Number((a && a.commodity_id) || 0);
+				const LOC = (id, name, chain, price, stock, status, autoload, cargo, ground) =>
+					({ terminal_id: id, terminal: name, chain, price, stock, status, autoload, cargo_deck: cargo, ground });
+				const tables = {
+					4: { // Altruciatoxin
+						buys: [
+							LOC(430, 'Tram & Myers', 'Stanton > Crusader > Yela > Port Olisare', 3100, 900, 5, false, true, true),
+							LOC(436, 'Checkmate Admin', 'Stanton > Crusader > Yela > Daymar', 3200, 1200, 5, true, true, true),
+							LOC(432, 'Grim HEX', 'Stanton > Crusader > Yela > Grim HEX', 3300, 600, 4, true, true, false)
+						],
+						sells: [
+							LOC(428, 'Bai Hang', 'Stanton > Crusader > Yela > Yela Prime', 6350, 900, 5, true, true, false),
+							LOC(431, 'Orbituary', 'Stanton > Crusader > Daymar > Orbituary', 6250, 800, 4, true, true, false)
+						]
+					},
+					60: { // Gold — Sebos Beleg: viele Standorte, nicht nur Anderson
+						buys: [
+							LOC(436, 'Checkmate Admin', 'Stanton > Crusader > Yela > Daymar', 4750, 3500, 6, true, true, true),
+							LOC(430, 'Tram & Myers', 'Stanton > Crusader > Yela > Port Olisare', 4800, 3000, 5, false, true, true),
+							LOC(432, 'Grim HEX', 'Stanton > Crusader > Yela > Grim HEX', 4800, 2800, 5, true, true, false),
+							LOC(438, 'HDMS-Anderson', 'Stanton > Crusader > Yela > Yela Prime', 4850, 2500, 4, true, false, true)
+						],
+						sells: [
+							LOC(431, 'Orbituary', 'Stanton > Crusader > Daymar > Orbituary', 6280, 3000, 6, true, true, false),
+							LOC(428, 'Bai Hang', 'Stanton > Crusader > Yela > Yela Prime', 6250, 3500, 5, true, true, false),
+							LOC(437, 'Port Olisare', 'Stanton > Crusader > Yela > Yela Prime', 6200, 4000, 5, false, true, false)
+						]
+					},
+					27: { // Distilled Spirits
+						buys: [LOC(436, 'Checkmate Admin', 'Stanton > Crusader > Yela > Daymar', 1427, 9000, 5, true, true, true)],
+						sells: [LOC(428, 'Bai Hang', 'Stanton > Crusader > Yela > Yela Prime', 2320, 9000, 5, true, true, false)]
+					},
+					3: { // Agricultural Supplies
+						buys: [LOC(436, 'Checkmate Admin', 'Stanton > Crusader > Yela > Daymar', 1108, 12000, 5, true, true, true)],
+						sells: [LOC(437, 'Port Olisare', 'Stanton > Crusader > Yela > Yela Prime', 1780, 40000, 6, false, true, false)]
+					}
+				};
+				const t = tables[cid];
+				if (!t) return null;
+				return { commodity_id: cid, commodity: '', buys: t.buys, sells: t.sells };
 			}
 			default:
 				return null;

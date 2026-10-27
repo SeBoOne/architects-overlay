@@ -38,8 +38,8 @@ use provider::{
     MarketplaceFilter, Offer, PricePoint, ProviderError, Result, SearchEntities, SearchHit,
     TerminalPriceGroup,
     routes::{
-        RouteCommodityMeta, RouteEnrichment, RouteFilters, RouteList, RoutePriceRow,
-        RouteTerminalMeta, TradeRoute,
+        RouteCommodityLocations, RouteCommodityMeta, RouteEnrichment, RouteFilters, RouteList,
+        RoutePriceRow, RouteTerminalMeta, TradeRoute, route_commodity_locations,
     },
 };
 
@@ -570,6 +570,10 @@ impl DataProvider for UexProvider {
         self.trade_routes_impl(filters).await
     }
 
+    async fn route_locations(&self, commodity_id: u64) -> Result<Option<RouteCommodityLocations>> {
+        self.route_locations_impl(commodity_id)
+    }
+
     async fn vehicles_scu(&self) -> Result<HashMap<String, f64>> {
         self.vehicles_scu_impl().await
     }
@@ -1091,6 +1095,23 @@ impl UexProvider {
             swept_at,
             refreshing,
         })
+    }
+
+    /// Alternativ-Tabelle (F2): alle Kauf-/Verkaufsorte einer Ware direkt aus
+    /// den LOKALEN Routen-Zeilen + Terminal-Metadaten — KEIN neuer UEX-Call.
+    /// Greift auf denselben Cache zu wie `trade_routes_impl`, filtert aber
+    /// NICHT auf die beste Buy→Sell-Kombination: jede Zeile mit buy_price > 0
+    /// ist ein Kaufort, jede mit sell_price > 0 ein Verkaufsort.
+    fn route_locations_impl(&self, commodity_id: u64) -> Result<Option<RouteCommodityLocations>> {
+        let (terminal_flags, _) = self.load_route_terminal_flags()?;
+        let terminal_names = self.terminal_names_map()?;
+        let rows = self.collect_route_rows()?;
+        Ok(route_commodity_locations(
+            &rows,
+            &terminal_flags,
+            &terminal_names,
+            commodity_id,
+        ))
     }
 
     /// TTL des Enrichment-Satzes (wie andere UEX-Preisdaten).

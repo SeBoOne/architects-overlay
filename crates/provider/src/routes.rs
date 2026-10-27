@@ -256,6 +256,111 @@ pub struct RouteList {
     pub refreshing: bool,
 }
 
+/// Eine Kauf- ODER Verkaufsstelle im Alternativ-Tabellen-Beleg (F2): das
+/// Terminal, seine Hierarchie-Kette (System > Planet > ...), der Preis je SCU
+/// in dieser Richtung und die lokalen Bestands-/Nachfrage-Werte. Wird aus den
+/// bereits im Cache liegenden `RoutePriceRow`s abgeleitet — KEIN neuer
+/// UEX-Call (Datenbasis = bestehende lokale Matrix/Enrichment).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RouteLocation {
+    pub terminal_id: u64,
+    pub terminal: String,
+    pub chain: String,
+    /// Kauf-preis (linke Spalte) bzw. Verkaufspreis (rechts) je SCU.
+    pub price: f64,
+    /// Verfügbare SCU am Terminal (`sell_stock`).
+    pub stock: f64,
+    /// Lager-Nachfrage 0..=7 (kauf: buy_status, verkauf: sell_status).
+    pub status: u8,
+    pub autoload: bool,
+    pub cargo_deck: bool,
+    pub ground: bool,
+}
+
+/// Zweispaltige Alternativ-Tabelle für ein Commodity (F2): alle Kauforte
+/// (Preis aufsteigend) links, alle Verkaufsorte (Preis absteigend) rechts —
+/// abgeleitet aus den lokalen Routen-Zeilen, sortiert im Frontend nach Preis.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RouteCommodityLocations {
+    pub commodity_id: u64,
+    pub commodity: String,
+    /// Alle Terminals, an denen das Commodity gekauft wird (buy_price > 0).
+    pub buys: Vec<RouteLocation>,
+    /// Alle Terminals, an denen es verkauft wird (sell_price > 0).
+    pub sells: Vec<RouteLocation>,
+}
+
+/// Baut aus den lokalen Routen-Rohzeilen die Kauf-/Verkaufsort-Tabelle einer
+/// Ware. Nur Preise > 0 gelten als Ort; ein Terminal kann in beiden Listen
+/// auftauchen (kauft UND verkauft die Ware). Nachfrage-/Bestandswerte kommen
+/// aus den Zeilen (`buy_status`/`sell_status`/`sell_stock`) — der lokale
+/// Enrichment-Stand, kein Netzwerkzugriff.
+pub fn route_commodity_locations(
+    rows: &[RoutePriceRow],
+    terminal_flags: &std::collections::HashMap<u64, RouteTerminalMeta>,
+    terminal_names: &std::collections::HashMap<u64, String>,
+    commodity_id: u64,
+) -> Option<RouteCommodityLocations> {
+    let name = |id: u64| -> String {
+        terminal_names
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| format!("Terminal {id}"))
+    };
+    let empty = RouteTerminalMeta::default();
+    let row_at = |r: &RoutePriceRow, buy: bool| RouteLocation {
+        terminal_id: r.terminal_id,
+        terminal: name(r.terminal_id),
+        chain: terminal_flags
+            .get(&r.terminal_id)
+            .unwrap_or(&empty)
+            .chain
+            .clone(),
+        price: if buy { r.buy_price } else { r.sell_price },
+        stock: r.sell_stock,
+        status: if buy { r.buy_status } else { r.sell_status },
+        autoload: terminal_flags
+            .get(&r.terminal_id)
+            .unwrap_or(&empty)
+            .autoload,
+        cargo_deck: terminal_flags
+            .get(&r.terminal_id)
+            .unwrap_or(&empty)
+            .cargo_center,
+        ground: terminal_flags.get(&r.terminal_id).unwrap_or(&empty).ground,
+    };
+
+    let commodity_name = rows
+        .iter()
+        .find(|r| r.commodity_id == commodity_id)
+        .map(|r| r.commodity.clone());
+
+    if commodity_name.is_none() {
+        return None;
+    }
+
+    let buys: Vec<RouteLocation> = rows
+        .iter()
+        .filter(|r| r.commodity_id == commodity_id && r.buy_price > 0.0)
+        .map(|r| row_at(r, true))
+        // aggregiere pro Terminal: der Eintrag mit dem niedrigsten Preis
+        // (ein Terminal kann mehrmals vorkommen, wenn der Sweep mehrere
+        // Zeilen je Ware lieferte — Rohzeile ist 1:1 Terminal×Ware).
+        .collect();
+    let sells: Vec<RouteLocation> = rows
+        .iter()
+        .filter(|r| r.commodity_id == commodity_id && r.sell_price > 0.0)
+        .map(|r| row_at(r, false))
+        .collect();
+
+    Some(RouteCommodityLocations {
+        commodity_id,
+        commodity: commodity_name.unwrap(),
+        buys,
+        sells,
+    })
+}
+
 /// Does this query use terminal-SIDE filters (Start/Target/Autoload/Cargo-
 /// Deck/Boden/Space)? If not, the persisted Profit-Matrix can serve the query
 /// directly; if yes, the rows behind the matrix must be re-scanned (the
@@ -1112,6 +1217,97 @@ mod tests {
             compute(&rows, &t, &Default::default(), &f)[0].quantity,
             100.0
         );
+    }
+
+    #[test]
+    fn route_commodity_locations_builds_buy_and_sell_tables() {
+        // Zwei Waren: Laranite wird an 2 Orten gekauft, an 2 verkauft; Titanium
+        // kauft+verkauft dasselbe Terminal. Die Tabelle muss ALLE Orte liefern
+        // (nicht nur die beste Buy→Sell-Kombination), mit Terminal-Name, Kette,
+        // Preis und Bestands-/Nachfragewerten aus der Zeile.
+        let rows = vec![
+            row(1, 10, "Laranite", 100.0, 0.0), // Kaufort, buy 100
+            row(1, 20, "Laranite", 90.0, 0.0),  // Kaufort, buy 90 (günstiger)
+            row(1, 30, "Laranite", 0.0, 150.0), // Verkaufsort, sell 150
+            row(1, 40, "Laranite", 0.0, 160.0), // Verkaufsort, sell 160 (teurer)
+            row(2, 50, "Titanium", 50.0, 80.0), // kauft UND verkauft dasselbe Terminal
+        ];
+        let t = meta_map(&[
+            (
+                10,
+                flags(
+                    false,
+                    false,
+                    true,
+                    "Stanton > Crusader > Daymar > Outpost A",
+                ),
+            ),
+            (
+                20,
+                flags(
+                    false,
+                    false,
+                    true,
+                    "Stanton > Crusader > Daymar > Outpost B",
+                ),
+            ),
+            (
+                30,
+                flags(false, false, false, "Stanton > Hurston > Lorville > TDD"),
+            ),
+            (
+                40,
+                flags(false, false, false, "Stanton > MicroTech > Port Tressler"),
+            ),
+            (50, flags(true, true, false, "Stanton > ArcCorp > ARC-L1")),
+        ]);
+        let locs = route_commodity_locations(&rows, &t, &names_of(&t), 1).unwrap();
+        assert_eq!(locs.commodity, "Laranite");
+        // 2 Kauforte (beide buy_price>0), 2 Verkaufsorte.
+        assert_eq!(locs.buys.len(), 2);
+        assert_eq!(locs.sells.len(), 2);
+        // Terminal-Namen, Ketten, Preise korrekt gemappt.
+        let buy_names: Vec<&str> = locs.buys.iter().map(|b| b.terminal.as_str()).collect();
+        assert!(buy_names.contains(&"Terminal - Outpost A"));
+        assert!(buy_names.contains(&"Terminal - Outpost B"));
+        let buy20 = locs
+            .buys
+            .iter()
+            .find(|b| b.chain.contains("Outpost B"))
+            .unwrap();
+        assert_eq!(buy20.price, 90.0);
+        let sell40 = locs
+            .sells
+            .iter()
+            .find(|s| s.chain.contains("Port Tressler"))
+            .unwrap();
+        assert_eq!(sell40.price, 160.0);
+        // Flags durchgereicht: Outpost A ist Boden, Tressler ist Space.
+        assert!(
+            locs.buys
+                .iter()
+                .find(|b| b.chain.contains("Outpost A"))
+                .unwrap()
+                .ground
+        );
+        assert!(sell40.ground == false);
+        assert_eq!(
+            locs.sells.len(),
+            2,
+            "TDD + Tressler sind beide Verkaufsorte (sell_price>0)"
+        );
+        // Terminal 50 kauft UND verkauft Titanium → erscheint in beiden Listen.
+        let ti = route_commodity_locations(&rows, &t, &names_of(&t), 2).unwrap();
+        assert_eq!(ti.buys.len(), 1);
+        assert_eq!(ti.sells.len(), 1);
+        assert!(ti.buys[0].chain.contains("ARC-L1"));
+        assert!(
+            ti.sells[0].autoload,
+            "Autoload-Flag des Terminals muss durchgereicht werden"
+        );
+
+        // Unbekannte Ware → None (kein leeres Rauschen).
+        assert!(route_commodity_locations(&rows, &t, &names_of(&t), 99).is_none());
     }
 
     #[test]
