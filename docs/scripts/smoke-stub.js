@@ -654,6 +654,24 @@ window.__TAURI_INTERNALS__ = {
 					R(3, 'Agricultural Supplies', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1108, true, true, true, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 1780, false, true, false, 4000, 2),
 					R(4, 'Altruciatoxin', true, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 3200, false, false, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6200, true, true, false, 120, 2)
 				];
+				// RB3 (t_4e581d1d): Zusatz-Routen gleicher Ware für die Alternativ-Probe —
+				// nur aktiv, wenn die Probe __RB3_EXTRA__ setzt (RB1/RB2-Fixtures bleiben)
+				// unverändert: 3 Zeilen). Enrichment nur hier, damit der ≋-Volumen-Chip
+				// in den Alternativen belegt werden kann.
+				if (globalThis.__RB3_EXTRA__) {
+					const enr = (scu_reachable, status_destination) => ({ scu_reachable, scu_destination: 0, status_destination });
+					routes = routes.concat([
+						R(4, 'Altruciatoxin', true, [430, 'Tram & Myers'], 'Stanton > Crusader > Yela > Port Olisare', 3100, false, true, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6350, true, true, false, 90, 2),
+						R(4, 'Altruciatoxin', true, [432, 'Grim HEX'], 'Stanton > Crusader > Yela > Grim HEX', 3300, true, true, false, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 6250, true, true, false, 60, 2),
+						R(4, 'Altruciatoxin', true, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 3200, false, false, true, [431, 'Orbituary'], 'Stanton > Crusader > Daymar > Orbituary', 6050, true, true, false, 200, 1),
+						R(27, 'Distilled Spirits', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1427, true, true, true, [437, 'Port Olisare'], 'Stanton > Crusader > Yela > Yela Prime', 2280, true, true, true, 300, 2)
+					]);
+					for (const r of routes) {
+						if (r.commodity_id === 4 && r.buy_terminal_id !== 436) r.enrichment = enr(2400, 5);
+						if (r.commodity_id === 4 && r.sell_terminal_id === 431) r.enrichment = enr(800, 3);
+						if (r.commodity_id === 27 && r.sell_terminal_id === 437) r.enrichment = enr(1500, 4);
+					}
+				}
 				if (f.commodity) routes = routes.filter((r) => r.commodity.toLowerCase().includes(String(f.commodity).toLowerCase()));
 				if (f.from) routes = routes.filter((r) => (r.buy_terminal + ' ' + r.buy_chain).toLowerCase().includes(String(f.from).toLowerCase()));
 				if (f.to) routes = routes.filter((r) => (r.sell_terminal + ' ' + r.sell_chain).toLowerCase().includes(String(f.to).toLowerCase()));
