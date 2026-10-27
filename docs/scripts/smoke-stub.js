@@ -633,6 +633,9 @@ window.__TAURI_INTERNALS__ = {
 				// Routen (Berechnung selbst ist cargo-test-belegt in
 				// provider::routes — hier genügt die Kontrakt-Struktur).
 				const f = (a && a.filters) || {};
+				// RB2: Budget aktiv = Zahl > 0 → kaufbare Menge gekappt.
+				const budget = (f.budget !== null && f.budget !== undefined && Number(f.budget) > 0) ? Number(f.budget) : 0;
+				const qty = (b, scu, buy) => b > 0 ? Math.min(scu || 0, Math.floor(b / buy)) : (scu || 0);
 				const now = Math.floor(Date.now() / 1000);
 				const R = (cid, cname, illegal, bt, bchain, buy, bauto, bcargo, bground, st, schain, sell, sauto, scargo, sground, stock, dist) => ({
 					commodity_id: cid, commodity: cname, illegal,
@@ -640,8 +643,11 @@ window.__TAURI_INTERNALS__ = {
 					buy_terminal_autoload: bauto, buy_terminal_cargo_deck: bcargo, buy_terminal_ground: bground,
 					sell_terminal_id: st[0], sell_terminal: st[1], sell_chain: schain, sell_price: sell,
 					sell_terminal_autoload: sauto, sell_terminal_cargo_deck: scargo, sell_terminal_ground: sground,
-					sell_stock: stock, profit_per_scu: sell - buy, profit_total: (sell - buy) * (f.scu || 1),
-					cost_total: buy * (f.scu || 1), margin: Math.round((sell - buy) / buy * 10000) / 10000, distance: dist
+					sell_stock: stock, profit_per_scu: sell - buy,
+					// RB2: Menge = min(SCU, floor(Budget/buy)); ohne Budget = SCU.
+					quantity: qty(budget, f.scu, buy),
+					profit_total: (sell - buy) * qty(budget, f.scu, buy),
+					cost_total: buy * qty(budget, f.scu, buy), margin: Math.round((sell - buy) / buy * 10000) / 10000, distance: dist
 				});
 				let routes = [
 					R(27, 'Distilled Spirits', false, [436, 'Checkmate Admin'], 'Stanton > Crusader > Yela > Daymar', 1427, true, true, true, [428, 'Bai Hang'], 'Stanton > Crusader > Yela > Yela Prime', 2320, true, true, false, 900, 2),
@@ -658,11 +664,14 @@ window.__TAURI_INTERNALS__ = {
 				if (f.ground_only) routes = routes.filter((r) => r.buy_terminal_ground && r.sell_terminal_ground);
 				if (f.space_only) routes = routes.filter((r) => !r.buy_terminal_ground && !r.sell_terminal_ground);
 				const sort = f.sort || 'profit_desc';
-				if (sort === 'profit_asc') routes.sort((x, y) => x.profit_per_scu - y.profit_per_scu);
-				else if (sort === 'total_profit_desc') routes.sort((x, y) => y.profit_total - x.profit_total);
-				else if (sort === 'margin_desc') routes.sort((x, y) => y.margin - x.margin);
-				else if (sort === 'distance_asc') routes.sort((x, y) => x.distance - y.distance);
-				else routes.sort((x, y) => y.profit_per_scu - x.profit_per_scu);
+				// RB2: Menge-0-Routen sinken ans Ende (Spiegel Backend sort_routes).
+				const zeroRank = (x) => (budget > 0 && x.quantity <= 0) ? 1 : 0;
+				const sink = (x, y) => zeroRank(x) - zeroRank(y);
+				if (sort === 'profit_asc') routes.sort((x, y) => sink(x, y) || (x.profit_per_scu - y.profit_per_scu));
+				else if (sort === 'total_profit_desc') routes.sort((x, y) => sink(x, y) || (y.profit_total - x.profit_total));
+				else if (sort === 'margin_desc') routes.sort((x, y) => sink(x, y) || (y.margin - x.margin));
+				else if (sort === 'distance_asc') routes.sort((x, y) => sink(x, y) || (x.distance - y.distance));
+				else routes.sort((x, y) => sink(x, y) || (y.profit_per_scu - x.profit_per_scu));
 				return { source: 'stub', swept_at: now, routes };
 			}
 			default:

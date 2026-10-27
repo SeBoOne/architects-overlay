@@ -1421,6 +1421,31 @@ html[data-window="spotlight"] .shell {
 	white-space: nowrap;
 }
 
+/* RB2 (t_9b42249a): Route mit Budget, aber Menge 0 (Budget reicht nicht für
+   1 SCU) — ausgegraut, mit dezentem Hinweis statt Profit. */
+.mrow.is-rbzero {
+	opacity: 0.45;
+	filter: saturate(0.4);
+}
+.mrow.is-rbzero .m-price,
+.mrow.is-rbzero .m-meta {
+	color: var(--fgfaint);
+}
+.r-hint {
+	font: 500 9.5px/1.4 var(--font-mono);
+	color: var(--fgfaint);
+	margin-top: 2px;
+}
+/* Budget-Menge-Chip: gleiche Form wie der Enrichment-Volumen-Chip (Option b),
+   aber in der Warenfarbe des Budgets — kennzeichnet Menge ≠ Schiffskapazität. */
+.r-chip-menge {
+	color: var(--buy);
+	border: 1px solid color-mix(in srgb, var(--buy) 40%, transparent);
+	border-radius: 4px;
+	padding: 2px 6px;
+	white-space: nowrap;
+}
+
 .m-right {
 	text-align: right;
 	white-space: nowrap;
