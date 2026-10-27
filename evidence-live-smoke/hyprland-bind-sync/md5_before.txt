@@ -1,0 +1,2 @@
+f81415691b1154fb5d0dda946f22e863  /home/sebo/.config/omarchy/omasettings.json
+c76150af5ac983be723276e8f35e4651  /home/sebo/.config/hypr/bindings.lua

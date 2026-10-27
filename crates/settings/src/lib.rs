@@ -22,6 +22,9 @@
 //! [shortcuts]
 //! toggle = "Ctrl+Shift+U"      # C2a: Overlay-Toggle (kollisionsgeprüft)
 //! click_through = "Ctrl+Shift+O" # Click-through-Umschalter
+//! sync_omarchy = true          # C2b: Consent — Kürzel via OmaSettings an
+//!                              # Hyprland-Binds andocken (Default: false,
+//!                              # einmalige Zustimmung in der Settings-UI)
 //! ```
 
 use std::fmt;
@@ -390,12 +393,17 @@ struct DataSection {
 
 /// C2a: globale Kürzel. Als Strings gespeichert (kanonisch normalisiert),
 /// damit C2b (Hyprland-Binder) sie ohne Rust-Kenntnis lesen kann.
+/// C2b: `sync_omarchy` ist die EINMALIGE Zustimmung des Nutzers, dass die
+/// App die OmaSettings-Bindungen des Systems verändern darf. Fehlend =
+/// false — die App schreibt ohne gesetztes Flag niemals in Systemkonfig.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct ShortcutsSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     toggle: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     click_through: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sync_omarchy: Option<bool>,
 }
 
 /// UI preferences (palette, detail variant). Fields are optional in the file
@@ -450,6 +458,9 @@ pub struct Settings {
     /// C2a: kanonische Kürzel-Strings (siehe `parse_shortcut_combo`).
     shortcut_toggle: String,
     shortcut_click_through: String,
+    /// C2b: Consent für die OmaSettings-Bind-Sync (Default false — ohne
+    /// Zustimmung schreibt die App nie in die Systemkonfiguration).
+    shortcut_sync_omarchy: bool,
 }
 
 impl Default for Settings {
@@ -463,6 +474,7 @@ impl Default for Settings {
             scale: SCALE_DEFAULT,
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
+            shortcut_sync_omarchy: false,
         }
     }
 }
@@ -520,6 +532,13 @@ impl Settings {
                     .and_then(|s| s.click_through.as_deref()),
                 DEFAULT_CLICK_SHORTCUT,
             ),
+            // C2b: fehlend = kein Consent — die App verhält sich exakt wie
+            // vor C2b, bis der Nutzer in der Settings-UI zustimmt.
+            shortcut_sync_omarchy: raw
+                .shortcuts
+                .as_ref()
+                .and_then(|s| s.sync_omarchy)
+                .unwrap_or(false),
         })
     }
 
@@ -534,6 +553,7 @@ impl Settings {
             scale: SCALE_DEFAULT,
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
+            shortcut_sync_omarchy: false,
         }
     }
 
@@ -612,6 +632,17 @@ impl Settings {
         self.shortcut_click_through = canonical;
     }
 
+    /// C2b: Consent-Flag — true erst nach einmaliger Zustimmung in der
+    /// Settings-UI. Nur dann darf die App OmaSettings-Binds ändern.
+    pub fn shortcut_sync_omarchy(&self) -> bool {
+        self.shortcut_sync_omarchy
+    }
+
+    /// Set the OmaSettings-sync consent in memory (persist via [`Settings::save`]).
+    pub fn set_shortcut_sync_omarchy(&mut self, on: bool) {
+        self.shortcut_sync_omarchy = on;
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -630,6 +661,7 @@ impl Settings {
             shortcuts: Some(ShortcutsSection {
                 toggle: Some(self.shortcut_toggle.clone()),
                 click_through: Some(self.shortcut_click_through.clone()),
+                sync_omarchy: Some(self.shortcut_sync_omarchy),
             }),
         };
         let content = toml::to_string_pretty(&raw)
@@ -879,6 +911,33 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("toggle = \"Ctrl+Shift+Super+K\""));
         assert!(content.contains("click_through = \"Alt+Space\""));
+    }
+
+    #[test]
+    fn omarchy_sync_consent_migrates_off_and_roundtrips() {
+        // Erstmigration: altes config ohne sync_omarchy -> false (App schreibt
+        // ohne Zustimmung NIE in die Systemkonfiguration).
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "[shortcuts]\ntoggle = \"Ctrl+Shift+U\"\n").unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert!(!loaded.shortcut_sync_omarchy());
+
+        let mut s = Settings::load_from(&path).unwrap();
+        s.set_shortcut_sync_omarchy(true);
+        s.save().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("sync_omarchy = true"),
+            "C2b-Lesbarkeit: {content}"
+        );
+        assert!(Settings::load_from(&path).unwrap().shortcut_sync_omarchy());
+
+        // Ausschalten persistiert ebenfalls.
+        let mut s2 = Settings::load_from(&path).unwrap();
+        s2.set_shortcut_sync_omarchy(false);
+        s2.save().unwrap();
+        assert!(!Settings::load_from(&path).unwrap().shortcut_sync_omarchy());
     }
 
     #[test]

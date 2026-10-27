@@ -12,6 +12,8 @@ use std::sync::Arc;
 mod app_settings;
 mod hangar;
 #[cfg(desktop)]
+mod hyprland_sync;
+#[cfg(desktop)]
 mod inventory;
 #[cfg(desktop)]
 mod ipc_socket;
@@ -65,6 +67,7 @@ pub fn run() {
             app_settings::settings_set_scale,
             app_settings::settings_set_shortcut_toggle,
             app_settings::settings_set_shortcut_click_through,
+            app_settings::settings_set_shortcuts_sync,
             overlay::overlay_config_closed,
         ]);
     }
@@ -104,6 +107,7 @@ pub fn run() {
                 // Settings first — the frontend reads its snapshot at boot to
                 // apply data-palette / data-detail-variant.
                 tauri::Manager::manage(app, app_settings::SettingsState::load());
+                tauri::Manager::manage(app, app_settings::SyncNote::default());
 
                 setup_trade(app)?;
 
@@ -115,6 +119,19 @@ pub fn run() {
                 // keybinds on Wayland, where global shortcuts are unreliable) drive
                 // the overlay. Best-effort — must not block startup.
                 ipc_socket::init(app.handle());
+
+                // C2b (t_1adbc017): Wayland/Omarchy-Driftsync beim Start —
+                // nur wenn Consent (`[shortcuts] sync_omarchy`) gesetzt ist,
+                // ein Hyprland läuft und das OmaSettings-Plugin existiert.
+                // Läuft im Thread mit kurzem Verzug: Setup muss davon nichts
+                // blockieren, ein Fehler ist rein sichtbares Log + Note.
+                {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                        app_settings::startup_hypr_sync(&handle);
+                    });
+                }
 
                 // System tray (Overlay-Toggle / Config öffnen / Beenden).
                 // Fails soft internally (see tray::init).

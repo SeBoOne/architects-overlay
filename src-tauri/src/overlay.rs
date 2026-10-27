@@ -571,6 +571,43 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
     });
 }
 
+/// hyprctl mit hartem Zeitbudget (t_1adbc017): waehrend eines laufenden
+/// `hyprctl reload` antwortet des Kompositors Socket-Interface erst nach
+/// Abschluss — unlimitierte `.output()`-Aufrufe blockieren dann den
+/// aufrufenden Thread (im Main-Thread-Kontext bis zum xdg-Ping-Timeout:
+/// 'Application Not Responding', Input-Sperre fuer das Overlay-Fenster).
+/// `None` = Spawn-Fehler oder Timeout (Kind wird gekillt); die Anrufer
+/// fallen auf ihre ohnehin vorhandenen Best-Effort-Pfade.
+#[cfg(target_os = "linux")]
+fn hyprctl_limited(args: &[&str]) -> Option<std::process::Output> {
+    const BUDGET: std::time::Duration = std::time::Duration::from_millis(800);
+    let start = std::time::Instant::now();
+    let mut child = std::process::Command::new("hyprctl")
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) => {
+                if start.elapsed() > BUDGET {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    log::warn!("hyprctl {:?}: Timeout nach {BUDGET:?}", args);
+                    return None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    }
+}
+
 /// Hyprland's own global cursor position via `hyprctl -j cursorpos` — in the
 /// compositor's logical layout pixels. This is exactly the coordinate space in
 /// which `available_monitors()` reports its rectangles on Wayland (verified
@@ -578,10 +615,7 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
 /// hyprctl is unavailable (not Hyprland, Lua-bridge rejects the keyword, …).
 #[cfg(target_os = "linux")]
 fn hyprland_cursor_position() -> Option<(i32, i32)> {
-    let out = std::process::Command::new("hyprctl")
-        .args(["-j", "cursorpos"])
-        .output()
-        .ok()?;
+    let out = hyprctl_limited(&["-j", "cursorpos"])?;
     if !out.status.success() {
         return None;
     }
@@ -770,15 +804,12 @@ fn compositor_geometry(pos: (i32, i32), size: (u32, u32)) {
     }
     let (resize_lua, move_lua) = geometry_dispatch_lua(std::process::id(), pos, size);
     for lua in [resize_lua.as_str(), move_lua.as_str()] {
-        match std::process::Command::new("hyprctl")
-            .args(["dispatch", lua])
-            .output()
-        {
-            Ok(out) => log::info!(
+        match hyprctl_limited(&["dispatch", lua]) {
+            Some(out) => log::info!(
                 "geometry dispatch: out={:?}",
                 String::from_utf8_lossy(&out.stdout).trim()
             ),
-            Err(err) => log::warn!("geometry dispatch: hyprctl spawn failed: {err}"),
+            None => log::warn!("geometry dispatch: hyprctl spawn failed or timed out"),
         }
     }
 }
@@ -840,11 +871,8 @@ fn compositor_focus(class: &str) {
         // (verified live); the plain form stays as fallback for non-Omarchy
         // Hyprland installs.
         let lua = format!("hl.dsp.focus({{ window = \"class:{class}\" }})");
-        let out = std::process::Command::new("hyprctl")
-            .args(["dispatch", &lua])
-            .output();
-        let ok = match &out {
-            Ok(o) => {
+        let ok = match hyprctl_limited(&["dispatch", &lua]) {
+            Some(o) => {
                 log::info!(
                     "compositor_focus({class}): status={:?} out={:?}",
                     o.status.code(),
@@ -852,15 +880,13 @@ fn compositor_focus(class: &str) {
                 );
                 o.status.success()
             }
-            Err(e) => {
-                log::info!("compositor_focus({class}): spawn failed: {e}");
+            None => {
+                log::info!("compositor_focus({class}): spawn failed or timed out");
                 false
             }
         };
         if !ok {
-            let _ = std::process::Command::new("hyprctl")
-                .args(["dispatch", "focuswindow", &format!("class:{class}")])
-                .status();
+            let _ = hyprctl_limited(&["dispatch", "focuswindow", &format!("class:{class}")]);
         }
     }
     #[cfg(not(target_os = "linux"))]

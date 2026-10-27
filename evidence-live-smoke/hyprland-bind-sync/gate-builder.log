@@ -1,0 +1,16 @@
+# C2b Gate-Log (builder, t_1adbc017, 2026-10-27) — Architects-Overlay feature/hyprland-bind-sync
+# Basis: feature/configurable-shortcuts @ c33c901 (C2a, approved t_28c3bf85)
+
+cargo fmt --all --check                      -> FMT-OK
+cargo check --workspace --all-targets        -> Finished (0 errors)
+cargo test --workspace                       -> 209 passed / 0 failed  (C2a 198 + 11 neu:
+                                                9x hyprland_sync, 1x settings consent-roundtrip,
+                                                1x app_settings sync-note)
+pnpm exec svelte-check --threshold error     -> 0 errors / 34 pre-existing warnings (identisch C2a)
+pnpm build                                   -> adapter-static done
+cargo check --workspace --target x86_64-pc-windows-msvc
+        (Host-Shim PATH=/tmp/c2b-shimbin lib.exe->llvm-ar, cc-rs-Archive ring+libsqlite3-sys)
+                                             -> Finished, 1 warning = pre-existing
+                                                geometry_dispatch_lua dead_code (C2a kosmetisch)
+Windows-Fix durch die Karte selbst: is_executable() war Unix-only (std::os::unix) — jetzt
+#[cfg(unix)] + not(unix)-Fallback; Shell-Fake-Tests #[cfg(unix)] gegatet.
