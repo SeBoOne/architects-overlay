@@ -1,0 +1,7 @@
+RED (old DTO + crafted fixture):
+explicit-null u64 fields must not fail the fetch: Error("invalid type: null, expected u64", line: 5, column: 31)
+test result: FAILED. 0 passed; 1 failed
+
+GREEN (fixed DTO, same fixture):
+test dto::tests::listing_row_tolerates_explicit_null_u64_fields ... ok
+test result: ok. 2 passed; 0 failed

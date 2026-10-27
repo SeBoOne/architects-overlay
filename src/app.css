@@ -963,6 +963,21 @@ html[data-window="spotlight"] .shell {
 	font-weight: 600;
 }
 
+/* K6 (t_9b385831, P2c): Quelle-Label der Preisdetail — zeigt live, aus
+   welcher Quelle die angezeigten Preise stammen (Label identisch zur
+   Statusbar, z. B. "WIKI+UEX (UEX)"). */
+.d-src {
+	padding: 0.5vh var(--pad-x);
+	border-bottom: 1px solid var(--lineb);
+	font: 500 max(1vh, 9px)/1.2 var(--font-mono);
+	letter-spacing: 0.08em;
+	color: var(--fgdim);
+	text-transform: none;
+}
+.d-src .warn {
+	color: var(--warn);
+}
+
 /* Skelett / Fehler beim Laden der Preise */
 .d-ghost {
 	padding: calc(var(--xpan-h) * 0.6) var(--pad-x);
@@ -2165,6 +2180,25 @@ html[data-window="spotlight"] .shell {
 	font-size: 11px;
 	color: var(--accent);
 	margin-top: 4px;
+}
+/* K6 (t_9b385831, P2a): aktive Preisquelle deutlich sichtbar (mehr als der
+   kleine Statusbar-Text); Label identisch zur Statusbar ("WIKI+UEX (UEX)"). */
+.cfg-src-active {
+	font-size: 12px;
+	color: var(--fg);
+	padding: 6px 8px;
+	border: 1px dashed var(--line);
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--panel) 40%, transparent);
+}
+.cfg-src-active b {
+	color: var(--accent);
+	letter-spacing: 0.06em;
+}
+/* K6 (P1): UEX-Quelle ohne API-Key → klarer Hinweis. */
+.cfg-src-warn {
+	font-size: 11px;
+	color: var(--warn);
 }
 
 /* ==========================================================================

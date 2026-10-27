@@ -1,0 +1,13 @@
+====================================
+svelte-check found 0 errors and 34 warnings in 2 files
+> Using @sveltejs/adapter-static
+Wrote site to "build"
+✔ done
+FE-DONE
+   Compiling rusqlite v0.40.2
+   Compiling cache v0.1.0 (/home/sebo/.hermes/kanban/boards/architects-overlay/workspaces/t_cbd4a605/wt/crates/cache)
+   Compiling wiki_client v0.1.0 (/home/sebo/.hermes/kanban/boards/architects-overlay/workspaces/t_cbd4a605/wt/crates/wiki-client)
+   Compiling uex_client v0.1.0 (/home/sebo/.hermes/kanban/boards/architects-overlay/workspaces/t_cbd4a605/wt/crates/uex-client)
+    Finished `release` profile [optimized] target(s) in 1m 54s
+       Built application at: /tmp/ao6serde_build/release/architects-overlay
+TAURI-DONE

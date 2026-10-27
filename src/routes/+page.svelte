@@ -176,6 +176,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let cfg = $state<SettingsSnapshot | null>(null);
 	let apiKeyInput = $state('');
 	let apiKeyNote = $state('');
+	// K6 (t_9b385831, P2): kurze Confirm-Zeile im Config-View nach Aktionen
+	// (Preisquelle umstellen) — analog K3 Notif-Timeout: verschwindet nach 3 s
+	// von selbst, damit die Wirkung sichtbar ist, ohne das View zuzumüllen.
+	let cfgToast = $state('');
+	let cfgToastTimer: ReturnType<typeof setTimeout> | undefined;
+	function cfgConfirm(msg: string) {
+		cfgToast = msg;
+		if (cfgToastTimer) clearTimeout(cfgToastTimer);
+		cfgToastTimer = setTimeout(() => (cfgToast = ''), 3000);
+	}
 
 	// P8-Detail-Variante: Backend-Wert ist Quelle der Wahrheit, aber die Umschal-
 	// tung wirkt SOFORT auch ohne Backend (statischer Build/Probe) über einen
@@ -576,6 +586,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inConfig = false;
 		apiKeyInput = '';
 		apiKeyNote = '';
+		cfgToast = '';
+		if (cfgToastTimer) clearTimeout(cfgToastTimer);
 		// Der Tray kann das Overlay (ohne laufendes Spiel) rein für die Config
 		// gezeigt haben — das Backend darf das Fenster dann wieder verbergen.
 		if (isTauri()) {
@@ -599,6 +611,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	async function chooseSource(name: string) {
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_commodity_source', { name });
+			// K6 P2-Feedback: Confirm-Zeile (3 s) + aktive Quelle-Zeile im View;
+			// der Flip ist live (SourceSwitch) — die nächste Preisabfrage nutzt
+			// sofort die neue Quelle, sichtbar am Quelle-Label der Preisdetail.
+			cfgConfirm(
+				cfg?.commodity_source === 'uex'
+					? 'Preisquelle umgestellt: UEX primär (Wiki-Fallback) — gilt ab sofort.'
+					: 'Preisquelle umgestellt: Wiki primär (UEX-Fallback) — gilt ab sofort.'
+			);
+			// K6 P2d (t_9b385831): Statusbar-Chip ('syncLabel' liest status.provider)
+			// sofort konsistent machen. Ohne diesen Refresh aktualisiert der Chip
+			// erst beim nächsten Preis-Sync (im Live-Smoke Run433 als 'minimal
+			// verzögert' beobachtet). sync_status wertet den live geflippten
+			// SourceSwitch aus (providers.rs name()) — kein Restart/Reload nötig.
+			try {
+				status = await invoke<SyncStatus>('sync_status');
+			} catch {
+				// Chip-Refresh ist best-effort: Der Flip selbst ist bereits
+				// persistiert und wirkt auf die nächste Preisabfrage ohnehin.
+			}
 		} catch (e) {
 			apiKeyNote = String(e);
 		}
@@ -2354,6 +2385,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								onclick={() => chooseSource('uex')}
 							>UEX</button>
 						</div>
+						<!-- K6 P2 (a): aktive Quelle deutlich — identischer Label wie
+						     die Statusbar ("WIKI+UEX (UEX)"), plus Klartext, was der
+						     Schalter bedeutet (die Chips wählen die PRIMÄRquelle, die
+						     andere Quelle bleibt Fallback für Fehlstellen). -->
+						<div class="cfg-src-active">
+							Aktive Quelle:
+							<b>{cfg?.commodity_source === 'uex' ? 'WIKI+UEX (UEX)' : 'WIKI+UEX (WIKI)'}</b>
+							— {cfg?.commodity_source === 'uex'
+								? 'Commodity-Preise primär aus UEX, Wiki ergänzt Fehlstellen.'
+								: 'Commodity-Preise primär aus dem Wiki, UEX ergänzt Fehlstellen.'}
+						</div>
+						<!-- K6 P1-Akzeptanz: Quelle auf UEX ohne Key → klarer Hinweis. -->
+						{#if cfg?.commodity_source === 'uex' && !cfg?.uex_api_key_set}
+							<div class="cfg-src-warn" role="alert">
+								UEX API-Key nicht gesetzt — UEX-Lesezugriff funktioniert derzeit
+								ohne Key; falls UEX ablehnt (HTTP 403), greift automatisch der
+								Wiki-Fallback. Key unten setzen.
+							</div>
+						{/if}
+						<!-- K6 P2 (b): Confirm nach Umschalten (Timeout 3 s). -->
+						{#if cfgToast}
+							<div class="cfg-note" role="status">{cfgToast}</div>
+						{/if}
 					</section>
 					<section class="cfg-sect">
 						<div class="h">Schriftscale</div>
@@ -2796,6 +2850,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<button class:active={detailVariant === 'a'} onclick={() => { localVariant = 'a'; void chooseVariant('a'); }} title="Variante A — Zeilenboxen">A</button>
 											<button class:active={detailVariant === 'c'} onclick={() => { localVariant = 'c'; void chooseVariant('c'); }} title="Variante C — Trader-Hero (Default)">C</button>
 									</div>
+								</div>
+
+								<!-- K6 P2 (c): live sichtbare Wirkung — die Preisdetail zeigt
+								     die Quelle, aus DERen Cache diese Preise kommen (Backend-
+								     Provider-Label, identisch zur Statusbar). Nach Quelle-
+								     Umschalten + erneutem Öffnen steht hier die neue Quelle.
+								     K6 P1: ohne Key und UEX primär → Hinweis (Preise kommen
+								     nur aus dem Wiki-Fallback). -->
+								<div class="d-src" role="note">
+									Quelle: {d.source.toUpperCase()}
+									{#if d.source.includes('uex') && cfg && !cfg.uex_api_key_set}
+										· <span class="warn">kein UEX-API-Key — UEX anonym geladen; bei Ablehnung Wiki-Fallback</span>
+									{/if}
 								</div>
 
 								{#if dFilter}

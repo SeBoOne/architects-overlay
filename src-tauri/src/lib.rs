@@ -372,14 +372,18 @@ mod wiring_tests {
                 .any(|p| p.terminal_id == 12 && p.buy_price == 8_000.0),
             "uex mode must serve the uex price table, got {points:?}"
         );
-        // UEX mode ignores the wiki table entirely: Laranite exists only in
-        // the wiki dataset → the pure-UEX path must NOT answer with the wiki
-        // table (pre-fix revision returned the wiki points here).
-        let res = provider.prices("Laranite").await;
+        // K6 (t_9b385831 P2): UEX mode + failing UEX fetch (offline here;
+        // Laranite is absent from the UEX dataset) must FALL BACK to the
+        // wiki table — the UI promises 'UEX primär (Wiki-Fallback)' (the
+        // pre-K6 pure-UEX behavior asserted is_err() at exactly this point).
+        let res = provider
+            .prices("Laranite")
+            .await
+            .expect("uex mode: failing UEX fetch must fall back to the wiki table");
         assert!(
-            res.is_err(),
-            "uex mode must ignore the wiki-only commodity, got {:?}",
-            res.as_ref().map(|p| p.len())
+            res.iter()
+                .any(|p| p.terminal_id == 778 && p.buy_price == 8_379.0),
+            "uex-mode fallback must serve the wiki table, got {res:?}"
         );
 
         // Flip back — the provider follows again (no restart, both ways).
