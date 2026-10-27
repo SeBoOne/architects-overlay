@@ -1307,6 +1307,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return { qty: scu, cost, gross, profit: gross - cost };
 	}
 
+	// RB3 (Karte t_4e581d1d): „Nächst beste Alternativrouten“ im Routen-Detail —
+	// gleiche Ware (commodity_id), ohne die aktuell geöffnete Route. Datenbasis:
+	// die bereits geladene lokale Matrix (routes_, inkl. Enrichment) — kein neuer
+	// UEX-Call, nur filtern + sortieren nach Gewinn/SCU (dann Profit absolut),
+	// max. 5 Einträge.
+	function isSameRoute(a: TradeRoute, b: TradeRoute): boolean {
+		return (
+			a.commodity_id === b.commodity_id &&
+			a.buy_terminal_id === b.buy_terminal_id &&
+			a.sell_terminal_id === b.sell_terminal_id
+		);
+	}
+	let rAlternatives = $derived.by(() => {
+		const cur = rDetail;
+		if (!cur) return [] as TradeRoute[];
+		return routes_
+			.filter((r) => r.commodity_id === cur.commodity_id && !isSameRoute(r, cur))
+			.sort((a, b) => b.profit_per_scu - a.profit_per_scu || b.profit_total - a.profit_total)
+			.slice(0, 5);
+	});
+
+	/** Ein-Klick-Wechsel: Alternative übernimmt die bestehende Routen-Ansicht. */
+	function switchRoute(r: TradeRoute) {
+		const i = routes_.findIndex((x) => isSameRoute(x, r));
+		if (i >= 0) rSel = i;
+		rDetail = r; // Detail-Panel rendert die Route (Kopf, Legs, Math) neu.
+		document.querySelector('.rdetail')?.scrollTo({ top: 0 });
+	}
+
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
 	let flat = $state<SearchHit[]>([]);
 	let groupOffsets = $state<number[]>([]);
@@ -2882,8 +2911,42 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span title="Gain = (Sell−Buy) × Menge · absolute"><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
 								<span title="Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)"><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
 								<span><b>Bestand dort</b> {fmtPrice(rDetail.sell_stock)} SCU</span>
+						</div>
+						{#if rAlternatives.length >= 2}
+							<div class="rd-alt">
+								<div class="rd-alt-head">
+									<span class="rd-alt-title">Nächst beste Alternativen</span>
+									<span class="rd-alt-sub">gleiche Ware · nach Gewinn/SCU</span>
+								</div>
+								{#each rAlternatives as a}
+									<button
+										type="button"
+										class="rd-alt-row"
+										class:is-rbzero={rBudgetActive && a.quantity <= 0}
+										title="Route wechseln — öffnet diese Alternative"
+										aria-label={`Alternative öffnen: ${a.buy_terminal} → ${a.sell_terminal}`}
+										onclick={() => switchRoute(a)}
+									>
+										<span class="rd-alt-main">
+											<span class="rd-alt-term">{a.buy_terminal} → {a.sell_terminal}</span>
+											{#if a.enrichment && (a.enrichment.scu_reachable > 0 || a.enrichment.scu_destination > 0)}
+												<span class="r-chip r-chip-vol" title="UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo">≋ {a.enrichment.scu_reachable > 0 ? fmt(Math.round(a.enrichment.scu_reachable)) : fmt(Math.round(a.enrichment.scu_destination))} SCU</span>
+											{/if}
+											{#if rBudgetActive}
+												<span class="r-chip r-chip-menge" title="RB2: mit diesem Budget kaufbare Menge (min SCHIFF-SCU, floor Budget ÷ Kaufpreis)">Menge {fmtQty(a.quantity)} SCU</span>
+											{/if}
+										</span>
+										<span class="rd-alt-right">
+											<span class="rd-alt-gain">+{fmtPrice(a.profit_per_scu)}</span>
+											<span class="rd-alt-meta">{fmtPrice(a.profit_total)} aUEC · Marge {(a.margin * 100).toFixed(0)} %</span>
+										</span>
+									</button>
+								{/each}
 							</div>
-							<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
+						{:else}
+							<div class="rd-alt-none">keine weiteren für {rDetail.commodity}</div>
+						{/if}
+						<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
 							<div class="md-actions">
 								<span class="btn-ghost" onclick={() => (rDetail = null)}>Zurück (Esc)</span>
 							</div>
