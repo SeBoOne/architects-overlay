@@ -142,7 +142,7 @@ async def main():
 
         await call("Page.enable")
         await call("Runtime.enable")
-        await call("Emulation.setDeviceMetricsOverride", {"width": 1920, "height": 1080, "deviceScaleFactor": 2, "mobile": False})
+        await call("Emulation.setDeviceMetricsOverride", {"width": 1920, "height": 1500, "deviceScaleFactor": 2, "mobile": False})
 
         async def navigate(stub_extra=""):
             await call("Page.addScriptToEvaluateOnNewDocument", {"source": STUB})
@@ -295,6 +295,11 @@ async def main():
         )
         check("s2-trades-newest-first", str(first_trade).startswith("Waste|Lorville · Flotte „Corsair №1“"), str(first_trade))
         check("s2-trades-price-shown", "229" in str(first_trade), str(first_trade)[:120])
+        # Pane hat eine CSS-fixierte Höhe — die 5. Trade-Zeile liegt unter dem
+        # Fold; für den Beleg das Trades-Pane nach unten scrollen (DOM-Zähler
+        # [3,5] + Reihenfolge-Check belegen die 5 Zeilen unabhängig davon).
+        await js("(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(l) l.scrollTop = l.scrollHeight; var p=document.querySelector('.pane-market'); if(p) p.scrollTop = p.scrollHeight;})()")
+        await asyncio.sleep(0.4)
         await shot("shop-s2-offers-and-trades.png")
 
         # Deep-Link: OfferRow-Klick → open_marketplace_listing(slug)
