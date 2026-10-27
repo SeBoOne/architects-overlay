@@ -11,7 +11,7 @@ use std::time::Duration;
 use cache::Cache;
 use provider::{
     DataProvider, Entity, EntityKind, MarketplaceFilter, ProviderError, SearchEntities,
-    routes::{RouteEnrichment, RouteFilters},
+    routes::RouteEnrichment,
 };
 use uex_client::UexProvider;
 use wiremock::matchers::{method, path, query_param};
