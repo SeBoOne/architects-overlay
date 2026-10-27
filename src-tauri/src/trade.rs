@@ -757,7 +757,11 @@ async fn get_own_offers_cmd(
     let cache_fresh = state.cache.own_offers_fresh().unwrap_or(false);
     match state.provider.my_offers(username.to_string()).await {
         Ok(offers) => Ok(OwnOffersResponse {
-            source: if cache_fresh { "cache".into() } else { "live".into() },
+            source: if cache_fresh {
+                "cache".into()
+            } else {
+                "live".into()
+            },
             fetched_at: now_unix(),
             offers,
             note: None,
@@ -786,25 +790,40 @@ pub async fn get_my_trades(state: State<'_, TradeState>) -> Result<TradesRespons
     let cache_fresh = state.cache.own_trades_fresh().unwrap_or(false);
     match state.provider.user_trades().await {
         Ok(trades) => Ok(TradesResponse {
-            source: if cache_fresh { "cache".into() } else { "live".into() },
+            source: if cache_fresh {
+                "cache".into()
+            } else {
+                "live".into()
+            },
             fetched_at: now_unix(),
             trades,
             note: None,
             key_set,
         }),
-        Err(e) => {
-            match state.cache.own_trades_snapshot() {
-                Ok(snapshot) if !snapshot.is_empty() => Ok(TradesResponse {
-                    source: "offline".into(),
-                    fetched_at: now_unix(),
-                    trades: snapshot,
-                    note: Some(friendly(e)),
-                    key_set,
-                }),
-                _ => Err(friendly(e)),
-            }
-        }
+        Err(e) => match state.cache.own_trades_snapshot() {
+            Ok(snapshot) if !snapshot.is_empty() => Ok(TradesResponse {
+                source: "offline".into(),
+                fetched_at: now_unix(),
+                trades: snapshot,
+                note: Some(friendly(e)),
+                key_set,
+            }),
+            _ => Err(friendly(e)),
+        },
     }
+}
+
+/// Open the user's own trade history page on uexcorp.space (the UEX
+/// marketplace manager / account page). A per-trade deep-link isn't
+/// documented; the trade LOG page is the continuation point. Pure external
+/// navigation, nothing written.
+#[tauri::command]
+pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
+    let url = "https://uexcorp.space/marketplace/".to_string();
+    let _ = &app;
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(url)
 }
 
 /// Open one listing's page on uexcorp.space in the system default browser.
@@ -2059,7 +2078,9 @@ mod tests {
             wiki_sync: None,
         });
         let state = app.state::<TradeState>();
-        let resp = get_my_offers(state.clone(), "sebo_one".into()).await.unwrap();
+        let resp = get_my_offers(state.clone(), "sebo_one".into())
+            .await
+            .unwrap();
         assert_eq!(resp.source, "live");
         assert_eq!(resp.offers[0].title, "Drake Nettle S");
         // Hinweis: den Snapshot füllt der echte uex_client-Provider (get_own_-

@@ -53,6 +53,7 @@ pub fn run() {
             trade::get_my_offers,
             trade::get_my_trades,
             trade::open_marketplace_listing,
+            trade::open_marketplace_trades,
             inventory::inventory_list,
             inventory::inventory_locations,
             inventory::inventory_add,
