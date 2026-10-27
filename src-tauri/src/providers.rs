@@ -424,6 +424,15 @@ impl DataProvider for CompositeProvider {
         self.uex.trade_routes(filters).await
     }
 
+    async fn route_locations(
+        &self,
+        commodity_id: u64,
+    ) -> Result<Option<provider::routes::RouteCommodityLocations>> {
+        // Routen bleiben UEX-EXKLUSIV (siehe trade_routes) — die Alternativ-
+        // Tabelle liest denselben lokalen Routen-Datensatz.
+        self.uex.route_locations(commodity_id).await
+    }
+
     async fn vehicles_scu(&self) -> Result<std::collections::HashMap<String, f64>> {
         // UEX-Referenzdatum (Schiffs-Cargo) — nicht source-switch-abhängig.
         self.uex.vehicles_scu().await

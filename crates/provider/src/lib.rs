@@ -177,6 +177,19 @@ pub trait DataProvider: Send + Sync {
         Err(ProviderError::Unsupported("trade routes".to_string()))
     }
 
+    /// Alternativ-Tabelle (F2): alle Kauf-/Verkaufsorte einer Ware aus dem
+    /// LOKALEN Routen-Datensatz (kein neuer UEX-Call — Datenbasis ist die
+    /// bereits gesweepten Preiszeilen). Der Default meldet "nicht unterstützt";
+    /// Implementierungen mit Routen-Sweep servieren die Tabelle aus den
+    /// lokalen Zeilen.
+    async fn route_locations(
+        &self,
+        commodity_id: u64,
+    ) -> Result<Option<routes::RouteCommodityLocations>> {
+        let _ = commodity_id;
+        Err(ProviderError::Unsupported("route locations".to_string()))
+    }
+
     /// Schiffs-SCU-Kapazitäten (name/name_full/slug → SCU, lowercase) für den
     /// Hangar-Filter des Routen-Views. Default: nicht unterstützt.
     async fn vehicles_scu(&self) -> Result<std::collections::HashMap<String, f64>> {
