@@ -2200,6 +2200,57 @@ html[data-window="spotlight"] .shell {
 	font-size: 11px;
 	color: var(--warn);
 }
+/* C2a (t_6565fe8b): Tastenkürzel — Capture-Zeile mit Soll-Ist-Anzeige.
+   Grid: Label/Aktiv links, Capture-Button rechts; Help/Fehler spans both. */
+.cfg-sc-row {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	gap: 6px 10px;
+	align-items: center;
+}
+.cfg-sc-meta {
+	min-width: 170px;
+}
+.cfg-sc-lbl {
+	font-size: 12px;
+	color: var(--fgdim);
+}
+.cfg-sc-active {
+	font-size: 12px;
+	color: var(--dim);
+}
+.cfg-sc-active b {
+	color: var(--accent);
+	letter-spacing: 0.06em;
+}
+.cfg-sc-capture {
+	min-width: 132px;
+	justify-self: end;
+}
+.cfg-sc-help {
+	grid-column: 1 / -1;
+	font-size: 11px;
+	color: var(--accent);
+}
+.cfg-sc-err {
+	grid-column: 1 / -1;
+	font-size: 11px;
+	color: var(--alert);
+}
+.cfg-sc-note {
+	font-size: 11px;
+	color: var(--dim);
+	border-top: 1px dashed var(--line);
+	padding-top: 6px;
+}
+.cfg-sc-warn {
+	color: var(--warn);
+	margin-top: 4px;
+}
+.cfg-sc-ok {
+	color: var(--ok);
+	margin-top: 4px;
+}
 
 /* ==========================================================================
    Rail — linke Modus-Leiste (Karte t_315a26cc)

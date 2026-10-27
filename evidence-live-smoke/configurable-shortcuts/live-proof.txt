@@ -1,0 +1,75 @@
+Live-Smoke t_6565fe8b — C2a konfigurierbare Shortcuts (Settings-Key-Capture, Persistenz, Soll-Ist)
+Datum: 2026-10-27 (CET) | Build: feature/configurable-shortcuts @ d3e83b0-Basis + Arbeitscommit (pnpm tauri build --debug --no-bundle; Release-Gate separat: pnpm tauri build --no-bundle OK 12.89s)
+
+SETUP
+- Isolierte Instanz /tmp/aoc2 (eigene XDG data/config/cache + RT /tmp/aoc2 mit Symlinks
+  wayland-1 + hypr; HIS gesetzt — Log zeigt 'geometry dispatch: out="ok"', im Vorversuch
+  deralten Attempt ohne HIS noch fehlgeschlagen). ARCH_OVERLAY_SMOKE=1 zeigt das Fenster
+  ohne laufendes Star Citizen. Reale Instanz PID 1118120 nur als PID bestaetigt, nie beruehrt.
+- Treiber: scripts/drive.py (uinput Tasten/Maus, grim-Fenster-Crop) + combo.py
+  (uinput-Mod-Chord Strg+Alt+K / Strg+F2 fuer die Capture-Felder).
+- Settings-Ansicht per Rail-Klick (544,382 = Zahnrad-Eintrag 'Einstellungen (F12)'):
+  Injiziertes F12 erreicht das WebKit in Debug-Builds NICHT (F12 = devtools-Key),
+  Rail-Klick ist derselbe setMode('settings')-Pfad; F2-Key-Injektion funktioniert
+  (Sonaden-Screenshot 02-probe-f2 market view) — Tastenpfad allgemein alive, F12 special.
+
+ALT (Erststart ohne [shortcuts]-Sektion — Erstmigration auf historische Defaults):
+- OCR 10-alt-defaults.png / Zoom 21-alt-zoom.png:
+    TASTENKURZEL
+    Overlay-Toggle   Aktiv: STRG+UMSCHALT+U   [Aendern]
+    Click-through    Aktiv: STRG+UMSCHALT+O   [Aendern]
+    Intern belegt (nicht waehlbar): F1–F6, F12, Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
+    Globale Kuerzel OS-seitig registriert — Aenderungen wirken sofort ohne Neustart.
+- config.toml existiert vor dem ersten Speichern nicht; Defaults U/O laut Snapshot-Zeile.
+- global_shortcuts_active=true ist auf DIESEM Rechner ehrlich: App laeuft XWayland/X11,
+  Plugin registriert (kein 'not registered'-Warn in app.log). Wayland-Fall
+  (false + Hinweis + Compositor-Pfad C2b) ist unit-getestet und im View-Code enthalten.
+
+NEU (Capture: Aendern -> Strg+Alt+K gedrueckt):
+- OCR 11-neu-capture-ok.png / Zoom 22-neu-zoom.png:
+    Toast: "Tastenkuerzel uebernommen: STRG+ALT+K — gilt ab sofort."
+    Overlay-Toggle   Aktiv: STRG+ALT+K      (Click-through unveraendert STRG+UMSCHALT+O)
+- Ground-Truth config.toml nach Uebernahme:
+    [shortcuts]
+    toggle = "Ctrl+Alt+K"
+    click_through = "Ctrl+Shift+O"
+
+KONFLIKT (Capture scharf -> Strg+F2):
+- OCR 12-konflikt-f2.png / Zoom 23-konflikt-zoom.png:
+    Feld-Fehler: "Intern belegt: F2 (Marktplatz) — im fokussierten Overlay wuerde
+    beides feuern. Andere Taste waehlen."
+    Capture bleibt scharf (Button 'Abbrechen (Esc)'), Aktiv-Zeile zeigt unveraendert
+    STRG+ALT+K (Soll-Ist: Fehler aendert den aktiven Wert nicht), help-Zeile aktiv.
+- config.toml nach Konflikt-Abgabe unveraendert: toggle = "Ctrl+Alt+K".
+
+ESC-ABBRUCH:
+- 13-esc-abort.png: Esc im scharfen Capture -> Zeile zurueck auf 'Aktiv: ... [Aendern]',
+  keine help-/error-Zeilen, keine Aenderung, config unveraendert.
+
+PERSISTENZ NACH NEUSTART (kill 3910210 -> Instanz 2 304166, gleiche Isoli-Dirs):
+- OCR 14-persist-nach-neustart.png / Zoom 24-persist-zoom.png:
+    Overlay-Toggle Aktiv: STRG+ALT+K | Click-through Aktiv: STRG+UMSCHALT+O
+  -> Start registriert die persistierten Kombinationen (app.log2: keine
+  'shortcut ... not registered'-Warnung). Kein Reset auf U/O.
+
+WINDOWS-PAD (nicht live rauchbar auf Linux — Codepfad + Unit):
+- Rebind-Protokoll (settings_set_shortcut_*): erst Validierung, dann
+  overlay::rebind_shortcut (unregister alt -> register neu; Fehler -> ALTEN Wert
+  re-registriert + dt. Fehlermeldung ans Feld, NICHTS persistiert), erst dann
+  persistieren. Derselbe Shortcut::from_str-Parser wie tauri-plugin-global-shortcut
+  (Test canonical_combos_parse_into_expected_hotkeys; settings-Kanon roundtrippt
+  durch denselben Parser: parse_normalizes_aliases_and_order).
+- Doppelvergabe-Regel der zwei Felder: Test shortcut_pair_validation.
+
+GATES (logs: gate_rust.log, gate_fe.log):
+- cargo fmt --all --check OK; cargo check --workspace --all-targets OK;
+  cargo test --workspace: 198 passed / 0 failed / 14 ignored (settings 16,
+  src-tauri lib test 64, cache 24, integration_uex 20, uex_client 18,
+  wiki_client 18, provider 16, math_eval 8, fixtures_mapping 7,
+  game_detection 7; C2a neu: 7 settings-Validierungs-/Persistenz-Tests
+  (crate 9→16), 3 overlay-Tests (Parser/Dispatch/Rebind),
+  1 neuer app_settings-Test + aktualisierter Snapshot-Kontrakt-Test).
+- svelte-check: 0 errors (34 pre-existing a11y warnings); vite build OK;
+  pnpm tauri build --no-bundle (Release) OK.
+
+MD5-Eindeutigkeit der Bundle-PNGs geprüft (Duplikate der Alt-Attempt entfernt).
