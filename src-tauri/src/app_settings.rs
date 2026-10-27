@@ -185,18 +185,15 @@ fn validate_shortcut_input(
 /// three, nothing is ever written. Result lands in the UI note; a failed
 /// sync never rolls back the persisted combo (that would silently lose the
 /// user's new value — the note names the manual recovery instead).
-fn sync_slot(
-    state: &SettingsState,
-    note: &SyncNote,
-    canonical: &str,
-    command: &str,
-    description: &str,
-) {
-    eprintln!(
-        "[ao-sync] sync_slot ein: {canonical} state2={}",
-        state.shortcut_state().2
-    );
-    if !state.shortcut_state().2 {
+fn sync_slot(consent: bool, note: &SyncNote, canonical: &str, command: &str, description: &str) {
+    // Deadlock-Fix (t_1adbc017): sync_slot darf auf KEINEN Zugriff auf
+    // SettingsState haben — die Command-Handler rufen es, waehrend sie den
+    // `inner`-MutexGuard halten (std::Mutex ist nicht reentrant).
+    // Live-Beobachtung: shortcut_state() re-lockt -> 'sync_slot ein'
+    // erscheint nie, der Command kehrt nie zurueck, der Store wird nie
+    // geschrieben. Consent-Wert wird darum explizit uebergeben.
+    eprintln!("[ao-sync] sync_slot ein: {canonical} consent={consent}");
+    if !consent {
         eprintln!("[ao-sync] slot skipped: consent=false");
         return; // no consent — compositor config stays untouched
     }
@@ -470,26 +467,37 @@ pub fn settings_set_shortcut_toggle(
     eprintln!("[ao-sync] TOGGLE-CMD validiert: {canonical}");
     crate::overlay::rebind_shortcut(&app, crate::overlay::ShortcutKind::Toggle, &canonical)?;
     eprintln!("[ao-sync] TOGGLE-CMD rebind ok");
-    let mut s = state.inner.lock().expect("settings lock");
-    s.set_shortcut_toggle(canonical.clone());
-    state.persist(&s);
-    eprintln!("[ao-sync] TOGGLE-CMD persistiert");
+    // Deadlock-Fix (t_1adbc017): Snapshot + Consent-Wert werden innerhalb
+    // des Guard-Scopes gelesen; der Guard wird VOR sync_slot verworfen —
+    // sonst re-lockt sync_slot den nicht-reentranten `inner`-Mutex und der
+    // Command haengt fuer immer (Store bleibt ungeschrieben).
+    let (consent, snap) = {
+        let mut s = state.inner.lock().expect("settings lock");
+        s.set_shortcut_toggle(canonical.clone());
+        state.persist(&s);
+        eprintln!("[ao-sync] TOGGLE-CMD persistiert");
+        (
+            s.shortcut_sync_omarchy(),
+            SettingsSnapshot::from_settings(
+                &s,
+                crate::overlay::global_shortcuts_active(&app),
+                &sync.take(),
+            ),
+        )
+    };
     // C2b: persistierter Soll-Wert wird Compositor-Bind (Consent-Gates in
     // sync_slot). Fehler hier schlagen NICHT auf die Kürzel-Änderung zurück —
-    // das Kürzel ist gültig gespeichert, die Note zeigt den Sync-Fehler.
+    // das Kürzel ist gültig gespeichert, die Note zeigt den Sync-Fehler
+    // (verzögertes Snapshot-Refresh im UI).
     eprintln!("[ao-sync] TOGGLE-CMD rufe sync_slot");
     sync_slot(
-        &state,
+        consent,
         &sync,
         &canonical,
         crate::hyprland_sync::TOGGLE_COMMAND,
         crate::hyprland_sync::TOGGLE_DESCRIPTION,
     );
-    Ok(SettingsSnapshot::from_settings(
-        &s,
-        crate::overlay::global_shortcuts_active(&app),
-        &sync.take(),
-    ))
+    Ok(snap)
 }
 
 /// C2a: Click-through-Kürzel setzen — identisches Protokoll wie
@@ -509,22 +517,30 @@ pub fn settings_set_shortcut_click_through(
         .to_owned();
     let canonical = validate_shortcut_input(&combo, &peer, "Overlay-Toggle")?;
     crate::overlay::rebind_shortcut(&app, crate::overlay::ShortcutKind::ClickThrough, &canonical)?;
-    let mut s = state.inner.lock().expect("settings lock");
-    s.set_shortcut_click_through(canonical.clone());
-    state.persist(&s);
+    // Deadlock-Fix (t_1adbc017): wie beim Toggle-Feld — Guard vor sync_slot
+    // droppen (nicht-reentranter Mutex), Snapshot/Consent im Scope lesen.
+    let (consent, snap) = {
+        let mut s = state.inner.lock().expect("settings lock");
+        s.set_shortcut_click_through(canonical.clone());
+        state.persist(&s);
+        (
+            s.shortcut_sync_omarchy(),
+            SettingsSnapshot::from_settings(
+                &s,
+                crate::overlay::global_shortcuts_active(&app),
+                &sync.take(),
+            ),
+        )
+    };
     // C2b: wie beim Toggle-Feld — Sync nach Persistenz, Consent-gegate't.
     sync_slot(
-        &state,
+        consent,
         &sync,
         &canonical,
         crate::hyprland_sync::CLICK_COMMAND,
         crate::hyprland_sync::CLICK_DESCRIPTION,
     );
-    Ok(SettingsSnapshot::from_settings(
-        &s,
-        crate::overlay::global_shortcuts_active(&app),
-        &sync.take(),
-    ))
+    Ok(snap)
 }
 
 /// C2b: EINMALIGE Zustimmung umschalten ("Tastenkürzel mit System (Omarchy)
