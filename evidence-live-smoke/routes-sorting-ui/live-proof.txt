@@ -1,0 +1,49 @@
+# RA t_5b6d908f — Routen-UI Live-Evidenz (feature/routes-sorting-ui @ 75743a3, base main 4144d9b)
+
+Probe: `docs/scripts/routes-sorting-ui-probe.py` — echte Svelte-Logik, Tauri-IPC
+gestubbt (docs/scripts/smoke-stub.js), CDP-Headless-Chromium auf dem echten
+`pnpm build`. 14/14 Proben-Checks PASS.
+
+## P1 — Tab wechselt keine View mehr; Shift+Tab rückwärts
+- keydown-Handler auf Tab (Angebote⇄Routen) in `onKey` entfernt; Tab läuft jetzt
+  natürlich durchs Formular. Shift+Tab unbeeinflusst (kein Handler, keine Modifier-Kombi gefangen).
+- LIVE belegt: Tab-Sequenz wanderte
+  `SELECT(Schiff) → INPUT SCU → INPUT Ware → INPUT Startort → INPUT Zielort → Chips(Alle/Legal/…/Nein)`;
+  `document.activeElement` folgt. Dabei wurde der Angebote-Chip zu KEINEM
+  Zeitpunkt `is-on` (View blieb Handelsrouten) — Beleg `05-tab-mid-form.png`.
+- Shift+Tab: Fokus SCU → zurück zum SELECT-Schiff (Vorgänger) — Beleg `06-shift-tab-backward.png`.
+- Ansicht nach allen Tabs weiterhin Handelsrouten (`is-on`), 3 Routen-Listenzeilen da.
+
+## P2 — Ein einziger dynamischer Gewinn/SCU-Schalter (3-Zustand)
+- Statt zwei Chips (↓/↑) EIN Button „Gewinn/SCU"; cycleProfitSort schaltet
+  neutral → absteigend → aufsteigend → neutral, Richtung via Icon-Pfeil.
+- LIVE belegt (DOM-text):
+  - Default ↓  → `Gewinn/SCU ↓`
+  - Click 1     → `Gewinn/SCU ↑`   (`02-gewinne-asc.png`)
+  - Click 2     → `Gewinn/SCU`  (kein Pfeil, neutral) (`03-gewinne-neutral.png`)
+  - Click 3     → `Gewinn/SCU ↓`   (`04-gewinne-desc.png`)
+- Neutral ist ECHT: Backend-Variante `RouteSort::Natural` lässt die Originalliste
+  unverändert (additiv, kein Verhaltensänderung bestehender Sort). Im neutralen
+  Screenshot steht die Liste in Basisreihenfolge (Distilled, Agri, Altruciatoxin)
+  — anders als unter ↓ (Altruciatoxin zuerst) → Zustände sind funktional distinkt.
+- Nur Routen-Sortierleiste konsolidiert; Marktplatz-Sort (Preis ↑↓/Neueste) unverändert.
+
+## P3 — „Profit absolut absteigend" entfernt (rein UI)
+- Jetzt sichtbar: `Gewinn/SCU ↓` + `Marge ↓` + `Distanz ↑` — KEIN „Profit absolut"
+  mehr (Screenshot `01-routes-sortbar-single-gewinne-no-profit.png` + Vision-Check).
+- Rangfolge identisch zu „Gewinn/SCU ↓": profit_total = profit_per_scu × SCU bei
+  FESTEM SCU ⇒ monotone Skalierung ⇒ identische Reihenfolge. Deterministisch
+  belegt per cargo-Test
+  `routes::tests::profit_total_desc_ranking_identical_to_profit_per_scu_desc`
+  (4 Waren, unterschiedliche Gewinne; Sequenz ProfitDesc == TotalProfitDesc ==
+  [Alpha, Gamma, Beta, Delta]).
+
+## Gate (komplett)
+- `cargo fmt --check` … ok
+- `cargo check --workspace` … ok
+- `cargo test --workspace` … 0 failed (neuer P3-Test eingeschlossen)
+- `svelte-check` … 0 errors (34 vorbestehende a11y-Warnungen, unberührt)
+- `pnpm build` … ok (build/ gitignored)
+
+Dateien: crates/provider/src/routes.rs, src/routes/+page.svelte,
+docs/scripts/smoke-stub.js, docs/scripts/routes-sorting-ui-probe.py, diese Screenshots.
