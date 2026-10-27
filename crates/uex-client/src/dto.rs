@@ -297,6 +297,43 @@ pub struct ListingRow {
     pub slug: String,
 }
 
+/// `/user_trades` row (eigener Trade-Verlauf, M2a). Null-Härtung wie überall:
+/// UEX sendet explizite `null`s auf optionalen numerischen/String-Feldern.
+/// `operation` ist "buy"|"sell"; `scu` (int) und `price` (float) pro SCU.
+#[derive(Debug, Deserialize)]
+pub struct UserTradeRow {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_terminal: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_commodity: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_user_fleet: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_vehicle: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_organization: u64,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub operation: String,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub scu: u64,
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub price: f64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub date_added: u64,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub commodity_name: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub terminal_name: String,
+    #[serde(default)]
+    pub user_fleet_name: Option<String>,
+    #[serde(default)]
+    pub vehicle_name: Option<String>,
+    #[serde(default)]
+    pub organization_name: Option<String>,
+}
+
 /// `/items_prices` row (per terminal or per item). Only `price_buy` carries
 /// the terminal's purchase price (what the player pays); `price_sell` is 0
 /// for items (shops don't buy items back). The `min/max/avg` variants and
@@ -627,6 +664,31 @@ mod tests {
     /// t_65a91d5b C3b: `null`-Werte auf den numerischen Enrichment-Feldern
     /// (UEX sendet `null` statt 0, wenn unbekannt) dürfen das Mapping nicht
     /// reißen — Serde-Regel (explizites null ≠ fehlendes Feld).
+    #[test]
+    fn user_trade_row_parses_live_shape() {
+        // /user_trades-Response (Research §3): optionale Strings null-bar,
+        // operation buy/sell, scu int, price float pro SCU.
+        let row: UserTradeRow = serde_json::from_str(
+            r#"{
+                "id": 12345, "id_terminal": 29, "id_commodity": 79,
+                "id_user_fleet": 0, "id_vehicle": 3, "id_organization": null,
+                "operation": "sell", "scu": 250, "price": 10000.00,
+                "date_added": 1730000100,
+                "commodity_name": "Waste", "terminal_name": "Port Tressler",
+                "user_fleet_name": null, "vehicle_name": "Caterpillar",
+                "organization_name": "AAWA"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(row.id, 12345);
+        assert_eq!(row.operation, "sell");
+        assert_eq!(row.scu, 250);
+        assert_eq!(row.price, 10000.0);
+        assert_eq!(row.vehicle_name.as_deref(), Some("Caterpillar"));
+        assert_eq!(row.organization_name.as_deref(), Some("AAWA"));
+        assert!(row.user_fleet_name.is_none());
+    }
+
     #[test]
     fn commodity_route_row_nulls_map_to_zero() {
         let row: CommodityRouteRow = serde_json::from_str(

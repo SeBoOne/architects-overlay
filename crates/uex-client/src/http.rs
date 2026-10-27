@@ -129,6 +129,68 @@ impl UexHttpClient {
         }
     }
 
+    /// Like [`UexHttpClient::get_optional`], but attaches an EXTRA `secret-key`
+    /// header (the user-scoped reads `/user_trades/` etc. require BOTH the
+    /// bearer token and the personal secret key — the settings slot holds one
+    /// value, sent as bearer for public reads and additionally as secret-key
+    /// here). Reads public endpoints (marketplace_listings?username=) work
+    /// with both; the user-scoped ones REQUIRE the secret-key.
+    pub async fn get_user<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &[(String, String)],
+        secret_key: Option<&str>,
+    ) -> Result<T> {
+        self.pace().await;
+
+        let url = format!("{}{}", self.base_url, path);
+        let mut request = self.client.get(&url).query(params);
+        if let Some(key) = &self.api_key {
+            request = request.bearer_auth(key);
+        }
+        if let Some(secret) = secret_key {
+            request = request.header("secret-key", secret);
+        }
+
+        let response = request.send().await.map_err(map_reqwest_error)?;
+        let status = response.status();
+        let text = response.text().await.map_err(map_reqwest_error)?;
+
+        if !status.is_success() {
+            return Err(ProviderError::Http {
+                status: status.as_u16(),
+                body: text.chars().take(300).collect(),
+            });
+        }
+
+        let envelope: Envelope<serde_json::Value> =
+            serde_json::from_str(&text).map_err(|e| ProviderError::Json(e.to_string()))?;
+
+        if envelope.status != "ok" {
+            // user_trades meldet "no_trades_found" als status, wenn keine
+            // Trades existieren — kein Fehler, sondern eine leere Historie.
+            if envelope.status == "no_trades_found" {
+                return Err(ProviderError::NotFound("keine Trades".to_string()));
+            }
+            return match envelope.status.as_str() {
+                "requests_limit_reached" => Err(ProviderError::RateLimit { retry_after: None }),
+                _ => Err(ProviderError::Http {
+                    status: envelope.http_code.unwrap_or(status.as_u16()),
+                    body: envelope.message.clone().unwrap_or(envelope.status.clone()),
+                }),
+            };
+        }
+
+        match envelope.data {
+            Some(v) if !v.is_null() => {
+                serde_json::from_value(v).map_err(|e| ProviderError::Json(e.to_string()))
+            }
+            _ => Err(ProviderError::Json(format!(
+                "response status ok but `data` missing for {path}"
+            ))),
+        }
+    }
+
     /// Respect the pacing window: sleep until `min_interval` has passed since
     /// the previous request.
     async fn pace(&self) {

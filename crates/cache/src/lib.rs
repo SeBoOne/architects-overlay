@@ -43,6 +43,11 @@ pub const TTL_WIKI_REFERENCE: Duration = Duration::from_secs(43_200); // 12h
 /// background sync keeps it warm — rate-limit-schonend (one listing fetch per
 /// TTL window at most).
 pub const TTL_MARKETPLACE: Option<Duration> = Some(Duration::from_secs(300));
+/// Own-offers + trade history (M2a, Read-Phase) share the marketplace snapshot
+/// TTL: user-scoped data, short-lived on UEX, wants a fresh-ish local copy but
+/// must never hammer the API. Additive cache behind the SAME TTL analog so the
+/// offline/stale-first contract is identical to the general marketplace view.
+pub const TTL_OWN_SHOP: Option<Duration> = Some(Duration::from_secs(300));
 
 /// Data-source tags stored per entity/price row (`entities.source`,
 /// `prices.source`, …). Legacy rows (pre-scheme v2) are all `uex`.
@@ -186,6 +191,48 @@ CREATE TABLE IF NOT EXISTS marketplace_offers (
   slug         TEXT    NOT NULL DEFAULT '',
   fetched_at   INTEGER NOT NULL
 );
+-- Eigene Marketplace-Offers des angemeldeten Users (M2a, Read-Phase):
+-- identisches Schema wie marketplace_offers, GESCHLOSSEN auf den eigenen
+-- User (username-Filter). Additive Tabelle — der allgemeine marketplace-
+-- Snapshot (alle User) bleibt unberührt. TTL analog TTL_OWN_SHOP.
+CREATE TABLE IF NOT EXISTS own_offers (
+  id           INTEGER PRIMARY KEY,
+  title        TEXT    NOT NULL DEFAULT '',
+  description  TEXT    NOT NULL DEFAULT '',
+  item_id      INTEGER NOT NULL DEFAULT 0,
+  category_id  INTEGER NOT NULL DEFAULT 0,
+  operation    TEXT    NOT NULL DEFAULT 'sell',
+  listing_type TEXT    NOT NULL DEFAULT 'item',
+  price        REAL    NOT NULL DEFAULT 0,
+  currency     TEXT    NOT NULL DEFAULT 'UEC',
+  unit         TEXT    NOT NULL DEFAULT '',
+  quantity     INTEGER NOT NULL DEFAULT 0,
+  location     TEXT    NOT NULL DEFAULT '',
+  region       TEXT    NOT NULL DEFAULT '',
+  seller       TEXT    NOT NULL DEFAULT '',
+  quality      INTEGER NOT NULL DEFAULT 0,
+  updated      INTEGER NOT NULL,
+  expires      INTEGER,
+  slug         TEXT    NOT NULL DEFAULT '',
+  fetched_at   INTEGER NOT NULL
+);
+-- eigene Trades (M2a, Read-Phase): Trade-Verlauf aus /user_trades/.
+-- Additiv, TTL analog TTL_OWN_SHOP.
+CREATE TABLE IF NOT EXISTS own_trades (
+  id           INTEGER PRIMARY KEY,
+  terminal_id  INTEGER NOT NULL DEFAULT 0,
+  commodity_id INTEGER NOT NULL DEFAULT 0,
+  operation    TEXT    NOT NULL DEFAULT 'sell',
+  scu          INTEGER NOT NULL DEFAULT 0,
+  price        REAL    NOT NULL DEFAULT 0,
+  date_added   INTEGER NOT NULL DEFAULT 0,
+  commodity    TEXT    NOT NULL DEFAULT '',
+  terminal     TEXT    NOT NULL DEFAULT '',
+  vehicle      TEXT,
+  fleet_name   TEXT,
+  organization TEXT,
+  fetched_at   INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -326,6 +373,10 @@ fn item_prices_meta_key(item_id: u64) -> String {
 }
 
 const MARKETPLACE_META_KEY: &str = "fetched_at:marketplace";
+/// Frischemarker für die eigenen Offers (M2a) — analog marketplace.
+const OWN_OFFERS_META_KEY: &str = "fetched_at:own_offers";
+/// Frischemarker für die eigenen Trades (M2a) — analog marketplace.
+const OWN_TRADES_META_KEY: &str = "fetched_at:own_trades";
 
 /// Epoch stamp of the `route_matrix` artifact (`meta` keys, cf. v6 schema):
 /// the epoch VALUE describes the price dataset the matrix was built from.
@@ -403,7 +454,12 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   eine fehlende/leere Tabelle lässt die Matrix unverändert serven). Rein
 ///   additiv — `CREATE TABLE IF NOT EXISTS` im SCHEMA, keine Bestandsdaten
 ///   betroffen.
-pub const SCHEMA_VERSION: i64 = 7;
+/// * v8 — M2a (Read-Phase, Marktplatz-Shop-Verwaltung): neue additive Tabellen
+///   `own_offers` (eigene Marketplace-Offers, username-gefiltert) und
+///   `own_trades` (eigener Trade-Verlauf) — Snapshot-Semantik wie
+///   `marketplace_offers`, TTL analog. Rein additiv, keine Bestandsdaten
+///   betroffen (CREATE TABLE IF NOT EXISTS erzeugt sie auf jedem Open).
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -1709,6 +1765,202 @@ impl Cache {
             }
         })
     }
+
+    // ---------- eigene Offers + Trades (M2a, Read-Phase) ----------
+    //
+    // Additive Snapshots für den „Mein Shop"-Abschnitt. Gleiche Semantik wie
+    // marketplace_offers: store_* ersetzt den Snapshot in EINER Transaktion
+    // (alt bleibt bis Commit sichtbar), *_fresh(&self) = TTL-Urteil über den
+    // TTL_OWN_SHOP-Frischemarker, *_snapshot liest stale-first.
+
+    /// Frische-Marker der eigenen Offers (analog marketplace TTL).
+    pub fn own_offers_fresh(&self) -> Result<bool> {
+        let Some(ttl) = TTL_OWN_SHOP else {
+            return Ok(false);
+        };
+        let fetched = self.meta_get(OWN_OFFERS_META_KEY)?;
+        Ok(match fetched {
+            Some(ts) => now_unix().saturating_sub(ts) < ttl.as_secs(),
+            None => false,
+        })
+    }
+
+    /// Eigene Offers als Snapshot ersetzen (username-gefiltert).
+    pub fn store_own_offers(&self, offers: &[provider::Offer]) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM own_offers", [])?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO own_offers (id, title, description, item_id, category_id,
+                        operation, listing_type, price, currency, unit, quantity, location,
+                        region, seller, quality, updated, expires, slug, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                             ?15, ?16, ?17, ?18, ?19)",
+                )?;
+                let now = now_unix() as i64;
+                for o in offers {
+                    stmt.execute(rusqlite::params![
+                        o.id as i64,
+                        o.title,
+                        o.description,
+                        o.item_id as i64,
+                        o.category_id as i64,
+                        o.operation.as_str(),
+                        o.listing_type.as_str(),
+                        o.price,
+                        o.currency,
+                        o.unit,
+                        o.quantity as i64,
+                        o.location,
+                        o.region,
+                        o.seller,
+                        o.quality as i64,
+                        o.updated as i64,
+                        o.expires.map(|e| e as i64),
+                        o.slug,
+                        now,
+                    ])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (OWN_OFFERS_META_KEY, now_unix().to_string()),
+            )?;
+            tx.commit()
+        })
+    }
+
+    /// Letzter Snapshot der eigenen Offers (stale-first; Frischeentscheidung
+    /// obliegt dem CALLER via [`Cache::own_offers_fresh`]).
+    pub fn own_offers_snapshot(&self) -> Result<Vec<Offer>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, title, description, item_id, category_id, operation,
+                        listing_type, price, currency, unit, quantity, location, region, seller,
+                        quality, updated, expires, slug
+                 FROM own_offers ORDER BY updated DESC, id DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let operation: String = row.get(5)?;
+                let listing_type: String = row.get(6)?;
+                Ok(Offer {
+                    id: row.get::<_, i64>(0)? as u64,
+                    title: row.get(1)?,
+                    description: row.get(2)?,
+                    item_id: row.get::<_, i64>(3)? as u64,
+                    category_id: row.get::<_, i64>(4)? as u64,
+                    operation: operation.parse().unwrap_or(provider::MarketOperation::Sell),
+                    listing_type: listing_type.parse().unwrap_or(provider::ListingType::Item),
+                    price: row.get(7)?,
+                    currency: row.get(8)?,
+                    unit: row.get(9)?,
+                    quantity: row.get::<_, i64>(10)? as u64,
+                    location: row.get(11)?,
+                    region: row.get(12)?,
+                    seller: row.get(13)?,
+                    quality: row.get::<_, i64>(14)? as u16,
+                    updated: row.get::<_, i64>(15)? as u64,
+                    expires: row.get::<_, Option<i64>>(16)?.map(|e| e as u64),
+                    slug: row.get(17)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Frische-Marker der eigenen Trades (analog marketplace TTL).
+    pub fn own_trades_fresh(&self) -> Result<bool> {
+        let Some(ttl) = TTL_OWN_SHOP else {
+            return Ok(false);
+        };
+        let fetched = self.meta_get(OWN_TRADES_META_KEY)?;
+        Ok(match fetched {
+            Some(ts) => now_unix().saturating_sub(ts) < ttl.as_secs(),
+            None => false,
+        })
+    }
+
+    /// Eigene Trades als Snapshot ersetzen. Die letzte N-Trades-Logik (hier
+    /// „letzte 5") ist UI-Verantwortung; der Cache hält den vollständig
+    /// geladenen Verlauf (bzw. was UEX geliefert hat).
+    pub fn store_own_trades(&self, trades: &[provider::Trade]) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM own_trades", [])?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO own_trades (id, terminal_id, commodity_id, operation, scu,
+                        price, date_added, commodity, terminal, vehicle, fleet_name, organization,
+                        fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                )?;
+                let now = now_unix() as i64;
+                for t in trades {
+                    stmt.execute(rusqlite::params![
+                        t.id as i64,
+                        t.terminal_id as i64,
+                        t.commodity_id as i64,
+                        t.operation.as_str(),
+                        t.scu as i64,
+                        t.price,
+                        t.date_added as i64,
+                        t.commodity,
+                        t.terminal,
+                        t.vehicle,
+                        t.fleet_name,
+                        t.organization,
+                        now,
+                    ])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (OWN_TRADES_META_KEY, now_unix().to_string()),
+            )?;
+            tx.commit()
+        })
+    }
+
+    /// Letzter Snapshot der eigenen Trades (stale-first; Frischeentscheidung
+    /// obliegt dem CALLER via [`Cache::own_trades_fresh`]).
+    pub fn own_trades_snapshot(&self) -> Result<Vec<provider::Trade>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, terminal_id, commodity_id, operation, scu, price, date_added,
+                        commodity, terminal, vehicle, fleet_name, organization
+                 FROM own_trades ORDER BY date_added DESC, id DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let operation: String = row.get(3)?;
+                Ok(provider::Trade {
+                    id: row.get::<_, i64>(0)? as u64,
+                    terminal_id: row.get::<_, i64>(1)? as u64,
+                    commodity_id: row.get::<_, i64>(2)? as u64,
+                    operation: operation.parse().unwrap_or(provider::MarketOperation::Sell),
+                    scu: row.get::<_, i64>(4)? as u64,
+                    price: row.get(5)?,
+                    date_added: row.get::<_, i64>(6)? as u64,
+                    commodity: row.get(7)?,
+                    terminal: row.get(8)?,
+                    vehicle: row.get(9)?,
+                    fleet_name: row.get(10)?,
+                    organization: row.get(11)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -2587,5 +2839,99 @@ mod tests {
         let map = cache.route_enrichment_rows().unwrap();
         assert!(!map.contains_key("a"), "old set must be replaced");
         assert!(map.contains_key("b"));
+    }
+
+    // ---- M2a (Read-Phase): eigene Offers + Trades cache roundtrips ----
+
+    fn shop_offer(id: u64) -> Offer {
+        Offer {
+            id,
+            title: "Drake Nettle S".into(),
+            description: String::new(),
+            item_id: 0,
+            category_id: 0,
+            operation: MarketOperation::Sell,
+            listing_type: ListingType::Item,
+            price: 4500000.0,
+            currency: "UEC".into(),
+            unit: "unit".into(),
+            quantity: 1,
+            location: "Port Tressler".into(),
+            region: "Stanton".into(),
+            seller: "sebo_one".into(),
+            quality: 72,
+            updated: 1730000000 + id,
+            expires: None,
+            slug: format!("drake-nettle-s-{id}"),
+        }
+    }
+
+    fn shop_trade(id: u64) -> provider::Trade {
+        provider::Trade {
+            id,
+            terminal_id: 1,
+            commodity_id: 79,
+            operation: MarketOperation::Sell,
+            scu: 250,
+            price: 10000.0,
+            date_added: 1730000100 + id,
+            commodity: "Waste".into(),
+            terminal: "Port Tressler".into(),
+            vehicle: None,
+            fleet_name: None,
+            organization: None,
+        }
+    }
+
+    #[test]
+    fn own_offers_roundtrip_and_fresh() {
+        let cache = Cache::open_in_memory().unwrap();
+        assert!(!cache.own_offers_fresh().unwrap());
+        assert!(cache.own_offers_snapshot().unwrap().is_empty());
+        cache.store_own_offers(&[shop_offer(1), shop_offer(2)]).unwrap();
+        assert!(cache.own_offers_fresh().unwrap());
+        let snap = cache.own_offers_snapshot().unwrap();
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap[0].title, "Drake Nettle S");
+        // Snapshot-Semantik: store ersetzt die alte Menge (keine Duplikate).
+        cache.store_own_offers(&[shop_offer(3)]).unwrap();
+        assert_eq!(cache.own_offers_snapshot().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn own_trades_roundtrip_and_fresh() {
+        let cache = Cache::open_in_memory().unwrap();
+        assert!(!cache.own_trades_fresh().unwrap());
+        assert!(cache.own_trades_snapshot().unwrap().is_empty());
+        cache.store_own_trades(&[shop_trade(7), shop_trade(8)]).unwrap();
+        assert!(cache.own_trades_fresh().unwrap());
+        let snap = cache.own_trades_snapshot().unwrap();
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap[0].commodity, "Waste");
+        // Snapshot-Semantik: store ersetzt die alte Menge.
+        cache.store_own_trades(&[shop_trade(9)]).unwrap();
+        assert_eq!(cache.own_trades_snapshot().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn own_shop_ttl_marker_expires_when_backdated() {
+        let cache = Cache::open_in_memory().unwrap();
+        cache.store_own_trades(&[shop_trade(1)]).unwrap();
+        let back = now_unix().saturating_sub(TTL_OWN_SHOP.unwrap().as_secs() + 1);
+        cache
+            .with(|conn| {
+                conn.execute(
+                    "UPDATE meta SET value = ?1 WHERE key = ?2",
+                    [
+                        back.to_string(),
+                        "fetched_at:own_trades".to_string(),
+                    ],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(!cache.own_trades_fresh().unwrap(), "expired ⇒ stale");
+        // Stale-First: Rows bleiben trotzdem serviert.
+        assert_eq!(cache.own_trades_snapshot().unwrap().len(), 1);
     }
 }

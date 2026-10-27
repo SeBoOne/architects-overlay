@@ -15,8 +15,8 @@ pub mod routes;
 
 pub use crate::model::{
     Entity, EntityKind, ListingType, LocationPrices, MarketOperation, MarketplaceFilter, Offer,
-    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, deserialize_id_flexible,
-    deserialize_opt_id_flexible, serialize_id_as_string,
+    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, Trade,
+    deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
 };
 
 /// Domain error produced by a provider implementation.
@@ -168,6 +168,19 @@ pub trait DataProvider: Send + Sync {
     /// stale — a fresh fetch happens on every call; the last snapshot is kept
     /// locally for offline display only.
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>>;
+
+    /// The user's OWN marketplace offers, read via `user_trades`-scoped or
+    /// `marketplace_listings?username=<self>` filtering. Requires the source's
+    /// user credential. Default reports unsupported.
+    async fn my_offers(&self, _username: String) -> Result<Vec<Offer>> {
+        Err(ProviderError::Unsupported("own offers".to_string()))
+    }
+
+    /// The user's own trade history (last trades), source-scoped. Requires a
+    /// user credential on the source. Default reports unsupported.
+    async fn user_trades(&self) -> Result<Vec<Trade>> {
+        Err(ProviderError::Unsupported("user trades".to_string()))
+    }
 
     /// Handelsrouten (Karte t_128b7547): bester Einkauf → bester Verkauf je
     /// Ware, aus dem eigenen Preis-Datensatz. Der Default meldet "nicht

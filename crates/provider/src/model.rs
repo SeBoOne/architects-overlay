@@ -345,6 +345,29 @@ pub struct MarketplaceFilter {
     pub limit: u32,
 }
 
+/// One entry of the user's own trade history (UEX `/user_trades/`),
+/// source-agnostic projection. Mirrors the UEX wire row from the research
+/// doc: 1:1 all string/number fields, denormalized names already resolved
+/// by the source (commodity_name / terminal_name).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Trade {
+    pub id: u64,
+    pub terminal_id: u64,
+    pub commodity_id: u64,
+    pub operation: MarketOperation,
+    /// Menge in SCU (int auf dem Wire).
+    pub scu: u64,
+    /// Preis pro SCU (float auf dem Wire).
+    pub price: f64,
+    /// Unix-Timestamp (date_added).
+    pub date_added: u64,
+    pub commodity: String,
+    pub terminal: String,
+    pub vehicle: Option<String>,
+    pub fleet_name: Option<String>,
+    pub organization: Option<String>,
+}
+
 /// A live marketplace offer (source-agnostic projection of a listing).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Offer {

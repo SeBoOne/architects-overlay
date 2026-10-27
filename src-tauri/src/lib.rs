@@ -50,6 +50,8 @@ pub fn run() {
             trade::sync_status,
             trade::sync_now,
             trade::get_marketplace,
+            trade::get_my_offers,
+            trade::get_my_trades,
             trade::open_marketplace_listing,
             inventory::inventory_list,
             inventory::inventory_locations,

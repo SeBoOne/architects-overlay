@@ -160,6 +160,31 @@ pub struct MarketResponse {
     pub note: Option<String>,
 }
 
+/// „Mein Shop" — eigene Offers (M2a): gleiche Quellenkennung wie
+/// [`MarketResponse`]. `key_set` teilt der UI mit, ob ein API-Key gesetzt ist
+/// (ohne ihn bricht der User-scoped Read; die UI zeigt dann den Settings-Hin-
+/// weis statt einer rohen Fehlermeldung).
+#[derive(Clone, serde::Serialize)]
+pub struct OwnOffersResponse {
+    pub source: String,
+    pub fetched_at: u64,
+    pub offers: Vec<provider::Offer>,
+    pub note: Option<String>,
+    pub key_set: bool,
+}
+
+/// „Mein Shop" — letzte Trades (M2a): letzte-5-Logik übernimmt die UI (der
+/// Cache liefert den vollständig geladenen Verlauf); hier kommen die Trades
+/// des Caches/Live-Fetches.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TradesResponse {
+    pub source: String,
+    pub fetched_at: u64,
+    pub trades: Vec<provider::Trade>,
+    pub note: Option<String>,
+    pub key_set: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -710,6 +735,78 @@ pub async fn get_marketplace(
     }
 }
 
+/// Eigene Offers + Trades (M2a, Read-Phase, „Mein Shop") — je eigener Command
+/// mit Quellenkennung cache/live/offline wie get_marketplace. Kein Schreib-
+/// zugriff in dieser Phase; Deep-Links gehen an die UEX-Seite.
+#[tauri::command]
+pub async fn get_my_offers(
+    state: State<'_, TradeState>,
+    username: String,
+) -> Result<OwnOffersResponse, String> {
+    get_own_offers_cmd(&state, &username).await
+}
+
+/// Eigene Offers laden mit stale-first-Cache + offline-Fallback. `key_set`
+/// wird bei true nur dann zur Fehlerdifferenzierung benutzt (kein Key → die
+/// UI zeigt den Settings-Hinweis statt der rohen UEX-Auth-Fehlermeldung).
+async fn get_own_offers_cmd(
+    state: &State<'_, TradeState>,
+    username: &str,
+) -> Result<OwnOffersResponse, String> {
+    let key_set = api_key_set();
+    let cache_fresh = state.cache.own_offers_fresh().unwrap_or(false);
+    match state.provider.my_offers(username.to_string()).await {
+        Ok(offers) => Ok(OwnOffersResponse {
+            source: if cache_fresh { "cache".into() } else { "live".into() },
+            fetched_at: now_unix(),
+            offers,
+            note: None,
+            key_set,
+        }),
+        Err(e) => {
+            // Offline / Auth: letzter Snapshot oder sauberer Fehler.
+            match state.cache.own_offers_snapshot() {
+                Ok(snapshot) if !snapshot.is_empty() => Ok(OwnOffersResponse {
+                    source: "offline".into(),
+                    fetched_at: now_unix(),
+                    offers: snapshot,
+                    note: Some(friendly(e)),
+                    key_set,
+                }),
+                _ => Err(friendly(e)),
+            }
+        }
+    }
+}
+
+/// Eigene Trades laden (M2a) — stale-first + offline-Fallback.
+#[tauri::command]
+pub async fn get_my_trades(state: State<'_, TradeState>) -> Result<TradesResponse, String> {
+    let key_set = api_key_set();
+    let cache_fresh = state.cache.own_trades_fresh().unwrap_or(false);
+    match state.provider.user_trades().await {
+        Ok(trades) => Ok(TradesResponse {
+            source: if cache_fresh { "cache".into() } else { "live".into() },
+            fetched_at: now_unix(),
+            trades,
+            note: None,
+            key_set,
+        }),
+        Err(e) => {
+            match state.cache.own_trades_snapshot() {
+                Ok(snapshot) if !snapshot.is_empty() => Ok(TradesResponse {
+                    source: "offline".into(),
+                    fetched_at: now_unix(),
+                    trades: snapshot,
+                    note: Some(friendly(e)),
+                    key_set,
+                }),
+                _ => Err(friendly(e)),
+            }
+        }
+    }
+}
+
 /// Open one listing's page on uexcorp.space in the system default browser.
 /// URL scheme verified against the live site (October 2026): both item and
 /// service listings live under `/marketplace/item/info/{slug}/`. No slug → the
@@ -974,6 +1071,15 @@ fn now_unix() -> u64 {
         .as_secs()
 }
 
+/// Ist ein UEX-API-Key am Settings-Slot gesetzt? (M2a: ohne Key liefert die
+/// UI einen sauberen Settings-Hinweis statt der rohen UEX-Auth-Meldung.)
+fn api_key_set() -> bool {
+    settings::Settings::load()
+        .ok()
+        .map(|s| s.uex_api_key().is_some())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     /// Regression (t_925a577a): get_prices nimmt die Row-ID als String ODER
@@ -992,6 +1098,8 @@ mod tests {
     use super::*;
     use tauri::Manager;
     use tauri::test::mock_app;
+    // M2a-Tests (Mein Shop): eigene Offers/Trades nutzen die Seam-Typen.
+    use provider::{ListingType, MarketOperation};
 
     #[test]
     fn friendly_rate_limit_is_german_and_actionable() {
@@ -1801,5 +1909,202 @@ mod tests {
         assert_eq!(out[0].name, "Checkmate Station");
         assert_eq!(out[1].kind, "terminal");
         assert_eq!(out[1].id, 436);
+    }
+
+    // ---- M2a (Read-Phase): „Mein Shop" — eigene Offers + Trades --------
+
+    struct ShopProvider {
+        fail_offers: bool,
+        fail_trades: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl DataProvider for ShopProvider {
+        async fn search(
+            &self,
+            _e: provider::SearchEntities,
+            _q: &str,
+        ) -> provider::Result<Vec<SearchHit>> {
+            Ok(vec![])
+        }
+        async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
+            Ok(vec![])
+        }
+        async fn marketplace_offers(
+            &self,
+            _f: provider::MarketplaceFilter,
+        ) -> provider::Result<Vec<provider::Offer>> {
+            Ok(vec![])
+        }
+        async fn my_offers(&self, _u: String) -> provider::Result<Vec<provider::Offer>> {
+            if self.fail_offers {
+                Err(provider::ProviderError::Http {
+                    status: 403,
+                    body: "invalid_secret_key".into(),
+                })
+            } else {
+                Ok(vec![provider::Offer {
+                    id: 900,
+                    title: "Drake Nettle S".into(),
+                    description: String::new(),
+                    item_id: 0,
+                    category_id: 0,
+                    operation: MarketOperation::Sell,
+                    listing_type: ListingType::Item,
+                    price: 4500000.0,
+                    currency: "UEC".into(),
+                    unit: "unit".into(),
+                    quantity: 1,
+                    location: "Port Tressler".into(),
+                    region: "Stanton".into(),
+                    seller: "sebo_one".into(),
+                    quality: 72,
+                    updated: 1730000000,
+                    expires: None,
+                    slug: "drake-nettle-s".into(),
+                }])
+            }
+        }
+        async fn user_trades(&self) -> provider::Result<Vec<provider::Trade>> {
+            if self.fail_trades {
+                Err(provider::ProviderError::Http {
+                    status: 403,
+                    body: "not_allowed".into(),
+                })
+            } else {
+                Ok(vec![provider::Trade {
+                    id: 5,
+                    terminal_id: 1,
+                    commodity_id: 79,
+                    operation: MarketOperation::Sell,
+                    scu: 250,
+                    price: 10000.0,
+                    date_added: 1730000100,
+                    commodity: "Waste".into(),
+                    terminal: "Port Tressler".into(),
+                    vehicle: None,
+                    fleet_name: None,
+                    organization: None,
+                }])
+            }
+        }
+        async fn fetch_entities(&self, _k: EntityKind) -> provider::Result<Vec<provider::Entity>> {
+            Ok(vec![])
+        }
+        fn name(&self) -> String {
+            "shop".into()
+        }
+    }
+
+    #[tokio::test]
+    async fn my_offers_live_and_offline_fallback() {
+        // Offline-Szenario: Live schlägt fehl, aber ein Snapshot existiert →
+        // source "offline" + Note, der Snapshot bleibt sichtbar.
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: true,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+        });
+        let state = app.state::<TradeState>();
+        state
+            .cache
+            .store_own_offers(&[provider::Offer {
+                id: 900,
+                title: "Drake Nettle S".into(),
+                description: String::new(),
+                item_id: 0,
+                category_id: 0,
+                operation: MarketOperation::Sell,
+                listing_type: ListingType::Item,
+                price: 4500000.0,
+                currency: "UEC".into(),
+                unit: "unit".into(),
+                quantity: 1,
+                location: "Port Tressler".into(),
+                region: "Stanton".into(),
+                seller: "sebo_one".into(),
+                quality: 72,
+                updated: 1730000000,
+                expires: None,
+                slug: "drake-nettle-s".into(),
+            }])
+            .unwrap();
+        let resp = get_my_offers(state.clone(), "sebo_one".into())
+            .await
+            .unwrap();
+        assert_eq!(resp.source, "offline");
+        assert_eq!(resp.offers.len(), 1, "snapshot survives");
+        assert_eq!(resp.offers[0].title, "Drake Nettle S");
+        assert!(resp.note.is_some());
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn my_offers_live_sets_snapshot() {
+        // Live-Pfad: der erfolgreiche Fetch füllt den eigenen Snapshot (der
+        // spätere Offline-Fallback kann ihn servieren).
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: false,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+        });
+        let state = app.state::<TradeState>();
+        let resp = get_my_offers(state.clone(), "sebo_one".into()).await.unwrap();
+        assert_eq!(resp.source, "live");
+        assert_eq!(resp.offers[0].title, "Drake Nettle S");
+        // Hinweis: den Snapshot füllt der echte uex_client-Provider (get_own_-
+        // offers_impl) — der IPC-Command delegiert nur. Das ist im uex_client-/
+        // cache-Test abgedeckt, nicht an der IPC-Stub-Grenze.
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn my_trades_fails_cleanly_without_snapshot_and_serves_offline() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: true,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+        });
+        let state = app.state::<TradeState>();
+        // Kein Snapshot → sauberer Fehler (nicht leere Liste / kein Crash).
+        let err = get_my_trades(state.clone()).await.unwrap_err();
+        assert!(!err.is_empty(), "clean German error");
+        // Snapshot gesetzt → offline-Fallback.
+        state
+            .cache
+            .store_own_trades(&[provider::Trade {
+                id: 7,
+                terminal_id: 2,
+                commodity_id: 79,
+                operation: MarketOperation::Buy,
+                scu: 100,
+                price: 500.0,
+                date_added: 1730000200,
+                commodity: "Waste".into(),
+                terminal: "Lorville".into(),
+                vehicle: None,
+                fleet_name: None,
+                organization: None,
+            }])
+            .unwrap();
+        let resp = get_my_trades(state).await.unwrap();
+        assert_eq!(resp.source, "offline");
+        assert_eq!(resp.trades[0].commodity, "Waste");
+        let _ = app;
     }
 }

@@ -45,7 +45,7 @@ use provider::{
 
 use dto::{
     CategoryRow, CommodityRouteRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow,
-    StarSystemRow, TerminalRow, VehicleRow,
+    StarSystemRow, TerminalRow, UserTradeRow, VehicleRow,
 };
 
 /// Search result page size served from the cache.
@@ -135,6 +135,9 @@ pub fn route_terminal_flags_from_rows(rows: &[TerminalRow]) -> HashMap<u64, Rout
 pub struct UexProvider {
     http: UexHttpClient,
     cache: Arc<Cache>,
+    /// User-scoped Reads senden den Slot-Key ZUSÄTZLICH als `secret-key`-
+    /// Header (UEX /user_trades/ etc. verlangen Beide). Nur dort verwendet.
+    secret_key: Option<String>,
     /// Typ-Feld der zuletzt via `/terminals` geholten Zeilen (id → UEX type).
     /// Wird in `fetch_entities` gesetzt und in `ensure_fresh` als
     /// Ground-truth-Sidecar persistiert (P15a-Härtung).
@@ -155,11 +158,16 @@ impl UexProvider {
         base_url: &str,
         min_interval: std::time::Duration,
     ) -> Result<UexProvider> {
-        let http = UexHttpClient::new(base_url, api_key, None, min_interval)?;
+        let http = UexHttpClient::new(base_url, api_key.clone(), None, min_interval)?;
         Ok(UexProvider {
             http,
             cache,
             last_terminal_types: std::sync::Mutex::new(HashMap::new()),
+            // User-scoped Endpunkte (user_trades, username-Filter) senden den
+            // Slot-Key ZUSÄTZLICH als `secret-key`-Header — UEX erwartet dort
+            // beide (Bearer + secret-key). Bewusst NICHT global am HTTP-Client
+            // gesetzt (dann ginge der secret-key auf allen Public-Reads mit).
+            secret_key: api_key,
         })
     }
 
@@ -427,6 +435,27 @@ impl DataProvider for UexProvider {
                 .map_err(map_cache_err)?;
         }
         Ok(Self::apply_local(offers, &filters))
+    }
+
+    /// Eigene Marketplace-Offers des angemeldeten Users (M2a, Read-Phase).
+    ///
+    /// UEX filtert `/marketplace_listings` per `username=` (ein dedizierter
+    /// „own-listing"-Parameter existiert nicht — Research §3, Option 1).
+    /// Stale-first wie der allgemeine Snapshot: frischer Cache dient direkt,
+    /// sonst LIVE-Fetch (oder letzter Snapshot bei Offline — die IPC-Ebene
+    /// entscheidet die Quellenkennung). Der Snapshot wird additiv aktualisiert
+    /// (eigene Tabelle `own_offers`), die öffentliche marketplace-Tabelle
+    /// bleibt unberührt.
+    async fn my_offers(&self, username: String) -> Result<Vec<Offer>> {
+        self.my_offers_impl(username).await
+    }
+
+    /// Eigener Trade-Verlauf (M2a, Read-Phase).
+    ///
+    /// `GET /user_trades/` — user-scoped, braucht User-credential. Stale-first
+    /// wie der Rest; der letzte Snapshot (Tabelle `own_trades`) dient offline.
+    async fn user_trades(&self) -> Result<Vec<provider::Trade>> {
+        self.user_trades_impl().await
     }
 
     async fn fetch_entities(&self, kind: EntityKind) -> Result<Vec<Entity>> {
@@ -1288,6 +1317,96 @@ impl UexProvider {
         }
         Ok(out)
     }
+
+    /// Eigene Marketplace-Offers live holen + Snapshot additiv aktualisieren.
+    /// Stale-first: der Cache entscheidet in der IPC-Ebene (dort liegt die
+    /// Quellenkennung cache/live/offline); hier nur der VoLLe Fetch-Weg in
+    /// die eigene Tabelle (username-gefiltert).
+    async fn my_offers_impl(&self, username: String) -> Result<Vec<Offer>> {
+        let username = username.trim().to_owned();
+        if username.is_empty() {
+            return Err(ProviderError::Config(
+                "Bitte den UEX-Benutzernamen angeben, um deine Offers zu laden.".into(),
+            ));
+        }
+        let rows: Vec<ListingRow> = self
+            .http
+            .get_user(
+                "/marketplace_listings",
+                &[("username".to_string(), username.clone())],
+                self.secret_key.as_deref(),
+            )
+            .await?;
+        let offers = self.map_listing_rows(rows, &username).await?;
+        self.cache
+            .store_own_offers(&offers)
+            .map_err(map_cache_err)?;
+        Ok(offers)
+    }
+
+    /// Eigene Trades live holen + Snapshot additiv aktualisieren (Tabelle
+    /// `own_trades`). Stale-first-Entscheidung liegt in der IPC-Ebene.
+    async fn user_trades_impl(&self) -> Result<Vec<provider::Trade>> {
+        let rows: Vec<UserTradeRow> = self
+            .http
+            .get_user("/user_trades", &[], self.secret_key.as_deref())
+            .await?;
+        let trades = rows.into_iter().map(map_trade).collect::<Vec<_>>();
+        self.cache
+            .store_own_trades(&trades)
+            .map_err(map_cache_err)?;
+        Ok(trades)
+    }
+
+    /// Wire-/Listing-Rows → Seam-Offers, identische Mapping-Logik wie
+    /// `marketplace_offers` (inkl. Region-Auflösung). Der username-Filter
+    /// wurde schon serverseitig angewendet; `self` wird als seller-Fallback
+    /// gesetzt, falls eine Zeile keinen seller trägt.
+    async fn map_listing_rows(
+        &self,
+        rows: Vec<ListingRow>,
+        self_username: &str,
+    ) -> Result<Vec<Offer>> {
+        let regions = self.star_system_names().await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let region = if r.id_star_system != 0 {
+                    regions.get(&r.id_star_system).cloned().unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                Offer {
+                    id: r.id,
+                    title: r.title,
+                    description: r.description,
+                    item_id: r.id_item,
+                    category_id: r.id_category,
+                    operation: r.operation.parse().unwrap_or(MarketOperation::Sell),
+                    listing_type: r.r#type.parse().unwrap_or(ListingType::Item),
+                    price: r.price.parse::<f64>().unwrap_or(0.0),
+                    currency: if r.currency.is_empty() {
+                        "UEC".into()
+                    } else {
+                        r.currency
+                    },
+                    unit: r.unit,
+                    quantity: r.in_stock,
+                    location: r.location,
+                    region,
+                    seller: if r.user_name.is_empty() {
+                        self_username.to_owned()
+                    } else {
+                        r.user_name
+                    },
+                    quality: r.quality.unwrap_or(0),
+                    updated: r.date_added,
+                    expires: r.date_expiration,
+                    slug: r.slug,
+                }
+            })
+            .collect())
+    }
 }
 
 /// Unix-Sekunden (Lokalzeit unabhängig).
@@ -1546,6 +1665,29 @@ fn map_route_enrichment(r: CommodityRouteRow) -> RouteEnrichment {
     }
 }
 
+/// Map a `/user_trades/` wire-row onto the seam [`provider::Trade`].
+fn map_trade(r: UserTradeRow) -> provider::Trade {
+    provider::Trade {
+        id: r.id,
+        terminal_id: r.id_terminal,
+        commodity_id: r.id_commodity,
+        operation: r.operation.parse().unwrap_or(provider::MarketOperation::Sell),
+        scu: r.scu,
+        price: r.price,
+        date_added: r.date_added,
+        commodity: r.commodity_name,
+        terminal: r.terminal_name,
+        vehicle: none_if_empty(r.vehicle_name),
+        fleet_name: none_if_empty(r.user_fleet_name),
+        organization: none_if_empty(r.organization_name),
+    }
+}
+
+/// `Some("")` → `None` (UEX liefert leere/Optionale Strings manchmal als "").
+fn none_if_empty(s: Option<String>) -> Option<String> {
+    s.filter(|v| !v.trim().is_empty())
+}
+
 /// Map a `/commodities_prices` row (commodity- OR terminal-scoped — same wire
 /// shape) onto the seam [`PricePoint`]. `fallback_commodity` is used when the
 /// row omits the name (ageing API rows); the terminal name falls back to a
@@ -1616,7 +1758,7 @@ fn map_item_price_point(r: ItemPriceRow, fallback_item: &str) -> PricePoint {
 pub mod private {
     pub use crate::dto::{
         CategoryRow, CommodityRouteRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow,
-        StarSystemRow, TerminalRow,
+        StarSystemRow, TerminalRow, UserTradeRow,
     };
     pub use crate::http::DEFAULT_BASE_URL;
 }
