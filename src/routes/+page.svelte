@@ -171,6 +171,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		commodity_source: string;
 		// K2 (t_5fe8eb4c, P12): font/icon scale in % (Chips 80–125, backend 50–200).
 		scale: number;
+		// C2a (t_6565fe8b): kanonische Kürzel (Soll — persistiert) + Ist
+		// (registriert das OS die Hotkeys wirklich — Wayland: nein).
+		shortcut_toggle: string;
+		shortcut_click_through: string;
+		global_shortcuts_active: boolean;
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -186,6 +191,122 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (cfgToastTimer) clearTimeout(cfgToastTimer);
 		cfgToastTimer = setTimeout(() => (cfgToast = ''), 3000);
 	}
+
+	// ---- C2a (t_6565fe8b): konfigurierbare globale Tastenkürzel ------------
+	// Key-Capture: Feld über „Ändern“ scharf stellen → Kombination drücken,
+	// erste vollständige Mod+Taste-Kombination wird sofort ans Backend gegeben
+	// (dort final validiert: ≥1 Mod + 1 Taste, Escape-Verbot, interne
+	// Konflikte, Doppelvergabe). Esc bricht die Capture ab. Fehler bleiben im
+	// Feld sichtbar, der Capture-Modus bleibt aktiv — alter Kürzel bleibt aktiv.
+	type ShortcutField = 'toggle' | 'click';
+	let scCapture = $state<ShortcutField | null>(null);
+	let scPreview = $state('');
+	let scNote = $state('');
+	let scNoteFor = $state<ShortcutField | null>(null);
+
+	const MOD_LABELS: Record<string, string> = { Ctrl: 'STRG', Alt: 'ALT', Shift: 'UMSCHALT', Super: 'WIN' };
+	const KEY_LABELS: Record<string, string> = {
+		Space: 'LEERTASTE', Enter: 'ENTER', Tab: 'TAB', ArrowUp: '↑', ArrowDown: '↓',
+		ArrowLeft: '←', ArrowRight: '→', PageUp: 'BILD HOC', PageDown: 'BILD RUN',
+		Backspace: 'BACKSPACE', Delete: 'ENTF', Home: 'POS1', End: 'ENDE', Insert: 'EINFG',
+		PrintScreen: 'DRUCK', ScrollLock: 'ROLLEN', CapsLock: 'FESTSTELL', Pause: 'PAUSE',
+		Backquote: '`', Backslash: '\\', BracketLeft: '[', BracketRight: ']', Comma: ',',
+		Equal: '=', Minus: '-', Period: '.', Quote: "'", Semicolon: ';', Slash: '/',
+	};
+	function canonicalToLabel(canonical: string): string {
+		if (!canonical) return '—';
+		return canonical
+			.split('+')
+			.map((tok) => MOD_LABELS[tok] ?? KEY_LABELS[tok] ?? tok.toUpperCase())
+			.join('+');
+	}
+	// Browser-Event-Code → kanonischer Taste-Token (Backend-Parser akzeptiert
+	// genau diese Tokens; Ziffernblock/Browser-Sonderkeys bewusst null).
+	function codeToToken(code: string): string | null {
+		if (/^Key[A-Z]$/.test(code)) return code.slice(3);
+		if (/^Digit\d$/.test(code)) return code.slice(5);
+		if (/^F\d{1,2}$/.test(code)) return code;
+		const fixed: Record<string, string> = {
+			Space: 'Space', Enter: 'Enter', Tab: 'Tab', Backspace: 'Backspace', Delete: 'Delete',
+			Home: 'Home', End: 'End', Insert: 'Insert', PageUp: 'PageUp', PageDown: 'PageDown',
+			PrintScreen: 'PrintScreen', ScrollLock: 'ScrollLock', CapsLock: 'CapsLock', Pause: 'Pause',
+			ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown', ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight',
+			Backquote: 'Backquote', Backslash: 'Backslash', BracketLeft: 'BracketLeft',
+			BracketRight: 'BracketRight', Comma: 'Comma', Equal: 'Equal', Minus: 'Minus',
+			Period: 'Period', Quote: 'Quote', Semicolon: 'Semicolon', Slash: 'Slash',
+		};
+		return fixed[code] ?? null;
+	}
+	function startShortcutCapture(field: ShortcutField) {
+		scCapture = field;
+		scPreview = '';
+		scNote = '';
+		scNoteFor = null;
+	}
+	function cancelShortcutCapture() {
+		scCapture = null;
+		scPreview = '';
+		scNote = '';
+		scNoteFor = null;
+	}
+	// Capture-Key BEFORE every other handler (see onKey): nothing pressed
+	// during capture may switch modes. Modifiers alone keep waiting; first
+	// complete combo submits immediately.
+	function captureShortcut(e: KeyboardEvent) {
+		const field = scCapture;
+		if (!field) return; // $state-Variable: lokal fixieren, TS kann sie nicht narrowing
+		e.preventDefault();
+		if (e.key === 'Escape') {
+			cancelShortcutCapture();
+			return;
+		}
+		if (['Control', 'Shift', 'Alt', 'AltGraph', 'Meta'].includes(e.key)) return;
+		const token = codeToToken(e.code);
+		if (!token) {
+			scNoteFor = field;
+			scNote = `Taste ${e.key} nicht unterstützt — Buchstabe, Ziffer, F1–F24 oder Sonderzeichen der Haupttastatur nutzen.`;
+			return;
+		}
+		const mods: string[] = [];
+		if (e.ctrlKey) mods.push('Ctrl');
+		if (e.altKey) mods.push('Alt');
+		if (e.shiftKey) mods.push('Shift');
+		if (e.metaKey) mods.push('Super');
+		if (!mods.length) {
+			scNoteFor = field;
+			scNote = 'Zuerst eine Mod-Taste (Strg/Alt/Shift/Win) halten, dann die normale Taste.';
+			return;
+		}
+		// kanonische Mod-Reihenfolge Ctrl→Alt→Shift→Super = Backend-Kanonik
+		const canonical = `${mods.join('+')}+${token}`;
+		scPreview = canonicalToLabel(canonical);
+		void submitShortcut(field, canonical);
+	}
+	async function submitShortcut(field: ShortcutField, canonical: string) {
+		const cmd = field === 'toggle' ? 'settings_set_shortcut_toggle' : 'settings_set_shortcut_click_through';
+		try {
+			cfg = await invoke<SettingsSnapshot>(cmd, { combo: canonical });
+			applySettings(cfg);
+			const applied = field === 'toggle' ? cfg?.shortcut_toggle : cfg?.shortcut_click_through;
+			scCapture = null;
+			scPreview = '';
+			scNote = '';
+			scNoteFor = null;
+			cfgConfirm(`Tastenkürzel übernommen: ${canonicalToLabel(applied ?? '')} — gilt ab sofort.`);
+		} catch (err) {
+			// Nichts persistiert, OS-Registration unverändert (Backend hat den
+			// alten Wert re-registriert). Capture bleibt scharf: sofort neu
+			// tryierbar, Fehler sichtbar direkt am betroffenen Feld.
+			scNoteFor = field;
+			scNote = String(err);
+			scPreview = '';
+		}
+	}
+	let shortcutFields = $derived([
+		{ id: 'toggle' as ShortcutField, label: 'Overlay-Toggle', fallback: 'Ctrl+Shift+U', value: cfg?.shortcut_toggle },
+		{ id: 'click' as ShortcutField, label: 'Click-through', fallback: 'Ctrl+Shift+O', value: cfg?.shortcut_click_through },
+		// Ohne Backend (SSR/Probe): die kanonischen Defaults anzeigen.
+	].map((f) => ({ ...f, display: canonicalToLabel(f.value || f.fallback) })));
 
 	// P8-Detail-Variante: Backend-Wert ist Quelle der Wahrheit, aber die Umschal-
 	// tung wirkt SOFORT auch ohne Backend (statischer Build/Probe) über einen
@@ -578,6 +699,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		dToast = '';
 		apiKeyInput = '';
 		apiKeyNote = '';
+		cancelShortcutCapture();
 		inConfig = true;
 		if (searchEl) searchEl.blur();
 	}
@@ -586,6 +708,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inConfig = false;
 		apiKeyInput = '';
 		apiKeyNote = '';
+		// Capture darf ein Schließen nicht überleben (kein Geister-Fenster-Modus).
+		cancelShortcutCapture();
 		cfgToast = '';
 		if (cfgToastTimer) clearTimeout(cfgToastTimer);
 		// Der Tray kann das Overlay (ohne laufendes Spiel) rein für die Config
@@ -1840,6 +1964,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	function onKey(e: KeyboardEvent) {
 		const k = e.key;
+		// C2a (t_6565fe8b): scharfe Shortcut-Capture überschreibt alles — keys
+		// während der Capture dürfen keine Modi wechseln (F12 mitten in der
+		// Capture dürfte das Settings-View sonst schließen) und erreichen auch
+		// kein Suchfeld. Capture konsumiert das Event vollständig.
+		if (scCapture) {
+			captureShortcut(e);
+			return;
+		}
 		// ---- F-Tasten: In-App-Moduswechsel (Karte t_315a26cc) ----------------
 		// F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar · F12 Einstellungen.
 		// KEINE Hyprland-Binds — die Tasten greifen nur, solange das Overlay
@@ -2420,6 +2552,52 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									onclick={() => void chooseScale(pct)}
 								>{pct} %</button>
 							{/each}
+						</div>
+					</section>
+					<section class="cfg-sect">
+						<div class="h">Tastenkürzel</div>
+						{#each shortcutFields as f (f.id)}
+							<div class="cfg-sc-row" class:is-cap={scCapture === f.id}>
+								<div class="cfg-sc-meta">
+									<div class="cfg-sc-lbl">{f.label}</div>
+									<!-- Soll-Ist: aktiv = persistierter Backend-Wert
+									     (überlebt Neustart), nicht der Entwurf im Feld. -->
+									<div class="cfg-sc-active">
+										Aktiv: <b>{f.display}</b>
+									</div>
+								</div>
+								<button
+									type="button"
+									class="chip cfg-sc-capture"
+									class:is-on={scCapture === f.id}
+									onclick={() => (scCapture === f.id ? cancelShortcutCapture() : startShortcutCapture(f.id))}
+								>{scCapture === f.id ? 'Abbrechen (Esc)' : 'Ändern'}</button>
+								{#if scCapture === f.id}
+									<div class="cfg-sc-help" role="status">
+										{scPreview ? `Gewählt: ${scPreview} — prüfen…` : 'Mod-Taste (Strg/Alt/Shift/Win) + normale Taste drücken'}
+									</div>
+								{/if}
+								{#if scNoteFor === f.id}
+									<div class="cfg-sc-err" role="alert">{scNote}</div>
+								{/if}
+							</div>
+						{/each}
+						<!-- Konfliktliste + Ehrlichkeit zum Registrierungszustand
+						     (Preisquellen-Feedback-Muster, K6): die In-App-Handler
+						     prüfen keine Mod-Tasten, darum sind diese Tasten für
+						     globale Kürzel gesperrt. -->
+						<div class="cfg-sc-note">
+							Intern belegt (nicht wählbar): F1–F6, F12, Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
+							{#if cfg && !cfg.global_shortcuts_active}
+								<div class="cfg-sc-warn" role="status">
+									Globale Kürzel <b>nicht OS-seitig registriert</b> (Wayland): die
+									gespeicherten Kombinationen sind die kanonische Quelle und werden
+									über die Compositor-Bindung (<span class="src">arch-overlay toggle</span>)
+								aktiv — Bindgenerierung folgt (C2b).
+								</div>
+							{:else if cfg}
+								<div class="cfg-sc-ok" role="status">Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart.</div>
+							{/if}
 						</div>
 					</section>
 					<section class="cfg-sect">

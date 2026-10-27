@@ -17,13 +17,14 @@
 //!
 //! No telemetry: nothing is logged or transmitted.
 
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::webview::WebviewWindow;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutEvent, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcut, Shortcut, ShortcutEvent, ShortcutState};
 
 /// Window label of the spotlight overlay. Referenced from capabilities and the
 /// frontend (`getCurrentWebviewWindow().getLabel()`).
@@ -92,6 +93,59 @@ impl OverlayState {
     }
 }
 
+/// Which global shortcut slot a combo drives (C2a, t_6565fe8b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutKind {
+    /// Overlay-Toggle (default `Ctrl+Shift+U`).
+    Toggle,
+    /// Click-through-Umschalter (default `Ctrl+Shift+O`).
+    ClickThrough,
+}
+
+/// Live mapping pressed hotkey → action. Single source of truth for the
+/// plugin handler AND for runtime re-registration: the plugin's global
+/// handler dispatches against THIS state, so a rebind only swaps the
+/// bindings + the OS registration, never the handler closure itself.
+pub struct ShortcutBindings {
+    toggle: RwLock<Option<Shortcut>>,
+    click: RwLock<Option<Shortcut>>,
+}
+
+impl ShortcutBindings {
+    pub fn new() -> Self {
+        Self {
+            toggle: RwLock::new(None),
+            click: RwLock::new(None),
+        }
+    }
+
+    fn slot(&self, kind: ShortcutKind) -> &RwLock<Option<Shortcut>> {
+        match kind {
+            ShortcutKind::Toggle => &self.toggle,
+            ShortcutKind::ClickThrough => &self.click,
+        }
+    }
+
+    pub fn current(&self, kind: ShortcutKind) -> Option<Shortcut> {
+        *self.slot(kind).read().expect("shortcut bindings lock")
+    }
+
+    pub fn set(&self, kind: ShortcutKind, shortcut: Option<Shortcut>) {
+        *self.slot(kind).write().expect("shortcut bindings lock") = shortcut;
+    }
+
+    /// Which action a pressed hotkey maps to (`Shortcut` is Copy+PartialEq).
+    pub fn match_kind(&self, pressed: &Shortcut) -> Option<ShortcutKind> {
+        if self.toggle.read().expect("lock").as_ref() == Some(pressed) {
+            return Some(ShortcutKind::Toggle);
+        }
+        if self.click.read().expect("lock").as_ref() == Some(pressed) {
+            return Some(ShortcutKind::ClickThrough);
+        }
+        None
+    }
+}
+
 /// Snapshot of the overlay state, serialized to the frontend via IPC.
 #[derive(Clone, serde::Serialize)]
 pub struct OverlaySnapshot {
@@ -104,6 +158,7 @@ pub struct OverlaySnapshot {
 /// Must be called from the app setup (main thread).
 pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     app.manage(OverlayState::new());
+    app.manage(ShortcutBindings::new());
 
     create_spotlight_window(app)?;
     // NOTE: click-through is applied on first *show* (see `apply_visibility`):
@@ -120,7 +175,21 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         apply_visibility(app.handle(), true);
     }
 
-    register_global_shortcuts(app);
+    // C2a (t_6565fe8b): the persisted settings are the canonical shortcut
+    // source (settings state is managed BEFORE overlay::init in lib.rs —
+    // try_state keeps this robust if the order ever changes). Migration to
+    // the historical U/O defaults happens inside the settings crate, so the
+    // values here are always canonical, validated strings.
+    let (toggle, click) = app
+        .try_state::<crate::app_settings::SettingsState>()
+        .map(|st| st.shortcut_combos())
+        .unwrap_or_else(|| {
+            (
+                settings::DEFAULT_TOGGLE_SHORTCUT.to_owned(),
+                settings::DEFAULT_CLICK_SHORTCUT.to_owned(),
+            )
+        });
+    register_global_shortcuts(app, &toggle, &click);
 
     let handle = app.handle();
     spawn_game_poller(handle);
@@ -173,45 +242,132 @@ fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Web
     Ok(win)
 }
 
-/// Register the global shortcuts. The `global-shortcut` backend is X11-based
+/// Register the global shortcuts from the persisted canonical combos
+/// (C2a, t_6565fe8b). The `global-shortcut` backend is X11-based
 /// (global_hotkey has no Wayland implementation), so on a pure Wayland session
 /// the plugin fails to initialise; we swallow that — the overlay still works,
 /// only the global hotkey is unavailable there. The Wayland fallback is the
 /// Unix-socket CLI (`arch-overlay toggle`, see `ipc_socket` + docs/WAYLAND.md),
-/// which compositor keybinds exec directly.
-fn register_global_shortcuts<R: Runtime>(app: &tauri::App<R>) {
-    // Strg+Shift+U toggles visibility, Strg+Shift+O toggles click-through.
-    // Hard-coded for Phase 1 — both become configurable via `settings`.
-    let shortcut_visible = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyU);
-    let shortcut_click = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyO);
-
+/// which compositor keybinds exec directly; C2b generates those binds FROM
+/// the same canonical settings values.
+///
+/// The plugin is built with a single global handler that dispatches against
+/// the managed `ShortcutBindings` — registered at plugin setup. Every actual
+/// combo goes through `global_shortcut().register()` afterwards, which is the
+/// exact API a runtime rebind uses (see `rebind_shortcut`).
+fn register_global_shortcuts<R: Runtime>(app: &tauri::App<R>, toggle: &str, click: &str) {
     let mut builder = tauri_plugin_global_shortcut::Builder::new();
-    builder = builder.with_shortcut(shortcut_visible).unwrap();
-    builder = builder.with_shortcut(shortcut_click).unwrap();
-    let plugin = builder
-        .with_handler(
-            move |open_app: &AppHandle<R>, shortcut: &Shortcut, event: ShortcutEvent| {
-                if event.state != ShortcutState::Pressed {
-                    return;
+    builder = builder.with_handler(
+        move |open_app: &AppHandle<R>, shortcut: &Shortcut, event: ShortcutEvent| {
+            if event.state != ShortcutState::Pressed {
+                return;
+            }
+            let Some(bindings) = open_app.try_state::<ShortcutBindings>() else {
+                return;
+            };
+            match bindings.match_kind(shortcut) {
+                Some(ShortcutKind::Toggle) => toggle_visible(open_app),
+                Some(ShortcutKind::ClickThrough) => {
+                    let _ = toggle_click_through(open_app);
                 }
-                if shortcut == &shortcut_visible {
-                    toggle_visible(open_app);
-                } else if shortcut == &shortcut_click {
-                    toggle_click_through(open_app);
-                }
-            },
-        )
-        .build();
+                None => {}
+            }
+        },
+    );
 
     // Failure (e.g. no X11 on Wayland) must not abort startup — but it must
     // be visible: a silently missing hotkey looks like a dead overlay. The
     // socket CLI (`ipc_socket`) is the Wayland fallback.
-    if let Err(err) = app.handle().plugin(plugin) {
+    if let Err(err) = app.handle().plugin(builder.build()) {
         log::warn!(
             "global shortcuts unavailable ({err}); under Wayland use the socket CLI: \
-             arch-overlay toggle (see docs/WAYLAND.md)"
+             arch-overlay toggle (see docs/WAYLAND.md) — persisted shortcuts become \
+             compositor binds (C2b)"
+        );
+        return;
+    }
+
+    for (kind, combo) in [
+        (ShortcutKind::Toggle, toggle),
+        (ShortcutKind::ClickThrough, click),
+    ] {
+        if let Err(err) = register_combo(app.handle(), kind, combo) {
+            // Startup collision (e.g. another app holds the combo): visible in
+            // the log; the Settings view surfaces it on the next (re)bind.
+            log::warn!("global shortcut {combo:?} ({kind:?}) not registered: {err}");
+        }
+    }
+}
+
+/// Register one canonical combo and publish it in the live bindings.
+fn register_combo<R: Runtime>(
+    app: &AppHandle<R>,
+    kind: ShortcutKind,
+    canonical: &str,
+) -> Result<(), String> {
+    let shortcut: Shortcut = canonical
+        .parse()
+        .map_err(|err| format!("Ungültige Kombination {canonical:?}: {err}"))?;
+    let global_shortcut = app.state::<GlobalShortcut<R>>();
+    global_shortcut
+        .register(shortcut)
+        .map_err(|err| format!("{canonical:?}: {err}"))?;
+    if let Some(bindings) = app.try_state::<ShortcutBindings>() {
+        bindings.set(kind, Some(shortcut));
+    }
+    Ok(())
+}
+
+/// Runtime re-registration (C2a): deregister the slot's old combo, register
+/// the new one, swap the bindings. On failure (combo occupied by another
+/// app) the OLD combo is re-registered and the error is returned — the
+/// settings value stays untouched, so old value + old registration survive
+/// intact (Windows path: same API, muda registers via RegisterHotKey).
+///
+/// If the plugin never initialised (Wayland), only the bindings are swapped:
+/// the combo is still persisted as the canonical source and C2b will render
+/// compositor binds from it — persisting must not fail there.
+pub fn rebind_shortcut<R: Runtime>(
+    app: &AppHandle<R>,
+    kind: ShortcutKind,
+    canonical: &str,
+) -> Result<(), String> {
+    let new_shortcut: Shortcut = canonical
+        .parse()
+        .map_err(|err| format!("Ungültige Kombination {canonical:?}: {err}"))?;
+    let Some(bindings) = app.try_state::<ShortcutBindings>() else {
+        return Err("Overlay-State nicht verfügbar — Kürzel nicht geändert.".into());
+    };
+    let old = bindings.current(kind);
+
+    if let Some(global_shortcut) = app.try_state::<GlobalShortcut<R>>() {
+        if let Some(old) = old {
+            let _ = global_shortcut.unregister(old);
+        }
+        if let Err(err) = global_shortcut.register(new_shortcut) {
+            // Restore the previous live registration before reporting.
+            if let Some(old) = old {
+                let _ = global_shortcut.register(old);
+            }
+            return Err(format!(
+                "Tastenkürzel {canonical} konnte nicht registriert werden (anderweitig belegt?): {err} — bisheriges Kürzel bleibt aktiv."
+            ));
+        }
+    } else {
+        log::warn!(
+            "global shortcuts inaktiv (Wayland?) — Kürzel {canonical:?} nur persistiert; \
+             Aktivierung erfolgt über Compositor-Bindung (arch-overlay toggle, C2b)"
         );
     }
+
+    bindings.set(kind, Some(new_shortcut));
+    Ok(())
+}
+
+/// Whether the OS-level global shortcut plugin is alive (Soll-Ist display in
+/// the Settings view: persisted combo vs. actually registered combo).
+pub fn global_shortcuts_active<R: Runtime>(app: &AppHandle<R>) -> bool {
+    app.try_state::<GlobalShortcut<R>>().is_some()
 }
 
 /// Toggle spotlight visibility. Only meaningful while the game runs (the toggle
@@ -897,5 +1053,103 @@ mod tests {
         assert!(snapshot(h).unwrap().visible);
         set_game_running(h, true); // no change → state untouched
         assert!(snapshot(h).unwrap().visible);
+    }
+
+    /// C2a (t_6565fe8b): the canonical strings persisted by the settings
+    /// crate MUST parse through global_hotkey's `Shortcut::from_str` into
+    /// exactly the hotkey the plugin registers (Windows/X11 path shares this
+    /// exact parser). Defaults included.
+    #[test]
+    fn canonical_combos_parse_into_expected_hotkeys() {
+        use tauri_plugin_global_shortcut::{Code, Modifiers};
+        let toggle: Shortcut = "Ctrl+Shift+U"
+            .parse()
+            .expect("canonical default toggle parses");
+        assert_eq!(toggle.key, Code::KeyU);
+        assert!(toggle.mods.contains(Modifiers::CONTROL));
+        assert!(toggle.mods.contains(Modifiers::SHIFT));
+
+        let click: Shortcut = "Ctrl+Shift+O"
+            .parse()
+            .expect("canonical default click parses");
+        assert_eq!(click.key, Code::KeyO);
+
+        let fancy: Shortcut = "Ctrl+Alt+Shift+Super+F9"
+            .parse()
+            .expect("full canonical order parses");
+        assert_eq!(fancy.key, Code::F9);
+        assert!(fancy.mods.contains(Modifiers::SUPER));
+
+        // settings::validate_shortcut_combo output feeds this parse directly
+        for canonical in [
+            settings::DEFAULT_TOGGLE_SHORTCUT,
+            settings::DEFAULT_CLICK_SHORTCUT,
+            "Alt+Space",
+            "Ctrl+PageUp",
+        ] {
+            assert!(
+                canonical.parse::<Shortcut>().is_ok(),
+                "{canonical} must parse"
+            );
+        }
+    }
+
+    /// C2a: dispatch is binding-driven, not closure-driven — after a rebind
+    /// (bindings swap WITHOUT re-registering the plugin handler) the NEW combo
+    /// maps to its action and the OLD combo maps to nothing.
+    #[test]
+    fn bindings_dispatch_follows_rebind() {
+        let bindings = ShortcutBindings::new();
+        bindings.set(ShortcutKind::Toggle, Some("Ctrl+Shift+U".parse().unwrap()));
+        bindings.set(
+            ShortcutKind::ClickThrough,
+            Some("Ctrl+Shift+O".parse().unwrap()),
+        );
+
+        let u: Shortcut = "Ctrl+Shift+U".parse().unwrap();
+        let o: Shortcut = "Ctrl+Shift+O".parse().unwrap();
+        assert_eq!(bindings.match_kind(&u), Some(ShortcutKind::Toggle));
+        assert_eq!(bindings.match_kind(&o), Some(ShortcutKind::ClickThrough));
+
+        // swap the toggle slot to Ctrl+Alt+K (what rebind_shortcut publishes)
+        let k: Shortcut = "Ctrl+Alt+K".parse().unwrap();
+        bindings.set(ShortcutKind::Toggle, Some(k));
+        assert_eq!(bindings.match_kind(&k), Some(ShortcutKind::Toggle));
+        assert_eq!(bindings.match_kind(&u), None, "old combo must stop firing");
+        assert_eq!(bindings.current(ShortcutKind::ClickThrough), Some(o));
+    }
+
+    /// `rebind_shortcut` without a live plugin (the Wayland case: bindings
+    /// managed, no GlobalShortcut state) must NOT error — the combo persists
+    /// as canonical source for C2b and only the bindings move. The
+    /// occupied-by-other-app failure path (plugin state present) needs a live
+    /// hotkey manager and is verified on the Windows/X11 build, not in unit
+    /// scope; the bindings-only fallback is exactly what C2a promises for
+    /// Wayland.
+    #[test]
+    fn rebind_without_plugin_updates_bindings_only() {
+        let app = mock_app_with_bindings();
+        let h = app.handle();
+        let bindings = h.state::<ShortcutBindings>();
+        bindings.set(ShortcutKind::Toggle, Some("Ctrl+Shift+U".parse().unwrap()));
+        assert!(bindings.current(ShortcutKind::Toggle).is_some());
+
+        let result = rebind_shortcut(h, ShortcutKind::Toggle, "Ctrl+Alt+K");
+        assert!(
+            result.is_ok(),
+            "Wayland rebind must persist, not fail: {result:?}"
+        );
+        assert_eq!(
+            bindings.current(ShortcutKind::Toggle),
+            Some("Ctrl+Alt+K".parse::<Shortcut>().unwrap())
+        );
+        assert!(!global_shortcuts_active(h), "mock app has no plugin state");
+    }
+
+    fn mock_app_with_bindings() -> tauri::App<tauri::test::MockRuntime> {
+        let app = mock_app();
+        app.manage(OverlayState::new());
+        app.manage(ShortcutBindings::new());
+        app
     }
 }

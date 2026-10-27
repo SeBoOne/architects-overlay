@@ -18,6 +18,10 @@
 //! [data]
 //! commodity_source = "wiki" # wiki | uex  (commodity PRICE source; wiki
 //!                           # first, UEX as fallback for gaps)
+//!
+//! [shortcuts]
+//! toggle = "Ctrl+Shift+U"      # C2a: Overlay-Toggle (kollisionsgeprüft)
+//! click_through = "Ctrl+Shift+O" # Click-through-Umschalter
 //! ```
 
 use std::fmt;
@@ -147,6 +151,219 @@ impl fmt::Display for CommoditySource {
     }
 }
 
+// ---- C2a (t_6565fe8b): konfigurierbare globale Tastenkürzel ----------------
+//
+// Kanonische Quelle für beide Kürzel (Overlay-Toggle / Click-through). Der
+// String ist plattformneutral im `global_hotkey`-Format (Mod-Tokens + Taste,
+// '+'-separiert, case-insensitive parsebar — identisch zu dem Format, das
+// tauri-plugin-global-shortcut per `Shortcut::from_str` akzeptiert). C2b
+// (Hyprland-Binder) liest exakt diese Werte aus der config und übersetzt sie
+// in Compositor-Syntax — die config bleibt die einzige kanonische Quelle.
+
+/// Erstmigration: fehlende Settings → die historischen Phase-1-Defaults.
+pub const DEFAULT_TOGGLE_SHORTCUT: &str = "Ctrl+Shift+U";
+pub const DEFAULT_CLICK_SHORTCUT: &str = "Ctrl+Shift+O";
+
+/// Hotkeys, die die Overlay-UI selbst verarbeitet, solange das Overlay
+/// fokussiert ist (onKey in +page.svelte). Die In-App-Handler prüfen KEINE
+/// Mod-Tasten (`k === 'F5'` feuert auch bei Strg+F5), ein globales Kürzel auf
+/// denselben Tasten würde also IMMER beide Aktionen auslösen — daher als
+/// Konflikt abgelehnt und in der Fehlermeldung als Konfliktliste sichtbar.
+/// (F7–F11 sind frei.)
+pub const RESERVED_INTERNAL_KEYS: &[(&str, &str)] = &[
+    ("F1", "Modus Suche"),
+    ("F2", "Marktplatz"),
+    ("F3", "Inventar"),
+    ("F4", "Hangar"),
+    ("F5", "Preis-/Market-Sync"),
+    ("F6", "Handelsrouten"),
+    ("F12", "Einstellungen"),
+    ("ENTER", "Bestätigen (Detail/Auswahl)"),
+    ("TAB", "Angebote ⇄ Routen"),
+    ("ARROWUP", "Listen-Navigation"),
+    ("ARROWDOWN", "Listen-Navigation"),
+    ("ARROWLEFT", "Detail zurück"),
+    ("ARROWRIGHT", "Detail öffnen"),
+    ("M", "Marktplatz verlassen"),
+];
+
+/// Mod-Tokens in kanonischer Ausgabereihenfolge.
+const MOD_ORDER: [(&str, &[&str]); 4] = [
+    // kanonischer Name: akzeptierte Aliases (u.a. deutsch für Hand-Edits)
+    ("Ctrl", &["CTRL", "CONTROL", "STRG"]),
+    ("Alt", &["ALT", "OPTION"]),
+    ("Shift", &["SHIFT"]),
+    (
+        "Super",
+        &["SUPER", "META", "WIN", "WINDOWS", "COMMAND", "CMD"],
+    ),
+];
+
+/// Tasten, die `global_hotkey::parse_key` (und damit der Windows-/X11-
+/// Registrierungspfad) als Haupttaste akzeptiert. Aliases so gehalten, dass
+/// der Roundtrip parsebar bleibt.
+const KEY_ALIASES: &[(&str, &[&str])] = &[
+    ("Space", &["SPACE"]),
+    ("Enter", &["ENTER", "RETURN"]),
+    ("Tab", &["TAB"]),
+    ("Escape", &["ESCAPE", "ESC"]),
+    ("Backspace", &["BACKSPACE"]),
+    ("Delete", &["DELETE"]),
+    ("Home", &["HOME"]),
+    ("End", &["END"]),
+    ("Insert", &["INSERT"]),
+    ("PageUp", &["PAGEUP", "PGUP"]),
+    ("PageDown", &["PAGEDOWN", "PGDN"]),
+    ("PrintScreen", &["PRINTSCREEN", "PRTSC"]),
+    ("ScrollLock", &["SCROLLLOCK"]),
+    ("CapsLock", &["CAPSLOCK"]),
+    ("Pause", &["PAUSE", "PAUSEBREAK"]),
+    ("ArrowUp", &["ARROWUP", "UP"]),
+    ("ArrowDown", &["ARROWDOWN", "DOWN"]),
+    ("ArrowLeft", &["ARROWLEFT", "LEFT"]),
+    ("ArrowRight", &["ARROWRIGHT", "RIGHT"]),
+    ("Backquote", &["BACKQUOTE", "`"]),
+    ("Backslash", &["BACKSLASH", "\\"]),
+    ("BracketLeft", &["BRACKETLEFT", "["]),
+    ("BracketRight", &["BRACKETRIGHT", "]"]),
+    ("Comma", &["COMMA", ","]),
+    ("Equal", &["EQUAL", "="]),
+    ("Minus", &["MINUS", "-"]),
+    ("Period", &["PERIOD", "."]),
+    ("Quote", &["QUOTE", "'"]),
+    ("Semicolon", &["SEMICOLON", ";"]),
+    ("Slash", &["SLASH", "/"]),
+];
+
+/// Eingabe (frei formatiert, z. B. `strg+shift+U`, `Meta+Space`, `Ctrl+F8`)
+/// → kanonischer String `Ctrl+Alt+Shift+Super+Key` in fixer Mod-Reihenfolge.
+/// Regeln: ≥1 Mod-Taste, genau 1 Haupttaste, keine unbekannten Tokens.
+/// Wird NUR über diese Normalisierung persistiert; Fehler sind deutsch, weil
+/// sie 1:1 im Settings-Feld sichtbar werden.
+pub fn parse_shortcut_combo(input: &str) -> std::result::Result<String, String> {
+    let tokens: Vec<String> = input
+        .split('+')
+        .map(|t| t.trim().to_ascii_uppercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return Err("Leere Kombination — Mod-Taste + normale Taste eingeben.".into());
+    }
+
+    let mut mods: Vec<&'static str> = Vec::new();
+    let mut key: Option<String> = None;
+    for tok in &tokens {
+        if let Some((canon, _)) = MOD_ORDER
+            .iter()
+            .find(|(_, aliases)| aliases.contains(&tok.as_str()))
+        {
+            if !mods.contains(canon) {
+                mods.push(canon);
+            }
+            continue;
+        }
+        if key.is_some() {
+            return Err("Mehrere Haupttasten — genau eine normale Taste pro Kürzel.".into());
+        }
+        key = Some(normalize_key_token(tok)?);
+    }
+
+    if mods.is_empty() {
+        return Err(
+            "Mindestens eine Mod-Taste (Strg/Alt/Shift/Win) plus eine normale Taste.".into(),
+        );
+    }
+    let Some(key) = key else {
+        return Err("Es fehlt eine normale Haupttaste (nur Mod-Tasten reichen nicht).".into());
+    };
+
+    // Kanonische Reihenfolge Ctrl → Alt → Shift → Super, Haupttaste zuletzt.
+    let mut out: Vec<String> = MOD_ORDER
+        .iter()
+        .filter(|(canon, _)| mods.contains(canon))
+        .map(|(canon, _)| canon.to_string())
+        .collect();
+    out.push(key);
+    Ok(out.join("+"))
+}
+
+/// Haupttasten-Normalisierung: `KeyU`→`U`, `Digit5`→`5`, Aliases→kanonisch,
+/// A–Z / 0–9 / F1–F24 direkt.
+fn normalize_key_token(tok: &str) -> std::result::Result<String, String> {
+    if tok.len() == 1 && tok.as_bytes()[0].is_ascii_alphabetic() {
+        return Ok(tok.to_string());
+    }
+    if tok.len() == 1 && tok.as_bytes()[0].is_ascii_digit() {
+        return Ok(tok.to_string());
+    }
+    if let Ok(n) = tok[1..].parse::<u8>() {
+        if tok.starts_with('F') && (1..=24).contains(&n) {
+            return Ok(format!("F{n}"));
+        }
+    }
+    // `KEYU`/`DIGIT5` schreiben dieselbe Taste explizit — akzeptieren.
+    if let Some(rest) = tok.strip_prefix("KEY") {
+        if rest.len() == 1 && rest.as_bytes()[0].is_ascii_alphabetic() {
+            return Ok(rest.to_string());
+        }
+    }
+    if let Some(rest) = tok.strip_prefix("DIGIT") {
+        if rest.len() == 1 && rest.as_bytes()[0].is_ascii_digit() {
+            return Ok(rest.to_string());
+        }
+    }
+    if tok.starts_with("NUMPAD") || tok.starts_with("NUM") {
+        return Err("Ziffernblock-Tasten werden nicht unterstützt — Haupttastatur nutzen.".into());
+    }
+    if let Some((canon, _)) = KEY_ALIASES
+        .iter()
+        .find(|(_, aliases)| aliases.contains(&tok))
+    {
+        return Ok(canon.to_string());
+    }
+    Err(format!(
+        "Unbekannte Taste {tok:?} — nicht als globales Kürzel registrierbar."
+    ))
+}
+
+/// Vollvalidierung eines Kürzels inkl. interner Konflikte (Konfliktliste in
+/// der Fehlermeldung). Escape wird explizit abgelehnt (Esc = Capture-Abbruch
+/// und UI-Zurück in jeder Ansicht). Alt+Zahl ist intern für die
+/// Badge-Navigation belegt (Handler prüft nur altKey+Digit, ignoriert
+/// weitere Mod-Tasten) — gleicher Grund wie die F-Tasten.
+pub fn validate_shortcut_combo(input: &str) -> std::result::Result<String, String> {
+    let canonical = parse_shortcut_combo(input)?;
+    let key = canonical.rsplit('+').next().expect("canonical has a key");
+    let key_upper = key.to_ascii_uppercase();
+
+    if key_upper == "ESCAPE" || key_upper == "ESC" {
+        return Err(
+            "Escape ist als Kürzel nicht erlaubt (Abbrechen/Zurück in jeder Ansicht).".into(),
+        );
+    }
+    if let Some((_, what)) = RESERVED_INTERNAL_KEYS.iter().find(|(k, _)| *k == key_upper) {
+        return Err(format!(
+            "Intern belegt: {key} ({what}) — im fokussierten Overlay würde beides feuern. Andere Taste wählen."
+        ));
+    }
+    let mods_part = canonical[..canonical.len() - key.len() - 1].to_ascii_uppercase();
+    if mods_part.contains("ALT") && key.len() == 1 && key.as_bytes()[0].is_ascii_digit() {
+        return Err(format!(
+            "Intern belegt: Alt+{key} (Angebots-Treffer {key} fokussieren) — andere Kombination wählen."
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Kanonischer String robust validieren (Erstmigration/Hand-Edit-Pfad):
+/// ungültige Werte führen nie zum Absturz, sondern zu `fallback` — wie
+/// `norm_scale` bei der Scale.
+pub fn normalized_or(input: Option<&str>, fallback: &str) -> String {
+    input
+        .and_then(|s| validate_shortcut_combo(s).ok())
+        .unwrap_or_else(|| fallback.to_owned())
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct RawConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -155,6 +372,8 @@ struct RawConfig {
     ui: Option<UiSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     data: Option<DataSection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shortcuts: Option<ShortcutsSection>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -167,6 +386,16 @@ struct UexSection {
 struct DataSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     commodity_source: Option<CommoditySource>,
+}
+
+/// C2a: globale Kürzel. Als Strings gespeichert (kanonisch normalisiert),
+/// damit C2b (Hyprland-Binder) sie ohne Rust-Kenntnis lesen kann.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct ShortcutsSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    toggle: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    click_through: Option<String>,
 }
 
 /// UI preferences (palette, detail variant). Fields are optional in the file
@@ -218,6 +447,9 @@ pub struct Settings {
     detail_variant: DetailVariant,
     commodity_source: CommoditySource,
     scale: u16,
+    /// C2a: kanonische Kürzel-Strings (siehe `parse_shortcut_combo`).
+    shortcut_toggle: String,
+    shortcut_click_through: String,
 }
 
 impl Default for Settings {
@@ -229,6 +461,8 @@ impl Default for Settings {
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
+            shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
+            shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
         }
     }
 }
@@ -275,6 +509,17 @@ impl Settings {
                 .and_then(|u| u.scale)
                 .map(norm_scale)
                 .unwrap_or(SCALE_DEFAULT),
+            // Erstmigration: fehlende/ungültige Kürzel → Defaults (U/O).
+            shortcut_toggle: normalized_or(
+                raw.shortcuts.as_ref().and_then(|s| s.toggle.as_deref()),
+                DEFAULT_TOGGLE_SHORTCUT,
+            ),
+            shortcut_click_through: normalized_or(
+                raw.shortcuts
+                    .as_ref()
+                    .and_then(|s| s.click_through.as_deref()),
+                DEFAULT_CLICK_SHORTCUT,
+            ),
         })
     }
 
@@ -287,6 +532,8 @@ impl Settings {
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
+            shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
+            shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
         }
     }
 
@@ -342,6 +589,29 @@ impl Settings {
         self.scale = norm_scale(pct);
     }
 
+    /// Overlay-Toggle-Kürzel (kanonisch, z. B. `Ctrl+Shift+U`).
+    pub fn shortcut_toggle(&self) -> &str {
+        &self.shortcut_toggle
+    }
+
+    /// Click-through-Kürzel (kanonisch, z. B. `Ctrl+Shift+O`).
+    pub fn shortcut_click_through(&self) -> &str {
+        &self.shortcut_click_through
+    }
+
+    /// Set the toggle shortcut in memory (persist via [`Settings::save`]).
+    /// Takes the VALIDATED canonical string from `validate_shortcut_combo` —
+    /// this setter does not re-validate, the IPC command does.
+    pub fn set_shortcut_toggle(&mut self, canonical: String) {
+        self.shortcut_toggle = canonical;
+    }
+
+    /// Set the click-through shortcut in memory (persist via [`Settings::save`]).
+    /// Same contract as [`Settings::set_shortcut_toggle`].
+    pub fn set_shortcut_click_through(&mut self, canonical: String) {
+        self.shortcut_click_through = canonical;
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -356,6 +626,10 @@ impl Settings {
             }),
             data: Some(DataSection {
                 commodity_source: Some(self.commodity_source),
+            }),
+            shortcuts: Some(ShortcutsSection {
+                toggle: Some(self.shortcut_toggle.clone()),
+                click_through: Some(self.shortcut_click_through.clone()),
             }),
         };
         let content = toml::to_string_pretty(&raw)
@@ -566,5 +840,140 @@ mod tests {
             "config file must be 0600, got {:o}",
             mode & 0o777
         );
+    }
+
+    // ---- C2a (t_6565fe8b): Shortcut-Validierung + Persistenz --------------
+
+    #[test]
+    fn shortcuts_migrate_from_defaults_when_missing() {
+        // Erstmigration: altes config.toml ohne [shortcuts] → U/O-Defaults.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "[uex]\napi_key = \"old-key\"\n").unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.shortcut_toggle(), DEFAULT_TOGGLE_SHORTCUT);
+        assert_eq!(loaded.shortcut_click_through(), DEFAULT_CLICK_SHORTCUT);
+
+        // Komplett fehlende Datei: dieselben Defaults.
+        let fresh = Settings::load_from(&tmp.path().join("none.toml")).unwrap();
+        assert_eq!(fresh.shortcut_toggle(), "Ctrl+Shift+U");
+        assert_eq!(fresh.shortcut_click_through(), "Ctrl+Shift+O");
+    }
+
+    #[test]
+    fn shortcuts_roundtrip_and_canonical_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        let mut s = Settings::with_path(path.clone());
+        s.set_shortcut_toggle(settings_canonical("meta+ctrl+shift+k")); // freie Reihenfolge, gemischt
+        s.set_shortcut_click_through(settings_canonical("Alt+Space"));
+        s.save().unwrap();
+
+        let loaded = Settings::load_from(&path).unwrap();
+        // kanonische Mod-Reihenfolge Ctrl → Alt → Shift → Super
+        assert_eq!(loaded.shortcut_toggle(), "Ctrl+Shift+Super+K");
+        assert_eq!(loaded.shortcut_click_through(), "Alt+Space");
+
+        // Kanonische Strings sind 1:1 im TOML sichtbar (C2b-Lesbarkeit).
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("toggle = \"Ctrl+Shift+Super+K\""));
+        assert!(content.contains("click_through = \"Alt+Space\""));
+    }
+
+    #[test]
+    fn hand_edited_invalid_shortcut_falls_back_to_default() {
+        // wie norm_scale: kaputter Wert darf den Start nie blockieren.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(&path, "[shortcuts]\ntoggle = \"Kauderwelsch\"\n").unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.shortcut_toggle(), DEFAULT_TOGGLE_SHORTCUT);
+        assert_eq!(loaded.shortcut_click_through(), DEFAULT_CLICK_SHORTCUT);
+    }
+
+    fn settings_canonical(input: &str) -> String {
+        validate_shortcut_combo(input).unwrap_or_else(|e| panic!("valid combo rejected: {e}"))
+    }
+
+    #[test]
+    fn parse_normalizes_aliases_and_order() {
+        assert_eq!(settings_canonical("strg+shift+u"), "Ctrl+Shift+U");
+        assert_eq!(settings_canonical("CTRL+U"), "Ctrl+U");
+        assert_eq!(settings_canonical("Meta+Space"), "Super+Space");
+        assert_eq!(settings_canonical("WIN+F8"), "Super+F8");
+        assert_eq!(settings_canonical("alt+option+k"), "Alt+K"); // dedup, Mods nach Taste ok
+        assert_eq!(settings_canonical("Ctrl+C+Shift"), "Ctrl+Shift+C"); // Reihenfolge egal → kanonisch
+        assert_eq!(settings_canonical("Ctrl+KEYU"), "Ctrl+U");
+        assert_eq!(settings_canonical("Shift+DIGIT7"), "Shift+7");
+        assert_eq!(settings_canonical("Ctrl+ pgup "), "Ctrl+PageUp");
+        assert_eq!(settings_canonical("ctrl+f10"), "Ctrl+F10"); // F7–F11 frei
+    }
+
+    #[test]
+    fn parse_rejects_structurally_invalid_combos() {
+        for bad in [
+            "U",            // keine Mod-Taste
+            "Ctrl+Shift",   // keine Haupttaste
+            "Ctrl+C+V",     // zwei Haupttasten
+            "",             // leer
+            "Ctrl+",        // leeres Token nach Filter → nur Ctrl
+            "CmdOrCtrl+K",  // OS-konditional — kein kanonisches Token
+            "Ctrl+Numpad5", // Ziffernblock explizit abgelehnt
+            "Ctrl+F25",     // außerhalb F1–F24
+        ] {
+            let err = validate_shortcut_combo(bad).unwrap_err();
+            assert!(!err.is_empty(), "rejection needs a visible message");
+        }
+    }
+
+    #[test]
+    fn reserved_internal_keys_are_conflicts_with_list() {
+        // F-Tasten des Overlays + UI-Grundtasten (Handler prüft keine Mods).
+        let err = validate_shortcut_combo("Ctrl+F5").unwrap_err();
+        assert!(
+            err.contains("F5") && err.contains("Preis"),
+            "conflict list: {err}"
+        );
+        for reserved in [
+            "Ctrl+Shift+F2",
+            "Alt+F12",
+            "Super+Enter",
+            "Ctrl+Tab",
+            "Alt+Up",
+            "Ctrl+Alt+M",
+        ] {
+            assert!(
+                validate_shortcut_combo(reserved).is_err(),
+                "{reserved} must collide with an internal hotkey"
+            );
+        }
+        // Escape als Kombination ablehnen (Task-Vorgabe).
+        let err = validate_shortcut_combo("Ctrl+Shift+Escape").unwrap_err();
+        assert!(err.contains("Escape"), "message names Escape: {err}");
+        // Alt+Zahl ist intern die Badge-Navigation (ignoriert weitere Mods).
+        let err = validate_shortcut_combo("Ctrl+Alt+3").unwrap_err();
+        assert!(err.contains("Alt+3"), "conflict list: {err}");
+    }
+
+    #[test]
+    fn canonical_strings_parse_by_global_hotkey_format() {
+        // Der persistierte String MUSS im global_hotkey-Format stehen (Windows-
+        // Registrierungspfad nutzt Shortcut::from_str mit demselben Parser).
+        // Hier Spiegel-Test ohne global_hotkey-Import: dieselbe Token-Semantik.
+        for canonical in [
+            "Ctrl+Shift+U",
+            "Ctrl+Shift+O",
+            "Ctrl+Shift+Super+K",
+            "Alt+Space",
+            "Alt+Super+F9",
+        ] {
+            let tokens: Vec<&str> = canonical.split('+').collect();
+            assert!(tokens.len() >= 2, "shortcut needs mod + key: {canonical}");
+            assert!(
+                validate_shortcut_combo(canonical).unwrap() == canonical,
+                "canonical must roundtrip through validation: {canonical}"
+            );
+        }
     }
 }

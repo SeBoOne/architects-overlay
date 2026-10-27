@@ -49,6 +49,17 @@ impl SettingsState {
         self.source_switch.set(source);
     }
 
+    /// C2a (t_6565fe8b): the canonical shortcut strings. overlay::init reads
+    /// them at startup; the setter commands write them. Single source of
+    /// truth for both the OS registration and C2b's compositor binds.
+    pub fn shortcut_combos(&self) -> (String, String) {
+        let s = self.inner.lock().expect("settings lock");
+        (
+            s.shortcut_toggle().to_owned(),
+            s.shortcut_click_through().to_owned(),
+        )
+    }
+
     fn persist(&self, settings: &Settings) {
         if let Err(e) = settings.save() {
             log::warn!("settings: persist failed: {e}");
@@ -79,44 +90,78 @@ pub struct SettingsSnapshot {
     pub commodity_source: String,
     /// K2 (t_5fe8eb4c, P12): font/icon scale in % (50..200, default 100).
     pub scale: u16,
+    /// C2a (t_6565fe8b): kanonische, persistierte Kürzel (Soll — das, was
+    /// der Nutzer gestellt hat und was überlebt).
+    pub shortcut_toggle: String,
+    pub shortcut_click_through: String,
+    /// C2a: Ist — meldet, ob das OS die globalen Kürzel WIRKLICH registriert
+    /// hat (Wayland: false, dort greift der Compositor-Pfad; C2b bindet aus
+    /// den Soll-Werten). Soll-Ist wie beim Preisquellen-Feedback (K6).
+    pub global_shortcuts_active: bool,
 }
 
 impl SettingsSnapshot {
-    fn from_settings(s: &Settings) -> Self {
+    fn from_settings(s: &Settings, global_shortcuts_active: bool) -> Self {
         SettingsSnapshot {
             palette: s.palette().as_str().to_owned(),
             detail_variant: s.detail_variant().as_str().to_owned(),
             uex_api_key_set: s.uex_api_key().is_some(),
             commodity_source: s.commodity_source().as_str().to_owned(),
             scale: s.scale(),
+            shortcut_toggle: s.shortcut_toggle().to_owned(),
+            shortcut_click_through: s.shortcut_click_through().to_owned(),
+            global_shortcuts_active,
         }
     }
 }
 
+/// C2a pure validation stage shared by both shortcut commands: settings-crate
+/// rules (≥1 Mod + 1 Taste, no Escape, internal conflict list) PLUS the
+/// cross-field rule — the two fields must not end up with the same combo.
+/// Kept tauri-free so it is unit-testable without a live app.
+fn validate_shortcut_input(
+    combo: &str,
+    peer_combo: &str,
+    peer_label: &str,
+) -> Result<String, String> {
+    let canonical = settings::validate_shortcut_combo(combo)?;
+    if canonical == peer_combo {
+        return Err(format!(
+            "Diese Kombination ist bereits das {peer_label}-Kürzel — zwei Kürzel derselben Taste doppelt vergeben geht nicht."
+        ));
+    }
+    Ok(canonical)
+}
+
 /// Read the current settings snapshot.
 #[tauri::command]
-pub fn settings_get(state: tauri::State<SettingsState>) -> SettingsSnapshot {
+pub fn settings_get(state: tauri::State<SettingsState>, app: tauri::AppHandle) -> SettingsSnapshot {
     let s = state.inner.lock().expect("settings lock");
-    SettingsSnapshot::from_settings(&s)
+    SettingsSnapshot::from_settings(&s, crate::overlay::global_shortcuts_active(&app))
 }
 
 /// Set the colour palette (amber | mfcd | bloom). Persists immediately.
 #[tauri::command]
 pub fn settings_set_palette(
     state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
     name: String,
 ) -> Result<SettingsSnapshot, String> {
     let palette = Palette::from_name(&name).ok_or_else(|| format!("unknown palette: {name}"))?;
     let mut s = state.inner.lock().expect("settings lock");
     s.set_palette(palette);
     state.persist(&s);
-    Ok(SettingsSnapshot::from_settings(&s))
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+    ))
 }
 
 /// Set the price-detail variant (c | a). Persists immediately.
 #[tauri::command]
 pub fn settings_set_detail_variant(
     state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
     name: String,
 ) -> Result<SettingsSnapshot, String> {
     let variant =
@@ -124,7 +169,10 @@ pub fn settings_set_detail_variant(
     let mut s = state.inner.lock().expect("settings lock");
     s.set_detail_variant(variant);
     state.persist(&s);
-    Ok(SettingsSnapshot::from_settings(&s))
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+    ))
 }
 
 /// Set (Some) or remove (None) the UEX API key. Persists immediately.
@@ -132,12 +180,13 @@ pub fn settings_set_detail_variant(
 #[tauri::command]
 pub fn settings_set_uex_api_key(
     state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
     key: Option<String>,
 ) -> SettingsSnapshot {
     let mut s = state.inner.lock().expect("settings lock");
     s.set_uex_api_key(key.filter(|k| !k.trim().is_empty()));
     state.persist(&s);
-    SettingsSnapshot::from_settings(&s)
+    SettingsSnapshot::from_settings(&s, crate::overlay::global_shortcuts_active(&app))
 }
 
 /// Set the primary commodity price source (wiki | uex). Persists immediately
@@ -146,6 +195,7 @@ pub fn settings_set_uex_api_key(
 #[tauri::command]
 pub fn settings_set_commodity_source(
     state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
     name: String,
 ) -> Result<SettingsSnapshot, String> {
     let source = CommoditySource::from_name(&name)
@@ -153,7 +203,10 @@ pub fn settings_set_commodity_source(
     state.set_commodity_source_live(source);
     let s = state.inner.lock().expect("settings lock");
     state.persist(&s);
-    Ok(SettingsSnapshot::from_settings(&s))
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+    ))
 }
 
 /// K2 (t_5fe8eb4c, P12): Set the overlay font/icon scale in % — the F12-View
@@ -166,6 +219,7 @@ pub fn settings_set_commodity_source(
 #[tauri::command]
 pub fn settings_set_scale(
     state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
     pct: u16,
 ) -> Result<SettingsSnapshot, String> {
     if pct < settings::SCALE_MIN || pct > settings::SCALE_MAX {
@@ -174,7 +228,68 @@ pub fn settings_set_scale(
     let mut s = state.inner.lock().expect("settings lock");
     s.set_scale(pct);
     state.persist(&s);
-    Ok(SettingsSnapshot::from_settings(&s))
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+    ))
+}
+
+/// C2a (t_6565fe8b): Overlay-Toggle-Kürzel setzen. Ablauf (bewusst in
+/// dieser Reihenfolge — der OS-Pfad entscheidet, ob persistiert wird):
+/// 1. rein prüfen (settings-Crate-Regeln + Doppelvergabe gegen das andere
+///    Feld) — Fehler hier ändern NICHTS.
+/// 2. `overlay::rebind_shortcut`: deregistriere alt → registriere neu.
+///    Scheitert die Registrierung (Belegung durch eine andere App — der
+///    Windows-Fall), wird der alte Wert re-registriert und der Fehler
+///    sichtbar ans Settings-Feld zurückgegeben; der persistierte Wert
+///    bleibt unberührt (= alter Kürzel bleibt aktiv).
+/// 3. erst jetzt: persistieren + frischer Snapshot (Soll-Ist-Zeilen im UI).
+#[tauri::command]
+pub fn settings_set_shortcut_toggle(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    combo: String,
+) -> Result<SettingsSnapshot, String> {
+    let peer = state
+        .inner
+        .lock()
+        .expect("settings lock")
+        .shortcut_click_through()
+        .to_owned();
+    let canonical = validate_shortcut_input(&combo, &peer, "Click-through")?;
+    crate::overlay::rebind_shortcut(&app, crate::overlay::ShortcutKind::Toggle, &canonical)?;
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_shortcut_toggle(canonical);
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+    ))
+}
+
+/// C2a: Click-through-Kürzel setzen — identisches Protokoll wie
+/// `settings_set_shortcut_toggle`, nur anderes Feld (und anderer Peer).
+#[tauri::command]
+pub fn settings_set_shortcut_click_through(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    combo: String,
+) -> Result<SettingsSnapshot, String> {
+    let peer = state
+        .inner
+        .lock()
+        .expect("settings lock")
+        .shortcut_toggle()
+        .to_owned();
+    let canonical = validate_shortcut_input(&combo, &peer, "Overlay-Toggle")?;
+    crate::overlay::rebind_shortcut(&app, crate::overlay::ShortcutKind::ClickThrough, &canonical)?;
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_shortcut_click_through(canonical);
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+    ))
 }
 
 #[cfg(test)]
@@ -189,9 +304,10 @@ mod tests {
     /// active — while single-word fields (palette, scale) kept working.
     #[test]
     fn snapshot_json_keys_match_frontend_snake_case_contract() {
-        let snap = SettingsSnapshot::from_settings(&Settings::with_path(std::path::PathBuf::from(
-            "/dev/null",
-        )));
+        let snap = SettingsSnapshot::from_settings(
+            &Settings::with_path(std::path::PathBuf::from("/dev/null")),
+            true,
+        );
         let keys: Vec<String> = {
             let v = serde_json::to_value(&snap).unwrap();
             let map = v.as_object().expect("snapshot serializes as object");
@@ -203,6 +319,11 @@ mod tests {
             "uex_api_key_set",
             "commodity_source",
             "scale",
+            // C2a (t_6565fe8b): dieselbe Snake-Case-Vertrag gilt für die
+            // Shortcut-Felder — camelCase würde sie im UI unsichtbar machen.
+            "shortcut_toggle",
+            "shortcut_click_through",
+            "global_shortcuts_active",
         ] {
             assert!(
                 keys.iter().any(|k| k == required),
@@ -231,5 +352,29 @@ mod tests {
         assert_eq!(reader.get(), CommoditySource::Uex);
         state.source_switch.set(CommoditySource::Wiki);
         assert_eq!(reader.get(), CommoditySource::Wiki);
+    }
+
+    /// C2a (t_6565fe8b): cross-field rule of the shortcut setter — the two
+    /// fields may not end up on the same combo; settings-crate rules pass
+    /// through untranslated (German, shown 1:1 in the Settings field).
+    #[test]
+    fn shortcut_pair_validation() {
+        // ok: fresh canonical combo, peer untouched
+        assert_eq!(
+            validate_shortcut_input("ctrl+alt+k", "Ctrl+Shift+O", "Click-through").unwrap(),
+            "Ctrl+Alt+K"
+        );
+        // Doppelvergabe: identical to the other field's active combo
+        let err =
+            validate_shortcut_input("Ctrl+Shift+O", "Ctrl+Shift+O", "Click-through").unwrap_err();
+        assert!(
+            err.contains("Click-through"),
+            "names the colliding field: {err}"
+        );
+        // internal conflict from the settings crate surfaces verbatim
+        let err = validate_shortcut_input("Ctrl+F2", "Ctrl+Shift+O", "Click-through").unwrap_err();
+        assert!(err.contains("F2"), "conflict list names F2: {err}");
+        // structurally invalid (no main key)
+        assert!(validate_shortcut_input("Ctrl+Shift", "Ctrl+Shift+O", "Click-through").is_err());
     }
 }
