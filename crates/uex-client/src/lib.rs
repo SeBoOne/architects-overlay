@@ -1319,15 +1319,26 @@ impl UexProvider {
     }
 
     /// Eigene Marketplace-Offers live holen + Snapshot additiv aktualisieren.
-    /// Stale-first: der Cache entscheidet in der IPC-Ebene (dort liegt die
-    /// Quellenkennung cache/live/offline); hier nur der VoLLe Fetch-Weg in
-    /// die eigene Tabelle (username-gefiltert).
+    /// Stale-first: ein frischer username-bewusster Snapshot dient direkt aus
+    /// dem Cache (KEIN Netzwerk) — analog `marketplace_offers`. Sonst LIVE-Fetch
+    /// in die eigene Tabelle (username-gefiltert). Die Quellenkennung
+    /// cache/live/offline entscheidet die IPC-Ebene passend dazu.
     async fn my_offers_impl(&self, username: String) -> Result<Vec<Offer>> {
         let username = username.trim().to_owned();
         if username.is_empty() {
             return Err(ProviderError::Config(
                 "Bitte den UEX-Benutzernamen angeben, um deine Offers zu laden.".into(),
             ));
+        }
+        // Fresh-Shortcut: frischer Snapshot für GENAU diesen User → keine
+        // Netzwerk-Requests (TTL + Username-Marker). username-bewusst, damit
+        // ein User-Wechsel nicht die Offers des vorherigen Accounts serviert.
+        if self
+            .cache
+            .own_offers_fresh_for(&username)
+            .map_err(map_cache_err)?
+        {
+            return self.cache.own_offers_snapshot().map_err(map_cache_err);
         }
         let rows: Vec<ListingRow> = self
             .http
@@ -1339,14 +1350,20 @@ impl UexProvider {
             .await?;
         let offers = self.map_listing_rows(rows, &username).await?;
         self.cache
-            .store_own_offers(&offers)
+            .store_own_offers(&offers, &username)
             .map_err(map_cache_err)?;
         Ok(offers)
     }
 
     /// Eigene Trades live holen + Snapshot additiv aktualisieren (Tabelle
-    /// `own_trades`). Stale-first-Entscheidung liegt in der IPC-Ebene.
+    /// `own_trades`). Stale-first: frischer Snapshot dient direkt (KEIN Netz),
+    /// sonst LIVE-Fetch. Handelt es sich um eine leere Historie
+    /// (`no_trades_found`), wird `Ok([])` geliefert — die UI zeigt dann den
+    /// Leer-Zustand statt eines Fehlers.
     async fn user_trades_impl(&self) -> Result<Vec<provider::Trade>> {
+        if self.cache.own_trades_fresh().map_err(map_cache_err)? {
+            return self.cache.own_trades_snapshot().map_err(map_cache_err);
+        }
         let rows: Vec<UserTradeRow> = self
             .http
             .get_user("/user_trades", &[], self.secret_key.as_deref())
@@ -2319,5 +2336,151 @@ mod tests {
         let mut noop = vec![make_route(1, 1, 2)];
         p2.attach_route_enrichment(&mut noop).unwrap();
         assert!(noop[0].enrichment.is_none());
+    }
+
+    // --- M2a Review-Runde 2: echter stale-first + leere Historie ---
+
+    /// Frischer, username-passender Snapshot → der Fresh-Shortcut serviert
+    /// IHN aus dem Cache, OHNE einen HTTP-Request zu machen. Basis-URL
+    /// bewusst tot (127.0.0.1:1) — würde das impl einen Fetch versuchen,
+    /// schlüge der Test beim Connect fehl.
+    #[tokio::test]
+    async fn my_offers_serves_fresh_snapshot_without_network() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_offers(&[offers_offer(1)], "sebo_one")
+            .unwrap();
+        assert!(
+            cache.own_offers_fresh_for("sebo_one").unwrap(),
+            "frisch nach store"
+        );
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1", // tote URL — darf nie erreicht werden
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let offers = provider.my_offers("sebo_one".into()).await.unwrap();
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].title, "Drake Nettle S");
+    }
+
+    /// Username-Wechsel nach frischem Snapshot → NICHT cache-servieren,
+    /// sondern live fetchen (tote URL → Fehler, kein Stale-Serve für den
+    /// falschen Account). Dasselbe für einen frischen Snapshot eines anderen
+    /// Users: `fresh_for` ist username-bewusst.
+    #[tokio::test]
+    async fn my_offers_does_not_serve_other_users_fresh_snapshot() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_offers(&[offers_offer(1)], "sebo_one")
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        // Anderer User: frisch-für-sebo_one heißt NICHT frisch-für-automator →
+        // Fetch versucht → tote URL → Fehler (kein Stale-Serve).
+        assert!(provider.my_offers("automator".into()).await.is_err());
+        // Identischer User ohne vs mit trim: lowercase tolerant.
+        assert!(provider.my_offers("  SeBo_One  ".into()).await.is_ok());
+    }
+
+    /// Frischer Trades-Snapshot → user_trades_impl serviert aus dem Cache
+    /// ohne Netz (tote URL belegt den Shortcut).
+    #[tokio::test]
+    async fn user_trades_serves_fresh_snapshot_without_network() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_trades(&[provider::Trade {
+                id: 7,
+                terminal_id: 2,
+                commodity_id: 79,
+                operation: MarketOperation::Buy,
+                scu: 100,
+                price: 500.0,
+                date_added: 1730000200,
+                commodity: "Waste".into(),
+                terminal: "Lorville".into(),
+                vehicle: None,
+                fleet_name: None,
+                organization: None,
+            }])
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let trades = provider.user_trades().await.unwrap();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].commodity, "Waste");
+    }
+
+    fn offers_offer(id: u64) -> provider::Offer {
+        provider::Offer {
+            id,
+            title: "Drake Nettle S".into(),
+            description: String::new(),
+            item_id: 0,
+            category_id: 0,
+            operation: MarketOperation::Sell,
+            listing_type: ListingType::Item,
+            price: 4500000.0,
+            currency: "UEC".into(),
+            unit: "unit".into(),
+            quantity: 1,
+            location: "Port Tressler".into(),
+            region: "Stanton".into(),
+            seller: "sebo_one".into(),
+            quality: 72,
+            updated: 1730000000,
+            expires: None,
+            slug: "drake-nettle-s".into(),
+        }
+    }
+
+    /// UEX meldet für leere Trade-Historien `no_trades_found` als status mit
+    /// HTTP 200 — das ist KEIN Fehler, sondern eine leere Liste. Der Client
+    /// muss `Ok([])` liefern (UI rendert „Noch keine Trades"), nicht
+    /// `Err(NotFound)`.
+    #[tokio::test]
+    async fn user_trades_empty_history_is_ok_not_error() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"no_trades_found","http_code":200,"data":null}"#;
+        std::thread::spawn(move || {
+            if let Ok(mut stream) = listener.incoming().next().unwrap() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let provider = UexProvider::with_base_url(
+            cache,
+            Some("some-secret-key".into()),
+            &format!("http://127.0.0.1:{port}"),
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let trades = provider.user_trades().await.unwrap();
+        assert!(trades.is_empty(), "leere Historie → Ok([]), kein Fehler");
     }
 }

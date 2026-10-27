@@ -169,8 +169,12 @@ impl UexHttpClient {
         if envelope.status != "ok" {
             // user_trades meldet "no_trades_found" als status, wenn keine
             // Trades existieren — kein Fehler, sondern eine leere Historie.
+            // Deserialisiere `[]` in den erwarteten Listen-Typ (alle Aufrufer
+            // lesen `Vec<T>`), damit die UI den Leer-Zustand rendert statt
+            // eines Fehlerpanels.
             if envelope.status == "no_trades_found" {
-                return Err(ProviderError::NotFound("keine Trades".to_string()));
+                return serde_json::from_value(serde_json::Value::Array(Vec::new()))
+                    .map_err(|e| ProviderError::Json(format!("empty history for {path}: {e}")));
             }
             return match envelope.status.as_str() {
                 "requests_limit_reached" => Err(ProviderError::RateLimit { retry_after: None }),

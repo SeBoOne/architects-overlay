@@ -375,6 +375,11 @@ fn item_prices_meta_key(item_id: u64) -> String {
 const MARKETPLACE_META_KEY: &str = "fetched_at:marketplace";
 /// Frischemarker für die eigenen Offers (M2a) — analog marketplace.
 const OWN_OFFERS_META_KEY: &str = "fetched_at:own_offers";
+/// Welchem User der `own_offers`-Snapshot gehört (username, normalisiert).
+/// Die `own_offers`-Tabelle trägt keinen Username-Schlüssel — ein frischer
+/// Snapshot von Account A darf nach dem Wechsel zu Account B NICHT als
+/// „cache" serviert werden. `own_offers_fresh_for` prüft TTL + diesen Marker.
+const OWN_OFFERS_USER_KEY: &str = "user:own_offers";
 /// Frischemarker für die eigenen Trades (M2a) — analog marketplace.
 const OWN_TRADES_META_KEY: &str = "fetched_at:own_trades";
 
@@ -389,6 +394,13 @@ const ROUTE_ENRICHMENT_META_KEY: &str = "route_enrichment:fetched_at";
 /// SQLite has no bool — flags are stored as 0/1 integers.
 fn bool_as_int(b: bool) -> i64 {
     if b { 1 } else { 0 }
+}
+
+/// Normalizes a username for cache-key comparisons: trimmed, ASCII-lowercased.
+/// Usernames come from a user-editable field, so `Foo_Bar` / `foo_bar` must
+/// match; a freshly typed one must not resurrect another account's snapshot.
+fn normalize_username(s: &str) -> String {
+    s.trim().to_lowercase()
 }
 
 /// Columns added to `marketplace_offers` after the initial Phase-1 schema.
@@ -1785,8 +1797,25 @@ impl Cache {
         })
     }
 
-    /// Eigene Offers als Snapshot ersetzen (username-gefiltert).
-    pub fn store_own_offers(&self, offers: &[provider::Offer]) -> Result<()> {
+    /// Username-bewusste Frische der eigenen Offers: frisch gemäß TTL UND der
+    /// Snapshot gehört zu `username`. Ein frischer, aber für einen ANDEREN
+    /// Account geladener Snapshot zählt hier als nicht-frisch, damit nach einem
+    /// Username-Wechsel nicht die Offers des vorherigen Users als „cache"
+    /// serviert werden.
+    pub fn own_offers_fresh_for(&self, username: &str) -> Result<bool> {
+        if !self.own_offers_fresh()? {
+            return Ok(false);
+        }
+        let stored = self.meta_get_str(OWN_OFFERS_USER_KEY)?;
+        Ok(stored
+            .map(|s| normalize_username(s.as_str()) == normalize_username(username))
+            .unwrap_or(false))
+    }
+
+    /// Eigene Offers als Snapshot ersetzen (username-gefiltert). Zeichnet
+    /// zusätzlich den User auf, dem der Snapshot gehört (für die
+    /// username-bewusste Frische in [`Cache::own_offers_fresh_for`]).
+    pub fn store_own_offers(&self, offers: &[provider::Offer], username: &str) -> Result<()> {
         self.with(|conn| {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM own_offers", [])?;
@@ -1823,6 +1852,11 @@ impl Cache {
                     ])?;
                 }
             }
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (OWN_OFFERS_USER_KEY, normalize_username(username)),
+            )?;
             tx.execute(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -2889,15 +2923,40 @@ mod tests {
         assert!(!cache.own_offers_fresh().unwrap());
         assert!(cache.own_offers_snapshot().unwrap().is_empty());
         cache
-            .store_own_offers(&[shop_offer(1), shop_offer(2)])
+            .store_own_offers(&[shop_offer(1), shop_offer(2)], "sebo_one")
             .unwrap();
         assert!(cache.own_offers_fresh().unwrap());
+        assert!(cache.own_offers_fresh_for("sebo_one").unwrap());
         let snap = cache.own_offers_snapshot().unwrap();
         assert_eq!(snap.len(), 2);
         assert_eq!(snap[0].title, "Drake Nettle S");
         // Snapshot-Semantik: store ersetzt die alte Menge (keine Duplikate).
-        cache.store_own_offers(&[shop_offer(3)]).unwrap();
+        cache
+            .store_own_offers(&[shop_offer(3)], "sebo_one")
+            .unwrap();
         assert_eq!(cache.own_offers_snapshot().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn own_offers_fresh_for_is_username_aware() {
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .store_own_offers(&[shop_offer(1)], "sebo_one")
+            .unwrap();
+        // Gleicher User, Case-/Whitespace-tolerant → frisch.
+        assert!(cache.own_offers_fresh_for("SeBo_One").unwrap());
+        // Anderer User → trotz frischem TTL-Snapshot NICHT frisch (kein
+        // „cache"-Serve für einen fremden Account).
+        assert!(!cache.own_offers_fresh_for("automator").unwrap());
+        // Nach User-Wechsel: der Marker gehört jetzt dem neuen User.
+        cache
+            .store_own_offers(&[shop_offer(2)], "Automator")
+            .unwrap();
+        assert!(cache.own_offers_fresh_for("automator").unwrap());
+        assert!(!cache.own_offers_fresh_for("sebo_one").unwrap());
+        // Kein Marker → nicht frisch (sein boolesches Formular: fresh_for = false).
+        let fresh = Cache::open_in_memory().unwrap();
+        assert!(!fresh.own_offers_fresh_for("sebo_one").unwrap());
     }
 
     #[test]

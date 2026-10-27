@@ -754,7 +754,12 @@ async fn get_own_offers_cmd(
     username: &str,
 ) -> Result<OwnOffersResponse, String> {
     let key_set = api_key_set();
-    let cache_fresh = state.cache.own_offers_fresh().unwrap_or(false);
+    // Gleiche username-bewusste Frischeprüfung wie im Provider-Fresh-Shortcut:
+    // nur wenn TTL frisch UND der Snapshot zu genau diesem User gehört,
+    // liefert der Provider aus dem Cache (source "cache"). Sonst läuft
+    // der LIVE-Fetch — die Kennung stimmt also immer mit dem tatsächlichen
+    // Datenweg überein.
+    let cache_fresh = state.cache.own_offers_fresh_for(username).unwrap_or(false);
     match state.provider.my_offers(username.to_string()).await {
         Ok(offers) => Ok(OwnOffersResponse {
             source: if cache_fresh {
@@ -2032,26 +2037,29 @@ mod tests {
         let state = app.state::<TradeState>();
         state
             .cache
-            .store_own_offers(&[provider::Offer {
-                id: 900,
-                title: "Drake Nettle S".into(),
-                description: String::new(),
-                item_id: 0,
-                category_id: 0,
-                operation: MarketOperation::Sell,
-                listing_type: ListingType::Item,
-                price: 4500000.0,
-                currency: "UEC".into(),
-                unit: "unit".into(),
-                quantity: 1,
-                location: "Port Tressler".into(),
-                region: "Stanton".into(),
-                seller: "sebo_one".into(),
-                quality: 72,
-                updated: 1730000000,
-                expires: None,
-                slug: "drake-nettle-s".into(),
-            }])
+            .store_own_offers(
+                &[provider::Offer {
+                    id: 900,
+                    title: "Drake Nettle S".into(),
+                    description: String::new(),
+                    item_id: 0,
+                    category_id: 0,
+                    operation: MarketOperation::Sell,
+                    listing_type: ListingType::Item,
+                    price: 4500000.0,
+                    currency: "UEC".into(),
+                    unit: "unit".into(),
+                    quantity: 1,
+                    location: "Port Tressler".into(),
+                    region: "Stanton".into(),
+                    seller: "sebo_one".into(),
+                    quality: 72,
+                    updated: 1730000000,
+                    expires: None,
+                    slug: "drake-nettle-s".into(),
+                }],
+                "sebo_one",
+            )
             .unwrap();
         let resp = get_my_offers(state.clone(), "sebo_one".into())
             .await
