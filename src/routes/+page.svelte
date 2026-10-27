@@ -298,6 +298,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			scNote = '';
 			scNoteFor = null;
 			cfgConfirm(`Tastenkürzel übernommen: ${canonicalToLabel(applied ?? '')} — gilt ab sofort.`);
+			scheduleSyncNoteRefresh();
 		} catch (err) {
 			// Nichts persistiert, OS-Registration unverändert (Backend hat den
 			// alten Wert re-registriert). Capture bleibt scharf: sofort neu
@@ -306,6 +307,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			scNote = String(err);
 			scPreview = '';
 		}
+	}
+	// C2b: Der Compositor-Sync laeuft im Backend-Hintergrundthread (ANR-
+	// Schutz, t_1adbc017) — die Sync-Note ist darum nicht sofort im
+	// Snapshot. Einmal nachziehen, damit Erfolg/Fehler am Feld sichtbar wird.
+	function scheduleSyncNoteRefresh() {
+		window.setTimeout(async () => {
+			try {
+				const fresh = await invoke<SettingsSnapshot>('settings_get');
+				if (fresh && fresh.sync_note) cfg = fresh;
+			} catch { /* Overlay gerade zu — naechster Settings-Open holt die Note */ }
+		}, 3000);
 	}
 	// C2b: Consent-Chip "Tastenkürzel mit System (Omarchy) synchronisieren".
 	// Erstanlass persistiert die Zustimmung; erst ab true führt die App die
@@ -319,6 +331,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfgConfirm(cfg.sync_note || (on
 				? 'Compositor-Sync aktiv — Kürzel ändern jetzt auch die Hyprland-Binds.'
 				: 'Compositor-Sync deaktiviert.'));
+		scheduleSyncNoteRefresh();
 		} catch (err) {
 			cfgConfirm(`Compositor-Sync: ${String(err)}`);
 		}

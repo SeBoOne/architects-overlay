@@ -489,27 +489,49 @@ pub fn sync_combo(
     }
 
     // Verification (Akzeptanz): the live bind table must carry our combo.
+    // The plugin reloads Hyprland ASYNC (hyprctl reload returns before the
+    // new bind table is live) — a single immediate query can still see the
+    // OLD table (observed live t_1adbc017: startup drift aborted because the
+    // verification raced the reload). Poll a few short rounds before failing.
     let mut note = format!("Sync {command}: {target}");
-    if let Some(binds_json) = paths.hyprctl_binds() {
-        match find_bind_by_description(&binds_json, description) {
-            Some(b) => {
-                let want_mask = modmask(canonical);
-                let want_key = to_system_combo(canonical)
-                    .map(|c| c.rsplit(" + ").next().unwrap_or("").to_owned())?;
-                if b.modmask == want_mask && bind_key_matches(&b.key, &want_key) {
-                    note.push_str(" — verifiziert (hyprctl binds)");
-                } else {
-                    return Err(format!(
-                        "Sync geschrieben, aber Hyprland zeigt {command} als key {:?} modmask {} statt {want_key:?} modmask {want_mask} — Store prüfen.",
-                        b.key, b.modmask
-                    ));
+    let want_mask = modmask(canonical);
+    let want_key =
+        to_system_combo(canonical).map(|c| c.rsplit(" + ").next().unwrap_or("").to_owned())?;
+    if paths.hyprctl_binds().is_some() {
+        let mut last: Option<(String, u32)> = None; // key+mask of the seen row
+        let mut seen_any = false;
+        let mut verified = false;
+        for attempt in 0..5 {
+            let binds_json = match paths.hyprctl_binds() {
+                Some(j) => j,
+                None => break, // not a Hyprland session — verification skipped
+            };
+            match find_bind_by_description(&binds_json, description) {
+                Some(b) => {
+                    seen_any = true;
+                    if b.modmask == want_mask && bind_key_matches(&b.key, &want_key) {
+                        verified = true;
+                        break;
+                    }
+                    last = Some((b.key, b.modmask));
                 }
+                None => last = None,
             }
-            None => {
-                return Err(format!(
-                    "Sync geschrieben, aber kein Bind {description:?} in hyprctl binds gefunden — Reload/Lua prüfen."
-                ));
+            if !verified && attempt < 4 {
+                std::thread::sleep(std::time::Duration::from_millis(600));
             }
+        }
+        if verified {
+            note.push_str(" — verifiziert (hyprctl binds)");
+        } else if seen_any {
+            let (key, mask) = last.unwrap();
+            return Err(format!(
+                "Sync geschrieben, aber Hyprland zeigt {command} als key {key:?} modmask {mask} statt {want_key:?} modmask {want_mask} (5 Prüf-Runden) — Store prüfen.",
+            ));
+        } else {
+            return Err(format!(
+                "Sync geschrieben, aber kein Bind {description:?} in hyprctl binds gefunden (5 Prüf-Runden) — Reload/Lua prüfen.",
+            ));
         }
     } else {
         note.push_str(" — hyprctl nicht erreichbar, Verifikation entfällt");
@@ -561,6 +583,9 @@ fn find_bind_by_description(binds_json: &str, description: &str) -> Option<Dumpe
 
 /// Startup drift check for BOTH slots (card mechanism 1, Wayland branch):
 /// sync only when the store combo differs from the persisted canonical combo.
+/// One slot's failure must NOT abort the other slot (observed live
+/// t_1adbc017: a verification error in slot 1 silently skipped slot 2 —
+/// the store then carried half the Soll state). Errors become per-slot notes.
 pub fn startup_sync_drift(
     paths: &OmarchyPaths,
     toggle: &str,
@@ -572,7 +597,16 @@ pub fn startup_sync_drift(
         (toggle, TOGGLE_COMMAND, TOGGLE_DESCRIPTION),
         (click, CLICK_COMMAND, CLICK_DESCRIPTION),
     ] {
-        let target = to_system_combo(canonical)?;
+        let target = match to_system_combo(canonical) {
+            Ok(t) => t,
+            Err(e) => {
+                out.push(SyncOutcome {
+                    changed: false,
+                    note: format!("Compositor-Sync {command} übersprungen: {e}"),
+                });
+                continue;
+            }
+        };
         if store_combo_for_command(&store, command).as_deref() == Some(target.as_str()) {
             continue; // no drift → no write
         }
@@ -581,7 +615,13 @@ pub fn startup_sync_drift(
         if ops.is_empty() {
             continue;
         }
-        out.push(sync_combo(paths, canonical, command, description)?);
+        match sync_combo(paths, canonical, command, description) {
+            Ok(o) => out.push(o),
+            Err(e) => out.push(SyncOutcome {
+                changed: false,
+                note: format!("Compositor-Sync {command} fehlgeschlagen: {e}"),
+            }),
+        }
     }
     Ok(out)
 }
@@ -874,5 +914,88 @@ echo '[{"modmask": 5, "key": "U", "description": "Architects Overlay: Palette ei
         };
         let err = sync_combo(&paths, "Ctrl+Alt+K", TOGGLE_COMMAND, TOGGLE_DESCRIPTION).unwrap_err();
         assert!(err.contains("statt"), "report mismatch: {err}");
+        assert!(
+            err.contains("Prüf-Runden"),
+            "retry rounds named in error: {err}"
+        );
+    }
+
+    // Drift-Sync bricht NICHT ab, wenn ein Slot verifizierungs-seitig fällt:
+    // der andere Slot wird trotzdem geschrieben (live-Beobachtung t_1adbc017:
+    // Toggle-Slot verifizierte nicht, Click-through blieb halbvoll im Store).
+    #[cfg(unix)]
+    #[test]
+    fn startup_drift_continues_after_slot_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = tmp.path();
+        std::fs::create_dir_all(cfg).unwrap();
+        let bin = cfg.join("omasettings");
+        let calls = cfg.join("calls.log");
+        std::fs::write(
+            &bin,
+            format!("#!/bin/sh\necho \"$@\" >> {}\nexit 0\n", calls.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let store = cfg.join("omasettings.json");
+        std::fs::write(&store, real_store()).unwrap();
+        // Fake hyprctl: Toggle zeigt weiter die ALTE Combo (Fehler),
+        // Click-through zeigt die neue ALT+SPACE-Zeile (Erfolg).
+        let hyprctl = cfg.join("hyprctl");
+        std::fs::write(
+            &hyprctl,
+            r#"#!/bin/sh
+echo '[{"modmask": 5, "key": "U", "description": "Architects Overlay: Palette ein-/ausblenden", "dispatcher": "__lua", "arg": "15"}, {"modmask": 8, "key": "Space", "description": "Architects Overlay: Click-through umschalten", "dispatcher": "__lua", "arg": "16"}]'
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &hyprctl,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let paths = OmarchyPaths {
+            bin,
+            store,
+            bindings_lua: cfg.join("bindings.lua"),
+            hyprctl,
+            lua: PathBuf::new(),
+        };
+        // Drift: toggle -> Ctrl+Alt+K (Verifikation fällt), click -> Alt+Space (gelingt).
+        let outcomes = startup_sync_drift(&paths, "Ctrl+Alt+K", "Alt+Space").unwrap();
+        assert_eq!(outcomes.len(), 2, "beide Slots berichten");
+        let notes: String = outcomes
+            .iter()
+            .map(|o| o.note.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            notes.contains("arch-overlay toggle fehlgeschlagen"),
+            "Slot-1-Fehler als Note: {notes}"
+        );
+        assert!(
+            notes.contains("arch-overlay clickthrough"),
+            "Slot-2-Note vorhanden: {notes}"
+        );
+        assert!(
+            notes.contains("ALT + SPACE") && !notes.contains("clickthrough fehlgeschlagen"),
+            "Slot 2 erfolgreich verifiziert: {notes}"
+        );
+        let log = std::fs::read_to_string(&calls).unwrap();
+        // Slot 1 ops UND Slot 2 ops wurden beide über die CLI ausgeführt.
+        assert!(
+            log.contains("keys remove CTRL + SHIFT + U"),
+            "slot1 ops: {log}"
+        );
+        assert!(log.contains("keys add CTRL + ALT + K"), "slot1 add: {log}");
+        assert!(
+            log.contains("keys remove CTRL + SHIFT + O"),
+            "slot2 ops: {log}"
+        );
+        assert!(
+            log.contains("keys add ALT + SPACE Architects Overlay: Click-through umschalten arch-overlay clickthrough"),
+            "slot2 add: {log}"
+        );
     }
 }

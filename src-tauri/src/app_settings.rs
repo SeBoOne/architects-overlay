@@ -81,8 +81,12 @@ impl SettingsState {
 /// 1:1 sichtbar nach dem K6-Muster). Kein persistierter Zustand — die
 /// Wahrheit liegt im OmaSettings-Store, die Note ist die Rueckmeldung des
 /// letzten Sync-Versuchs dieser App-Instanz.
-#[derive(Debug, Default)]
-pub struct SyncNote(pub std::sync::Mutex<String>);
+// Clonebar (Arc-Inneres): Kommando-Handler koennen eine Kopie an den
+// Sync-Hintergrundthread weitergeben, ohne den Main-Thread zu blockieren
+// (ANR-Schutz, t_1adbc017: synchrone Sync-Ausfuehrung in settings_set_*
+// hing den Wayland-Ping des Fensters fest — 'Application Not Responding').
+#[derive(Debug, Default, Clone)]
+pub struct SyncNote(pub std::sync::Arc<std::sync::Mutex<String>>);
 
 impl SyncNote {
     pub fn set(&self, msg: impl Into<String>) {
@@ -188,32 +192,80 @@ fn sync_slot(
     command: &str,
     description: &str,
 ) {
+    eprintln!(
+        "[ao-sync] sync_slot ein: {canonical} state2={}",
+        state.shortcut_state().2
+    );
     if !state.shortcut_state().2 {
+        eprintln!("[ao-sync] slot skipped: consent=false");
         return; // no consent — compositor config stays untouched
     }
     if !crate::hyprland_sync::hyprland_session_active() {
+        eprintln!("[ao-sync] slot skipped: HYPRLAND_INSTANCE_SIGNATURE fehlt");
         return;
     }
     let Some(paths) = crate::hyprland_sync::OmarchyPaths::detect() else {
+        eprintln!("[ao-sync] slot skipped: Plugin nicht gefunden");
         note.set("Compositor-Sync: Hyprland läuft, aber das OmaSettings-Plugin wurde nicht gefunden. Manuelles Anlegen der Binds: docs/WAYLAND.md.");
         return;
     };
+    // ANR-Schutz (t_1adbc017): sync_combo fuehrt mehrere omasettings-CLI-
+    // Laeufe + Reload + Verifikations-Polling aus — das blockiert Minuten
+    // bis Sekunden. Laeuft es im Kommando-Handler (Main-Thread), haengt der
+    // Thread den CLI-Kind selbst fest: der Kompositor reloadet, pingt das
+    // Overlay-Fenster, dessen Main-Thread auf den CLI wartet —
+    // Ping-Deadlock bis zum 'Application Not Responding'-Dialog
+    // (live beobachtet: jeder UI-Kuerzel-Commit erzeugte genau dieses
+    // Muster; Startup-Drift lief dagegen im Thread und funktionierte).
+    // Deshalb: Heavywork in den Hintergrundthread, Main-Thread frei.
+    let note = note.clone();
+    let canonical = canonical.to_owned();
+    let command = command.to_owned();
+    let description = description.to_owned();
+    std::thread::spawn(move || {
+        run_sync_serialized(paths, &canonical, &command, &description, &note);
+    });
+}
+
+/// Nur ein Compositor-Sync darf gleichzeitig CLI-Kommandos + Reloads
+/// ausloesen (read-modify-write auf omasettings.json verTRAegt keine
+/// Parallelitaet; zwei Reloads gleichzeitig ping-pong-nieren den
+/// Kompositor). Der Lock blockiert einen Hintergrundthread, nie den
+/// Main-Thread.
+static SYNC_CLI_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn run_sync_serialized(
+    paths: crate::hyprland_sync::OmarchyPaths,
+    canonical: &str,
+    command: &str,
+    description: &str,
+    note: &SyncNote,
+) {
+    let _serial = SYNC_CLI_LOCK.lock().unwrap_or_else(|p| {
+        eprintln!("[ao-sync] Lock vergiftet — Sync faehrt fort");
+        p.into_inner()
+    });
     match crate::hyprland_sync::sync_combo(&paths, canonical, command, description) {
         Ok(outcome) if outcome.changed => {
             log::info!("hyprland bind sync: {}", outcome.note);
+            eprintln!("[ao-sync] slot OK: {}", outcome.note);
             note.set(outcome.note);
         }
         Ok(_) => {
             // store already matched — nothing written, nothing to report
+            eprintln!("[ao-sync] slot no-op: Store entspricht bereits {canonical}");
         }
         Err(err) => {
             log::warn!("hyprland bind sync failed: {err}");
+            eprintln!("[ao-sync] slot FAIL: {err}");
             note.set(format!("Compositor-Sync fehlgeschlagen: {err}"));
         }
     }
 }
 
 /// C2b: drift sync for BOTH slots (used on consent-enable and at app start).
+/// Consent-gates werden synchron geprueft, die Heavywork laeuft im
+/// Hintergrundthread (ANR-Schutz, wie sync_slot — t_1adbc017).
 fn sync_all(state: &SettingsState, note: &SyncNote) {
     if !state.shortcut_state().2 || !crate::hyprland_sync::hyprland_session_active() {
         return;
@@ -223,23 +275,35 @@ fn sync_all(state: &SettingsState, note: &SyncNote) {
         return;
     };
     let (toggle, click, _) = state.shortcut_state();
-    match crate::hyprland_sync::startup_sync_drift(&paths, &toggle, &click) {
-        Ok(outcomes) => {
-            if outcomes.is_empty() {
-                note.set(
-                    "Compositor-Sync aktiv — System-Binds entsprechen den gespeicherten Kürzeln.",
-                );
+    let note = note.clone();
+    std::thread::spawn(move || {
+        let _serial = SYNC_CLI_LOCK.lock().unwrap_or_else(|p| {
+            eprintln!("[ao-sync] Lock vergiftet — Sync faehrt fort");
+            p.into_inner()
+        });
+        match crate::hyprland_sync::startup_sync_drift(&paths, &toggle, &click) {
+            Ok(outcomes) => {
+                if outcomes.is_empty() {
+                    eprintln!(
+                        "[ao-sync] drift no-op: System-Binds entsprechen bereits den gespeicherten Kürzeln"
+                    );
+                    note.set(
+                        "Compositor-Sync aktiv — System-Binds entsprechen den gespeicherten Kürzeln.",
+                    );
+                }
+                for o in outcomes {
+                    log::info!("hyprland bind sync: {}", o.note);
+                    eprintln!("[ao-sync] drift OK: {}", o.note);
+                    note.set(o.note);
+                }
             }
-            for o in outcomes {
-                log::info!("hyprland bind sync: {}", o.note);
-                note.set(o.note);
+            Err(err) => {
+                log::warn!("hyprland bind sync failed: {err}");
+                eprintln!("[ao-sync] drift FAIL: {err}");
+                note.set(format!("Compositor-Sync fehlgeschlagen: {err}"));
             }
         }
-        Err(err) => {
-            log::warn!("hyprland bind sync failed: {err}");
-            note.set(format!("Compositor-Sync fehlgeschlagen: {err}"));
-        }
-    }
+    });
 }
 
 /// C2b (t_1adbc017): startup drift check, called from lib.rs setup thread
@@ -401,14 +465,19 @@ pub fn settings_set_shortcut_toggle(
         .expect("settings lock")
         .shortcut_click_through()
         .to_owned();
+    eprintln!("[ao-sync] TOGGLE-CMD ein: combo={combo:?}");
     let canonical = validate_shortcut_input(&combo, &peer, "Click-through")?;
+    eprintln!("[ao-sync] TOGGLE-CMD validiert: {canonical}");
     crate::overlay::rebind_shortcut(&app, crate::overlay::ShortcutKind::Toggle, &canonical)?;
+    eprintln!("[ao-sync] TOGGLE-CMD rebind ok");
     let mut s = state.inner.lock().expect("settings lock");
     s.set_shortcut_toggle(canonical.clone());
     state.persist(&s);
+    eprintln!("[ao-sync] TOGGLE-CMD persistiert");
     // C2b: persistierter Soll-Wert wird Compositor-Bind (Consent-Gates in
     // sync_slot). Fehler hier schlagen NICHT auf die Kürzel-Änderung zurück —
     // das Kürzel ist gültig gespeichert, die Note zeigt den Sync-Fehler.
+    eprintln!("[ao-sync] TOGGLE-CMD rufe sync_slot");
     sync_slot(
         &state,
         &sync,
