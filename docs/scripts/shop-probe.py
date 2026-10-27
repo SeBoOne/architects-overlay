@@ -379,6 +379,35 @@ async def main():
         check("s3-offline-data-survives", still == 3, "offers=" + str(still))
         await shot("shop-s3-offline-fallback.png")
 
+        # =====================================================================
+        # S4 — Review R2 (Defekt 2): leere Historie → LEER-Zustand statt
+        #       Fehlerpane. UEX meldet `no_trades_found` als 200/leere Liste —
+        #       der Client mappt das auf Ok([]); die UI rendert „Noch keine
+        #       Trades im Verlauf." (row-empty), NICHT „nicht erreichbar".
+        # =====================================================================
+        await navigate(
+            "window.__stubState.uex_api_key_set = true;"
+            "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
+            "window.__SHOP_OFFERS__=[];"
+            "window.__SHOP_TRADES__=[];"
+            "window.__SHOP_OFFERS_FAIL__=false;"
+            "window.__SHOP_TRADES_FAIL__=false;"   # S3 setzte FAIL=true — zurücksetzen
+        )
+        await enter_market()
+        await click_chip("Mein Shop")
+        await asyncio.sleep(1.8)
+
+        offers_null = await js("[...document.querySelectorAll('[data-shop-offer-idx]')].length")
+        check("s4-no-offers-rows", offers_null == 0, "offers=" + str(offers_null))
+        trades_empty_state = await js(has_text_expr(".row-empty", "Noch keine Trades im Verlauf."))
+        check("s4-empty-history-empty-state", trades_empty_state is True)
+        err_pane_s4 = await js(has_text_expr(".pane-error .big", "Mein Shop nicht erreichbar"))
+        check("s4-no-error-pane-on-empty", err_pane_s4 is False)
+        # Offers-Leerzustand mit Benutzername im Text (der andere row-empty).
+        offers_empty = await js(has_text_expr(".row-empty", "Keine eigenen Offers"))
+        check("s4-empty-offers-state", offers_empty is True)
+        await shot("shop-s4-empty-history.png")
+
         await call("Page.close")
 
     proc.terminate()
