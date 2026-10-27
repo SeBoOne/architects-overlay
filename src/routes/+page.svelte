@@ -3301,6 +3301,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						</div>
 					{:else}
+						{#if shopErr}
+							<div class="row-empty" style="padding: 10px 16px; color: var(--alert)" role="alert">{shopErr}</div>
+						{/if}
 						{#if shopNote}
 							<div class="row-empty" style="padding: 10px 16px">{shopNote}</div>
 						{/if}
