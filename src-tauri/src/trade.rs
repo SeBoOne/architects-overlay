@@ -773,9 +773,13 @@ async fn get_own_offers_cmd(
             key_set,
         }),
         Err(e) => {
-            // Offline / Auth: letzter Snapshot oder sauberer Fehler.
-            match state.cache.own_offers_snapshot() {
-                Ok(snapshot) if !snapshot.is_empty() => Ok(OwnOffersResponse {
+            // Offline / Auth: letzter Snapshot NUR, wenn er zu genau diesem
+            // Username gehört (username-bewusst wie der Fresh-Pfad). Ein nach
+            // Kontowechsel mit Netz-/Auth-Fehler aufgefrischter View darf die
+            // Offers des VORHERIGEN Accounts nicht als „offline"-Eigendaten
+            // bekommen — sonst als leerer Fall an den Fehlerpfad.
+            match state.cache.own_offers_snapshot_for(username) {
+                Ok(Some(snapshot)) if !snapshot.is_empty() => Ok(OwnOffersResponse {
                     source: "offline".into(),
                     fetched_at: now_unix(),
                     offers: snapshot,
@@ -2068,6 +2072,64 @@ mod tests {
         assert_eq!(resp.offers.len(), 1, "snapshot survives");
         assert_eq!(resp.offers[0].title, "Drake Nettle S");
         assert!(resp.note.is_some());
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn my_offers_offline_fallback_is_username_aware() {
+        // Defekt 3 (R2-Probe): Snapshot gehört zu sebo_one, Live-Fetch für
+        // automator schlägt fehl → die automator-View darf die sebo_one-
+        // Offers NICHT als „offline"-Eigendaten bekommen, sondern muss den
+        // Fehlerpfad zeigen (wie der leere Fall). Kontowechsel-Leak.
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: true,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+        });
+        let state = app.state::<TradeState>();
+        state
+            .cache
+            .store_own_offers(
+                &[provider::Offer {
+                    id: 900,
+                    title: "Drake Nettle S".into(),
+                    description: String::new(),
+                    item_id: 0,
+                    category_id: 0,
+                    operation: MarketOperation::Sell,
+                    listing_type: ListingType::Item,
+                    price: 4500000.0,
+                    currency: "UEC".into(),
+                    unit: "unit".into(),
+                    quantity: 1,
+                    location: "Port Tressler".into(),
+                    region: "Stanton".into(),
+                    seller: "sebo_one".into(),
+                    quality: 72,
+                    updated: 1730000000,
+                    expires: None,
+                    slug: "drake-nettle-s".into(),
+                }],
+                "sebo_one",
+            )
+            .unwrap();
+        // Gleicher User → offline-Fallback serviert den Snapshot.
+        let ok = get_my_offers(state.clone(), "sebo_one".into())
+            .await
+            .unwrap();
+        assert_eq!(ok.source, "offline");
+        assert_eq!(ok.offers.len(), 1);
+        // Anderer User mit fehlschlagendem Fetch → Err, NIE sebo_one-Offers.
+        let err = get_my_offers(state.clone(), "automator".into()).await;
+        assert!(
+            err.is_err(),
+            "fremder Snapshot darf nicht als offline serviert werden"
+        );
         let _ = app;
     }
 

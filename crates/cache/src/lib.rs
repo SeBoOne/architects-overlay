@@ -1866,6 +1866,21 @@ impl Cache {
         })
     }
 
+    /// Username-bewusste Snapshot-Variante für den Offline-Fallback: liefert
+    /// den Snapshot NUR, wenn er (Marker `user:own_offers`) zu `username`
+    /// gehört, sonst `Ok(None)`. Verhindert, dass nach einem Username-Wechsel
+    /// (mit Netz-/Auth-Fehler auf dem neuen Account) die Offers des VORHERIGEN
+    /// Users als „offline"-Eigendaten serviert werden — dieselbe Username-
+    /// Bewusstheit wie [`Cache::own_offers_fresh_for`].
+    pub fn own_offers_snapshot_for(&self, username: &str) -> Result<Option<Vec<Offer>>> {
+        match self.meta_get_str(OWN_OFFERS_USER_KEY)? {
+            Some(stored) if normalize_username(&stored) == normalize_username(username) => {
+                Ok(Some(self.own_offers_snapshot()?))
+            }
+            _ => Ok(None),
+        }
+    }
+
     /// Letzter Snapshot der eigenen Offers (stale-first; Frischeentscheidung
     /// obliegt dem CALLER via [`Cache::own_offers_fresh`]).
     pub fn own_offers_snapshot(&self) -> Result<Vec<Offer>> {
@@ -2957,6 +2972,27 @@ mod tests {
         // Kein Marker → nicht frisch (sein boolesches Formular: fresh_for = false).
         let fresh = Cache::open_in_memory().unwrap();
         assert!(!fresh.own_offers_fresh_for("sebo_one").unwrap());
+    }
+
+    #[test]
+    fn own_offers_snapshot_for_is_username_aware() {
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .store_own_offers(&[shop_offer(1)], "sebo_one")
+            .unwrap();
+        // Gleicher User (Case-tolerant) → Snapshot kommt.
+        let snap = cache.own_offers_snapshot_for("SeBo_One").unwrap();
+        assert_eq!(snap.as_ref().map(|v| v.len()), Some(1));
+        // Anderer User → Ok(None), nie der fremde Snapshot.
+        assert!(
+            cache
+                .own_offers_snapshot_for("automator")
+                .unwrap()
+                .is_none()
+        );
+        // Kein Marker / leerer Cache → Ok(None).
+        let fresh = Cache::open_in_memory().unwrap();
+        assert!(fresh.own_offers_snapshot_for("sebo_one").unwrap().is_none());
     }
 
     #[test]
