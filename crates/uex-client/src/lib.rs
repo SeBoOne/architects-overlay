@@ -1671,7 +1671,10 @@ fn map_trade(r: UserTradeRow) -> provider::Trade {
         id: r.id,
         terminal_id: r.id_terminal,
         commodity_id: r.id_commodity,
-        operation: r.operation.parse().unwrap_or(provider::MarketOperation::Sell),
+        operation: r
+            .operation
+            .parse()
+            .unwrap_or(provider::MarketOperation::Sell),
         scu: r.scu,
         price: r.price,
         date_added: r.date_added,

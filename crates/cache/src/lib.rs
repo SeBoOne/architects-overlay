@@ -2888,7 +2888,9 @@ mod tests {
         let cache = Cache::open_in_memory().unwrap();
         assert!(!cache.own_offers_fresh().unwrap());
         assert!(cache.own_offers_snapshot().unwrap().is_empty());
-        cache.store_own_offers(&[shop_offer(1), shop_offer(2)]).unwrap();
+        cache
+            .store_own_offers(&[shop_offer(1), shop_offer(2)])
+            .unwrap();
         assert!(cache.own_offers_fresh().unwrap());
         let snap = cache.own_offers_snapshot().unwrap();
         assert_eq!(snap.len(), 2);
@@ -2903,7 +2905,9 @@ mod tests {
         let cache = Cache::open_in_memory().unwrap();
         assert!(!cache.own_trades_fresh().unwrap());
         assert!(cache.own_trades_snapshot().unwrap().is_empty());
-        cache.store_own_trades(&[shop_trade(7), shop_trade(8)]).unwrap();
+        cache
+            .store_own_trades(&[shop_trade(7), shop_trade(8)])
+            .unwrap();
         assert!(cache.own_trades_fresh().unwrap());
         let snap = cache.own_trades_snapshot().unwrap();
         assert_eq!(snap.len(), 2);
@@ -2922,10 +2926,7 @@ mod tests {
             .with(|conn| {
                 conn.execute(
                     "UPDATE meta SET value = ?1 WHERE key = ?2",
-                    [
-                        back.to_string(),
-                        "fetched_at:own_trades".to_string(),
-                    ],
+                    [back.to_string(), "fetched_at:own_trades".to_string()],
                 )?;
                 Ok(())
             })
