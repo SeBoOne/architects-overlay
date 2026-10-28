@@ -37,8 +37,8 @@
 		{ id: 'search', key: 'F1', label: 'Suche', title: 'Suche (F1)', icon: 'search' },
 		{ id: 'market', key: 'F2', label: 'Marktplatz', title: 'Marktplatz (F2)', icon: 'market' },
 		{ id: 'routes', key: 'F3', label: 'Routen', title: 'Handelsrouten (F3)', icon: 'routes' },
-		{ id: 'inventory', key: 'F4', label: 'Inventar', title: 'Inventar — kommt bald (F4)', icon: 'inventory' },
-		{ id: 'hangar', key: 'F11', label: 'Hangar', title: 'Hangar — kommt bald (F11)', icon: 'hangar' },
+		{ id: 'inventory', key: 'F4', label: 'Inventar', title: 'Inventar (F4)', icon: 'inventory' },
+		{ id: 'hangar', key: 'F11', label: 'Hangar', title: 'Hangar (F11)', icon: 'hangar' },
 		{ id: 'settings', key: 'F12', label: 'Einstellungen', title: 'Einstellungen (F12)', icon: 'settings' }
 	];
 
@@ -60,9 +60,8 @@
 			: DEFAULT_KEYS[id];
 	}
 	function titleFor(en: Entry): string {
-		const soon = en.id === 'inventory' || en.id === 'hangar' ? ' — kommt bald' : '';
 		const label = en.id === 'routes' ? 'Handelsrouten' : en.label;
-		return `${label}${soon} (${keyFor(en.id)})`;
+		return `${label} (${keyFor(en.id)})`;
 	}
 </script>
 
