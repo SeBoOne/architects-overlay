@@ -222,6 +222,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		global_shortcuts_active: boolean;
 		// C2b (t_1adbc017): Consent (persistiert) + Compositor-Ist + Sync-Note.
 		shortcuts_sync_omarchy: boolean;
+		// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (every_action|delete_only).
+		marketplace_confirm: string;
 		hyprland_session: boolean;
 		omasettings_available: boolean;
 		sync_note: string;
@@ -945,6 +947,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	// M2b (Write-Layer, Sicherheitsmodell): 2-Schritt-Bestätigung für
+	// schreibende Marktplatz-Aktionen umschalten (every_action → jede Aktion,
+	// delete_only → nur Abmelden). Keine Batch-Aktionen.
+	let mktConfirmNote = $state('');
+	async function setMarketplaceConfirm(mode: 'every_action' | 'delete_only') {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_marketplace_confirm', { mode });
+			mktConfirmNote = mode === 'every_action'
+				? 'Jede schreibende Aktion wird bestätigt (Default).'
+				: 'Nur beim ABMELDEN wird bestätigt — Anlegen läuft direkt.';
+		} catch (e) {
+			mktConfirmNote = String(e);
+		}
+	}
+
 	// Scroll-Position der Ergebnisliste für den Zurück-Blick.
 	let listScroll = $state(0);
 	// Status-Toast nach Auswahl einer Detail-Zeile.
@@ -1239,13 +1256,165 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			shopErr = String(e);
 		}
 	}
-	async function openMyShopDeepLink() {
+		async function openMyShopDeepLink() {
 		try {
 			await invoke<string>('open_marketplace_trades');
 		} catch (e) {
 			shopErr = String(e);
 		}
 	}
+
+	// ---- M2b (Write-Layer): Anlegen + Abmelden — 2-Schritt-Bestätigung,
+	// kein Edit (Bearbeiten = Abmelden + Neu anlegen), Pull nach Write. ----
+	type AdvertiseForm = {
+		operation: 'sell' | 'buy';
+		title: string;
+		description: string;
+		price: string;
+		quantity: string;
+		unit: string;
+		location: string;
+		source: string;
+		hours: string;
+	};
+	const emptyAdvertise = (): AdvertiseForm => ({
+		operation: 'sell',
+		title: '',
+		description: '',
+		price: '',
+		quantity: '1',
+		unit: 'unit',
+		location: '',
+		source: '',
+		hours: '168'
+	});
+	// 2-Schritt: Zustand, welche Aktion gerade auf Bestätigung wartet.
+	let advertForm = $state(emptyAdvertise());
+	let advertOpen = $state(false);
+	let advertNote = $state('');
+	let confirmAction = $state<null | { kind: 'advertise' } | { kind: 'delete'; offer: Offer }>(null);
+	let writeBusy = $state(false);
+	// „Bearbeiten" gibt es NICHT als eigenen Zweig — das Formular wird beim
+	// Editieren nur VORBEFÜLLT; der Nutzer meldet die alte Listung separat ab
+	// und legt neu an (klare UX-Kennzeichnung, M2b-1).
+	let editingOffer = $state<Offer | null>(null);
+	function openAdvertise(offer: Offer | null) {
+		if (offer) {
+			editingOffer = offer;
+			advertForm = {
+				operation: offer.operation === 'buy' ? 'buy' : 'sell',
+				title: offer.title,
+				description: offer.description,
+				price: String(Math.round(offer.price)),
+				quantity: String(offer.quantity),
+				unit: offer.unit || 'unit',
+				location: offer.location,
+				source: '',
+				hours: '168'
+			};
+		} else {
+			editingOffer = null;
+			advertForm = emptyAdvertise();
+		}
+		advertOpen = true;
+		advertNote = '';
+	}
+	// 2-Schritt: prüft das Settings-Modell (M2b-2). ConfirmEveryAction = immer
+	// bestätigen, ConfirmDeleteOnly = nur das Abmelden; Anlegen läuft direkt.
+	function requestAdvertise() {
+		if (writeBusy) return;
+		const confirmMode = cfg?.marketplace_confirm ?? 'every_action';
+		if (confirmMode === 'every_action') {
+			confirmAction = { kind: 'advertise' };
+		} else {
+			void doAdvertise();
+		}
+	}
+	async function doAdvertise() {
+		confirmAction = null;
+		advertNote = '';
+		const f = advertForm;
+		if (!f.title.trim() || !f.description.trim()) {
+			advertNote = 'Titel und Beschreibung sind Pflicht.';
+			advertOpen = true;
+			return;
+		}
+		const price = Math.round(Number(f.price));
+		const qty = Math.round(Number(f.quantity));
+		if (!Number.isFinite(price) || price <= 0) {
+			advertNote = 'Preis muss eine positive Ganzzahl sein.';
+			advertOpen = true;
+			return;
+		}
+		if (!Number.isFinite(qty) || qty <= 0) {
+			advertNote = 'Menge muss eine positive Ganzzahl sein.';
+			advertOpen = true;
+			return;
+		}
+		// Nach jedem Write PULL (M2b-4) — kein Optimismus. Fehlerpfad: kein
+		// Retry, Meldung + Deep-Link-Button (M2b-3).
+		writeBusy = true;
+		const payload = {
+			id_item: null,
+			id_category: null,
+			id_star_system: null,
+			id_terminal: null,
+			id_organization: null,
+			operation: f.operation,
+			language: 'de_DE',
+			type: 'item',
+			unit: f.unit.trim() || 'unit',
+			price,
+			currency: 'UEC',
+			title: f.title.trim(),
+			description: f.description.trim(),
+			source: f.source.trim() || null,
+			availability: 'immediate',
+			durability: null,
+			location: f.location.trim() || null,
+			in_stock: qty,
+			hours_expiration: Number(f.hours) || null,
+			is_hidden: null,
+			is_production: 1
+		};
+		try {
+			await invoke<Offer>('marketplace_advertise', { payload });
+			editingOffer = null;
+			advertOpen = false;
+			advertForm = emptyAdvertise();
+			// Pull: lokale Liste neu laden (der POST-Response/GET bestätigt).
+			await loadShop(true);
+			shopNote = f.operation === 'sell'
+				? 'Listing „' + f.title.trim() + '“ wurde angelegt.'
+				: 'Kauf-Gesuch „' + f.title.trim() + '“ wurde angelegt.';
+		} catch (e) {
+			// KEIN Retry — Fehlermeldung + Deep-Link-Button (UI rendert shopErr).
+			shopErr = String(e);
+			advertOpen = true;
+		}
+		writeBusy = false;
+	}
+	// Abmelden bestätigt IMMER (any Modus — Löschen ist die riskantere Aktion,
+	// M2b-2 kein Retry/Spam, M2b-3 Fehlerpfad).
+	function requestDelete(offer: Offer) {
+		if (writeBusy) return;
+		confirmAction = { kind: 'delete', offer };
+	}
+	async function doDelete(offer: Offer) {
+		confirmAction = null;
+		writeBusy = true;
+		try {
+			await invoke('marketplace_delete', { id: offer.id });
+			// Pull statt Optimismus.
+			await loadShop(true);
+			shopNote = 'Listing „' + offer.title + '“ wurde abgemeldet.';
+		} catch (e) {
+			shopErr = String(e);
+		}
+		writeBusy = false;
+	}
+	const UNIT_CHOICES = ['unit', 'scu', 'box', 'crate', 'pack', 'hundred', 'thousand'];
+	const HOUR_CHOICES = ['1', '2', '3', '5', '12', '24', '48', '72', '120', '168', '336', '720'];
 
 	// ---- Handelsrouten (Karte t_128b7547) ------------------------------------
 	// Separater Tab im Marktmodus (Design-Empfehlung der Karte). Datenquelle:
@@ -3094,7 +3263,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if usernameNote}
 							<div class="cfg-note">{usernameNote}</div>
 						{/if}
-					</section>
+					
+												<div class="cfg-key-status" style="margin-top: 12px">
+							Schreibbestätigung (2-Schritt):
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>Nach jeder Aktion (Default)</button>
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>Nur beim Abmelden</button>
+						</div>
+						{#if mktConfirmNote}
+							<div class="cfg-note">{mktConfirmNote}</div>
+						{/if}
+</section>
 				</div>
 			</div>
 		{:else if phase === 'loading'}
@@ -3454,12 +3632,53 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if shopNote}
 							<div class="row-empty" style="padding: 10px 16px">{shopNote}</div>
 						{/if}
-						<div class="mbar2" style="margin-top: 10px">
-							<span class="m-lbl">Eigene Offers ({myOffers.length})</span>
-							<span class="m-spacer"></span>
-							<span class="chip" title="Marketplace auf uexcorp.space öffnen" onclick={() => void openListingDeepLink(null)}>Im Browser öffnen ↗</span>
-						</div>
-						{#if myOffers.length}
+												<div class="mbar2" style="margin-top: 10px">
+													<span class="m-lbl">Eigene Offers ({myOffers.length})</span>
+													<span class="m-spacer"></span>
+													<span class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
+													<span class="chip" title="Marketplace auf uexcorp.space öffnen" onclick={() => void openListingDeepLink(null)}>Im Browser öffnen ↗</span>
+												</div>
+												{#if advertOpen}
+													<div class="pane-error" style="margin: 10px 0; background: rgba(255,255,255,.03)">
+														<div class="mbar2"><span class="m-lbl">{editingOffer ? 'NEU ANLEGEN (Bearbeiten = erst Abmelden, dann Neu)' : 'NEUES LISTING ANLEGEN'}</span></div>
+														{#if editingOffer}
+															<div class="row-empty" style="padding: 8px 12px">Dieses Formular ist VORBEFÜLLT mit „{editingOffer.title}“. Für eine Änderung musst du das alte Listing zuerst ABmelden (unten) und dann mit den neuen Werten neu anlegen — UEX unterstützt kein Bearbeiten.</div>
+														{/if}
+														<div class="mlist" style="padding: 6px 14px">
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Art</span>
+																<button type="button" class="chip" class:is-on={advertForm.operation === 'sell'} onclick={() => (advertForm.operation = 'sell')}>Verkauf (sell)</button>
+																<button type="button" class="chip" class:is-on={advertForm.operation === 'buy'} onclick={() => (advertForm.operation = 'buy')}>Kauf (buy)</button>
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Titel</span>
+																<input class="rtext" placeholder="Artikelname (alphanumerisch + -)" bind:value={advertForm.title} />
+																<span class="m-lbl">Preis (UEC)</span>
+																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.price} />
+																<span class="m-lbl">Menge</span>
+																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.quantity} />
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Einheit</span>
+																<select class="rtext" bind:value={advertForm.unit}>{#each UNIT_CHOICES as u}<option value={u}>{u}</option>{/each}</select>
+																<span class="m-lbl">Ort</span>
+																<input class="rtext" placeholder="z. B. Port Tressler" bind:value={advertForm.location} />
+																<span class="m-lbl">Laufzeit</span>
+																<select class="rtext" bind:value={advertForm.hours}>{#each HOUR_CHOICES as h}<option value={h}>{h} h</option>{/each}</select>
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Beschreibung</span>
+																<input class="rtext" style="flex: 1" placeholder="Freitext" bind:value={advertForm.description} />
+															</div>
+															<div class="mbar2" style="margin-top: 8px">
+																<button type="button" class="btn" disabled={writeBusy} onclick={() => void requestAdvertise()}>{writeBusy ? 'Wird gesendet …' : 'Anlegen (2-Schritt)'}</button>
+																<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => { advertOpen = false; editingOffer = null; }}>Abbrechen</button>
+																{#if advertNote}<span class="chip warn" style="margin-left: 8px">{advertNote}</span>{/if}
+															</div>
+														</div>
+													</div>
+												{/if}
+												{#if myOffers.length}
 							<div class="mlist">
 								{#each myOffers as o, i (o.id)}
 									<div
@@ -3476,12 +3695,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<div class="m-title">{o.title}</div>
 											<div class="m-sub">{o.location || '—'}{o.region ? ' · ' + o.region : ''} · {shopStatus(o)}</div>
 										</div>
-										<div class="m-right">
-											<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
-											<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
-										</div>
-									</div>
-								{/each}
+																				<div class="m-right">
+																					<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
+																					<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
+																				</div>
+																				<div class="m-right" style="gap: 4px">
+																					<button type="button" class="btn-ghost" title="Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)" onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>✎ Neu</button>
+																					<button type="button" class="btn-ghost" title="Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)" onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>Abmelden</button>
+																				</div>
+																			</div>
+																		{/each}
 							</div>
 							<div class="m-foot">
 								<span>Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen.</span>
@@ -3527,9 +3750,32 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span>Zeige {recentTrades.length} von {myTrades.length} Trades · Einzeltrade-Deep-Link bei UEX nicht dokumentiert → Verlauf im Browser.</span>
 								<span class="src">UEX Corp</span>
 							</div>
-						{:else}
-							<div class="row-empty" style="padding: 14px 16px">Noch keine Trades im Verlauf.</div>
-						{/if}
+												{:else}
+													<div class="row-empty" style="padding: 14px 16px">Noch keine Trades im Verlauf.</div>
+												{/if}
+											{/if}
+											{#if confirmAction}
+						{@const ca = confirmAction}
+						<!-- 2-Schritt-Bestätigung (M2b): jede schreibende Aktion verlangt
+							 eine zweite Bestätigung. Keine Batch-Aktionen. -->
+						<div class="pane-error" style="margin: 10px 0; border-color: var(--alert)">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">
+									{ca.kind === 'delete' ? 'Listing ABMELDEN?' : 'Listing ANLEGEN?'}
+								</div>
+								{#if ca.kind === 'delete'}
+									<div class="sm">{ca.offer.title} (@{fmtPrice(ca.offer.price)} · {fmtQty(ca.offer.quantity)} {ca.offer.unit || 'unit'}) wird auf uexcorp.space ABGEMELDET.</div>
+								{:else}
+									<div class="sm">{advertForm.operation === 'sell' ? 'Verkaufs-' : 'Kauf-'}Angebot „{advertForm.title}“ wird auf uexcorp.space ANGELEGT.</div>
+								{/if}
+								<div class="mbar2" style="margin-top: 10px; justify-content: center">
+									<button type="button" class="btn" disabled={writeBusy} onclick={() => ca.kind === 'delete' ? void doDelete(ca.offer) : void doAdvertise()}>
+										{ca.kind === 'delete' ? 'JA, ABMELDEN' : 'JA, ANLEGEN'}
+									</button>
+									<button type="button" class="btn-ghost" onclick={() => (confirmAction = null)}>Abbrechen</button>
+								</div>
+							</div>
+						</div>
 					{/if}
 				{:else if mLoading && !offers.length}
 					<div class="center">
