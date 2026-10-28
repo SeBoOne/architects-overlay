@@ -85,6 +85,109 @@ where
     Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
 }
 
+// ---------------------------------------------------------------------------
+// Flexible Marketplace-Zahlen (t_89d1e32e): UEX liefert Zahlen auf den
+// Marketplace-Endpunkten (`/marketplace_negotiations`, `/marketplace_listings`,
+// `/user_trades`, `/marketplace_advertise`) teils als JSON-Zahl, teils als
+// JSON-String (`"7000000"`), teils als explizites `null`. Bare `f64`/`u64`
+// crasht auf der String-Form (`invalid type: string "7000000", expected f64`)
+// und reißt den ganzen Fetch mit. Diese Deserializer akzeptieren alle drei
+// Formen; null/""/nicht-numerisch → 0 (gleiche Toleranzlinie wie die
+// null→0-Helfer oben — der Feed bleibt lebendig, Einzelwert 0 ist der
+// etablierte "unbekannt"-Sentinel).
+// ---------------------------------------------------------------------------
+
+/// String/Number/null → `f64`, nicht repräsentierbares → `None`.
+fn flex_f64(v: Option<serde_json::Value>) -> Option<f64> {
+    match v {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Number(n)) => n.as_f64(),
+        Some(serde_json::Value::String(s)) => s.trim().parse::<f64>().ok(),
+        Some(_) => None,
+    }
+}
+
+/// String/Number/null → `u64` (Float-Form wird ganzzahlig gerundet).
+fn flex_u64(v: Option<serde_json::Value>) -> Option<u64> {
+    match flex_f64(v) {
+        Some(x) if x.is_finite() && x >= 0.0 => Some(x.round() as u64),
+        _ => None,
+    }
+}
+
+/// f64-Feld: Zahl, String-Zahl, null oder leerer String → 0.0.
+pub(crate) fn de_f64_flex_null_to_zero<'de, D>(d: D) -> Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(flex_f64(Option::<serde_json::Value>::deserialize(d)?).unwrap_or(0.0))
+}
+
+/// u64-Feld: Zahl, String-Zahl, null oder leerer String → 0.
+pub(crate) fn de_u64_flex_null_to_zero<'de, D>(d: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(flex_u64(Option::<serde_json::Value>::deserialize(d)?).unwrap_or(0))
+}
+
+/// u8-Feld (0/1-Flags): Zahl, String-Zahl, null → 0.
+pub(crate) fn de_u8_flex_null_to_zero<'de, D>(d: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(flex_u64(Option::<serde_json::Value>::deserialize(d)?)
+        .unwrap_or(0)
+        .min(u8::MAX as u64) as u8)
+}
+
+/// u16-Feld (quality): Zahl, String-Zahl, null → 0.
+pub(crate) fn de_u16_flex_null_to_zero<'de, D>(d: D) -> Result<u16, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(flex_u64(Option::<serde_json::Value>::deserialize(d)?)
+        .unwrap_or(0)
+        .min(u16::MAX as u64) as u16)
+}
+
+/// `Option<f64>`: null/""/nicht-numerisch → None (offener Deal bleibt offen),
+/// Zahl oder String-Zahl → Some.
+pub(crate) fn de_opt_f64_flex<'de, D>(d: D) -> Result<Option<f64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(flex_f64(Option::<serde_json::Value>::deserialize(d)?))
+}
+
+/// `Option<u64>`: null/""/nicht-numerisch → None, Zahl oder String-Zahl → Some.
+pub(crate) fn de_opt_u64_flex<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(flex_u64(Option::<serde_json::Value>::deserialize(d)?))
+}
+
+/// Wie [`de_opt_u64_null_to_zero`], plus flexibel: String-Zahl akzeptieren.
+/// null → Some(0) (UEX-Semantik „no expiry“ bleibt erhalten).
+pub(crate) fn de_opt_u64_flex_null_to_zero<'de, D>(d: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Some(
+        flex_u64(Option::<serde_json::Value>::deserialize(d)?).unwrap_or(0),
+    ))
+}
+
+/// `Option<u16>` (quality): null/""/nicht-numerisch → None, sonst Some.
+pub(crate) fn de_opt_u16_flex<'de, D>(d: D) -> Result<Option<u16>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(flex_u64(Option::<serde_json::Value>::deserialize(d)?)
+        .map(|x| x.min(u16::MAX as u64) as u16))
+}
+
 /// Generic UEX response envelope.
 #[derive(Debug, Deserialize)]
 pub struct Envelope<T> {
@@ -261,7 +364,7 @@ pub struct PriceRow {
 /// der Server das Listing angelegt hatte).
 #[derive(Debug, Deserialize)]
 pub struct CreateResponse {
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id: u64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub url: String,
@@ -270,6 +373,7 @@ pub struct CreateResponse {
 /// `/marketplace_listings` row.
 #[derive(Debug, Deserialize)]
 pub struct ListingRow {
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id: u64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub title: String,
@@ -280,13 +384,13 @@ pub struct ListingRow {
     /// fields, e.g. deleted/unresolved items — deserializing `null` into a
     /// bare `u64` failed the whole fetch with
     /// `invalid type: null, expected a integer`). null maps to 0.
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_item: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_category: u64,
     /// Star system the listing is placed in (0 = unknown) — resolved to a
     /// region name via `/star_systems`.
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_star_system: u64,
     /// "buy" | "sell".
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
@@ -302,23 +406,24 @@ pub struct ListingRow {
     pub currency: String,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub unit: String,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub in_stock: u64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub location: String,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub user_name: String,
-    /// Quality on the source's scale (UEX: 0–1000); null when not set.
-    #[serde(default)]
+    /// Quality on the source's scale (UEX: 0–1000); null when not set —
+    /// teils als String-Zahl (t_89d1e32e).
+    #[serde(default, deserialize_with = "de_opt_u16_flex")]
     pub quality: Option<u16>,
     /// The live API sends this sometimes as `null`, sometimes as empty string
     /// `""` — kept as String so both shapes deserialize. Not used in Phase 2.
     #[serde(default)]
     pub hours_expiration: Option<String>,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub date_added: u64,
     /// null and `0` mean "no expiry" (see `de_opt_u64_null_to_zero`).
-    #[serde(default, deserialize_with = "de_opt_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_opt_u64_flex_null_to_zero")]
     pub date_expiration: Option<u64>,
     /// Permalink slug on uexcorp.space (deep-link target).
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
@@ -330,25 +435,25 @@ pub struct ListingRow {
 /// `operation` ist "buy"|"sell"; `scu` (int) und `price` (float) pro SCU.
 #[derive(Debug, Deserialize)]
 pub struct UserTradeRow {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_terminal: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_commodity: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_user_fleet: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_vehicle: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_organization: u64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub operation: String,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub scu: u64,
-    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_f64_flex_null_to_zero")]
     pub price: f64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub date_added: u64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub commodity_name: String,
@@ -371,20 +476,23 @@ pub struct UserTradeRow {
 #[allow(dead_code)] // advertiser_avatar/client_avatar/date_closed_client: Wire-Komplettbild, UI liest sie (noch) nicht
 #[derive(Debug, Deserialize)]
 pub struct NegotiationRow {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub id_listing: u64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub hash: String,
-    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    /// UEX liefert den Preis hier (live belegt, t_89d1e32e) teils als
+    /// String (`"7000000"`) statt Zahl.
+    #[serde(default, deserialize_with = "de_f64_flex_null_to_zero")]
     pub price: f64,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub unit: String,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub currency: String,
     /// Final agreed deal value („set by the paying side on successful close“).
-    #[serde(default)]
+    /// Zahl ODER String-Zahl (t_89d1e32e); null bleibt None (offen).
+    #[serde(default, deserialize_with = "de_opt_f64_flex")]
     pub deal_value: Option<f64>,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub deal_value_currency: String,
@@ -404,16 +512,16 @@ pub struct NegotiationRow {
     pub client_username: String,
     #[serde(default)]
     pub client_avatar: Option<String>,
-    /// 0/1-int auf dem Wire.
-    #[serde(default)]
+    /// 0/1-int auf dem Wire (teils als String, t_89d1e32e).
+    #[serde(default, deserialize_with = "de_u8_flex_null_to_zero")]
     pub is_listing_advertiser: u8,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub date_added: u64,
-    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
     pub date_modified: u64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_u64_flex")]
     pub date_closed: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_opt_u64_flex")]
     pub date_closed_client: Option<u64>,
 }
 
@@ -843,5 +951,126 @@ mod tests {
         assert_eq!(row.date_added, 0);
         assert_eq!(row.has_quantum_marker_destination, 0);
         assert_eq!(row.game_version_origin, None);
+    }
+
+    /// t_89d1e32e: UEX liefert auf /marketplace_negotiations Zahlen teils als
+    /// JSON-String (`"7000000"`) — das Live-Fehler-Payload-Fenster. Der ganze
+    /// Fetch darf daran nicht mehr reißen.
+    #[test]
+    fn negotiation_row_parses_string_encoded_numbers() {
+        let row: NegotiationRow = serde_json::from_str(
+            r#"{
+                "id": "5512", "id_listing": "4141", "hash": "a1b2c3",
+                "price": "7000000", "unit": "unit", "currency": "UEC",
+                "deal_value": "6900000", "deal_value_currency": null,
+                "listing_title": "Drake Nettle S", "listing_slug": "drake-nettle-s",
+                "advertiser_name": "Semih Balci", "advertiser_username": "sebo_one",
+                "advertiser_avatar": null,
+                "client_name": "John Doe", "client_username": "johndoe",
+                "client_avatar": null,
+                "is_listing_advertiser": "1",
+                "date_added": "1730000100", "date_modified": "1730000200",
+                "date_closed": null, "date_closed_client": null
+            }"#,
+        )
+        .expect("String-Zahlen muessen deserialisieren (Live-Bug t_89d1e32e)");
+        assert_eq!(row.id, 5512);
+        assert_eq!(row.id_listing, 4141);
+        assert_eq!(row.price, 7_000_000.0);
+        assert_eq!(
+            row.deal_value,
+            Some(6_900_000.0),
+            "String-deal_value -> Some"
+        );
+        assert_eq!(row.is_listing_advertiser, 1);
+        assert_eq!(row.date_added, 1_730_000_100);
+        assert_eq!(row.date_closed, None, "null bleibt None (offener Deal)");
+        // Offene Verhandlung: price als Zahl, deal_value null — Original-Semantik intakt.
+        let open: NegotiationRow = serde_json::from_str(
+            r#"{"id":5514,"id_listing":4143,"hash":"z9","price":4500000.00,
+                "unit":"unit","currency":"UEC","deal_value":null,
+                "deal_value_currency":null,"listing_title":"t","listing_slug":"t",
+                "advertiser_name":"a","advertiser_username":"u","advertiser_avatar":null,
+                "client_name":"c","client_username":"cu","client_avatar":null,
+                "is_listing_advertiser":0,"date_added":1730000100,
+                "date_modified":1730000200,"date_closed":null,"date_closed_client":null}"#,
+        )
+        .unwrap();
+        assert_eq!(open.price, 4_500_000.0, "echte Zahl bleibt ok");
+        assert_eq!(open.deal_value, None);
+    }
+
+    /// t_89d1e32e: `/marketplace_listings` (Offers) mit String-Zahlen auf
+    /// IDs/in_stock/date-Feldern — gleiches Fehlerklassen-Fenster.
+    #[test]
+    fn listing_row_parses_string_encoded_numbers() {
+        let row: ListingRow = serde_json::from_str(
+            r#"{
+                "id": "9001", "title": "Waste", "description": "",
+                "id_item": "79", "id_category": "2", "id_star_system": "3",
+                "operation": "sell", "type": "item",
+                "price": "400000", "currency": "UEC", "unit": "SCU",
+                "in_stock": "250", "location": null, "user_name": "sebo_one",
+                "quality": "1000", "hours_expiration": null,
+                "date_added": "1730000100", "date_expiration": "1730100000",
+                "slug": "waste-9001"
+            }"#,
+        )
+        .expect("String-Zahlen in ListingRow muessen deserialisieren");
+        assert_eq!(row.id, 9001);
+        assert_eq!(row.id_item, 79);
+        assert_eq!(row.in_stock, 250);
+        assert_eq!(row.quality, Some(1000));
+        assert_eq!(row.date_added, 1_730_000_100);
+        assert_eq!(row.date_expiration, Some(1_730_100_000));
+        // Zahl-Form unverändert ok; null-quality bleibt None.
+        let numeric: ListingRow = serde_json::from_str(
+            r#"{"id":9002,"title":"x","description":"","id_item":79,"id_category":2,
+                "id_star_system":3,"operation":"sell","type":"item","price":"400000",
+                "currency":"UEC","unit":"SCU","in_stock":0,"location":"","user_name":"u",
+                "quality":null,"hours_expiration":"","date_added":1730000100,
+                "date_expiration":null,"slug":"x"}"#,
+        )
+        .unwrap();
+        assert_eq!(numeric.in_stock, 0);
+        assert_eq!(numeric.quality, None);
+        assert_eq!(
+            numeric.date_expiration,
+            Some(0),
+            "null -> Some(0), Semantik 'no expiry'"
+        );
+    }
+
+    /// t_89d1e32e: `/user_trades` mit String-Zahlen (scu/price/IDs).
+    #[test]
+    fn user_trade_row_parses_string_encoded_numbers() {
+        let row: UserTradeRow = serde_json::from_str(
+            r#"{
+                "id": "12345", "id_terminal": "29", "id_commodity": "79",
+                "id_user_fleet": "0", "id_vehicle": "3", "id_organization": null,
+                "operation": "sell", "scu": "250", "price": "10000.50",
+                "date_added": "1730000100",
+                "commodity_name": "Waste", "terminal_name": "Port Tressler",
+                "user_fleet_name": null, "vehicle_name": "Caterpillar",
+                "organization_name": "AAWA"
+            }"#,
+        )
+        .expect("String-Zahlen in UserTradeRow muessen deserialisieren");
+        assert_eq!(row.id, 12345);
+        assert_eq!(row.scu, 250);
+        assert_eq!(row.price, 10000.5);
+        assert_eq!(row.date_added, 1_730_000_100);
+    }
+
+    /// t_89d1e32e: `/marketplace_advertise`-Response mit String-id
+    /// (Runde-2-Quirk-Fenster von CreateResponse).
+    #[test]
+    fn create_response_parses_string_id() {
+        let res: CreateResponse = serde_json::from_str(r#"{"id": "4141", "url": "https://…/x"}"#)
+            .expect("String-id muss deserialisieren");
+        assert_eq!(res.id, 4141);
+        let numeric: CreateResponse =
+            serde_json::from_str(r#"{"id": 4142, "url": "https://…/y"}"#).unwrap();
+        assert_eq!(numeric.id, 4142, "echte Zahl bleibt ok");
     }
 }
