@@ -414,6 +414,30 @@ pub struct Negotiation {
     pub date_closed: Option<u64>,
 }
 
+/// Eine Chat-Nachricht in einer Marketplace-Verhandlung (M3b t_893761f1,
+/// `GET /marketplace_negotiations_messages`). `event`/`message` sind
+/// null-bar (UEX markiert System-Events mit `event`, normale Nachrichten
+/// mit `message`); die UI zeigt beide Formen getrennt.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct NegotiationMessage {
+    pub id: u64,
+    pub id_listing: u64,
+    pub id_negotiation: u64,
+    pub event: Option<String>,
+    pub message: Option<String>,
+    pub listing_title: String,
+    pub listing_slug: String,
+    /// Negotiation-Identifier (UEX `hash`) — polling-/Deep-Link-Key.
+    pub negotiation_hash: String,
+    pub user_name: String,
+    pub user_username: String,
+    /// Message-Quelle ("uex-web", "uex-api", …) — Debug-/Transparenz-Feld.
+    pub api_name: String,
+    pub date_added: u64,
+    pub date_read: Option<u64>,
+}
+
 /// Marketplace category (source-agnostic projection of a `/categories` row).
 /// Used for the advertise-form dropdown — UEX REQUIRES `id_category` for
 /// `type=item`, so the user picks a display-name category whose `id` goes

@@ -2042,12 +2042,10 @@ html[data-window="spotlight"] .shell {
 
 .advert-modal {
   position: relative;
-  width: min(640px, calc(100vw - 28px));
-  /* An die Scrim-Box binden, NICHT an 100vh: im gezoomten Shell-Subtree
-     wird `fixed` auf den Shell-Container relativiert — 100vh lies das
-     Modal hinausragen (Body clippt hart, Buttons weg). 100% = Scrim-
-     Contentbox (Padding 14 px abgezogen) → passt immer, Pane scrollt. */
-  max-height: 100%;
+  /* MQ (t_d6ff5212): Popup größer — mehr Raum für die Felder, bleibt
+     vollständig innerhalb der Overlay-Grenzen (Scrim bindet die Box). */
+  width: min(820px, calc(100vw - 20px));
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--panel2);
@@ -2055,6 +2053,19 @@ html[data-window="spotlight"] .shell {
   border-radius: 4px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   overflow: hidden;
+}
+
+/* MQ (t_d6ff5212): mehrzeilige Beschreibung im Anlegen-Popup — autogrow
+   per oninput (height=auto→scrollHeight), hier nur die Basis.
+   UEX-API-Beleg: description string(65535), Newlines erlaubt. */
+.advert-desc {
+  flex: 1;
+  min-height: 64px;
+  max-height: 220px;
+  resize: vertical;
+  overflow-y: auto;
+  line-height: 1.45;
+  font-family: inherit;
 }
 
 /* Der Formular-Body (pane-error/mlist) trägt die interne Scroll-Region —
@@ -2124,6 +2135,49 @@ html[data-window="spotlight"] .shell {
   height: 84px;
   object-fit: cover;
   display: block;
+}
+
+/* MQ (t_d6ff5212): Bild-Lightbox — Inline-Zoom im Overlay statt Browser-
+   Deep-Link. Klick auf Thumbnail öffnet das Modal (Scrim wie advert/confirm),
+   Klick auf den Scrim oder Esc schließt. */
+.lightbox-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 160;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  cursor: zoom-out;
+}
+
+.lightbox-modal {
+  position: relative;
+  max-width: min(920px, calc(100vw - 24px));
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  cursor: default;
+}
+
+.lightbox-modal img {
+  max-width: 100%;
+  max-height: calc(100vh - 70px);
+  object-fit: contain;
+  border-radius: 4px;
+  border: 1px solid var(--lineb);
+  display: block;
+}
+
+.lightbox-cap {
+  text-align: center;
+  color: var(--fgdim);
+  font-size: 12px;
+  padding-top: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* --------------------------- Status / Lade- / Fehler- / Offline ------------ */
@@ -3055,4 +3109,93 @@ html[data-window="spotlight"] .shell {
 .hf-actions {
   display: flex;
   gap: 6px;
+}
+
+/* ---- M3b (t_893761f1): Trades-Reiter — Deal-Chat ----------------------- */
+/* Verlaufs-Scroller: flex:1 + min-height:0 (K2-Muster), scrollt innen. */
+.chat {
+  flex: 1;
+  min-height: 0;
+  max-height: min(48vh, 360px);
+  overflow: auto;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+/* Eine Nachricht: Panel-Karte; eigene (Username = Shop-Username) rechts-
+   ausgerichtet mit Akzent-Rand, Gegenpart links mit Panel2. */
+.chat-msg {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  max-width: 88%;
+  align-self: flex-start;
+}
+.chat-msg.own {
+  align-self: flex-end;
+  border-color: var(--accent-d);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel2));
+}
+.chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.chat-who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.chat-msg.own .chat-who {
+  color: var(--accent-h);
+}
+.chat-time {
+  font-size: 10px;
+  color: var(--fgdim);
+}
+.chat-text {
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* System-Events (event != null, message == null): zentriert, dezent. */
+.chat-ev {
+  align-self: center;
+  font-size: 10px;
+  color: var(--fgdim);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+/* neuer-Nachricht-Indikator in der Deal-Row (date_modified > gesehen). */
+.chat-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Eingabezeile unter dem Verlauf: Input + Senden (kein 2-Schritt — Chat ist
+   konversationell; Rate-Limit/Send-Fehlerpfad läuft über chatErr). */
+.chat-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+}
+.chat-input .rtext {
+  flex: 1;
+  min-width: 0;
 }

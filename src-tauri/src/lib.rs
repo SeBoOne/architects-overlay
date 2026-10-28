@@ -53,6 +53,8 @@ pub fn run() {
             trade::get_my_offers,
             trade::get_my_trades,
             trade::get_my_negotiations,
+            trade::get_negotiation_messages,
+            trade::send_negotiation_message,
             trade::marketplace_photo,
             trade::marketplace_advertise,
             trade::marketplace_delete,

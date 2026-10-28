@@ -560,6 +560,51 @@ pub struct NegotiationRow {
     pub date_closed_client: Option<u64>,
 }
 
+/// `/marketplace_negotiations_messages` row (Deal-Chat, M3b t_893761f1).
+/// Null-Härtung wie überall (Serde-Regel): UEX sendet explizite `null`s auf
+/// optionalen Feldern (`event`/`message` sind null bei System-Events bzw.
+/// als Makierung leerer Nachrichten) — `#[serde(default)]` deckt nur
+/// FEHLENDE Felder ab. Zahlen teils als String (t_89d1e32e-Muster).
+#[derive(Debug, Deserialize)]
+pub struct NegotiationMessageRow {
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
+    pub id: u64,
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
+    pub id_listing: u64,
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
+    pub id_negotiation: u64,
+    #[serde(default)]
+    pub event: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub listing_title: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub listing_slug: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub negotiation_hash: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub user_name: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub user_username: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub user_avatar: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub api_name: String,
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
+    pub date_added: u64,
+    #[serde(default, deserialize_with = "de_opt_u64_flex")]
+    pub date_read: Option<u64>,
+}
+
+/// POST `/marketplace_negotiations_messages/`-Antwort: nur die neue
+/// Message-ID (Doku §2.1 Output `id_message`).
+#[derive(Debug, Deserialize)]
+pub struct MessageCreatedRow {
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
+    pub id_message: u64,
+}
+
 /// `/items_prices` row (per terminal or per item). Only `price_buy` carries
 /// the terminal's purchase price (what the player pays); `price_sell` is 0
 /// for items (shops don't buy items back). The `min/max/avg` variants and

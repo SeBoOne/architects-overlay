@@ -174,6 +174,31 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 		key_set: boolean;
 	};
+	// M3b (t_893761f1): Deal-Chat — Mirrors provider::NegotiationMessage +
+	// IPC-Responses. `event`/`message` sind null-bar (System-Event vs. Text).
+	type NegotiationMessage = {
+		id: number;
+		id_listing: number;
+		id_negotiation: number;
+		event: string | null;
+		message: string | null;
+		listing_title: string;
+		listing_slug: string;
+		negotiation_hash: string;
+		user_name: string;
+		user_username: string;
+		api_name: string;
+		date_added: number;
+		date_read: number | null;
+	};
+	type MessagesResponse = {
+		source: 'cache' | 'live' | 'offline';
+		fetched_at: number;
+		messages: NegotiationMessage[];
+		note: string | null;
+		key_set: boolean;
+	};
+	type MessageSendResponse = { id_message: number };
 	const SHOP_USER_KEY = 'architects-overlay.shop.username';
 	function loadShopUser(): string {
 		try {
@@ -485,7 +510,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// intern bleibt es der Market-Phase mit mTab='routes'.
 	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
 	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
-	let mTab = $state<'offers' | 'routes' | 'shop'>('offers');
+	let mTab = $state<'offers' | 'routes' | 'shop' | 'trades'>('offers');
 	let railMode = $state<'inventory' | 'hangar' | null>(null);
 	let mode = $derived<Mode>(
 		railMode ??
@@ -1142,6 +1167,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let mNote = $state<string | null>(null);
 	let mSel = $state(0);
 	let offerDetail = $state<Offer | null>(null);
+	// MQ (t_d6ff5212): Bild-Lightbox — Inline-Zoom im Overlay. Klick auf ein
+	// Offer-Foto öffnet das Modal statt den Browser-Deep-Link; Scrim-Klick
+	// oder Esc schließt. Die externen Links bleiben den Buttons vorbehalten.
+	let lightbox = $state<{ uri: string; title: string } | null>(null);
 	// M3a-R1 (t_f2e70b16): CDN-Thumbs kommen als `application/octet-stream` +
 	// `X-Content-Type-Options: nosniff` — der Webview (Chromium ORB) blockt
 	// direkte <img>-Ladungen (live belegt: net::ERR_BLOCKED_BY_ORB). Das
@@ -1348,6 +1377,155 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Beim Betreten des Mein-Shop-Tabs laden (stale-first im Backend).
 	$effect(() => {
 		if (phase === 'market' && mTab === 'shop') void loadShop(true);
+	});
+
+	// ---- Trades (M3b, t_893761f1): Deal-Liste + Chat im Overlay -------------
+	// Deals = dieselbe Quelle wie „Letzte 5 Trades" (get_my_negotiations,
+	// stale-first im Backend). Chat: GET+POST /marketplace_negotiations_messages
+	// — konversationell, KEINE 2-Schritt-Bestätigung; Fehlerpfad (429/403)
+	// Meldung + Deep-Link statt Retry. Lifecycle (Start/Akzeptieren/Beenden/
+	// Bewertung) ist API-SEITIG NICHT vorhanden (Research §3) → Deep-Link-
+	// Buttons an die UEX-Webseite (Listing-Seite, dort sitzen die Buttons).
+	let tradesLoading = $state(false);
+	let tradesErr = $state<string | null>(null);
+	let tradesNote = $state<string | null>(null);
+	let tradesDeal = $state<Negotiation | null>(null);
+	let chatMsgs = $state<NegotiationMessage[]>([]);
+	let chatLoading = $state(false);
+	let chatErr = $state<string | null>(null);
+	let chatDraft = $state('');
+	let chatBusy = $state(false);
+	let chatScroller: HTMLElement | null = null;
+	// neuer-Nachricht-Indikator: pro Deal-Hash der zuletzt GESEHENE
+	// date_modified-Stand; Row mit aktuellerer Interaktion zeigt einen Punkt.
+	let tradesSeen: Record<string, number> = {};
+	let tradesPoller: ReturnType<typeof setInterval> | null = null;
+
+	const dealsSorted = $derived(
+		[...myNegotiations].sort((a, b) => (b.date_modified || b.date_added) - (a.date_modified || a.date_added))
+	);
+	function dealUnread(n: Negotiation): boolean {
+		const seen = tradesSeen[n.hash] ?? 0;
+		return (n.date_modified || 0) > seen;
+	}
+
+	async function loadDeals(bg: boolean) {
+		// Ohne Secret-Key ist der Pull nutzlos — sauberer Hinweis statt
+		// roher UEX-Auth-Meldung (Muster loadShop).
+		if (cfg && !cfg.uex_secret_key_set) {
+			tradesLoading = false;
+			tradesErr = null;
+			tradesNote = 'Für den Trades-Reiter braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).';
+			myNegotiations = [];
+			return;
+		}
+		tradesLoading = !bg;
+		tradesErr = null;
+		tradesNote = null;
+		try {
+			const r = await invoke<NegotiationsResponse>('get_my_negotiations');
+			myNegotiations = r.negotiations;
+			if (r.note) tradesNote = r.note;
+		} catch (e) {
+			tradesErr = String(e);
+		}
+		tradesLoading = false;
+	}
+
+	async function selectDeal(n: Negotiation, bg = false) {
+		tradesDeal = n;
+		tradesSeen = { ...tradesSeen, [n.hash]: n.date_modified || 0 };
+		chatErr = null;
+		chatLoading = !bg;
+		try {
+			const r = await invoke<MessagesResponse>('get_negotiation_messages', {
+				hash: n.hash,
+				id_negotiation: n.id
+			});
+			chatMsgs = r.messages;
+			if (r.note) chatErr = r.note;
+		} catch (e) {
+			chatErr = String(e);
+		}
+		chatLoading = false;
+		// Verlauf ans Ende scrollen (neueste unten).
+		queueMicrotask(() => {
+			if (chatScroller) chatScroller.scrollTop = chatScroller.scrollHeight;
+		});
+	}
+
+	async function sendChat() {
+		if (chatBusy || !tradesDeal) return;
+		const text = chatDraft.trim();
+		if (!text) return;
+		chatBusy = true;
+		chatErr = null;
+		const deal = tradesDeal;
+		try {
+			await invoke<MessageSendResponse>('send_negotiation_message', {
+				id_negotiation: deal.id,
+				hash: deal.hash,
+				message: text
+			});
+			chatDraft = '';
+			// Verlauf nach dem Write nachziehen (Pull statt Optimismus).
+			await selectDeal(deal, true);
+		} catch (e) {
+			// KEIN Retry — Meldung + Deep-Link (429/403-Pfad wie bei den
+			// anderen Writes). chatErr rendert den Button im Chat-Pane.
+			chatErr = String(e);
+		}
+		chatBusy = false;
+	}
+
+	function chatKey(e: KeyboardEvent) {
+		if (e.key === 'Enter' && !e.shiftKey) {
+			e.preventDefault();
+			void sendChat();
+		}
+	}
+
+	function dealTime(ts: number): string {
+		if (!ts) return '—';
+		const d = new Date(ts * 1000);
+		const today = new Date();
+		return d.toDateString() === today.toDateString()
+			? d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+			: d.toLocaleDateString('de-DE') + ' ' + d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+	}
+
+	// Lifecycle-Deep-Links (M3b-4): Start/Akzeptieren/Beenden/Bewertung sind
+	// NICHT per API vorhanden (Research §3) — die Buttons öffnen die
+	// UEX-Webseite an der Listing-/Deal-Stelle (verifiziertes Muster
+	// /marketplace/item/info/{slug}/; Einzeldeal-URL nicht dokumentiert).
+	async function openTradesDeepLink(n: Negotiation, what: string) {
+		try {
+			await invoke<string>('open_marketplace_listing', { slug: n.listing_slug });
+		} catch (e) {
+			tradesErr = what + ' · ' + String(e);
+		}
+	}
+
+	// Beim Betreten des Trades-Tabs laden + dezent pollen (max 1/min im
+	// Idle, Research §5). Beim Verlassen Interval abbauen.
+	$effect(() => {
+		if (phase === 'market' && mTab === 'trades') {
+			void loadDeals(true);
+			if (tradesPoller) clearInterval(tradesPoller);
+			tradesPoller = setInterval(() => {
+				void loadDeals(true);
+				if (tradesDeal && !chatBusy) void selectDeal(tradesDeal, true);
+			}, 60_000);
+		} else if (tradesPoller) {
+			clearInterval(tradesPoller);
+			tradesPoller = null;
+		}
+		return () => {
+			if (tradesPoller) {
+				clearInterval(tradesPoller);
+				tradesPoller = null;
+			}
+		};
 	});
 	// Status einer eigenen Listung aus der Expiry ableiten (UEX liefert auf
 	// marketplace_listings kein eigenes Status-Feld): ohne Ende → „aktiv",
@@ -3148,6 +3326,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				}
 				return; // Routen-Tab: keine Offer-Shortcuts
 			}
+			// MQ (t_d6ff5212): Lightbox offen → sie schluckt die Tastatur. Esc
+			// schließt, alle anderen Offer-/Market-Shortcuts laufen nicht.
+			if (lightbox) {
+				if (k === 'Escape') {
+					lightbox = null;
+					e.preventDefault();
+				}
+				return;
+			}
 			if (k === 'ArrowDown' && !offerDetail && !inStepper) {
 				mMove(1);
 				e.preventDefault();
@@ -3165,6 +3352,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			if (k === 'ArrowLeft' && offerDetail) {
 				offerDetail = null;
+				lightbox = null;
 				e.preventDefault();
 				return;
 			}
@@ -3181,6 +3369,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			if (k === 'Escape') {
 				if (offerDetail) {
 					offerDetail = null;
+					lightbox = null;
 				} else {
 					// Esc verlässt den Market-Modus zurück zur Suche — blendet
 					// das Overlay NICHT aus (Fokus liegt in der Ergebnisliste).
@@ -3825,9 +4014,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					
 												<div class="cfg-key-status" style="margin-top: 12px">
 							Schreibbestätigung (2-Schritt):
-							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>Nach jeder Aktion (Default)</button>
-							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>Nur beim Abmelden</button>
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>Nach jeder Aktion (empfohlen)</button>
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>Nur beim Abmelden/Löschen eines Listings</button>
 						</div>
+						<!-- MQ (t_d6ff5212): „Nur beim Abmelden“ war unklar → eindeutige
+						     Labels + 1-Zeilen-Erklärung, was jeweils bestätigt wird. -->
+						<div class="cfg-note">Bestätigungspflicht beim Anlegen von Listings vs. nur beim Entfernen.</div>
 						{#if mktConfirmNote}
 							<div class="cfg-note">{mktConfirmNote}</div>
 						{/if}
@@ -3875,6 +4067,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     erreichbar (setMode('routes') → mTab='routes' bleibt der
 					     interne Mechanismus). -->
 					<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
+					<!-- M3b (t_893761f1): Trades-Reiter — Deals + Chat im Overlay. -->
+					<button type="button" role="tab" aria-selected={mTab === 'trades'} class="chip" class:is-on={mTab === 'trades'} onclick={() => (mTab = 'trades')}>Trades</button>
 				</div>
 			{/if}
 			{#if offerDetail}
@@ -3914,8 +4108,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<button
 											type="button"
 											class="md-photo"
-											title="Bild groß öffnen (uexcorp.space)"
-											onclick={() => void openListingDeepLink(offerDetail!.slug)}
+											title="Bild vergrößern (Inline-Lightbox im Overlay)"
+											onclick={() => {
+												const uri = offerPhotoUris[pi];
+												if (uri && offerDetail) lightbox = { uri, title: offerDetail.title };
+											}}
 										>
 											<img src={offerPhotoUris[pi]} alt={'Bild ' + (pi + 1) + ' von „' + offerDetail!.title + '“'} loading="lazy" />
 										</button>
@@ -3934,12 +4131,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="md-desc empty">Keine Beschreibung.</div>
 						{/if}
 						<div class="md-actions">
+							<!-- MQ (t_d6ff5212): Verhandlungs-Einstieg sichtbar machen. Die
+							     API bietet KEIN POST /marketplace_negotiations (Research) —
+							     Deals entstehen auf der UEX-Webseite → Deep-Link-Button. -->
+							<span class="btn" title="Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)" onclick={() => void openListingDeepLink(offerDetail!.slug)}>VERHANDELN AUF UEX ↗</span>
 							<span class="btn-ghost" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
-							<span class="btn-ghost" onclick={() => (offerDetail = null)}>Zurück</span>
+							<span class="btn-ghost" onclick={() => { offerDetail = null; lightbox = null; }}>Zurück</span>
 						</div>
 						<div class="md-note">
-							Öffnet <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — nur Lesen, keine Änderungen.
+							Verhandeln startet auf <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter.
 						</div>
+						{#if lightbox}
+							<!-- MQ (t_d6ff5212): Bild-Lightbox — Inline-Zoom statt Browser.
+							     Klick auf den Scrim (oder Esc) schließt; Klick aufs Bild nicht. -->
+							<div class="lightbox-scrim" role="presentation" onclick={() => (lightbox = null)}>
+								<div class="lightbox-modal" role="dialog" aria-modal="true" aria-label="Bild vergrößert">
+									<img src={lightbox.uri} alt={'Vergrößert: ' + lightbox.title} onclick={(ev) => ev.stopPropagation()} />
+									<div class="lightbox-cap">{lightbox.title} — Klick außerhalb oder Esc schließt</div>
+								</div>
+							</div>
+						{/if}
 					</div>
 				{:else if mTab === 'routes'}
 					{#if rDetail}
@@ -4151,6 +4362,126 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{:else}
 							<div class="row-empty" style="padding: 28px 16px">Keine Routen für diese Filter.</div>
+						{/if}
+					{/if}
+				{:else if mTab === 'trades'}
+					<!-- M3b (t_893761f1): Trades-Reiter — Deal-Liste (get_my_negotiations,
+					     stale-first) + Chat im Overlay (GET/POST
+					     /marketplace_negotiations_messages). Lifecycle-Aktionen
+					     (Starten/Beenden/Bewerten) sind API-SEITIG nicht vorhanden
+					     (Research §3) → Deep-Link-Buttons, keine Fake-Buttons. -->
+					{#if tradesDeal}
+						<div class="mbar">
+							<span class="chip" onclick={() => (tradesDeal = null)}>← Deals</span>
+							<span class="m-lbl" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
+								{tradesDeal.listing_title}
+							</span>
+							<span class="chip" title="Deal auf uexcorp.space öffnen (Listing-Seite)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Deal öffnen')}>Auf UEX öffnen ↗</span>
+						</div>
+						<div class="chat" bind:this={chatScroller}>
+							{#if chatLoading}
+								<div class="center" style="padding: 20px 0"><span class="spin"></span><div class="big" style="margin-top: 10px">Lade Verlauf …</div></div>
+							{:else if chatMsgs.length === 0}
+								<div class="row-empty" style="padding: 14px 16px">Noch keine Nachrichten in dieser Verhandlung.</div>
+							{:else}
+								{#each chatMsgs as m (m.id)}
+									{#if m.event && !m.message}
+										<div class="chat-ev">{m.event}</div>
+									{:else}
+										<div class="chat-msg {m.user_username === shopUser.trim() ? 'own' : ''}">
+											<div class="chat-head">
+												<span class="chat-who">{m.user_name || m.user_username || '—'}</span>
+												<span class="chat-time">{dealTime(m.date_added)}</span>
+											</div>
+											<div class="chat-text">{m.message}</div>
+										</div>
+									{/if}
+								{/each}
+							{/if}
+						</div>
+						{#if chatErr}
+							<div class="row-empty" style="padding: 10px 16px; color: var(--alert); display: flex; align-items: center; gap: 12px" role="alert">
+								<span style="flex: 1">{chatErr}</span>
+								<!-- Send-Fehlerpfad (429/403): Meldung + Deep-Link statt Retry. -->
+								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Fehler-Pfad')}>AUF UEXCORP.SPACE ÖFFNEN ↗</button>
+							</div>
+						{/if}
+						<div class="chat-input">
+							<input
+								class="rtext"
+								placeholder="Nachricht an {tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || 'Käufer') : (tradesDeal.advertiser_username || 'Anbieter')} …"
+								bind:value={chatDraft}
+								onkeydown={chatKey}
+								maxlength={65535}
+								aria-label="Chat-Nachricht senden"
+							/>
+							<button type="button" class="btn" disabled={chatBusy || !chatDraft.trim()} onclick={() => void sendChat()}>
+								{chatBusy ? 'Senden …' : 'Senden'}
+							</button>
+						</div>
+					{:else}
+						<div class="mbar">
+							<span class="m-lbl">Deals</span>
+							<span class="chip" onclick={() => void loadDeals(true)}>Aktualisieren</span>
+							<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
+						</div>
+						<!-- MQ (t_d6ff5212): Deal-Einstieg sichtbar machen — Deals KANN das
+						     Overlay nicht starten (API hat kein POST /marketplace_negotiations).
+						     Sie entstehen auf uexcorp.space; hier nur verhandeln/chatten/beenden. -->
+						<div class="row-empty" style="padding: 8px 16px; text-align: left">
+							Deals entstehen auf <span class="src">uexcorp.space</span> — Deal auf der Angebotsseite starten („Deal“/„Negotiate“ am Listing), danach hier verhandeln, chatten und beenden.
+						</div>
+						{#if tradesLoading}
+							<div class="center">
+								<span class="spin"></span>
+								<div class="big" style="margin-top: 12px">Lade Trades …</div>
+							</div>
+						{:else if tradesErr && !myNegotiations.length}
+							<div class="pane-error">
+								<div class="center">
+									<div class="big" style="color: var(--alert)">Trades nicht erreichbar</div>
+									<div class="sm">{tradesErr}</div>
+									<span class="btn-ghost" onclick={() => void loadDeals(false)}>Erneut versuchen</span>
+									<span class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+								</div>
+							</div>
+						{:else if dealsSorted.length === 0}
+							<div class="row-empty" style="padding: 28px 16px">
+								{tradesNote ?? 'Keine Verhandlungen/Abschlüsse zu deinen Listings — starte einen Deal auf uexcorp.space.'}
+							</div>
+						{:else}
+							{#if tradesNote}
+								<div class="row-empty" style="padding: 10px 16px">{tradesNote}</div>
+							{/if}
+							<div class="mlist">
+								{#each dealsSorted as n (n.id)}
+									<div
+										class="mrow trow"
+										role="option"
+										aria-selected={false}
+										title="Deal-Chat öffnen"
+										onclick={() => void selectDeal(n)}
+									>
+										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-main">
+											<div class="m-title">{n.listing_title}</div>
+											<div class="m-sub">
+												{n.is_listing_advertiser
+													? `Gegenüber ${n.client_username || n.client_name || '—'} (Käufer)`
+													: `Gegenüber ${n.advertiser_username || n.advertiser_name || '—'} (Anbieter)`}
+											</div>
+										</div>
+										<div class="m-right">
+											<div class="m-meta">{dealTime(n.date_modified || n.date_added)}</div>
+											<div class="m-meta">{dealStatus(n)}{#if dealUnread(n)}<span class="chat-dot" title="Neue Interaktion"></span>{/if}</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+							<div class="m-foot">
+								<span>{dealsSorted.length} Deals · Chat im Overlay · Starten/Beenden/Bewerten nur auf UEX (Deep-Link) · Polling 1/min</span>
+								<span class="src">UEX Corp</span>
+							</div>
 						{/if}
 					{/if}
 				{:else if mTab === 'shop'}
@@ -4416,8 +4747,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																>{advertForm.hidden ? 'Ja' : 'No'}</button>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Beschreibung</span>
-																<input class="rtext" style="flex: 1" placeholder="Freitext (Markdown ok, max. 65.535 Zeichen)" maxlength="65535" bind:value={advertForm.description} />
+																<span class="m-lbl" style="align-self: flex-start; padding-top: 6px">Beschreibung</span>
+																<!-- MQ (t_d6ff5212): mehrzeiliges Textfeld (autogrow). API-Beleg
+																     [POST /marketplace_advertise Doku]: description string(65535),
+																     Newlines werden nicht eingeschränkt → \n wird 1:1 durchgereicht
+																     (Rust String, JSON-Encoder escaped sauber). -->
+																<textarea
+																	class="rtext advert-desc"
+																	rows="3"
+																	placeholder="Freitext, mehrzeilig (Markdown ok, max. 65.535 Zeichen) — Enter = neue Zeile"
+																	maxlength="65535"
+																	bind:value={advertForm.description}
+																	oninput={(e) => {
+																		const el = e.currentTarget;
+																		el.style.height = 'auto';
+																		el.style.height = el.scrollHeight + 'px';
+																	}}
+																></textarea>
 																{#if advertErrors.description}<span class="chip warn" style="margin-left: 4px">{advertErrors.description}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px; align-items: center">
@@ -4500,7 +4846,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																					<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
 																				</div>
 																				<div class="m-right" style="gap: 4px">
-																					<button type="button" class="btn-ghost" title="Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)" onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>✎ Neu</button>
+																					<button type="button" class="btn-ghost" title="Verhandeln startet auf uexcorp.space (API-seitig kein POST /marketplace_negotiations) — Angebotsseite im Browser öffnen" onclick={(ev) => { ev.stopPropagation(); void openListingDeepLink(o.slug); }}>💬 Verhandeln</button>
+									<button type="button" class="btn-ghost" title="Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)" onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>✎ Neu</button>
 																					<button type="button" class="btn-ghost" title="Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)" onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>Abmelden</button>
 																				</div>
 																			</div>
