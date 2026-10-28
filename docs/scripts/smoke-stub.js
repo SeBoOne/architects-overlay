@@ -60,6 +60,8 @@ const stubState = {
 	// Secret-Key → Meldung statt Request) fahren kann.
 	uex_secret_key_set: false,
 	uex_username: '',
+	// M2b (Write-Layer): 2-Schritt-Bestätigungs-Modell (every_action | delete_only).
+	marketplace_confirm: 'every_action',
 	// K2 (t_5fe8eb4c, P12): font/icon scale in % — mirrors Settings.scale in the
 	// Rust backend so the probe can A/B the scale live without a Tauri app.
 	scale: 100
@@ -162,6 +164,35 @@ window.__TAURI_INTERNALS__ = {
 					key_set: stubState.uex_api_key_set
 				};
 			}
+			// ---- M2b (Write-Layer): Anlegen + Abmelden + Confirm-Modus ---------
+			case 'marketplace_advertise': {
+				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
+				const nid = 90000 + Math.floor(Math.random() * 9000);
+				const p = a.payload || {};
+				// Neues Listing an den OWN-OFFERS-Array anfügen (Pull im UI zeigt es).
+				window.__SHOP_OFFERS__ = [{
+					id: nid, title: p.title || 'Neu', description: p.description || '',
+					item_id: 0, category_id: 0, operation: p.operation || 'sell',
+					listing_type: 'item', price: Number(p.price || 0), currency: 'UEC',
+					unit: p.unit || 'unit', quantity: Number(p.in_stock || 1),
+					location: p.location || '—', region: 'Stanton', seller: stubState.uex_username || 'sebo_one',
+					quality: 0, updated: Math.floor(Date.now() / 1000), expires: null,
+					slug: 'neu-' + nid
+				}, ...window.__SHOP_OFFERS__];
+				window.__SHOP_OFFERS_SOURCE__ = 'live';
+				return { id: nid, title: p.title || 'Neu' };
+			}
+			case 'marketplace_delete': {
+				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 403 · UEX nicht erreichbar');
+				window.__SHOP_OFFERS__ = (window.__SHOP_OFFERS__ || []).filter((o) => o.id !== Number(a.id));
+				window.__SHOP_OFFERS_SOURCE__ = 'live';
+				return undefined;
+			}
+			case 'marketplace_confirm_mode':
+				return stubState.marketplace_confirm || 'every_action';
+			case 'settings_set_marketplace_confirm':
+				stubState.marketplace_confirm = a.mode || 'every_action';
+				return { marketplace_confirm: stubState.marketplace_confirm };
 			case 'open_marketplace_listing':
 				// Nur Tracken — kein echtes Browserfenster im Headless-Smoke.
 				return 'https://uexcorp.space/marketplace/item/info/' + encodeURIComponent(a.slug || '');
