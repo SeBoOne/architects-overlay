@@ -14,9 +14,10 @@ mod model;
 pub mod routes;
 
 pub use crate::model::{
-    AdvertisePayload, Category, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
-    MarketplaceFilter, Offer, OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup,
-    Trade, deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
+    AdvertisePayload, AdvertiseResult, Category, Entity, EntityKind, ListingType, LocationPrices,
+    MarketOperation, MarketplaceFilter, Offer, OfferSort, PricePoint, SearchEntities, SearchHit,
+    TerminalPriceGroup, Trade, deserialize_id_flexible, deserialize_opt_id_flexible,
+    serialize_id_as_string,
 };
 
 /// Domain error produced by a provider implementation.
@@ -196,8 +197,10 @@ pub trait DataProvider: Send + Sync {
     /// ([`AdvertisePayload`]); kein Edit — Bearbeiten = Abmelden + Neu anlegen.
     /// Der Provider validiert die Pflichtfelder und sendet KEINEN Retry bei
     /// 429/403 (Fehlerpfad: Meldung + Deep-Link, die UI entscheidet das
-    /// Weiterleiten). Default reports unsupported.
-    async fn advertise_offer(&self, _payload: AdvertisePayload) -> Result<Offer> {
+    /// Weiterleiten). Liefert die neue Listung als `id` + Permalink-`url`
+    /// (UEX-Antwort ist NICHT die vollständige ListingRow — die erscheint erst
+    /// nach Approval in `/marketplace_listings`). Default reports unsupported.
+    async fn advertise_offer(&self, _payload: AdvertisePayload) -> Result<AdvertiseResult> {
         Err(ProviderError::Unsupported("advertise offer".to_string()))
     }
 

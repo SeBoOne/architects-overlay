@@ -510,6 +510,22 @@ pub struct Offer {
     pub slug: String,
 }
 
+/// Ergebnis von `POST /marketplace_advertise/` (M2b): die frisch angelegte
+/// Listung. UEX liefert in der Create-Antwort KEINE vollständige ListingRow
+/// (die erscheint erst nach Approval in `/marketplace_listings`) — nur
+/// `id` + Permalink-`url`. Genau daran hängt die Erfolgsmeldung der UI
+/// (Review t_6e26ec82 Runde 2: vorher ListingRow-Parse → „missing field id"
+/// trotz erfolgreichem Server-Create).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdvertiseResult {
+    /// Neue Listing-Id (0, wenn die Antwort sie nicht trug — erlaubt).
+    pub id: u64,
+    /// Permalink der Listung auf uexcorp.space (Deep-Link-Target). Leer,
+    /// wenn die Antwort sie nicht lieferte → UI fällt auf Marketplace-Home
+    /// zurück (M2b-4: Erfolgsmeldung an id/url, NICHT an den Pull).
+    pub url: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::SearchHit;
