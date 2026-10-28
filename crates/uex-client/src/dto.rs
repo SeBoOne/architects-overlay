@@ -362,6 +362,61 @@ pub struct UserTradeRow {
     pub organization_name: Option<String>,
 }
 
+/// `/marketplace_negotiations` row (eigene Marktplatz-Deals, t_350c4300 B2).
+/// Null-Härtung wie überall (Serde-Regel): UEX sendet explizite `null`s auf
+/// optionalen numerischen/String-Feldern — `#[serde(default)]` deckt nur
+/// FEHLENDE Felder ab, deshalb hier die null→…-Deserializer pro optionalem
+/// Feld. `is_listing_advertiser` ist ein 0/1-int; `deal_value`/`date_closed`
+/// sind null-bar (offene Verhandlung / noch kein Abschluss).
+#[allow(dead_code)] // advertiser_avatar/client_avatar/date_closed_client: Wire-Komplettbild, UI liest sie (noch) nicht
+#[derive(Debug, Deserialize)]
+pub struct NegotiationRow {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id_listing: u64,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub hash: String,
+    #[serde(default, deserialize_with = "de_f64_null_to_zero")]
+    pub price: f64,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub unit: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub currency: String,
+    /// Final agreed deal value („set by the paying side on successful close“).
+    #[serde(default)]
+    pub deal_value: Option<f64>,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub deal_value_currency: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub listing_title: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub listing_slug: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub advertiser_name: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub advertiser_username: String,
+    #[serde(default)]
+    pub advertiser_avatar: Option<String>,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub client_name: String,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub client_username: String,
+    #[serde(default)]
+    pub client_avatar: Option<String>,
+    /// 0/1-int auf dem Wire.
+    #[serde(default)]
+    pub is_listing_advertiser: u8,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub date_added: u64,
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub date_modified: u64,
+    #[serde(default)]
+    pub date_closed: Option<u64>,
+    #[serde(default)]
+    pub date_closed_client: Option<u64>,
+}
+
 /// `/items_prices` row (per terminal or per item). Only `price_buy` carries
 /// the terminal's purchase price (what the player pays); `price_sell` is 0
 /// for items (shops don't buy items back). The `min/max/avg` variants and
@@ -692,6 +747,52 @@ mod tests {
     /// t_65a91d5b C3b: `null`-Werte auf den numerischen Enrichment-Feldern
     /// (UEX sendet `null` statt 0, wenn unbekannt) dürfen das Mapping nicht
     /// reißen — Serde-Regel (explizites null ≠ fehlendes Feld).
+    #[test]
+    fn negotiation_row_parses_live_shape() {
+        // /marketplace_negotiations-Response (UEX-Doku „List all advertisement
+        // deals associated with a user"): Optionals null-bar (deal_value,
+        // avatar, date_closed), is_listing_advertiser 0/1-int. Serde-Regel:
+        // explizites null auf Optionals MUSS deserialisieren.
+        let row: NegotiationRow = serde_json::from_str(
+            r#"{
+                "id": 5512, "id_listing": 4141, "hash": "a1b2c3",
+                "price": 4500000.00, "unit": "unit", "currency": "UEC",
+                "deal_value": null, "deal_value_currency": null,
+                "listing_title": "Drake Nettle S", "listing_slug": "drake-nettle-s",
+                "advertiser_name": "Semih Balci", "advertiser_username": "sebo_one",
+                "advertiser_avatar": "https://…/avatar.png",
+                "client_name": "John Doe", "client_username": "johndoe",
+                "client_avatar": null,
+                "is_listing_advertiser": 1,
+                "date_added": 1730000100, "date_modified": 1730000200,
+                "date_closed": null, "date_closed_client": null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(row.id, 5512);
+        assert_eq!(row.id_listing, 4141);
+        assert_eq!(row.listing_slug, "drake-nettle-s");
+        assert_eq!(row.deal_value, None, "offener Deal: null bleibt None");
+        assert_eq!(row.is_listing_advertiser, 1);
+        assert_eq!(row.client_avatar, None);
+        assert_eq!(row.date_closed, None);
+        assert_eq!(row.date_modified, 1730000200);
+        // Abgeschlossener Deal (deal_value gesetzt, date_closed int).
+        let closed: NegotiationRow = serde_json::from_str(
+            r#"{"id":5513,"id_listing":4142,"hash":"x7","price":5000000.0,
+                "unit":"unit","currency":"UEC","deal_value":4900000.0,
+                "deal_value_currency":"UEC","listing_title":"Nettles",
+                "listing_slug":"nettles","advertiser_name":"a","advertiser_username":"u",
+                "advertiser_avatar":null,"client_name":"c","client_username":"cu",
+                "client_avatar":null,"is_listing_advertiser":0,
+                "date_added":1730000100,"date_modified":1730000300,
+                "date_closed":1730000300,"date_closed_client":1730000300}"#,
+        )
+        .unwrap();
+        assert_eq!(closed.deal_value, Some(4900000.0));
+        assert_eq!(closed.date_closed, Some(1730000300));
+    }
+
     #[test]
     fn user_trade_row_parses_live_shape() {
         // /user_trades-Response (Research §3): optionale Strings null-bar,

@@ -46,12 +46,16 @@ window.__TAURI__ = {};
    sie bei jedem invoke-Aufruf (kein Reload nötig). */
 window.__SHOP_OFFERS__ = window.__SHOP_OFFERS__ || [];
 window.__SHOP_TRADES__ = window.__SHOP_TRADES__ || [];
+window.__SHOP_NEGOTIATIONS__ = window.__SHOP_NEGOTIATIONS__ || [];
 window.__SHOP_OFFERS_FAIL__ = !!window.__SHOP_OFFERS_FAIL__;
 window.__SHOP_TRADES_FAIL__ = !!window.__SHOP_TRADES_FAIL__;
+window.__SHOP_NEGOTIATIONS_FAIL__ = !!window.__SHOP_NEGOTIATIONS_FAIL__;
 window.__SHOP_OFFERS_SOURCE__ = window.__SHOP_OFFERS_SOURCE__ || 'live';
 window.__SHOP_TRADES_SOURCE__ = window.__SHOP_TRADES_SOURCE__ || 'live';
+window.__SHOP_NEGOTIATIONS_SOURCE__ = window.__SHOP_NEGOTIATIONS_SOURCE__ || 'live';
 window.__SHOP_OFFERS_NOTE__ = window.__SHOP_OFFERS_NOTE__ || null;
 window.__SHOP_TRADES_NOTE__ = window.__SHOP_TRADES_NOTE__ || null;
+window.__SHOP_NEGOTIATIONS_NOTE__ = window.__SHOP_NEGOTIATIONS_NOTE__ || null;
 const stubState = {
 	palette: 'amber', detail_variant: 'c',
 	uex_api_key_set: false, commodity_source: 'wiki',
@@ -154,13 +158,29 @@ window.__TAURI_INTERNALS__ = {
 				};
 			}
 			case 'get_my_trades': {
-				// M2a Mein Shop — Trade-Verlauf (user-scoped).
+				// M2a Mein Shop — Trade-Verlauf (user-scoped). Commodity-seitig
+				// (/user_trades): seit t_350c4300 B2 NICHT mehr die Quelle des
+				// Mein-Shop-Trade-Abschnitts (get_my_negotiations), bleibt nur
+				// fürs spätere Route-Recording.
 				if (window.__SHOP_TRADES_FAIL__) throw new Error('HTTP 403 · UEX nicht erreichbar');
 				return {
 					source: window.__SHOP_TRADES_SOURCE__,
 					fetched_at: Math.floor(Date.now() / 1000),
 					trades: window.__SHOP_TRADES__,
 					note: window.__SHOP_TRADES_NOTE__,
+					key_set: stubState.uex_api_key_set
+				};
+			}
+			case 'get_my_negotiations': {
+				// t_350c4300 B2: Marktplatz-Deals des Accounts (user-scoped,
+				// /marketplace_negotiations) — die KORREKTE Quelle für „Letzte 5
+				// Marktplatz-Trades" im Mein-Shop.
+				if (window.__SHOP_NEGOTIATIONS_FAIL__) throw new Error('HTTP 403 · UEX nicht erreichbar');
+				return {
+					source: window.__SHOP_NEGOTIATIONS_SOURCE__,
+					fetched_at: Math.floor(Date.now() / 1000),
+					negotiations: window.__SHOP_NEGOTIATIONS__,
+					note: window.__SHOP_NEGOTIATIONS_NOTE__,
 					key_set: stubState.uex_api_key_set
 				};
 			}
