@@ -343,6 +343,12 @@ pub struct MarketplaceFilter {
     pub sort: Option<OfferSort>,
     /// Page size hint (API allows 100 default, up to 1000 with item+operation).
     pub limit: u32,
+    /// PB (t_1c9bc240, B2): F5-Resync — `true` umgeht die Cache-Frische-Prüfung
+    /// des UEX-Clients und erzwingt den Live-Fetch über denselben Snapshot-
+    /// Speicherpfad wie der Hintergrund-Refresh. Default `false` (serde-default
+    /// deckt das FEHLENDE Feld ab; `null` wird nie gesendet).
+    #[serde(default)]
+    pub force_refresh: bool,
 }
 
 /// One entry of the user's own trade history (UEX `/user_trades/`),
@@ -594,7 +600,23 @@ pub struct AdvertiseResult {
 
 #[cfg(test)]
 mod tests {
-    use super::SearchHit;
+    use super::{MarketplaceFilter, SearchHit};
+
+    /// PB (t_1c9bc240, B2): F5-Resync — fehlendes Feld deserialisiert als
+    /// `false` (serde-default deckt nur das FEHLENDE Feld ab); explizites
+    /// `true` im Filter-JSON aktiviert den Cache-Bypass.
+    #[test]
+    fn marketplace_filter_force_refresh_defaults_to_false() {
+        let f: MarketplaceFilter =
+            serde_json::from_str(r#"{"location":"","q":"","region":"","limit":100}"#).unwrap();
+        assert!(!f.force_refresh);
+        let f: MarketplaceFilter = serde_json::from_str(
+            r#"{"location":"","q":"","region":"","limit":100,"force_refresh":true}"#,
+        )
+        .unwrap();
+        assert!(f.force_refresh);
+        assert_eq!(MarketplaceFilter::default().force_refresh, false);
+    }
 
     /// M2b (Write-Layer): der Advertise-Payload serialisiert snake_case und
     /// lässt ungesetzte Optionale WEG (FEHLT im JSON — nicht "null") — exakt

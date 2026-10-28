@@ -802,7 +802,9 @@ pub async fn get_marketplace(
 ) -> Result<MarketResponse, String> {
     // Was the snapshot already fresh before the call? Then the provider serves
     // it from cache (live only when item_id/operation filter forces a fetch).
-    let cache_fresh = state.cache.marketplace_fresh().unwrap_or(false);
+    // PB (t_1c9bc240, B2): F5-Resync (force_refresh) ist per Definition live —
+    // der Cache wurde umgangen, die Quelle darf nicht "cache" behaupten.
+    let cache_fresh = !filters.force_refresh && state.cache.marketplace_fresh().unwrap_or(false);
     match state.provider.marketplace_offers(filters.clone()).await {
         Ok(offers) => Ok(MarketResponse {
             source: if cache_fresh {

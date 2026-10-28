@@ -471,6 +471,7 @@ mod tests {
             region: "Nyx".into(),
             sort: Some(OfferSort::PriceAsc),
             limit: 100,
+            force_refresh: false,
         };
         assert!(
             serde_json::from_str::<MarketplaceFilter>(&serde_json::to_string(&filter).unwrap())

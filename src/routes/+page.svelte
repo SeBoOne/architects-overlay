@@ -18,8 +18,9 @@
 	//     tut Esc NICHTS — Ausblenden ausschließlich per globalem Toggle
 	//     (Hyprland-Bind CTRL+SHIFT+U → arch-overlay toggle, KEIN In-App-Esc)
 	//   - Pfeil-Navigation scrollt die Liste auf die fokussierte Zeile (auto)
-	// Modi (Karte t_315a26cc): F1 Suche · F2 Marktplatz · F3 Inventar ·
-	// F4 Hangar · F12 Einstellungen — In-App-Keyhandler, die nur greifen, wenn
+	// Modi (Karte t_315a26cc): Mode-Hotkeys konfigurierbar (PB t_1c9bc240) —
+	// Defaults: F1 Suche · F2 Marktplatz · F3 Routen · F4 Inventar · F11 Hangar ·
+	// F12 Einstellungen — In-App-Keyhandler, die nur greifen, wenn
 	// das Overlay sichtbar+fokussiert ist (compositor_focus beim Show); die Rail
 	// links zeigt die Modi mit F-Key-Label, aktiver Modus in Akzentfarbe.
 	// Market-Modus (F2 / Rail): DAS Haupt-Suchfeld durchsucht Offers
@@ -37,6 +38,16 @@
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	// PB (t_1c9bc240, B1): Mode-Hotkeys — Defaults, Validação e Lookup em UM módulo.
+	import {
+		DEFAULT_MODE_HOTKEYS,
+		MODE_HOTKEY_RESERVED,
+		hotkeyFor,
+		modeKeyMap,
+		normalizeFkey,
+		validateModeHotkeys,
+		type ModeHotkeys
+	} from '../lib/hotkeys';
 	import Inventory from '../lib/Inventory.svelte';
 	import RoutesTypeahead from '../lib/RoutesTypeahead.svelte';
 	// MD (t_10be9255, D2): dunkles, mausbedienbares Dropdown mit Typeahead —
@@ -235,6 +246,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		global_shortcuts_active: boolean;
 		// C2b (t_1adbc017): Consent (persistiert) + Compositor-Ist + Sync-Note.
 		shortcuts_sync_omarchy: boolean;
+		// PB (t_1c9bc240, B1): Mode-Hotkeys persistidos (null = SSR/Probe/Config
+		// antiga → Defaults aus lib/hotkeys.ts = Migration zur neuen Belegung).
+		mode_hotkeys: ModeHotkeys | null;
 		// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (every_action|delete_only).
 		marketplace_confirm: string;
 		hyprland_session: boolean;
@@ -268,6 +282,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Konflikte, Doppelvergabe). Esc bricht die Capture ab. Fehler bleiben im
 	// Feld sichtbar, der Capture-Modus bleibt aktiv — alter Kürzel bleibt aktiv.
 	type ShortcutField = 'toggle' | 'click';
+	// PB (t_1c9bc240, B1): konfigurierbare Mode-Slots — Suche (F1), Marktplatz
+	// (F2) und Einstellungen (F12) bleiben fest belegt.
+	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory';
 	let scCapture = $state<ShortcutField | null>(null);
 	let scPreview = $state('');
 	let scNote = $state('');
@@ -383,6 +400,50 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			} catch { /* Overlay gerade zu — naechster Settings-Open holt die Note */ }
 		}, 3000);
 	}
+	// PB (t_1c9bc240, B1): Capture-Verwaltung der Mode-Hotkeys. Identisches
+	// Muster wie bei den globalen Kürzeln (C2a): nur EIN Capture scharf,
+	// Validierung Backend-seitig (nur F1–F12, F5 reserviert Resync,
+	// Doppelbelegung abgelehnt), Snapshot kommt inkl. sync_note zurück.
+	const modeHotkeyFields: { id: ModeHotkeyField; label: string }[] = [
+		{ id: 'hangar', label: 'Hangar' },
+		{ id: 'routes', label: 'Handelsrouten' },
+		{ id: 'inventory', label: 'Inventar' }
+	];
+	let hkCapture: ModeHotkeyField | null = $state(null);
+	let hkNote = $state('');
+	function startModeHotkeyCapture(id: ModeHotkeyField) {
+		scCapture = null;
+		hkCapture = id;
+		hkNote = '';
+	}
+	function cancelModeHotkeyCapture() {
+		hkCapture = null;
+		hkNote = '';
+	}
+	async function submitModeHotkey(field: ModeHotkeyField, key: string) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_mode_hotkey', { field, key });
+			applySettings(cfg);
+			const applied = cfg?.mode_hotkeys?.[field] ?? '';
+			hkCapture = null;
+			hkNote = '';
+			cfgConfirm(`Mode-Hotkey übernommen: ${applied} — gilt ab sofort.`);
+		} catch (err) {
+			hkNote = String(err);
+			hkCapture = null;
+		}
+	}
+	async function resetModeHotkeys() {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_reset_mode_hotkeys');
+			applySettings(cfg);
+			hkCapture = null;
+			hkNote = '';
+			cfgConfirm('Mode-Hotkeys auf Standard-Belegung zurückgesetzt.');
+		} catch (err) {
+			hkNote = String(err);
+		}
+	}
 	// C2b: Consent-Chip "Tastenkürzel mit System (Omarchy) synchronisieren".
 	// Erstanlass persistiert die Zustimmung; erst ab true führt die App die
 	// zwei arch-overlay-Binds im OmaSettings-Store (Backup vor erstem
@@ -412,11 +473,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let localVariant = $state<'a' | 'c' | null>(null);
 
 	// ---- Modi (Karte t_315a26cc) --------------------------------------------
-	// Zentraler Mode-State: F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar ·
-	// F12 Einstellungen. Der bestehende Market-Modus (F2/Rail) ist derselbe
+	// Zentraler Mode-State: Defaults F1 Suche · F2 Marktplatz · F3 Routen ·
+	// F4 Inventar · F11 Hangar · F12 Einstellungen (konfigurierbar, PB t_1c9bc240). Der bestehende Market-Modus (F2/Rail) ist derselbe
 	// State — `phase === 'market'` bleibt die Render-Quelle, Config bleibt
 	// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).
-	// P1 t_a39f6811: F6 Handelsrouten — eigener Mode für die Rail/Keyhandler;
+	// P1 t_a39f6811: Handelsrouten — eigener Mode für die Rail/Keyhandler;
 	// intern bleibt es der Market-Phase mit mTab='routes'.
 	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
 	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
@@ -806,6 +867,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		usernameInput = '';
 		usernameNote = '';
 		cancelShortcutCapture();
+		// PB (t_1c9bc240, B1): Config-Open startet immer sauber.
+		cancelModeHotkeyCapture();
 		inConfig = true;
 		if (searchEl) searchEl.blur();
 	}
@@ -820,6 +883,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		usernameNote = '';
 		// Capture darf ein Schließen nicht überleben (kein Geister-Fenster-Modus).
 		cancelShortcutCapture();
+		// PB (t_1c9bc240, B1): dasselbe für das Mode-Hotkey-Capture.
+		cancelModeHotkeyCapture();
 		cfgToast = '';
 		if (cfgToastTimer) clearTimeout(cfgToastTimer);
 		// Der Tray kann das Overlay (ohne laufendes Spiel) rein für die Config
@@ -2548,7 +2613,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		void runSearch();
 	}
 
-	// ---- Modi-Wechsel (F1/F2/F3/F4/F6/F12 + Rail-Klicks) ------------------------
+	// ---- Modi-Wechsel (Mode-Hotkeys + Rail-Klicks) ------------------------------
 	// Ein zentraler Einstieg: räumt den jeweiligen Alt-Zustand auf (Market-
 	// Reset, Config schließen, Detail schließen) und behält den Tastaturfokus
 	// im Suchfeld — wie bisher nach Market-Exit/Detail-Schließen.
@@ -2567,9 +2632,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				enterMarket();
 				if (searchEl) searchEl.focus();
 			}
-			mTab = 'offers'; // F2 = Angebots-Tab (F6 trägt Routen)
+			mTab = 'offers'; // Marktplatz-Hotkey = Angebots-Tab (Routen tragen den Routen-Hotkey)
 		} else if (m === 'routes') {
-			// F6/Rail: Handelsrouten-Tab im Marktmodus (t_a39f6811 P1).
+			// Routen-Hotkey/Rail: Handelsrouten-Tab im Marktmodus (t_a39f6811 P1).
 			// railMode lösen (t_04e3d8c6): sonst bleibt aus Hangar/Inventar
 			// railMode gesetzt und mode $derived wechselt nie auf 'routes'.
 			railMode = null;
@@ -2600,7 +2665,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// Kern-Loader für den Marketplace (cache-first, progressive Limits).
 	// `bg = true`: Hintergrund-Refresh (P3) — kein Spinner, UI bleibt bedienbar.
-	async function fetchMarket(limit: number, showAll = false, bg = false) {
+	// PB (t_1c9bc240, B2): `force = true` (F5-Resync) umgeht die Cache-Frische
+	// im Backend → ECHTER Live-Fetch über denselben Snapshot-Pfad wie der
+	// Hintergrund-Sweep, statt nur den Cache neu zu rendern.
+	async function fetchMarket(limit: number, showAll = false, bg = false, force = false) {
 		if (showAll) mLoadingMore = true; else if (!bg) mLoading = true;
 		mNote = null;
 		const filterObj = {
@@ -2610,7 +2678,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			operation: mOp === 'all' ? null : mOp,
 			region: '',
 			sort: mSort,
-			limit
+			limit,
+			force_refresh: force
 		};
 		try {
 			const resp = await invoke<MarketResponse>('get_marketplace', { filters: filterObj });
@@ -2638,24 +2707,48 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		await fetchMarket(100, false, mode === 'bg');
 	}
 
-	// P4: F5 (app-lokal) — kontextsensitiver Sync.
-	//   Market-Modus → Market-Daten manuell syncen (Normal-Load mit Spinner,
-	//   kein Hintergrund-Refresh — der User hat explizit angefragt).
-	//   Normal/Detail-Modus → Commodity-Preise syncen (Backend `sync_now`).
-	// Feedback NUR in der Statuszeile (f5Msg), nie modal.
+	// P4/PB (t_1c9bc240, B2): F5 (app-lokal, nie Browser-Reload) — RESYNC NUR
+	// AN RELEVANTEN ORTEN. Wirksamkeits-Fix: der alte Market-Pfad war cache-
+	// first (UI-Reload des Snapshots, die „zuletzt gesynced“-Anzeigen blieben
+	// stehen). Jetzt führt F5 denselben Pfad aus wie der Hintergrund-Sweep:
+	//   Angebote-Tab   → get_marketplace mit force_refresh (echter Live-Fetch,
+	//                    Snapshot-Store identisch zum Background-Sweep).
+	//   Mein-Shop-Tab  → loadShop (User-scoped Pull mit eigener Quelle).
+	//   Routen-Tab     → Backend-Sweep `sync_now` (SYNC-Event aktualisiert die
+	//                    Statuszeile) + Routen-Reload.
+	// Überall sonst: KEIN Call, kein Feedback, kein Hinweis in der Fußzeile.
 	async function onF5() {
-		flashStatus('Sync läuft …');
-		if (phase === 'market') {
-			await loadMarket();
-			flashStatus(mNote ? `Market-Sync fehlgeschlagen · ${mNote}` : `Aktualisiert vor ${rel(mFetchedAt || nowSec())}`);
-		} else {
+		if (phase !== 'market' || offerDetail) return;
+		if (mTab === 'shop') {
+			flashStatus('Mein Shop sync läuft …');
+			await loadShop();
+			flashStatus(
+				shopErr
+					? `Shop-Sync fehlgeschlagen · ${shopErr}`
+					: `Mein Shop aktualisiert · Quelle ${shopSource === 'live' ? 'UEX live' : shopSource === 'cache' ? 'Cache' : 'Offline-Snapshot'}`
+			);
+			return;
+		}
+		if (mTab === 'routes') {
+			flashStatus('Routen-Sweep läuft …');
 			try {
 				status = await invoke<SyncStatus>('sync_now');
-				flashStatus(`Preise aktualisiert · Cache ${cacheAge(status)}`);
+				flashStatus(`Daten gesweept · Cache ${cacheAge(status)}`);
 			} catch (e) {
-				flashStatus(`Sync fehlgeschlagen · ${String(e)}`);
+				flashStatus(`Sweep fehlgeschlagen · ${String(e)}`);
+				return;
 			}
+			await loadRoutes();
+			return;
 		}
+		// Angebote-Tab: forcierte Market-Sync (echter Live-Fetch).
+		flashStatus('Market-Sync läuft …');
+		await fetchMarket(100, false, false, true);
+		flashStatus(
+			mNote
+				? `Market-Sync fehlgeschlagen · ${mNote}`
+				: `Market aktualisiert · ${offers.length} Angebote · vor ${rel(mFetchedAt || nowSec())}`
+		);
 	}
 
 	function flashStatus(t: string) {
@@ -2835,29 +2928,49 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			captureShortcut(e);
 			return;
 		}
+		// PB (t_1c9bc240, B1): Mode-Hotkey-Capture — VOR allen anderen Shortcuts,
+		// damit die gedrückte F-Taste hier landet und keinen Modus auslöst.
+		if (hkCapture) {
+			if (k === 'Escape') {
+				cancelModeHotkeyCapture();
+				e.preventDefault();
+				return;
+			}
+			if (/^F([1-9]|1[0-2])$/.test(k)) {
+				const field = hkCapture;
+				void submitModeHotkey(field, k);
+				e.preventDefault();
+				return;
+			}
+			// Keine F-Taste: Capture bleibt scharf (Hinweis bleibt stehen).
+			return;
+		}
 		// ---- F-Tasten: In-App-Moduswechsel (Karte t_315a26cc) ----------------
-		// F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar · F12 Einstellungen.
-		// KEINE Hyprland-Binds — die Tasten greifen nur, solange das Overlay
-		// sichtbar+fokussiert ist (compositor_focus beim Show): SC verliert nie
-		// Tasten. F-Tasten erzeugen keine Zeichen, sie können also auch bei
-		// Fokus im Suchfeld/Stepper nicht in Eingaben geraten; einzig gegen
+		// PB (t_1c9bc240, B1): Belegung KONFIGURIERBAR — Lookup über das
+		// persistierte Map (Settings/F12), Defaults in lib/hotkeys.ts:
+		// F1 Suche · F2 Marktplatz · F3 Routen · F4 Inventar · F11 Hangar ·
+		// F12 Einstellungen. F5 ist NICHT im Map — bleibt der kontextsensitive
+		// Resync (B2, weiter unten im Handler). KEINE Hyprland-Binds — die
+		// Tasten greifen nur, solange das Overlay sichtbar+fokussiert ist
+		// (compositor_focus beim Show): SC verliert nie Tasten. F-Tasten
+		// erzeugen keine Zeichen, sie können also auch bei Fokus im
+		// Suchfeld/Stepper nicht in Eingaben geraten; einzig gegen
 		// contentEditable-Editoren (die F-Tasten selbst belegen können) wird
 		// mit demselben Check geschützt wie die bestehenden m/o-Shortcuts.
-		if (/^F(1|2|3|4|6|12)$/.test(k)) {
+		if (/^F([1-9]|1[0-2])$/.test(k) && k !== 'F5') {
 			if (
 				typeof (e.target as HTMLElement | null)?.isContentEditable === 'boolean' &&
 				(e.target as HTMLElement).isContentEditable
 			) {
 				return; // Rich-Text-Editor behält seine F-Tasten
 			}
-			if (k === 'F1') setMode('search');
-			else if (k === 'F2') setMode('market');
-			else if (k === 'F3') setMode('inventory');
-			else if (k === 'F4') setMode('hangar');
-			else if (k === 'F6') setMode('routes');
-			else setMode('settings');
-			e.preventDefault();
-			return;
+			const modeKey = modeKeyMap(cfg).get(k);
+			if (modeKey) {
+				setMode(modeKey);
+				e.preventDefault();
+				return;
+			}
+			// Nicht belegte F-Taste (z. B. F6/F7–F10): fällt durch — kein Modus.
 		}
 		// Platzhalter-Modi (Inventar/Hangar): nur Esc/F-Tasten wirken — keine
 		// Ergebnis-Navigation, kein Enter im Leeren.
@@ -2905,11 +3018,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			return;
 		}
-		// P4: F5 ist app-lokal — nie Browser-Reload. Kontextsensitiv: Market-Modus
-		// syncen Market-Daten, sonst Commodity-Preise (Feedback in der Fußzeile).
+		// P4/PB (t_1c9bc240, B2): F5 ist app-lokal — nie Browser-Reload — und
+		// wirkt NUR, wo Resync relevant ist (Market-Modus: Angebote, Mein Shop,
+		// Routen). Suche/Detail/Rail-Modi (Inventar/Hangar)/Config: KEIN Call,
+		// KEIN Feedback (der Handler ist hier nur noch erreichbar, weil die
+		// F5-Behandlung NACH den railMode/inConfig-Rückgaben liegt).
 		if (k === 'F5') {
-			void onF5();
-			e.preventDefault();
+			if (phase === 'market' && !offerDetail) {
+				if (mTab === 'shop' && cfg && !cfg.uex_secret_key_set) {
+					e.preventDefault();
+					return; // ohne Secret-Key gibt es nichts zu syncen — kein Fake-Feedback
+				}
+				void onF5();
+				e.preventDefault();
+			}
+			// sonst: F5 fällt durch — kein Modus, kein Sync, kein Reload.
 			return;
 		}
 		// Marktplatz-Modus: Angebot-Navigation + Detail.
@@ -3091,11 +3214,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	<div class="shell" class:in-detail={inDetail}>
 		<i class="deco t1"></i><i class="deco t2"></i>
 
-		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F6/F12) — gehört nur zum Overlay.
+		<!-- Rail: linke Modus-Leiste (Mode-Hotkeys) — gehört nur zum Overlay.
 		     K2 (t_5fe8eb4c): palW ist die VIEWPORT-wide pal-root nuun (width moved
 		     onto .shell); Shell-Box = max(70vw,640px) clamp 94vw ⇒ Palette <520px
 		     only below ~553px viewport → threshold re-based accordingly. -->
-		<Rail mode={mode} compact={palW > 0 && palW < 553} onselect={setMode} />
+		<!-- PB (t_1c9bc240, B1): Rail zeigt die persistierten Mode-Hotkeys. -->
+		<Rail mode={mode} compact={palW > 0 && palW < 553} onselect={setMode} hotkeys={cfg?.mode_hotkeys ?? undefined} />
 
 		<div class="shell-main">
 		<!-- Suchzeile -->
@@ -3440,11 +3564,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{/each}
 						<!-- Konfliktliste + Ehrlichkeit zum Registrierungszustand
-						     (Preisquellen-Feedback-Muster, K6): die In-App-Handler
-						     prüfen keine Mod-Tasten, darum sind diese Tasten für
-						     globale Kürzel gesperrt. -->
+					     (Preisquellen-Feedback-Muster, K6): die In-App-Handler
+					     prüfen keine Mod-Tasten, darum sind diese Tasten für
+					     globale Kürzel gesperrt. -->
 						<div class="cfg-sc-note">
-							Intern belegt (nicht wählbar): F1–F6, F12, Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
+							Für globale Hotkeys gesperrt: F-Tasten sind die Mode-Hotkeys
+							(konfigurierbar, Abschnitt „Mode-Hotkeys“), F5 führt den Resync aus.
+							Weitere interne Belegungen: Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
 							{#if cfg && cfg.hyprland_session}
 								<!-- C2b (t_1adbc017): Hyprland führt die Kürzel als
 								     Compositor-Binds. OmaSettings-Pfad nur mit
@@ -3490,6 +3616,42 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{:else if cfg}
 								<div class="cfg-sc-ok" role="status">Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart.</div>
 							{/if}
+						</div>
+					</section>
+					<!-- PB (t_1c9bc240, B1): Mode-Hotkeys — konfigurierbare F-Tasten der
+					     In-App-Modi. Persistiert im Settings-Crate (TOML), Validierung:
+					     nur F1–F12, F5 reserviert für den Resync, keine Doppelbelegung.
+					     Capture-Muster identisch zu den globalen Kürzeln (C2a). -->
+					<section class="cfg-sect">
+						<div class="h">Mode-Hotkeys</div>
+						{#each modeHotkeyFields as f (f.id)}
+							<div class="cfg-sc-row" class:is-cap={hkCapture === f.id}>
+								<div class="cfg-sc-meta">
+									<div class="cfg-sc-lbl">{f.label}</div>
+									<div class="cfg-sc-active">
+										Aktiv: <b>{hotkeyFor(cfg, f.id)}</b>
+									</div>
+								</div>
+								<button
+									type="button"
+									class="chip cfg-sc-capture"
+									class:is-on={hkCapture === f.id}
+									onclick={() => (hkCapture === f.id ? (hkCapture = null) : startModeHotkeyCapture(f.id))}
+								>{hkCapture === f.id ? 'Abbrechen (Esc)' : 'Ändern'}</button>
+							</div>
+						{/each}
+						{#if hkCapture}
+							<div class="cfg-sc-help" role="status">
+								F-Taste drücken (F1–F12) für „{modeHotkeyFields.find((f) => f.id === hkCapture)?.label}“ — Esc bricht ab.
+							</div>
+						{/if}
+						{#if hkNote}
+							<div class="cfg-sc-err" role="alert">{hkNote}</div>
+						{/if}
+						<div class="cfg-sc-note">
+							F5 ist fest für den Resync reserviert (Marktplatz, Mein Shop, Routen-Sweep)
+							und kann keinem Modus zugewiesen werden. Änderungen gelten sofort.
+							<button type="button" class="chip" onclick={() => void resetModeHotkeys()}>Standard-Belegung</button>
 						</div>
 					</section>
 					<section class="cfg-sect">
@@ -3625,7 +3787,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="mtabs" role="tablist">
 					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
 					<!-- t_350c4300 B1: kein „Handelsrouten"-Tab im Marktplatz — Routen
-					     sind nur noch über das Navigationsband (Rail) bzw. F6
+					     sind nur noch über das Navigationsband (Rail) bzw. den
+					     Mode-Hotkey für Routen (Default F3, konfigurierbar)
 					     erreichbar (setMode('routes') → mTab='routes' bleibt der
 					     interne Mechanismus). -->
 					<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
@@ -4630,7 +4793,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 						<div class="sect"><div class="h">Schnellzugriff</div></div>
 							<div class="recent">
-								<span class="r"><b>F2</b> Marktplatz · <b>F6</b> Routen</span>
+								<span class="r"><b>{hotkeyFor(cfg, 'market')}</b> Marktplatz · <b>{hotkeyFor(cfg, 'routes')}</b> Routen</span>
 								<span class="r"><b>F12</b> Einstellungen</span>
 								<span class="r"><b>Rechner</b> · =2*250+15%</span>
 								<span class="r"><b>Kategorie</b> · :c gold</span>
@@ -4646,9 +4809,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		<div class="foot">
 			<div class="hints">
 				{#if phase === 'market'}
+					<!-- PB (t_1c9bc240, B2): der F5-Hinweis erscheint nur an Orten mit
+					     Resync-Bezug (Angebote, Mein Shop, Routen) — nie global. -->
 					{#if offerDetail}
 						<span><kbd>Esc</kbd> zurück zur Liste</span>
 						<span><kbd>↵</kbd> im Browser öffnen</span>
+					{:else if mTab === 'shop'}
+						{#if cfg?.uex_secret_key_set}
+							<span><kbd>F5</kbd> Mein Shop syncen</span>
+						{/if}
+						<span><kbd>Esc</kbd> zurück zur Suche</span>
+					{:else if mTab === 'routes'}
+						<span><kbd>↑↓</kbd> Routen</span>
+						<span><kbd>↵</kbd> Detail</span>
+						<span><kbd>F5</kbd> Routen-Sweep</span>
+						<span><kbd>Esc</kbd> zurück zur Suche</span>
 					{:else}
 						<span><kbd>↑↓</kbd> Angebote</span>
 						<span><kbd>Alt+1..0</kbd> Offer</span>
@@ -4663,15 +4838,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<span><kbd>↵</kbd> Auswahl</span>
 					{/if}
 					<span>Suchfeld = Filter</span>
-					<span><kbd>F5</kbd> Preise syncen</span>
 					<span><kbd>Esc</kbd> zurück</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
 					<span><kbd>Esc</kbd> zurück</span>
-					<span><kbd>F2</kbd> Marktplatz</span>
-					<span><kbd>F5</kbd> Preise syncen</span>
+					<span><kbd>{hotkeyFor(cfg, 'market')}</kbd> Marktplatz</span>
 				{/if}
 			</div>
 			{#if f5Msg}

@@ -82,6 +82,8 @@ pub fn run() {
             app_settings::settings_set_shortcut_toggle,
             app_settings::settings_set_shortcut_click_through,
             app_settings::settings_set_shortcuts_sync,
+            app_settings::settings_set_mode_hotkey,
+            app_settings::settings_reset_mode_hotkeys,
             overlay::overlay_config_closed,
         ]);
     }

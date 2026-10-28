@@ -386,7 +386,13 @@ impl DataProvider for UexProvider {
         // replace the general snapshot.
         let cacheable =
             filters.item_id.is_none() && resolved_ids.is_empty() && filters.operation.is_none();
-        if cacheable && self.cache.marketplace_fresh().map_err(map_cache_err)? {
+        // PB (t_1c9bc240, B2): F5-Resync — force_refresh umgeht die Frische-
+        // Prüfung (echter Live-Fetch, derselbe Snapshot-Speicherpfad wie der
+        // Hintergrund-Refresh), statt nur den Cache neu zu rendern.
+        if cacheable
+            && !filters.force_refresh
+            && self.cache.marketplace_fresh().map_err(map_cache_err)?
+        {
             let snapshot = self.cache.marketplace_snapshot().map_err(map_cache_err)?;
             return Ok(Self::apply_local(snapshot, &filters));
         }

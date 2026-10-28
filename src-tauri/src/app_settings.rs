@@ -136,6 +136,8 @@ pub struct SettingsSnapshot {
     pub global_shortcuts_active: bool,
     /// C2b: persistierter Consent (einmalige Zustimmung, Default false).
     pub shortcuts_sync_omarchy: bool,
+    /// PB (t_1c9bc240, B1): persistierte Mode-Hotkeys (F-Keys der In-App-Modi).
+    pub mode_hotkeys: settings::ModeHotkeys,
     /// M2b Sicherheitsmodell: 2-Schritt-Bestätigung für Marktplatz-Writes
     /// ("every_action" = jede schreibende Aktion, Default; "delete_only" = nur
     /// Abmelden bestätigt). Keine Batch-Aktionen.
@@ -167,6 +169,7 @@ impl SettingsSnapshot {
             shortcut_click_through: s.shortcut_click_through().to_owned(),
             global_shortcuts_active,
             shortcuts_sync_omarchy: s.shortcut_sync_omarchy(),
+            mode_hotkeys: s.mode_hotkeys().clone(),
             marketplace_confirm: s.marketplace_confirm().as_str().to_owned(),
             hyprland_session: crate::hyprland_sync::hyprland_session_active(),
             omasettings_available: crate::hyprland_sync::OmarchyPaths::detect().is_some(),
@@ -457,6 +460,65 @@ pub fn settings_set_marketplace_confirm(
         .ok_or_else(|| format!("unbekannter Bestätigungs-Modus: {mode}"))?;
     let mut s = state.inner.lock().expect("settings lock");
     s.set_marketplace_confirm(confirm);
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    ))
+}
+
+/// PB (t_1c9bc240, B1): EINEN Mode-Hotkey setzen (nur die konfigurierbaren
+/// Slots — F1 Suche, F2 Marktplatz und F12 Einstellungen bleiben fest).
+/// Validierung: gültiger F-Key (F1–F12), `F5` reserviert für den Resync,
+/// keine Doppelbelegung (Settings-Crate). Persistiert sofort.
+#[tauri::command]
+pub fn settings_set_mode_hotkey(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    field: String,
+    key: String,
+) -> Result<SettingsSnapshot, String> {
+    let key = settings::validate_fkey(&key)?;
+    let field_norm = field.trim().to_lowercase();
+    if key == settings::MODE_HOTKEY_RESERVED {
+        return Err(format!("{field_norm}: F5 ist für den Resync reserviert"));
+    }
+    let mut s = state.inner.lock().expect("settings lock");
+    let mut hotkeys = s.mode_hotkeys().clone();
+    match field_norm.as_str() {
+        "hangar" => hotkeys.hangar = key.clone(),
+        "routes" => hotkeys.routes = key.clone(),
+        "inventory" => hotkeys.inventory = key.clone(),
+        _ => {
+            return Err(format!(
+                "Modus nicht konfigurierbar: {field} (F1/F2/F12 sind fest belegt)"
+            ));
+        }
+    }
+    hotkeys
+        .validate()
+        .map_err(|e| format!("{e} — Belegung unverändert"))?;
+    s.set_mode_hotkeys(hotkeys);
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    ))
+}
+
+/// PB (t_1c9bc240, B1): Mode-Hotkeys auf die Standard-Belegung zurücksetzen
+/// (F1 Suche · F2 Marktplatz · F3 Routen · F4 Inventar · F11 Hangar · F12).
+#[tauri::command]
+pub fn settings_reset_mode_hotkeys(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+) -> Result<SettingsSnapshot, String> {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_mode_hotkeys(settings::ModeHotkeys::default());
     state.persist(&s);
     Ok(SettingsSnapshot::from_settings(
         &s,
