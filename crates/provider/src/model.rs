@@ -381,6 +381,16 @@ pub struct Category {
     pub section: Option<String>,
 }
 
+/// Item-Typeahead-Treffer für die Listing-Form (MC, t_5faaf946): id + Name
+/// gehen in `AdvertisePayload.id_item`; der Subtitle (Kategorie · Firma) ist
+/// reine Anzeige im Dropdown.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ItemSuggestion {
+    pub id: u64,
+    pub name: String,
+    pub subtitle: String,
+}
+
 /// Write-Payload für `POST /marketplace_advertise/` (M2b, source-agnostic
 /// Container über dem Doku-Schema [Research §1]). Alle Felder tragen die
 /// offiziellen Input-Feldnamen (snake_case auf dem Wire) inkl. der
@@ -439,12 +449,26 @@ pub struct AdvertisePayload {
     /// 0–100.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub durability: Option<u8>,
+    /// 0–100 (MC, t_5faaf946). UEX-Output `get_marketplace_listings` führt
+    /// `quality` als eigenes Feld (0–100); die UEX-„Advertise"-Maske (Referenz-
+    /// Screenshot) hat ein eigenes Quality-Feld. Die POST-Doku [7] listet es
+    /// (noch) nicht — die Website sendet es, der Output kennt es: wir senden
+    /// es analog als eigenes Feld, nicht gemappt auf `durability`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub quality: Option<u8>,
     /// Offer-Laufzeit in Std.: 1|2|3|5|12|24|48|72|120|168|336|720.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hours_expiration: Option<u64>,
     /// 1 = hidden (nicht veröffentlichen), 0/null = veröffentlichen nach Approval.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_hidden: Option<u8>,
+    /// JPG/PNG als Base64 (mit oder ohne data-URI-Prefix), max 10 MB — Doku [7].
+    /// UEX überträgt GENAU EIN Bild pro Listing über dieses Feld; es gibt
+    /// keinen separaten Upload-Endpoint und keine URL-Felder im POST (MC,
+    /// t_5faaf946, Klärung Research §1 + Live-Doku). Das Frontend erlaubt bis
+    /// zu 5 Vorschau-Anhänge, sendet aber doku-konform das erste Bild hier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_data: Option<String>,
     /// 1 = Production, 0 = Sandbox/Test. Wir senden IMMER explizit 1 in
     /// der Produktions-App (Research: `is_production=0` für Tests).
     pub is_production: u8,
@@ -473,8 +497,10 @@ impl AdvertisePayload {
             in_stock: 1,
             availability: Some("ready_pickup".into()),
             durability: Some(85),
+            quality: None,
             hours_expiration: Some(168),
             is_hidden: None,
+            image_data: None,
             is_production: 1,
         }
     }
