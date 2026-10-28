@@ -1,0 +1,30 @@
+t_15e598e7 — MR: BUG Alternativ-Orte — BELEGE
+2026-10-28 · Branch feature/routes-altdata-fix · Gate: fmt 0, cargo test --workspace grün (inkl. neu: terminal_prices_kind_isolation, snapshot-Test, map_price_point_buy_direction_matches_uex_feed_semantics), svelte-check 0 Errors, vite build OK
+
+LIVE-GEGENPROBE (Sebo-Beispiele Osoian Hides + Stileron):
+  cargo test -p uex_client --test live_api -- --ignored live_commodity
+    → test live_commodity_price_direction_matches_player_view ... ok
+  Jeder gemappte Kaufort/Verkaufsort gegen den RAW-Feed geprüft:
+  * Osoian Hides (53): 2 Zeilen — Devlin Scrap & Salvage (t24) price_sell=870000 → KAUF;
+    The Golden Riviera (t665) price_buy=283500 → VERKAUF.
+  * Stileron (122): 22 Zeilen — 21 Kauforte (price_sell 110000–170000, z. B. TDD Area18
+    t12, Levski t778, Admin GrimHEX t27), 1 Verkaufsort Bueno Ravine (t551) price_buy=122850.
+  * Jede Feed-Zeile ist einseitig; die Spieler-Sicht-Mappung spiegelt das exakt.
+  Feed-Sample: evidence-live-smoke/routes-altdata/feed-sample.json
+
+ROOT-CAUSES + FIX (alle 4 Verdächtigen aus dem MR-Body):
+  1+4. Item/Commodity-ID-RAUM vermischt: der Terminal-Sweep mergte /items_prices-Zeilen
+     (id_item!) in dieselbe Tabelle und ÜBERSCHRIEB bei gleicher id sogar die Ware-Zeile.
+     Fix: cache SCHEMA v10 — terminal_prices bekommt `kind` ('commodity'/'item'),
+     PK (id_terminal,id_commodity,kind); Tabelle wird v10 einmalig neu aufgebaut;
+     terminal_price_rows_all liest NUR 'commodity'. Tests: kind_isolation.
+  2. Richtung invertiert: UEX price_buy zahlt das TERMINAL (Spieler VERKAUFT dort),
+     price_sell zahlt der SPIELER (Spieler kauft). Fix: map_price_point (uex-client)
+     + WikiProvider.map_price_entries tauschen buy/sell (incl. Stock/Status) auf
+     Spieler-Sicht. Live belegt via Osoian Hides/Stileron.
+  3. Stale/verwaiste Zeilen: store_terminal_prices war reiner Upsert → entfernte
+     Waren blieben für immer. Fix: Snapshot-Semantik je Kind (DELETE + INSERT; leere
+     Antwort löscht). Frontend: Alters-Chip „⏱ vor X" je Zeile; > 7 Tage (UEX
+     date_modified) in Warnfarbe (ROUTE_LOC_STALE_SECS, .r-chip-age.stale).
+  Bonus: Alternativ-Tabelle dedupliziert pro Terminal (bester Kauf = min buy_price,
+  bester Verkauf = max sell_price).

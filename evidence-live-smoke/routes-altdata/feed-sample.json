@@ -1,0 +1,145 @@
+{
+  "source": "https://api.uexcorp.uk/2.0/commodities_prices?id_commodity=53|122",
+  "fetched": "2026-10-28",
+  "note": "Richtung (Sebo-Beispiele): Kaufort = UEX price_sell>0 (Spieler kauft), Verkaufsort = UEX price_buy>0 (Spieler verkauft). Jede Feed-Zeile ist einseitig.",
+  "commodities": [
+    {
+      "commodity": "Osoian Hides",
+      "id_commodity": 53,
+      "rows": 2,
+      "kauforte": [
+        {
+          "terminal": 24,
+          "name": "Devlin Scrap and Salvage",
+          "price_sell": 870000
+        }
+      ],
+      "verkaufsorte": [
+        {
+          "terminal": 665,
+          "name": "The Golden Riviera",
+          "price_buy": 283500
+        }
+      ]
+    },
+    {
+      "commodity": "Stileron",
+      "id_commodity": 122,
+      "rows": 22,
+      "kauforte": [
+        {
+          "terminal": 504,
+          "name": "Jackson's Swap",
+          "price_sell": 130000
+        },
+        {
+          "terminal": 507,
+          "name": "Ashland",
+          "price_sell": 130000
+        },
+        {
+          "terminal": 18,
+          "name": "CBD - Central Business District - Lorville",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 12,
+          "name": "TDD - Trade and Development Division - Area 18",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 89,
+          "name": "TDD - Trade and Development Division - Commons - New Babbage",
+          "price_sell": 130000
+        },
+        {
+          "terminal": 72,
+          "name": "Rayari Kaltag Research Outpost",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 86,
+          "name": "Terra Mills Hydrofarm",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 42,
+          "name": "Hickes Research Outpost",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 10,
+          "name": "ArcCorp Mining Area 141",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 11,
+          "name": "ArcCorp Mining Area 157",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 23,
+          "name": "Deakins Research Outpost",
+          "price_sell": 150000
+        },
+        {
+          "terminal": 69,
+          "name": "Rayari Anvik Research Outpost",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 90,
+          "name": "TDD - Trade and Development Division - Cloudview Center - Orison",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 27,
+          "name": "Admin - GrimHEX",
+          "price_sell": 110000
+        },
+        {
+          "terminal": 591,
+          "name": "Canard View",
+          "price_sell": 130000
+        },
+        {
+          "terminal": 605,
+          "name": "Fallow Field",
+          "price_sell": 130000
+        },
+        {
+          "terminal": 665,
+          "name": "The Golden Riviera",
+          "price_sell": 130000
+        },
+        {
+          "terminal": 466,
+          "name": "Admin - Ruin Station",
+          "price_sell": 110000
+        },
+        {
+          "terminal": 688,
+          "name": "Sacren's Plot",
+          "price_sell": 130000
+        },
+        {
+          "terminal": 778,
+          "name": "Levski",
+          "price_sell": 140000
+        },
+        {
+          "terminal": 742,
+          "name": "Admin - Nyx Gateway (Pyro)",
+          "price_sell": 170000
+        }
+      ],
+      "verkaufsorte": [
+        {
+          "terminal": 551,
+          "name": "Bueno Ravine",
+          "price_buy": 122850
+        }
+      ]
+    }
+  ]
+}

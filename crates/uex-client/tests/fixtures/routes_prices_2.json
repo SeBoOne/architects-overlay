@@ -1,8 +1,36 @@
 {
- "status": "ok",
- "http_code": 200,
- "data": [
-  {"id": 9003, "id_commodity": 1, "id_terminal": 2, "price_buy": 0, "price_sell": 350, "scu_buy_avg": 0, "scu_sell_avg": 1000, "status_buy": 0, "status_sell": 7, "quality": 0, "date_modified": 1792355842, "commodity_name": "Agricium", "terminal_name": "Admin - ARC-L2"},
-  {"id": 9004, "id_commodity": 3, "id_terminal": 2, "price_buy": 0, "price_sell": 300, "scu_buy_avg": 0, "scu_sell_avg": 1000, "status_buy": 0, "status_sell": 7, "quality": 0, "date_modified": 1792355842, "commodity_name": "Agricultural Supplies", "terminal_name": "Admin - ARC-L2"}
- ]
+  "status": "ok",
+  "http_code": 200,
+  "data": [
+    {
+      "id": 9003,
+      "id_commodity": 1,
+      "id_terminal": 2,
+      "price_buy": 350,
+      "price_sell": 0,
+      "scu_buy_avg": 0,
+      "scu_sell_avg": 1000,
+      "status_buy": 1,
+      "status_sell": 0,
+      "quality": 0,
+      "date_modified": 1792355842,
+      "commodity_name": "Agricium",
+      "terminal_name": "Admin - ARC-L2"
+    },
+    {
+      "id": 9004,
+      "id_commodity": 3,
+      "id_terminal": 2,
+      "price_buy": 300,
+      "price_sell": 0,
+      "scu_buy_avg": 0,
+      "scu_sell_avg": 1000,
+      "status_buy": 1,
+      "status_sell": 0,
+      "quality": 0,
+      "date_modified": 1792355842,
+      "commodity_name": "Agricultural Supplies",
+      "terminal_name": "Admin - ARC-L2"
+    }
+  ]
 }

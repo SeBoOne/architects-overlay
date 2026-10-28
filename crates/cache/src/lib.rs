@@ -148,9 +148,14 @@ CREATE TABLE IF NOT EXISTS terminal_prices (
   sell_status  INTEGER NOT NULL DEFAULT 0,
   quality      INTEGER NOT NULL DEFAULT 0,
   source       TEXT    NOT NULL DEFAULT 'uex',
+  -- v10: data kind of the row — 'commodity' (the terminal's commodity trade
+  -- table) or 'item' (the /items_prices merge for the shop view). Route
+  -- data reads ONLY 'commodity' rows; items live in a different id space
+  -- (id_item vs id_commodity) and must never enter the alternatives table.
+  kind         TEXT    NOT NULL DEFAULT 'commodity',
   updated      INTEGER NOT NULL,
   fetched_at   INTEGER NOT NULL,
-  PRIMARY KEY (id_terminal, id_commodity)
+  PRIMARY KEY (id_terminal, id_commodity, kind)
 );
 -- Item price table (feedback fix Punkt 8): buy/sell prices for ONE item
 -- across all terminals that sell it, fetched on demand per item and cached
@@ -540,7 +545,7 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   commodity-seitiger Cargo-Handel und bleibt nur fürs Route-Recording).
 ///   Rein additiv — `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten
 ///   betroffen.
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -605,6 +610,53 @@ fn migrate_source_columns(conn: &Connection) -> Result<()> {
             [],
         )
         .map_err(|e| CacheError::Open(format!("migration hangar.source: {e}")))?;
+    }
+    // v10: `terminal_prices.kind` + einmaliger Bestands-Purge. Vor v10 hat
+    // der Terminal-Sweep die /items_prices-Zeilen (id_item-ID-RAUM!) in
+    // dieselbe Tabelle gemischt — ein Item mit zufällig gleicher id wie eine
+    // Ware hat deren Preiszeile sogar ÜBERSCHRIEBEN (gleicher PK) und landet
+    // als Geist in der Alternativ-Tabelle. Legacy-Zeilen sind nicht
+    // kind-sauber zu trennen → einmalig leeren + Frische-Marker löschen; der
+    // nächste Sweep baut die Tabelle sauber (je Kind Snapshot) auf (v3-
+    // Purge-Präzedenz).
+    let tp_has_kind = conn
+        .prepare("SELECT 1 FROM pragma_table_info('terminal_prices') WHERE name = 'kind'")
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
+        .exists([])
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?;
+    if !tp_has_kind {
+        // ALTER allein genügt NICHT: der alte PRIMARY KEY (id_terminal,
+        // id_commodity) liess Item- und Ware-Zeile desselben Terminals mit
+        // zufällig gleicher id ÜBEREINANDER schreiben. v10 baut die Tabelle
+        // daher komplett neu auf (Bestand wird ohnehin verworfen — der
+        // nächste Sweep füllt sie je Kind als Snapshot).
+        conn.execute("DROP TABLE terminal_prices", [])
+            .map_err(|e| CacheError::Open(format!("v10 terminal_prices drop: {e}")))?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS terminal_prices (
+                id_terminal  INTEGER NOT NULL,
+                id_commodity INTEGER NOT NULL,
+                commodity    TEXT    NOT NULL,
+                buy_price    REAL    NOT NULL DEFAULT 0,
+                sell_price   REAL    NOT NULL DEFAULT 0,
+                buy_stock    REAL    NOT NULL DEFAULT 0,
+                sell_stock   REAL    NOT NULL DEFAULT 0,
+                buy_status   INTEGER NOT NULL DEFAULT 0,
+                sell_status  INTEGER NOT NULL DEFAULT 0,
+                quality      INTEGER NOT NULL DEFAULT 0,
+                source       TEXT    NOT NULL DEFAULT 'uex',
+                kind         TEXT    NOT NULL DEFAULT 'commodity',
+                updated      INTEGER NOT NULL,
+                fetched_at   INTEGER NOT NULL,
+                PRIMARY KEY (id_terminal, id_commodity, kind)
+            );",
+        )
+        .map_err(|e| CacheError::Open(format!("v10 terminal_prices recreate: {e}")))?;
+        conn.execute(
+            "DELETE FROM meta WHERE key LIKE 'fetched_at:terminal_prices:%'",
+            [],
+        )
+        .map_err(|e| CacheError::Open(format!("v10 terminal_prices purge (meta): {e}")))?;
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;
@@ -1200,44 +1252,61 @@ impl Cache {
         })
     }
 
-    /// Upsert one terminal's price table (key = terminal × commodity) and
-    /// mark it fetched. Empty tables are allowed (a terminal trading nothing
-    /// cached as "checked, nothing there"), so the next open does not refetch
-    /// within the TTL window.
-    pub fn store_terminal_prices(&self, terminal_id: u64, points: &[PricePoint]) -> Result<()> {
+    /// Price snapshot of ONE terminal for ONE data kind. v10: die Tabelle ist
+    /// je Kind ein VOLLSTÄNDIGER Snapshot der UEX-Antwort (`/commodities_prices`
+    /// → 'commodity', `/items_prices` → 'item'): Zeilen, die in der Antwort
+    /// NICHT mehr auftauchen (die Ware wird nicht mehr geführt), werden
+    /// GELÖSCHT statt als verwaiste Geister stehen zu bleiben — der bisherige
+    /// reine Upsert hat entfernte Waren für immer in der Alternativ-Tabelle
+    /// behalten. `kind` trennt zusätzlich die beiden ID-RÄUME (id_commodity vs
+    /// id_item) — ein Item mit zufällig gleicher id darf nie in den Routen-
+    /// Datensatz geraten.
+    pub fn store_terminal_prices(
+        &self,
+        terminal_id: u64,
+        points: &[PricePoint],
+        kind: &str,
+    ) -> Result<()> {
         self.with(|conn| {
             let tx = conn.transaction()?;
+            // Snapshot-Semantik: alles Weglassen, was in der Antwort fehlt —
+            // auch bei leerer Antwort (das Terminal führt nichts mehr). Der
+            // Frische-Marker verhindert danach eine Refetch-Schleife.
+            tx.execute(
+                "DELETE FROM terminal_prices WHERE id_terminal = ?1 AND kind = ?2",
+                rusqlite::params![terminal_id as i64, kind],
+            )?;
             if points.is_empty() {
-                // No rows to upsert — still record that this terminal was
-                // CHECKED now; an empty result must not trigger a refetch
-                // loop while the marker is fresh.
                 tx.execute(
                     "INSERT INTO meta (key, value) VALUES (?1, ?2)
                      ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                    (terminal_prices_meta_key(terminal_id), now_unix().to_string()),
+                    (
+                        terminal_prices_meta_key(terminal_id),
+                        now_unix().to_string(),
+                    ),
                 )?;
                 return tx.commit();
+            }
+            // Dedupe im Snapshot (last-wins): UEX kann dieselbe Ware/dasselbe
+            // Item mehrfach liefern (Null-Messung + echte Messung) — sonst
+            // UNIQUE-Kollision auf (id_terminal, id_commodity, kind).
+            let mut deduped: Vec<&PricePoint> = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for p in points.iter().rev() {
+                if seen.insert(p.commodity_id) {
+                    deduped.push(p);
+                }
             }
             {
                 let mut stmt = tx.prepare(
                     "INSERT INTO terminal_prices (id_terminal, id_commodity, commodity,
                                                   buy_price, sell_price, buy_stock, sell_stock,
-                                                  buy_status, sell_status, quality, updated, fetched_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
-                     ON CONFLICT(id_terminal, id_commodity) DO UPDATE SET
-                       commodity = excluded.commodity,
-                       buy_price = excluded.buy_price,
-                       sell_price = excluded.sell_price,
-                       buy_stock = excluded.buy_stock,
-                       sell_stock = excluded.sell_stock,
-                       buy_status = excluded.buy_status,
-                       sell_status = excluded.sell_status,
-                       quality = excluded.quality,
-                       updated = excluded.updated,
-                       fetched_at = excluded.fetched_at",
+                                                  buy_status, sell_status, quality, updated, kind,
+                                                  fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 )?;
                 let now = now_unix() as i64;
-                for p in points {
+                for p in deduped {
                     stmt.execute(rusqlite::params![
                         terminal_id as i64,
                         p.commodity_id as i64,
@@ -1250,6 +1319,7 @@ impl Cache {
                         p.sell_status as i64,
                         p.quality as i64,
                         p.updated as i64,
+                        kind,
                         now
                     ])?;
                 }
@@ -1257,7 +1327,10 @@ impl Cache {
             tx.execute(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (terminal_prices_meta_key(terminal_id), now_unix().to_string()),
+                (
+                    terminal_prices_meta_key(terminal_id),
+                    now_unix().to_string(),
+                ),
             )?;
             tx.commit()
         })
@@ -1759,12 +1832,14 @@ impl Cache {
     /// ALLE Terminal-Preiszeilen (id_terminal + Punkt) — die Basis des
     /// Routen-Sweeps: der Sweep füllt `terminal_prices` über alle
     /// Commodity-Terminals, der Routen-Compute liest die Gesamtheit.
+    /// v10: NUR 'commodity'-Zeilen — die /items_prices-Merge-Zeilen
+    /// ('item', eigener ID-Raum) dürfen nie in den Routen-Datensatz.
     pub fn terminal_price_rows_all(&self) -> Result<Vec<(u64, Vec<PricePoint>)>> {
         self.with(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT id_terminal, commodity, id_commodity, buy_price, sell_price,
                         buy_stock, sell_stock, buy_status, sell_status, quality, updated
-                 FROM terminal_prices ORDER BY id_terminal, commodity",
+                 FROM terminal_prices WHERE kind = 'commodity' ORDER BY id_terminal, commodity",
             )?;
             let mut out: Vec<(u64, Vec<PricePoint>)> = Vec::new();
             let rows = stmt.query_map([], |row| {
@@ -2650,27 +2725,35 @@ mod tests {
         };
         assert!(!cache.terminal_prices_fresh(436).unwrap());
         cache
-            .store_terminal_prices(436, &[p(3, 1108.0, 0.0), p(27, 1427.0, 0.0)])
+            .store_terminal_prices(436, &[p(3, 1108.0, 0.0), p(27, 1427.0, 0.0)], "commodity")
             .unwrap();
         assert!(cache.terminal_prices_fresh(436).unwrap());
         let rows = cache.terminal_prices_for(436).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|r| r.terminal_id == 436));
 
-        // upsert replaces in place, per-terminal isolation
+        // Snapshot-Semantik: Ware 27 taucht in der zweiten Antwort nicht mehr
+        // auf → GELÖSCHT (früher: verwaiste Geisterzeile in der Alternativ-
+        // Tabelle), Ware 3 wird durch den neuen Preis ersetzt.
         cache
-            .store_terminal_prices(436, &[p(3, 1200.0, 0.0)])
+            .store_terminal_prices(436, &[p(3, 1200.0, 0.0)], "commodity")
             .unwrap();
         let rows = cache.terminal_prices_for(436).unwrap();
-        assert_eq!(rows.len(), 2, "upsert must not duplicate rows");
+        assert_eq!(
+            rows.len(),
+            1,
+            "snapshot must delete rows missing from the answer"
+        );
         assert_eq!(
             rows.iter().find(|r| r.commodity_id == 3).unwrap().buy_price,
             1200.0
         );
-        cache.store_terminal_prices(435, &[p(1, 9.0, 0.0)]).unwrap();
+        cache
+            .store_terminal_prices(435, &[p(1, 9.0, 0.0)], "commodity")
+            .unwrap();
         assert!(cache.terminal_prices_fresh(435).unwrap());
         assert_eq!(cache.terminal_prices_for(435).unwrap().len(), 1);
-        assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 2);
+        assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 1);
 
         // an empty fetch must still mark the terminal as checked
         cache
@@ -2685,7 +2768,7 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        cache.store_terminal_prices(428, &[]).unwrap();
+        cache.store_terminal_prices(428, &[], "commodity").unwrap();
         assert!(cache.terminal_prices_fresh(428).unwrap());
         assert!(cache.terminal_prices_for(428).unwrap().is_empty());
 
@@ -2737,11 +2820,69 @@ mod tests {
                     quality: 0,
                     updated: 1_700_000_000,
                 }],
+                "commodity",
             )
             .unwrap();
         assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 1);
         let _ = path;
         drop(dir);
+    }
+
+    #[test]
+    fn terminal_prices_kind_isolation() {
+        // Bug t_15e598e7 (Verdaechtiger 1 + 4): /items_prices-Zeilen leben im
+        // ID-RAUM id_item — sie duerfen nie als Ware in den Routen-Datensatz
+        // (terminal_price_rows_all) geraten, auch nicht bei id-Kollision.
+        let cache = Cache::open_in_memory().unwrap();
+        let point = |c: u64, name: &str, buy: f64, sell: f64| PricePoint {
+            commodity: name.into(),
+            commodity_id: c,
+            terminal_id: 436,
+            location: String::new(),
+            sell_price: sell,
+            buy_price: buy,
+            sell_stock: 5.0,
+            buy_stock: 0.0,
+            sell_status: if sell > 0.0 { 1 } else { 0 },
+            buy_status: if buy > 0.0 { 1 } else { 0 },
+            quality: 0,
+            updated: 1_700_000_000,
+        };
+        // Item mit id 33 (== Gold-Commodity-id) und eine echte Ware id 27.
+        cache
+            .store_terminal_prices(
+                436,
+                &[
+                    point(33, "Gold", 24_000.0, 0.0),
+                    point(27, "Laranite", 0.0, 30_000.0),
+                ],
+                "commodity",
+            )
+            .unwrap();
+        cache
+            .store_terminal_prices(
+                436,
+                &[
+                    point(33, "Gold-Item-Plakette", 8631.0, 0.0), // ID-KOLLISION
+                    point(7, "Hydro-Sproetchen", 120.0, 0.0),
+                ],
+                "item",
+            )
+            .unwrap();
+        // Items in der Shop-Ansicht vorhanden…
+        assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 4);
+        // …aber der Routen-Datensatz sieht NUR Commodities.
+        let rows = cache.terminal_price_rows_all().unwrap();
+        let all: Vec<_> = rows.iter().flat_map(|(_, pts)| pts.iter()).collect();
+        assert_eq!(all.len(), 2, "item rows must never enter the route dataset");
+        assert!(
+            all.iter()
+                .all(|p| p.commodity_id == 33 || p.commodity_id == 27)
+        );
+        // Item-Snapshot (leer) loescht Item-Zeilen, ruehrt Commodities nicht.
+        cache.store_terminal_prices(436, &[], "item").unwrap();
+        assert_eq!(cache.terminal_prices_for(436).unwrap().len(), 2);
+        assert!(cache.terminal_prices_fresh(436).unwrap());
     }
 
     #[test]

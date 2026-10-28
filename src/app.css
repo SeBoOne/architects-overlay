@@ -1457,6 +1457,20 @@ html[data-window="spotlight"] .shell {
   padding: 2px 5px;
   white-space: nowrap;
 }
+/* t_15e598e7: Preisstand-Chip in der Alternativ-Tabelle — Zeilen mit
+   > 7 Tage altem UEX-Preisstand in Warnfarbe (Alters-Chip, Anforderung
+   "verwaiste/zu alte Zeilen markiert"). */
+.r-chip-age {
+  color: var(--fgdim);
+  border: 1px solid var(--lineb);
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+}
+.r-chip-age.stale {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+}
 
 /* RB2 (t_9b42249a): Route mit Budget, aber Menge 0 (Budget reicht nicht für
    1 SCU) — ausgegraut, mit dezentem Hinweis statt Profit. */

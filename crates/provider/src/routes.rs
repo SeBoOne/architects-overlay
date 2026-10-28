@@ -272,6 +272,10 @@ pub struct RouteLocation {
     pub stock: f64,
     /// Lager-Nachfrage 0..=7 (kauf: buy_status, verkauf: sell_status).
     pub status: u8,
+    /// Preisstand dieser Zeile (UEX `date_modified`, Unix-Sekunden). 0 =
+    /// unbekannt. Das Frontend zeigt einen Alters-Chip für alte Zeilen
+    /// (Bug t_15e598e7: verwaiste/veraltete Zeilen ohne Kennzeichnung).
+    pub updated: u64,
     pub autoload: bool,
     pub cargo_deck: bool,
     pub ground: bool,
@@ -319,6 +323,7 @@ pub fn route_commodity_locations(
         price: if buy { r.buy_price } else { r.sell_price },
         stock: r.sell_stock,
         status: if buy { r.buy_status } else { r.sell_status },
+        updated: r.updated,
         autoload: terminal_flags
             .get(&r.terminal_id)
             .unwrap_or(&empty)
@@ -339,17 +344,38 @@ pub fn route_commodity_locations(
         return None;
     }
 
-    let buys: Vec<RouteLocation> = rows
-        .iter()
-        .filter(|r| r.commodity_id == commodity_id && r.buy_price > 0.0)
+    // Dedupe pro Terminal (der Sweep kann mehrere Zeilen je Ware liefern):
+    // bester KAUF = niedrigster buy_price, bester VERKAUF = höchster
+    // sell_price je Terminal.
+    let best_per_terminal = |key: fn(&RoutePriceRow) -> f64,
+                             maximize: bool|
+     -> std::collections::HashMap<u64, &RoutePriceRow> {
+        let mut acc: std::collections::HashMap<u64, &RoutePriceRow> =
+            std::collections::HashMap::new();
+        for r in rows.iter().filter(|r| r.commodity_id == commodity_id) {
+            acc.entry(r.terminal_id)
+                .and_modify(|best| {
+                    let better = if maximize {
+                        key(r) > key(best)
+                    } else {
+                        key(r) < key(best)
+                    };
+                    if better {
+                        *best = r;
+                    }
+                })
+                .or_insert(r);
+        }
+        acc
+    };
+    let buys: Vec<RouteLocation> = best_per_terminal(|r| r.buy_price, false)
+        .into_values()
+        .filter(|r| r.buy_price > 0.0)
         .map(|r| row_at(r, true))
-        // aggregiere pro Terminal: der Eintrag mit dem niedrigsten Preis
-        // (ein Terminal kann mehrmals vorkommen, wenn der Sweep mehrere
-        // Zeilen je Ware lieferte — Rohzeile ist 1:1 Terminal×Ware).
         .collect();
-    let sells: Vec<RouteLocation> = rows
-        .iter()
-        .filter(|r| r.commodity_id == commodity_id && r.sell_price > 0.0)
+    let sells: Vec<RouteLocation> = best_per_terminal(|r| r.sell_price, true)
+        .into_values()
+        .filter(|r| r.sell_price > 0.0)
         .map(|r| row_at(r, false))
         .collect();
 
