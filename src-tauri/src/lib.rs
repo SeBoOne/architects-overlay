@@ -58,6 +58,7 @@ pub fn run() {
             trade::marketplace_confirm_mode,
             trade::open_marketplace_listing,
             trade::open_marketplace_trades,
+            trade::open_created_listing,
             inventory::inventory_list,
             inventory::inventory_locations,
             inventory::inventory_add,

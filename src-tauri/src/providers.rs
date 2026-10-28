@@ -414,7 +414,7 @@ impl DataProvider for CompositeProvider {
     async fn advertise_offer(
         &self,
         payload: provider::AdvertisePayload,
-    ) -> Result<provider::Offer> {
+    ) -> Result<provider::AdvertiseResult> {
         // Write-Layer (M2b): Anlegen ist UEX-user-scoped (secret-key),
         // source-unabhängig immer über den UEX-Client. Kein Edit.
         self.uex.advertise_offer(payload).await

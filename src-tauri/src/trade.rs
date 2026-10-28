@@ -944,6 +944,22 @@ fn listing_deep_link(slug: &str) -> String {
     }
 }
 
+/// M2b-Review-Fix (t_6e26ec82 R2): öffnet den Permalink eines frisch
+/// ANGELEGTEN Listings (Create-Antwort liefert eine volle URL, kein Slug).
+/// Nur vertrauenswürdige uexcorp.space-URLs werden geöffnet — kein externes
+/// Öffnen beliebiger URLs. Grundlage: `POST /marketplace_advertise/` antwortet
+/// mit `{id, url}` (nicht mit der vollständigen ListingRow).
+#[tauri::command]
+pub fn open_created_listing(_app: AppHandle, url: String) -> Result<String, String> {
+    let url = url.trim().to_string();
+    if !url.starts_with("https://uexcorp.space/") {
+        return Err("Nur uexcorp.space-Links werden geöffnet.".into());
+    }
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(url)
+}
+
 // ---------------------------------------------------------------------------
 // M2b — Write-Layer: Anlegen + Abmelden (2-Schritt-Bestätigung, kein Edit,
 // Rate-Limit-Gate, kein Retry-Spam; Fehlerpfad: Meldung + Deep-Link-Button).
@@ -965,17 +981,17 @@ fn listing_deep_link(slug: &str) -> String {
 async fn advertise_offer_cmd(
     state: &State<'_, TradeState>,
     payload: provider::AdvertisePayload,
-) -> Result<provider::Offer, String> {
+) -> Result<provider::AdvertiseResult, String> {
     let now = now_unix();
     state.write_gate.try_acquire(now)?;
-    let offer = state
+    let res = state
         .provider
         .advertise_offer(payload)
         .await
         .map_err(friendly)?;
     // Nur erfolgreiche Writes registrieren (Fehler belegen das Fenster nicht).
     state.write_gate.record_write(now);
-    Ok(offer)
+    Ok(res)
 }
 
 /// Tauri-Command: Anlegen (M2b). Validierung der Pflichtfelder liegt im
@@ -984,7 +1000,7 @@ async fn advertise_offer_cmd(
 pub async fn marketplace_advertise(
     state: State<'_, TradeState>,
     payload: provider::AdvertisePayload,
-) -> Result<provider::Offer, String> {
+) -> Result<provider::AdvertiseResult, String> {
     advertise_offer_cmd(&state, payload).await
 }
 
@@ -2499,29 +2515,13 @@ mod tests {
         async fn advertise_offer(
             &self,
             _p: provider::AdvertisePayload,
-        ) -> provider::Result<provider::Offer> {
+        ) -> provider::Result<provider::AdvertiseResult> {
             let _ = self
                 .advertise_calls
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(provider::Offer {
+            Ok(provider::AdvertiseResult {
                 id: 9001,
-                title: "Neu Angelegt".into(),
-                description: String::new(),
-                item_id: 0,
-                category_id: 0,
-                operation: MarketOperation::Sell,
-                listing_type: ListingType::Item,
-                price: 999.0,
-                currency: "UEC".into(),
-                unit: "unit".into(),
-                quantity: 1,
-                location: "Lorville".into(),
-                region: "Stanton".into(),
-                seller: "sebo_one".into(),
-                quality: 0,
-                updated: 1,
-                expires: None,
-                slug: "neu-angelegt".into(),
+                url: "https://uexcorp.space/marketplace/item/info/neu-angelegt".into(),
             })
         }
         async fn delete_offer(&self, _id: u64) -> provider::Result<()> {
