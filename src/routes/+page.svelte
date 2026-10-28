@@ -116,21 +116,31 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 	};
 
-	// M2a (Read-Phase): „Mein Shop" — eigene Offers + letzte Trades.
-	// Mirrors provider::Trade (seam-DTO) + IPC-Responses.
-	type Trade = {
+	// M2a (Read-Phase): „Mein Shop" — eigene Offers + Marktplatz-Deals.
+	// t_350c4300 B2: die Trade-Quelle sind die MARKETPLACE-Negotiations
+	// (`/marketplace_negotiations` — Listing-Verhandlungen/-Abschlüsse des
+	// Accounts als Anbieter ODER Kunde). Der frühere /user_trades-Commodity-
+	// Verlauf (Agricium etc.) ist Cargo-Handel und gehört hier NICHT hin.
+	// Mirrors provider::Negotiation (seam-DTO) + IPC-Response.
+	type Negotiation = {
 		id: number;
-		terminal_id: number;
-		commodity_id: number;
-		operation: MarketOp;
-		scu: number;
+		listing_id: number;
+		hash: string;
 		price: number;
+		unit: string;
+		currency: string;
+		deal_value: number | null;
+		deal_value_currency: string;
+		listing_title: string;
+		listing_slug: string;
+		advertiser_name: string;
+		advertiser_username: string;
+		client_name: string;
+		client_username: string;
+		is_listing_advertiser: boolean;
 		date_added: number;
-		commodity: string;
-		terminal: string;
-		vehicle: string | null;
-		fleet_name: string | null;
-		organization: string | null;
+		date_modified: number;
+		date_closed: number | null;
 	};
 	type OwnOffersResponse = {
 		source: 'cache' | 'live' | 'offline';
@@ -139,10 +149,10 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 		key_set: boolean;
 	};
-	type TradesResponse = {
+	type NegotiationsResponse = {
 		source: 'cache' | 'live' | 'offline';
 		fetched_at: number;
-		trades: Trade[];
+		negotiations: Negotiation[];
 		note: string | null;
 		key_set: boolean;
 	};
@@ -1160,10 +1170,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (mSel > top || (visOffers.length === 0 && mSel !== 0)) mSel = top;
 	});
 
-	// ---- Mein Shop (M2a, Read-Phase): eigene Offers + letzte 5 Trades -----
+	// ---- Mein Shop (M2a, Read-Phase): eigene Offers + Marktplatz-Deals -----
 	let shopUser = $state(loadShopUser());
 	let myOffers = $state<Offer[]>([]);
-	let myTrades = $state<Trade[]>([]);
+	let myNegotiations = $state<Negotiation[]>([]);
 	let shopLoading = $state(false);
 	let shopSource = $state<'cache' | 'live' | 'offline'>('live');
 	let shopNote = $state<string | null>(null);
@@ -1194,7 +1204,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			shopErr = null;
 			shopNote = null;
 			myOffers = [];
-			myTrades = [];
+			myNegotiations = [];
 			return;
 		}
 		shopLoading = !bg;
@@ -1206,10 +1216,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (!bg) shopCreatedUrl = null;
 		// Eigene Offers brauchen den username-Filter; ohne key kein Abschnitt.
 		// Beide Reads parallel — unabhängig voneinander, ein Fehler reißt den
-		// anderen nicht mit.
+		// anderen nicht mit. t_350c4300 B2: der zweite Read ist die
+		// MARKTPLATZ-Quelle get_my_negotiations (nicht mehr get_my_trades —
+		// der /user_trades-Commodity-Verlauf zeigt hier die falschen Daten).
 		const results = await Promise.allSettled([
 			invoke<OwnOffersResponse>('get_my_offers', { username: shopUser.trim() }),
-			invoke<TradesResponse>('get_my_trades')
+			invoke<NegotiationsResponse>('get_my_negotiations')
 		]);
 		shopLoading = false;
 
@@ -1224,10 +1236,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			myOffers = [];
 			shopErr = String(results[0].reason);
 		}
-		// Trades (unabhängig vom Offers-Ergebnis)
+		// Marktplatz-Deals (unabhängig vom Offers-Ergebnis)
 		if (results[1].status === 'fulfilled') {
 			const r = results[1].value;
-			myTrades = r.trades;
+			myNegotiations = r.negotiations;
 			shopKeySet = shopKeySet || r.key_set;
 			if (r.note && !shopNote) shopNote = r.note;
 		} else if (!shopErr) {
@@ -1246,11 +1258,28 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (o.expires <= Math.floor(Date.now() / 1000)) return 'abgelaufen';
 		return 'läuft ab ' + new Date(o.expires * 1000).toLocaleDateString('de-DE');
 	}
-	// Letzte 5 Trades (neueste zuerst) — die letzten-5-Logik liegt laut
-	// Entscheidung in der UI; der Cache liefert den vollen Verlauf.
-	const recentTrades = $derived(
-		[...myTrades].sort((a, b) => b.date_added - a.date_added).slice(0, 5)
+	// Letzte 5 Marktplatz-Trades (neueste zuerst, t_350c4300 B2) — Aktivität
+	// nach date_modified (letzte Interaktion, inkl. Abschluss), Fallback auf
+	// date_added. Die letzten-5-Logik liegt laut Entscheidung in der UI; der
+	// Cache liefert den vollen Verlauf.
+	const recentNegotiations = $derived(
+		[...myNegotiations]
+			.sort((a, b) => (b.date_modified || b.date_added) - (a.date_modified || a.date_added))
+			.slice(0, 5)
 	);
+	// Status-Zeile eines Deals (Marktplatz-Bezug statt Commodity-Trace):
+	// abgeschlossen = deal_value + date_closed, sonst laufende Verhandlung.
+	function dealStatus(n: Negotiation): string {
+		if (n.date_closed) {
+			const dv = n.deal_value ? ' · ' + fmtPrice(n.deal_value) + ' ' + (n.deal_value_currency || n.currency || '') : '';
+			return 'abgeschlossen' + dv;
+		}
+		return 'in Verhandlung · seit ' + new Date((n.date_added || 0) * 1000).toLocaleDateString('de-DE');
+	}
+	// Rolle des eigenen Accounts in diesem Deal (m-op-Anzeige).
+	function dealRole(n: Negotiation): 'sell' | 'buy' {
+		return n.is_listing_advertiser ? 'sell' : 'buy';
+	}
 	async function openListingDeepLink(slug: string | null) {
 		try {
 			// Leerer Slug → Marketplace-Startseite (Backend-Doku). Kein iframe —
@@ -1262,6 +1291,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	async function openMyShopDeepLink() {
 		try {
+			// t_350c4300 B3: Ziel ist der Manager-Listings-Tab
+			// (https://uexcorp.space/marketplace/manage/tab/listings/) — dort
+			// verwaltet der Nutzer seine Listings (und sieht die Deals dazu).
+			// Login macht er selbst im Browser.
 			await invoke<string>('open_marketplace_trades');
 		} catch (e) {
 			shopErr = String(e);
@@ -3406,8 +3439,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			{#if !offerDetail}
 				<div class="mtabs" role="tablist">
 					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
-					<button type="button" role="tab" aria-selected={mTab === 'routes'} class="chip" class:is-on={mTab === 'routes'} onclick={() => (mTab = 'routes')}>Handelsrouten</button>
-				<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
+					<!-- t_350c4300 B1: kein „Handelsrouten"-Tab im Marktplatz — Routen
+					     sind nur noch über das Navigationsband (Rail) bzw. F6
+					     erreichbar (setMode('routes') → mTab='routes' bleibt der
+					     interne Mechanismus). -->
+					<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
 				</div>
 			{/if}
 			{#if offerDetail}
@@ -3696,7 +3732,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="pane-error" style="margin: 10px 0">
 							<div class="center">
 								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
-								<div class="sm">Eigene Offers + Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
+								<div class="sm">Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
 								<span class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</span>
 							</div>
 						</div>
@@ -3708,7 +3744,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="pane-error" style="margin: 10px 0">
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Secret-Key fehlt oder ist falsch — siehe Einstellungen</div>
-								<div class="sm">User-scoped Reads (eigene Offers, Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
+								<div class="sm">User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
 								<button type="button" class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</button>
 							</div>
 						</div>
@@ -3716,9 +3752,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="center">
 							<span class="spin"></span>
 							<div class="big" style="margin-top: 12px">Lade Mein Shop …</div>
-							<div class="sm">Eigene Offers + letzte Trades vom UEX-Client.</div>
+							<div class="sm">Eigene Offers + Marktplatz-Trades vom UEX-Client.</div>
 						</div>
-					{:else if shopErr && !myOffers.length && !myTrades.length}
+					{:else if shopErr && !myOffers.length && !myNegotiations.length}
 						<div class="pane-error">
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
@@ -3843,44 +3879,46 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{/if}
 						<div class="mbar2" style="margin-top: 14px">
-							<span class="m-lbl">Letzte 5 Trades</span>
+							<span class="m-lbl">Letzte 5 Marktplatz-Trades</span>
 							<span class="m-spacer"></span>
-							<span class="chip" title="Trade-Verlauf auf uexcorp.space öffnen" onclick={openMyShopDeepLink}>Verlauf im Browser ↗</span>
+							<!-- t_350c4300 B3: alle „Listings verwalten"-Buttons öffnen exakt
+							     den Manager-Listings-Tab (Backend open_marketplace_trades);
+							     Login macht der Nutzer selbst im Browser. -->
+							<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
 						</div>
-						{#if recentTrades.length}
+						{#if recentNegotiations.length}
 							<div class="mlist">
-								{#each recentTrades as t (t.id)}
+								{#each recentNegotiations as n (n.id)}
 									<div
 										class="mrow"
 										role="option"
-										title="Trade-Verlauf auf uexcorp.space öffnen"
-										onclick={openMyShopDeepLink}
+										title="Marktplatz-Deal auf uexcorp.space öffnen (Listing-Seite)"
+										onclick={() => void openListingDeepLink(n.listing_slug)}
 									>
-										<div class="m-op {t.operation}">{t.operation === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? 'Verkauf' : 'Kauf'}</div>
 										<div class="m-main">
-											<div class="m-title">{t.commodity}</div>
+											<div class="m-title">{n.listing_title}</div>
 											<div class="m-sub">
-												{t.terminal}
-												{t.vehicle ? ' · ' + t.vehicle : ''}
-												{t.fleet_name ? ` · Flotte „${t.fleet_name}“` : ''}
-												{t.organization ? ` · ${t.organization}` : ''}
+												{n.is_listing_advertiser
+													? `Gegenüber ${n.client_username || n.client_name || '—'} (Käufer)`
+													: `Gegenüber ${n.advertiser_username || n.advertiser_name || '—'} (Anbieter)`}
 											</div>
 										</div>
 										<div class="m-right">
-											<div class="m-price {t.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(t.price)} <span class="m-meta">/SCU</span></div>
-											<div class="m-meta">{fmtQty(t.scu)} SCU · {new Date(t.date_added * 1000).toLocaleDateString('de-DE')}</div>
+											<div class="m-price {dealRole(n)}">{fmtPrice(n.deal_value ?? n.price)} <span class="m-meta">/{n.unit || 'unit'}</span></div>
+											<div class="m-meta">{dealStatus(n)}</div>
 										</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>Zeige {recentTrades.length} von {myTrades.length} Trades · Einzeltrade-Deep-Link bei UEX nicht dokumentiert → Verlauf im Browser.</span>
+								<span>Zeige {recentNegotiations.length} von {myNegotiations.length} Marktplatz-Trades · Einzeldeal-Deep-Link bei UEX nicht dokumentiert → Listing-Seite im Browser.</span>
 								<span class="src">UEX Corp</span>
 							</div>
-												{:else}
-													<div class="row-empty" style="padding: 14px 16px">Noch keine Trades im Verlauf.</div>
-												{/if}
-											{/if}
+														{:else}
+															<div class="row-empty" style="padding: 14px 16px">Noch keine Marktplatz-Trades (Verhandlungen/Abschlüsse) im Verlauf.</div>
+														{/if}
+													{/if}
 											{#if confirmAction}
 						{@const ca = confirmAction}
 						<!-- 2-Schritt-Bestätigung (M2b): jede schreibende Aktion verlangt
