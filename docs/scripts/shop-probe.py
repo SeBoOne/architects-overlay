@@ -12,6 +12,9 @@ Belegt mit funktionalen DOM-Assertions (nicht nur Screenshots):
   S3 — Fehlerpfad: beide Reads schlagen fehl → „Mein Shop nicht erreichbar" +
        Fehlermeldung + „AUF UEXCORP.SPACE ÖFFNEN"; danach Offline-Fallback
        (Note + Offline-Snapshot-Chip, Daten bleiben sichtbar).
+  S5 — M2a-Fix (t_2f197d1c): API-Key gesetzt, aber KEIN persönlicher
+       Secret-Key → „Secret-Key fehlt oder ist falsch — siehe Einstellungen"
+       + Settings-Button, KEIN get_my_offers/get_my_trades-Request.
 
 Datenquelle: smoke-stub.js (JS-Mirror; die Rust-Seite ist durch cargo tests
 in src-tauri/trade.rs + crates/uex-client belegt). Screenshots nach docs/screens/.
@@ -256,6 +259,8 @@ async def main():
         # =====================================================================
         await navigate(
             "window.__stubState.uex_api_key_set = true;"
+            "window.__stubState.uex_secret_key_set = true;"
+            "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
             "window.__SHOP_OFFERS__ = " + SHOP_OFFERS + ";"
             "window.__SHOP_TRADES__ = " + SHOP_TRADES + ";"
         )
@@ -322,6 +327,7 @@ async def main():
         # Reads schlagen fehl → Fehlerpane statt leerem Abschnitt.
         await navigate(
             "window.__stubState.uex_api_key_set = true;"
+            "window.__stubState.uex_secret_key_set = true;"
             "window.__SHOP_OFFERS_FAIL__ = true;"
             "window.__SHOP_TRADES_FAIL__ = true;"
         )
@@ -387,6 +393,7 @@ async def main():
         # =====================================================================
         await navigate(
             "window.__stubState.uex_api_key_set = true;"
+            "window.__stubState.uex_secret_key_set = true;"
             "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
             "window.__SHOP_OFFERS__=[];"
             "window.__SHOP_TRADES__=[];"
@@ -407,6 +414,50 @@ async def main():
         offers_empty = await js(has_text_expr(".row-empty", "Keine eigenen Offers"))
         check("s4-empty-offers-state", offers_empty is True)
         await shot("shop-s4-empty-history.png")
+
+        # =====================================================================
+        # S5 — M2a-Fix (t_2f197d1c): API-Key gesetzt, aber KEIN persönlicher
+        #      Secret-Key → klare deutsche Meldung + Settings-Button, KEIN
+        #      Request (get_my_offers/get_my_trades werden gar nicht gefeuert).
+        # =====================================================================
+        await navigate(
+            "window.__stubState.uex_api_key_set = true;"
+            "window.__stubState.uex_secret_key_set = false;"
+            "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
+            "window.__SHOP_OFFERS__=" + SHOP_OFFERS + ";"
+            "window.__SHOP_TRADES__=" + SHOP_TRADES + ";"
+            "window.__SHOP_OFFERS_FAIL__=false;"
+            "window.__SHOP_TRADES_FAIL__=false;"
+        )
+        await js("""(function(){
+            var orig = window.__TAURI_INTERNALS__.invoke;
+            window.__calls = window.__calls || [];
+            window.__TAURI_INTERNALS__.invoke = function(cmd,args){
+                window.__calls.push(cmd + ':' + JSON.stringify(args || {}));
+                return orig(cmd,args);
+            };
+        })()""")
+        await enter_market()
+        await click_chip("Mein Shop")
+        await asyncio.sleep(1.5)
+        sk_hint = await js(has_text_expr(".pane-error .big", "Secret-Key fehlt oder ist falsch"))
+        check("s5-secret-key-hint-shown", sk_hint is True)
+        # KEIN Mein-Shop-Read getriggert (Gate greift VOR den Requests).
+        sk_calls = json.loads(str(await js("JSON.stringify(window.__calls || [])")) or "[]")
+        shop_reads = [c for c in sk_calls if "get_my_offers" in c or "get_my_trades" in c]
+        check("s5-no-shop-request-without-secret-key", len(shop_reads) == 0, str(shop_reads[:3]))
+        await shot("shop-s5-secret-key-missing.png")
+        sk_btn = await js(
+            "(function(){var b=[...document.querySelectorAll('.pane-error .btn')].find(function(x){return (x.textContent||'').includes('Einstellungen');}); if(b){b.click(); return true;} return false;})()"
+        )
+        check("s5-secret-key-settings-link-clicked", sk_btn is True)
+        await asyncio.sleep(0.6)
+        # Config-Pane nach unten scrollen, damit die neue Secret-Key-/Username-
+        # Sektion vollständig im Beleg-Screenshot steht (F12-View ist höhen-
+        # fixiert; der Scope oben zeigte nur Überschrift + Beschreibung).
+        await js("(function(){var p=document.querySelector('.pane-config'); if(p) p.scrollTop = p.scrollHeight;})()")
+        await asyncio.sleep(0.5)
+        await shot("shop-s5-settings-secret-key-field.png")
 
         await call("Page.close")
 

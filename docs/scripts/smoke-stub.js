@@ -55,6 +55,11 @@ window.__SHOP_TRADES_NOTE__ = window.__SHOP_TRADES_NOTE__ || null;
 const stubState = {
 	palette: 'amber', detail_variant: 'c',
 	uex_api_key_set: false, commodity_source: 'wiki',
+	// M2a-Fix (t_2f197d1c): bool-only Secret-Key + Username — der Stub
+	// spiegelt beide wie den API-Key, damit die Probe den Gate (ohne
+	// Secret-Key → Meldung statt Request) fahren kann.
+	uex_secret_key_set: false,
+	uex_username: '',
 	// K2 (t_5fe8eb4c, P12): font/icon scale in % — mirrors Settings.scale in the
 	// Rust backend so the probe can A/B the scale live without a Tauri app.
 	scale: 100
@@ -87,6 +92,12 @@ window.__TAURI_INTERNALS__ = {
 				// commodity_source) — ohne Spiegel bliebe der Key-Status im
 				// Smoke-Harness permanent aus.
 				stubState.uex_api_key_set = a.key != null && String(a.key).trim() !== '';
+			case 'settings_set_uex_secret_key':
+				if (cmd === 'settings_set_uex_secret_key')
+					stubState.uex_secret_key_set = a.key != null && String(a.key).trim() !== '';
+			case 'settings_set_uex_username':
+				if (cmd === 'settings_set_uex_username')
+					stubState.uex_username = typeof a.name === 'string' && a.name.trim() !== '' ? a.name.trim() : '';
 			case 'settings_set_commodity_source':
 				if (cmd === 'settings_set_commodity_source') stubState.commodity_source = a.name || stubState.commodity_source;
 				return stubSettings();

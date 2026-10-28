@@ -208,6 +208,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		palette: string;
 		detail_variant: string;
 		uex_api_key_set: boolean;
+		// M2a-Fix (t_2f197d1c): bool-only (roher Key geht nie ans Frontend)
+		// + UEX-Benutzername für den marketplace_listings?username=-Pull.
+		uex_secret_key_set: boolean;
+		uex_username: string;
 		commodity_source: string;
 		// K2 (t_5fe8eb4c, P12): font/icon scale in % (Chips 80–125, backend 50–200).
 		scale: number;
@@ -226,6 +230,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let cfg = $state<SettingsSnapshot | null>(null);
 	let apiKeyInput = $state('');
 	let apiKeyNote = $state('');
+	// M2a-Fix (t_2f197d1c): zweites Credential + Username (F12-View).
+	let secretKeyInput = $state('');
+	let secretKeyNote = $state('');
+	let usernameInput = $state('');
+	let usernameNote = $state('');
 	// K6 (t_9b385831, P2): kurze Confirm-Zeile im Config-View nach Aktionen
 	// (Preisquelle umstellen) — analog K3 Notif-Timeout: verschwindet nach 3 s
 	// von selbst, damit die Wirkung sichtbar ist, ohne das View zuzumüllen.
@@ -755,6 +764,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_get');
 			applySettings(cfg);
+			// M2a-Fix (t_2f197d1c): Settings-Username ist die kanonische Quelle
+			// für den „Mein Shop"-Pull — localStorage nur als SSR-Fallback.
+			if (cfg?.uex_username && !shopUser.trim()) shopUser = cfg.uex_username.trim();
 		} catch {
 			// Ohne Tauri (SSR/vite-dev) → Palette bleibt am app.html-Default.
 		}
@@ -774,6 +786,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		dToast = '';
 		apiKeyInput = '';
 		apiKeyNote = '';
+		secretKeyInput = '';
+		secretKeyNote = '';
+		usernameInput = '';
+		usernameNote = '';
 		cancelShortcutCapture();
 		inConfig = true;
 		if (searchEl) searchEl.blur();
@@ -783,6 +799,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inConfig = false;
 		apiKeyInput = '';
 		apiKeyNote = '';
+		secretKeyInput = '';
+		secretKeyNote = '';
+		usernameInput = '';
+		usernameNote = '';
 		// Capture darf ein Schließen nicht überleben (kein Geister-Fenster-Modus).
 		cancelShortcutCapture();
 		cfgToast = '';
@@ -878,6 +898,50 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			apiKeyNote = 'API-Key entfernt.';
 		} catch (e) {
 			apiKeyNote = String(e);
+		}
+	}
+
+	// M2a-Fix (t_2f197d1c): zweites Credential + Username — dieselben Muster
+	// wie der App-Key (invoke, Suppression leerer Eingaben, Note beim Ergebnis).
+	async function saveSecretKey() {
+		const key = secretKeyInput.trim();
+		if (!key) return;
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key });
+			secretKeyInput = '';
+			secretKeyNote = 'Secret-Key gespeichert — wird NIE im Klartext angezeigt.';
+			if (!shopUser.trim() && cfg?.uex_username) shopUser = cfg.uex_username.trim();
+		} catch (e) {
+			secretKeyNote = String(e);
+		}
+	}
+
+	async function removeSecretKey() {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key: null });
+			secretKeyInput = '';
+			secretKeyNote = 'Secret-Key entfernt.';
+		} catch (e) {
+			secretKeyNote = String(e);
+		}
+	}
+
+	async function saveUsername() {
+		const name = usernameInput.trim();
+		if (!name) return;
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_username', { name });
+			usernameInput = '';
+			usernameNote = 'UEX-Username gespeichert — wird für den „Mein Shop“-Pull verwendet.';
+			// Kanonische Quelle (Settings) → Shop-Input synchron halten.
+			shopUser = name;
+			try {
+				localStorage.setItem(SHOP_USER_KEY, name);
+			} catch {
+				/* localStorage incomplete — In-Memory bleibt aktiv. */
+			}
+		} catch (e) {
+			usernameNote = String(e);
 		}
 	}
 
@@ -1096,8 +1160,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} catch {
 			/* localStorage incomplete — In-Memory bleibt aktiv. */
 		}
+		// M2a-Fix (t_2f197d1c): der Username lebt kanonisch in den Settings
+		// (F12) — der Shop-Input schreibt best-effort zurück, damit beide
+		// Sichten synchron bleiben. Kein await: UI darf hier nicht blockieren.
+		if (typeof invoke === 'function') {
+			invoke('settings_set_uex_username', { name: v.trim() || null }).catch(() => {});
+		}
 	}
 	async function loadShop(bg = false) {
+		// M2a-Fix (t_2f197d1c): ohne persönlichen Secret-Key KEINE Requests —
+		// UEX antwortet sonst nur 400 user_not_found/403 invalid_secret_key.
+		// Der Gate zeigt stattdessen die deutsche Meldung + Settings-Link
+		// (cfgs null = SSR/Probe ohne Backend → Verhalten wie bisher).
+		if (cfg && !cfg.uex_secret_key_set) {
+			shopLoading = false;
+			shopErr = null;
+			shopNote = null;
+			myOffers = [];
+			myTrades = [];
+			return;
+		}
 		shopLoading = !bg;
 		shopErr = null;
 		shopNote = null;
@@ -2953,11 +3035,64 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								Setzen
 							</button>
 							{#if cfg?.uex_api_key_set}
-								<button type="button" class="btn-ghost" onclick={removeApiKey}>Entfernen</button>
+							<button type="button" class="btn-ghost" onclick={removeApiKey}>Entfernen</button>
 							{/if}
 						</div>
 						{#if apiKeyNote}
 							<div class="cfg-note">{apiKeyNote}</div>
+						{/if}
+					</section>
+					<section class="cfg-sect">
+						<div class="h">UEX persönlicher Secret-Key · UEX-Username</div>
+						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
+							Für den eigenen Shop („Mein Shop“, user-scoped Reads) braucht UEX
+							zusätzlich deinen persönlichen Secret-Key (40 Zeichen, noch maskierter
+							als der App-Key) und den Usernamen, exakt wie auf uexcorp.space registriert.
+						</div>
+						<div class="cfg-key-status">
+							Secret-Key:
+							<b class:ok={cfg?.uex_secret_key_set} class:off={!cfg?.uex_secret_key_set}>
+								{cfg?.uex_secret_key_set ? 'gesetzt' : 'nicht gesetzt'}
+							</b>
+						</div>
+						<div class="cfg-key-row">
+							<input
+								type="password"
+								autocomplete="off"
+								placeholder="Secret-Key einfügen … (maskiert)"
+								bind:value={secretKeyInput}
+								onkeydown={(e) => e.stopPropagation()}
+							/>
+							<button type="button" class="btn" onclick={saveSecretKey} disabled={!secretKeyInput.trim()}>
+								Setzen
+							</button>
+							{#if cfg?.uex_secret_key_set}
+							<button type="button" class="btn-ghost" onclick={removeSecretKey}>Entfernen</button>
+							{/if}
+						</div>
+						{#if secretKeyNote}
+							<div class="cfg-note">{secretKeyNote}</div>
+						{/if}
+						<div class="cfg-key-status" style="margin-top: 10px">
+							UEX-Username:
+							<b class:ok={cfg?.uex_username?.trim()} class:off={!cfg?.uex_username?.trim()}>
+								{cfg?.uex_username?.trim() ? cfg.uex_username.trim() : 'nicht gesetzt'}
+							</b>
+						</div>
+						<div class="cfg-key-row">
+							<input
+								type="text"
+								autocomplete="off"
+								placeholder="z. B. sebo_one"
+								bind:value={usernameInput}
+								onkeydown={(e) => e.stopPropagation()}
+							/>
+							<button type="button" class="btn" onclick={saveUsername} disabled={!usernameInput.trim()}>
+								Setzen
+							</button>
+						</div>
+						{#if usernameNote}
+							<div class="cfg-note">{usernameNote}</div>
 						{/if}
 					</section>
 				</div>
@@ -3283,6 +3418,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
 								<div class="sm">Eigene Offers + Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
 								<span class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</span>
+							</div>
+						</div>
+					{:else if !cfg?.uex_secret_key_set}
+						<!-- M2a-Fix (t_2f197d1c): ohne persönlichen Secret-Key KEIN
+						     Request (UEX antwortet sonst nur 400 user_not_found /
+						     403 invalid_secret_key) — stattdessen klare deutsche
+						     Meldung + Settings-Verweis. -->
+						<div class="pane-error" style="margin: 10px 0">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">Secret-Key fehlt oder ist falsch — siehe Einstellungen</div>
+								<div class="sm">User-scoped Reads (eigene Offers, Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
+								<button type="button" class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</button>
 							</div>
 						</div>
 					{:else if shopLoading}
