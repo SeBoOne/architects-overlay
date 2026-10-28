@@ -2777,4 +2777,24 @@ mod tests {
             "type=item mit id_category muss validieren: {result:?}"
         );
     }
+
+    /// M3a-R1 (t_f2e70b16): fetch_listing_photo-Härtung — nur
+    /// https://cdn.uexcorp.space wird geladen (offline prüfbar, kein Netz).
+    #[tokio::test]
+    async fn fetch_listing_photo_rejects_non_cdn_and_http() {
+        let e = crate::fetch_listing_photo("https://evil.example.com/a-t.jpg")
+            .await
+            .unwrap_err();
+        assert!(
+            e.to_string().contains("cdn.uexcorp.space"),
+            "fremder Host abgelehnt: {e}"
+        );
+        let e = crate::fetch_listing_photo("http://cdn.uexcorp.space/a-t.jpg")
+            .await
+            .unwrap_err();
+        assert!(
+            e.to_string().contains("https"),
+            "http-Scheme abgelehnt: {e}"
+        );
+    }
 }

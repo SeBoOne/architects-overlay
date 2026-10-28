@@ -415,3 +415,33 @@ async fn live_route_enrichment_before_after() {
         );
     }
 }
+
+/// M3a-R1 (t_f2e70b16): echter CDN-Thumb-Fetch — der CDN liefert
+/// `application/octet-stream` + `nosniff` (live geprüft: curl -sI, HTTP 200),
+/// deshalb Data-URI-Erzeugung im Backend. Prüft: Data-URI mit JPG/PNG-Mime,
+/// dekodierbar, < 2 MB. URL = eine echte Listing-Foto-URL der Live-API
+/// (/marketplace_listings/?operation=sell, Listing 181947).
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored"]
+async fn live_cdn_photo_fetches_to_data_uri() {
+    use base64::Engine as _;
+    let url = "https://cdn.uexcorp.space/uid93846/marketplace/listings/181947/d698688288ae1eb7f52f37144ce99cf90069bd72-t.jpg";
+    let data = uex_client::fetch_listing_photo(url).await.unwrap();
+    eprintln!("data-URI prefix: {}", &data[..40.min(data.len())]);
+    let (mime, b64) = data
+        .split_once(";base64,")
+        .expect("Data-URI Format data:<mime>;base64,<payload>");
+    assert!(
+        mime == "data:image/jpeg" || mime == "data:image/png",
+        "Sniff muss JPG oder PNG liefern, got {mime}"
+    );
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .expect("Base64-Payload dekodierbar");
+    assert!(!bytes.is_empty());
+    assert!(bytes.len() < 2 * 1024 * 1024, "2-MB-Limit");
+    assert!(
+        bytes.starts_with(&[0xFF, 0xD8, 0xFF]) || bytes.starts_with(&[0x89, b'P', b'N', b'G']),
+        "Magic-Bytes JPG/PNG"
+    );
+}

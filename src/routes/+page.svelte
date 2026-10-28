@@ -1067,6 +1067,33 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let mNote = $state<string | null>(null);
 	let mSel = $state(0);
 	let offerDetail = $state<Offer | null>(null);
+	// M3a-R1 (t_f2e70b16): CDN-Thumbs kommen als `application/octet-stream` +
+	// `X-Content-Type-Options: nosniff` — der Webview (Chromium ORB) blockt
+	// direkte <img>-Ladungen (live belegt: net::ERR_BLOCKED_BY_ORB). Das
+	// Backend proxied (Base64-Data-URI via `marketplace_photo`); Fehler
+	// (403/Timeout/kein JPG/PNG) → null → Kachel weggelassen bzw. Leerzustand.
+	let offerPhotoUris = $state<(string | null)[]>([]);
+	$effect(() => {
+		const detail = offerDetail;
+		offerPhotoUris = [];
+		if (!detail?.photos?.length) return;
+		let cancelled = false;
+		offerPhotoUris = detail.photos.map(() => null);
+		Promise.all(
+			detail.photos.map(async (url) => {
+				try {
+					return await invoke<string>('marketplace_photo', { url });
+				} catch {
+					return null;
+				}
+			}),
+		).then((uris) => {
+			if (!cancelled) offerPhotoUris = uris;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
 	let mSort = $state<OfferSort>('newest');
 	let mOp = $state<'all' | MarketOp>('all');
 	// Qualitäts-Filter (clientseitig — die UEX-API bietet keinen Qualitäts-
@@ -3649,22 +3676,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span><b>Qualität</b> {offerDetail.quality}</span>
 							{/if}
 						</div>
-						<!-- M3a: Bilder des Listings (live verifiziert: `photos` trägt
-						     Komma-getrennte CDN-Thumbnail-URLs, -t.jpg). Lazy geladen,
-						     Klick öffnet die Listung auf uexcorp.space — die CDN-Vollvariante
-						     (ohne -t) ist 403-gated, externe Seite zeigt das große Bild. -->
+						<!-- M3a-R1: Bilder per Backend-Proxy (Base64-Data-URI) — direkte
+						     CDN-URLs werden im Webview ORB-blockiert (octet-stream+nosniff).
+						     Fehlgeschlagene Fotos (403/Timeout/kein JPG/PNG) → Kachel weg;
+						     wenn KEIN Foto lädt → Leerzustand "Kein Bild hinterlegt." -->
 						{#if offerDetail.photos?.length}
 							<div class="md-photos">
 								{#each offerDetail.photos as ph, pi (ph + '#' + pi)}
-									<button
-										type="button"
-										class="md-photo"
-										title="Bild groß öffnen (uexcorp.space)"
-										onclick={() => void openListingDeepLink(offerDetail!.slug)}
-									>
-										<img src={ph} alt={'Bild ' + (pi + 1) + ' von „' + offerDetail!.title + '“'} loading="lazy" />
-									</button>
+									{#if offerPhotoUris[pi]}
+										<button
+											type="button"
+											class="md-photo"
+											title="Bild groß öffnen (uexcorp.space)"
+											onclick={() => void openListingDeepLink(offerDetail!.slug)}
+										>
+											<img src={offerPhotoUris[pi]} alt={'Bild ' + (pi + 1) + ' von „' + offerDetail!.title + '“'} loading="lazy" />
+										</button>
+									{/if}
 								{/each}
+								{#if offerPhotoUris.length > 0 && offerPhotoUris.every((u) => u === null)}
+									<div class="md-desc empty">Kein Bild hinterlegt.</div>
+								{/if}
 							</div>
 						{:else}
 							<div class="md-desc empty">Kein Bild hinterlegt.</div>

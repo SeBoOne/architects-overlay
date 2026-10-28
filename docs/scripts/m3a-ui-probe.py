@@ -33,14 +33,14 @@ def check(name, ok, detail=""):
     print(("  PASS " if ok else "  FAIL ") + name + ((" — " + detail) if detail else ""))
 
 NOW = int(time.time())
-# Hermetisches Probe-Bild: zuvor live CDN-URL (cdn.uexcorp.space ...-t.jpg) —
-# im Headless-Chromium nicht deterministisch ladbar (Netz-Flake), Render-Pfad
-# identisch: URL aus `photos` wird unverändert als <img src> gesetzt.
-PHOTO = f"http://127.0.0.1:{os.environ.get('PROBE_PORT', '8799')}/m3a-probe-photo.png"
+# M3a-R1: die UI lädt Fotos NICHT mehr als direkte CDN-URL (ORB-Blockade,
+# live belegt: octet-stream+nosniff → net::ERR_BLOCKED_BY_ORB), sondern über
+# invoke('marketplace_photo') → Base64-Data-URI. Der Probe-Photo-Feed ist
+# daher eine ECHTE Data-URI (64×64-PNG, identisches Pixelbild wie zuvor) —
+# der Stub 'marketplace_photo' liefert sie als Antwort auf den invoke.
+import struct, zlib
 
-
-def write_probe_photo() -> None:
-    import struct, zlib
+def make_probe_data_uri() -> str:
     w = h = 64
     raw = b"".join(b"\x00" + bytes([240, 120, 40] * w) for _ in range(h))
 
@@ -52,10 +52,9 @@ def write_probe_photo() -> None:
            + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
            + chunk(b"IDAT", zlib.compress(raw))
            + chunk(b"IEND", b""))
-    (ROOT / "build" / "m3a-probe-photo.png").write_bytes(png)
+    return "data:image/png;base64," + base64.b64encode(png).decode("ascii")
 
-
-write_probe_photo()
+PHOTO = make_probe_data_uri()
 
 def offer(id_, title, location, op, price, qty, extra=None):
     o = {
@@ -301,7 +300,10 @@ async def main():
         await asyncio.sleep(0.4)
         closed2 = await js("!document.querySelector('.advert-scrim') && !document.querySelector('.advert-discard')")
         check("a-clean-cancel-closes-direct", closed2 is True)
-        await shot("m3a-a-popup-closed.png")
+        # (M3a-R1) kein eigener Screenshot mehr hier — der Zustand nach dem
+        # Schließen ist identisch mit dem Mein-Shop-Startzustand, der Screenshot
+        # m3a-c-pending-chip.png belegt dieselbe Ansicht (vorher: zwei
+        # byte-identische Dateien mit unterschiedlichen Namen).
 
         # =================================================================
         # B — Angebots-Detail mit Bild / Leerzustand
@@ -329,8 +331,15 @@ async def main():
                 photo_loaded = True
                 break
             await asyncio.sleep(0.5)
+        # M3a-R1: das <img src> MUSS eine Data-URI sein (Backend-Proxy) —
+        # eine rohe CDN-URL wäre ORB-blockiert (octet-stream+nosniff).
+        src_is_data_uri = await js("(function(){var im=document.querySelector('.md-photos img'); return im ? im.src.startsWith('data:image/') : false;})()")
+        # Photo-Proxy wurde wirklich via invoke gerufen (Stub-Zähler).
+        proxy_called = await js("window.__PHOTO_CALLS__ === 1")
         check("b-detail-photos-rendered", detail_open is True and photos == 1 and photo_loaded is True,
               "detail=%s photos=%s loaded=%s" % (detail_open, photos, photo_loaded))
+        check("b-photo-src-is-data-uri", src_is_data_uri is True, "src_is_data_uri=%s" % src_is_data_uri)
+        check("b-photo-proxy-invoked", proxy_called is True, "proxy_called=%s" % proxy_called)
         await shot("m3a-b-detail-photo.png")
         # Leerzustand: Detail ohne Bild
         for k in ["Escape", "ArrowDown", "ArrowRight"]:

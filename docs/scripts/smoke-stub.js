@@ -874,6 +874,19 @@ window.__TAURI_INTERNALS__ = {
 				if (!t) return null;
 				return { commodity_id: cid, commodity: '', buys: t.buys, sells: t.sells };
 			}
+			case 'marketplace_photo': {
+				// M3a-R1 (t_f2e70b16): Bild-Proxy-Stub. Der echte Pfad (CDN
+				// octet-stream+nosniff → Backend-Fetch → Base64-Data-URI) ist
+				// durch cargo tests belegt (live_api live_cdn_photo_fetches_to_data_uri
+				// gegen echten CDN-Thumb). Der Stub spiegelt den UI-Vertrag:
+				// Data-URI als String; window.__PHOTO_FAIL__ simuliert den
+				// Proxy-Fehler (→ null → Kachel weggelassen).
+				if (window.__PHOTO_FAIL__) throw new Error('HTTP 403 · Foto nicht ladbar');
+				const url = String((a && a.url) || '');
+				globalThis.__PHOTO_CALLS__ = (globalThis.__PHOTO_CALLS__ || 0) + 1;
+				globalThis.__PHOTO_LAST_URL__ = url;
+				return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+			}
 			default:
 				return null;
 		}
