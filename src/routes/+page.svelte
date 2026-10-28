@@ -1276,7 +1276,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		location: string;
 		source: string;
 		hours: string;
+		// M2b-Review-Fix (t_6e26ec82): id_category ist für type=item Pflicht.
+		// Auswahl = value des <select> ('' = noch nichts gewählt / „bitte wählen").
+		category: string;
 	};
+	// UEX /categories — Kategorie-Auswahl für die Anlegen-Form (id + Name).
+	type MarketCategory = {
+		id: number;
+		name: string;
+		section: string | null;
+	};
+	let advertCategories = $state<MarketCategory[]>([]);
+	let advertCatOpen = $state(false);
+	$effect(() => {
+		// Beim Öffnen der Form die Kategorien laden (einmalig pro Session;
+		// UEX /categories ist klein + öffentlich). Ein Fehler hier blockiert
+		// das Anlegen NICHT — die Form-Validierung meldet dann, dass eine
+		// Kategorie fehlt, statt ohne Daten zu funktionieren.
+		if (advertOpen && !advertCatOpen) {
+			advertCatOpen = true;
+			invoke<MarketCategory[]>('get_categories')
+				.then((c) => (advertCategories = c))
+				.catch(() => {
+					advertCategories = [];
+				});
+		}
+		if (!advertOpen) {
+			advertCatOpen = false;
+		}
+	});
 	const emptyAdvertise = (): AdvertiseForm => ({
 		operation: 'sell',
 		title: '',
@@ -1286,7 +1314,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		unit: 'unit',
 		location: '',
 		source: '',
-		hours: '168'
+		hours: '168',
+		category: ''
 	});
 	// 2-Schritt: Zustand, welche Aktion gerade auf Bestätigung wartet.
 	let advertForm = $state(emptyAdvertise());
@@ -1310,7 +1339,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				unit: offer.unit || 'unit',
 				location: offer.location,
 				source: '',
-				hours: '168'
+				hours: '168',
+				// Bearbeiten = vorbelegtes Formular: die Kategorie der Bestands-
+				// listung vorwählen (falls im /categories-Pool vorhanden).
+				category: String(offer.category_id || '')
 			};
 		} else {
 			editingOffer = null;
@@ -1321,8 +1353,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	// 2-Schritt: prüft das Settings-Modell (M2b-2). ConfirmEveryAction = immer
 	// bestätigen, ConfirmDeleteOnly = nur das Abmelden; Anlegen läuft direkt.
+	// Die Formular-Validierung (inkl. Kategorie-Pflicht, M2b-Review-Fix
+	// t_6e26ec82) passiert VOR dem Confirm — der Nutzer bestätigt nur ein
+	// vollständiges Formular, und ohne Auswahl erscheint nie ein Write-Dialog.
 	function requestAdvertise() {
 		if (writeBusy) return;
+		const f = advertForm;
+		if (!f.title.trim() || !f.description.trim()) {
+			advertNote = 'Titel und Beschreibung sind Pflicht.';
+			return;
+		}
+		const catId = Number(f.category);
+		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
+			advertNote = 'Bitte eine Kategorie wählen (Pflicht für Item-Listings).';
+			return;
+		}
+		const price = Math.round(Number(f.price));
+		const qty = Math.round(Number(f.quantity));
+		if (!Number.isFinite(price) || price <= 0) {
+			advertNote = 'Preis muss eine positive Ganzzahl sein.';
+			return;
+		}
+		if (!Number.isFinite(qty) || qty <= 0) {
+			advertNote = 'Menge muss eine positive Ganzzahl sein.';
+			return;
+		}
 		const confirmMode = cfg?.marketplace_confirm ?? 'every_action';
 		if (confirmMode === 'every_action') {
 			confirmAction = { kind: 'advertise' };
@@ -1336,6 +1391,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const f = advertForm;
 		if (!f.title.trim() || !f.description.trim()) {
 			advertNote = 'Titel und Beschreibung sind Pflicht.';
+			advertOpen = true;
+			return;
+		}
+		// M2b-Review-Fix (t_6e26ec82): id_category ist für type=item PFLICHT.
+		// Ohne Auswahl kein Write — deutsche Meldung wie die übrigen Formular-
+		// Validierungen (UEX würde sonst 400 missing_id_category senden).
+		const catId = Number(f.category);
+		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
+			advertNote = 'Bitte eine Kategorie wählen (Pflicht für Item-Listings).';
 			advertOpen = true;
 			return;
 		}
@@ -1356,7 +1420,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		writeBusy = true;
 		const payload = {
 			id_item: null,
-			id_category: null,
+			// id_category: gewählte Kategorie (Pflichtfeld, s. o.)
+			id_category: catId,
 			id_star_system: null,
 			id_terminal: null,
 			id_organization: null,
@@ -3662,6 +3727,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.price} />
 																<span class="m-lbl">Menge</span>
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.quantity} />
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<!-- M2b-Review-Fix (t_6e26ec82): id_category ist für type=item Pflicht —
+																     UEX sendet sonst 400 missing_id_category. Die Auswahl kommt aus
+																     /categories (get_categories-IPC), angezeigt mit Section-Präfix. -->
+																<span class="m-lbl">Kategorie</span>
+																<select class="rtext" bind:value={advertForm.category} aria-label="Kategorie">
+																	<option value="">— bitte wählen —</option>
+																	{#each advertCategories as c}
+																		<option value={c.id}>{c.section ? c.section + ' › ' : ''}{c.name}</option>
+																	{/each}
+																</select>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Einheit</span>
