@@ -1462,12 +1462,26 @@ impl UexProvider {
         }
         if payload.title.trim().is_empty() {
             missing.push("title");
+        } else if payload.title.trim().chars().count() > 140 {
+            missing.push("title (max. 140 Zeichen, Doku [7])");
         }
         if payload.description.trim().is_empty() {
             missing.push("description");
+        } else if payload.description.trim().chars().count() > 65_535 {
+            missing.push("description (max. 65535 Zeichen, Doku [7])");
         }
         if payload.in_stock == 0 {
             missing.push("in_stock (Menge)");
+        }
+        if payload.quality.is_some_and(|q| q > 100) {
+            missing.push("quality (0–100)");
+        }
+        if payload
+            .image_data
+            .as_ref()
+            .is_some_and(|d| d.len() > 10_485_760)
+        {
+            missing.push("image_data (max. 10 MB Base64, Doku [7])");
         }
         if missing.is_empty() {
             Ok(())
@@ -2851,6 +2865,8 @@ mod tests {
             durability: Some(85),
             hours_expiration: Some(168),
             is_hidden: None,
+            quality: None,
+            image_data: None,
             is_production: 1,
         }
     }

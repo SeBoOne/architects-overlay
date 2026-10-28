@@ -1365,6 +1365,8 @@ async fn advertise_offer_posts_payload_and_maps_new_listing() {
         durability: Some(85),
         hours_expiration: Some(168),
         is_hidden: None,
+        quality: None,
+        image_data: None,
         is_production: 1,
     };
     let offer = provider.advertise_offer(p).await.expect("advertise ok");
@@ -1430,6 +1432,8 @@ async fn advertise_offer_without_category_never_posts_and_maps_uex_400() {
         durability: Some(85),
         hours_expiration: Some(168),
         is_hidden: None,
+        quality: None,
+        image_data: None,
         is_production: 1,
     };
     // Der Formular-Weg hat type=item + id_category → der Mock (ohne
@@ -1558,6 +1562,8 @@ async fn advertise_offer_parses_minimal_uex_data_without_id() {
         durability: Some(85),
         hours_expiration: Some(168),
         is_hidden: None,
+        quality: None,
+        image_data: None,
         is_production: 1,
     };
     let ok = provider

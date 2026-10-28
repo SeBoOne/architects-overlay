@@ -1099,6 +1099,51 @@ pub fn marketplace_confirm_mode(state: State<'_, TradeState>) -> String {
         .unwrap_or_else(|_| "every_action".to_owned())
 }
 
+/// Item-Auswahl für das Listing-Formular (MC, t_5faaf946): Typeahead über
+/// `EntityKind::Items` aus dem lokalen Cache (UEX /items wird beim Sync
+/// kategorienweise geladen). Analog `location_suggest` (routes.rs): Ranking
+/// starts-with vor contains, Case-insensitiv, max 12 Treffer — nur Items,
+/// keine Commodities (die /items-Rows mit is_commodity=1 werden beim Import
+/// schon gefiltert, siehe uex-client). Leerer Query → leere Liste.
+#[tauri::command]
+pub fn item_suggest(
+    state: State<'_, TradeState>,
+    query: String,
+) -> Result<Vec<provider::ItemSuggestion>, String> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let entities = state
+        .cache
+        .entities_of(EntityKind::Items)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    let mut starts: Vec<provider::ItemSuggestion> = Vec::new();
+    let mut contains: Vec<provider::ItemSuggestion> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for e in entities {
+        let name = e.name.trim();
+        let key = name.to_lowercase();
+        if key.is_empty() || seen.contains(&key) {
+            continue;
+        }
+        seen.insert(key.clone());
+        let hit = provider::ItemSuggestion {
+            id: e.id,
+            name: name.to_string(),
+            subtitle: e.subtitle.clone(),
+        };
+        if key.starts_with(&q) {
+            starts.push(hit);
+        } else if key.contains(&q) {
+            contains.push(hit);
+        }
+    }
+    starts.append(&mut contains);
+    starts.truncate(12);
+    Ok(starts)
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
@@ -2741,6 +2786,8 @@ mod tests {
             durability: Some(85),
             hours_expiration: Some(168),
             is_hidden: None,
+            quality: None,
+            image_data: None,
             is_production: 1,
         };
         // 2 erfolgreiche Anlegen erlaubt.
@@ -2781,6 +2828,89 @@ mod tests {
         let state = app.state::<TradeState>();
         // DELETE erfolgreich (provider Ok, gate frei).
         assert!(marketplace_delete(state.clone(), 847_291).await.is_ok());
+        let _ = app;
+    }
+
+    /// item_suggest (MC, t_5faaf946): Typeahead über EntityKind::Items —
+    /// nur Items, Ranking starts-with vor contains, max 12, leerer Query leer.
+    #[test]
+    fn item_suggest_lists_only_items_mc() {
+        let app = mock_app();
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_entities(
+                EntityKind::Items,
+                &[
+                    provider::Entity {
+                        id: 2265,
+                        kind: EntityKind::Items,
+                        name: "Fieldsbury Dark Bear Helmet Guava".into(),
+                        code: None,
+                        subtitle: "Helmets · Kastak Arms".into(),
+                    },
+                    provider::Entity {
+                        id: 2266,
+                        kind: EntityKind::Items,
+                        name: "CSP-68H Backpack".into(),
+                        code: None,
+                        subtitle: "Backpacks · RSI".into(),
+                    },
+                    provider::Entity {
+                        id: 2267,
+                        kind: EntityKind::Items,
+                        name: "P-6SR Sniper Rifle".into(),
+                        code: None,
+                        subtitle: "Weapons · Behring".into(),
+                    },
+                ],
+            )
+            .unwrap();
+        // Terminal/Commodity-Rows dürfen NIEMALS auftauchen (nur Items).
+        cache
+            .store_entities(
+                EntityKind::Terminals,
+                &[provider::Entity {
+                    id: 436,
+                    kind: EntityKind::Terminals,
+                    name: "Commodity Shop - Admin - Checkmate".into(),
+                    code: None,
+                    subtitle: "ArcCorp > Checkmate".into(),
+                }],
+            )
+            .unwrap();
+        app.manage(TradeState {
+            provider: Arc::new(StubProvider),
+            cache,
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+
+        // starts-with
+        let r = item_suggest(state.clone(), "fieldsbury".to_string()).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].id, 2265);
+        assert_eq!(r[0].name, "Fieldsbury Dark Bear Helmet Guava");
+        assert!(r[0].subtitle.contains("Kastak Arms"), "{}", r[0].subtitle);
+
+        // contains
+        let r = item_suggest(state.clone(), "rifle".to_string()).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].id, 2267);
+
+        // Case-insensitiv + leere Query → leer.
+        let r = item_suggest(state.clone(), "FIELDSBURY".to_string()).unwrap();
+        assert_eq!(r.len(), 1);
+        assert!(
+            item_suggest(state.clone(), "".to_string())
+                .unwrap()
+                .is_empty()
+        );
+
+        // Terminal taucht für einen item-Query nicht auf.
+        let r = item_suggest(state.clone(), "checkmate".to_string()).unwrap();
+        assert!(r.is_empty(), "Terminals gehören nicht ins Item-Typeahead");
         let _ = app;
     }
 }

@@ -39,6 +39,9 @@
 	import Rail from '../lib/Rail.svelte';
 	import Inventory from '../lib/Inventory.svelte';
 	import RoutesTypeahead from '../lib/RoutesTypeahead.svelte';
+	// MD (t_10be9255, D2): dunkles, mausbedienbares Dropdown mit Typeahead —
+	// ersetzt die nativen <select> im Anlegen-Formular.
+	import SelectCombo from '../lib/SelectCombo.svelte';
 	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
 	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
 	import { suggestShips, isSnubShip } from '../lib/hangar_ships';
@@ -1319,6 +1322,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// kein Edit (Bearbeiten = Abmelden + Neu anlegen), Pull nach Write. ----
 	type AdvertiseForm = {
 		operation: 'sell' | 'buy';
+		// MC (t_5faaf946): Listing Type — UEX `type`: item|service|contract.
+		listing_type: 'item' | 'service' | 'contract';
+		// Item-Auswahl (Typeahead) — UEX `id_item`. Pflicht wenn listing_type=item.
+		item_id: string;
+		item_label: string;
 		title: string;
 		description: string;
 		price: string;
@@ -1326,6 +1334,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		unit: string;
 		location: string;
 		source: string;
+		// MC: Currency (UEC|WIF|MGS), Default UEC.
+		currency: string;
+		// MC: Quality 0–100 (optional).
+		quality: string;
+		// MC: Hide Listing (optional, Default No) → is_hidden 1/0.
+		hidden: boolean;
+		// MC: Availability (optional) — Semantik lt. Doku [7]: Verfügbarkeits-
+		// Art (sofort/abholbereit/auf Bestellung/…), NICHT Lagerbestand (das
+		// ist `in_stock`) und kein Zeitraum.
+		availability: string;
+		// MC: Bilder bis 5 (Base64-data-URIs für Vorschau; das erste Bild geht
+		// doku-konform als `image_data` an UEX).
+		images: string[];
 		hours: string;
 		// M2b-Review-Fix (t_6e26ec82): id_category ist für type=item Pflicht.
 		// Auswahl = value des <select> ('' = noch nichts gewählt / „bitte wählen").
@@ -1369,6 +1390,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	});
 	const emptyAdvertise = (): AdvertiseForm => ({
 		operation: 'sell',
+		listing_type: 'item',
+		item_id: '',
+		item_label: '',
 		title: '',
 		description: '',
 		price: '',
@@ -1376,6 +1400,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		unit: 'unit',
 		location: '',
 		source: '',
+		currency: 'UEC',
+		quality: '',
+		hidden: false,
+		availability: '',
+		images: [],
 		hours: '168',
 		category: ''
 	});
@@ -1383,6 +1412,71 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let advertForm = $state(emptyAdvertise());
 	let advertOpen = $state(false);
 	let advertNote = $state('');
+	// MC (t_5faaf946): Ort- + Item-Typeahead-Optionen (async geladen).
+	// Ort: `location_suggest` (EntityKind::Locations, NUR Locations — Shops/
+	// Terminals erscheinen nie, gleiche Quelle wie der Routen-Filter).
+	type AdvertTypeaheadOpt = { value: string; label: string };
+	let advertLocSug = $state<string[]>([]);
+	let advertItemSug = $state<{ id: number; name: string; subtitle: string }[]>([]);
+	let advertLocDeb: ReturnType<typeof setTimeout> | null = null;
+	let advertItemDeb: ReturnType<typeof setTimeout> | null = null;
+	$effect(() => {
+		const q = advertForm.location.trim();
+		if (advertLocDeb) clearTimeout(advertLocDeb);
+		advertLocDeb = setTimeout(() => {
+			void (async () => {
+				try {
+					advertLocSug = q ? await invoke<string[]>('location_suggest', { query: q }) : [];
+				} catch {
+					advertLocSug = [];
+				}
+			})();
+		}, 120);
+	});
+	$effect(() => {
+		const q = advertForm.item_label.trim();
+		if (advertItemDeb) clearTimeout(advertItemDeb);
+		advertItemDeb = setTimeout(() => {
+			void (async () => {
+				try {
+					advertItemSug = q ? await invoke<{ id: number; name: string; subtitle: string }[]>('item_suggest', { query: q }) : [];
+				} catch {
+					advertItemSug = [];
+				}
+			})();
+		}, 120);
+	});
+	let advertLocOpts = $derived(
+		advertLocSug.map((n) => ({ value: n, label: n })) as AdvertTypeaheadOpt[]
+	);
+	let advertItemOpts = $derived(
+		advertItemSug.map((i) => ({ value: String(i.id), label: i.name })) as AdvertTypeaheadOpt[]
+	);
+	// MC: Bilder bis 5 — Dateiauswahl, Base64-Vorschau, X-Entfernen. UEX
+	// überträgt doku-konform das ERSTE Bild als image_data (Doku [7]).
+	let advertFileInput = $state<HTMLInputElement | null>(null);
+	function addAdvertImages(files: FileList | null) {
+		if (!files) return;
+		const room = 5 - advertForm.images.length;
+		for (const file of Array.from(files).slice(0, room)) {
+			if (!/^image\/(jpeg|png)$/.test(file.type)) {
+				advertNote = 'Nur JPG/PNG-Bilder sind erlaubt (UEX-Limit).';
+				continue;
+			}
+			if (file.size > 10 * 1024 * 1024) {
+				advertNote = 'Bild „' + file.name + '“ ist größer als 10 MB (UEX-Limit).';
+				continue;
+			}
+			const reader = new FileReader();
+			reader.onload = () => {
+				if (typeof reader.result === 'string') {
+					advertForm.images = [...advertForm.images, reader.result as string];
+				}
+			};
+			reader.readAsDataURL(file);
+		}
+		if (advertForm.images.length >= 5) advertNote = 'Maximal 5 Bilder (UEX-Limit).';
+	}
 	let confirmAction = $state<null | { kind: 'advertise' } | { kind: 'delete'; offer: Offer }>(null);
 	let writeBusy = $state(false);
 	// „Bearbeiten" gibt es NICHT als eigenen Zweig — das Formular wird beim
@@ -1394,13 +1488,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			editingOffer = offer;
 			advertForm = {
 				operation: offer.operation === 'buy' ? 'buy' : 'sell',
+				listing_type: offer.listing_type === 'service' || offer.listing_type === 'contract'
+					? offer.listing_type
+					: 'item',
+				item_id: offer.item_id ? String(offer.item_id) : '',
+				item_label: '',
 				title: offer.title,
 				description: offer.description,
 				price: String(Math.round(offer.price)),
 				quantity: String(offer.quantity),
 				unit: offer.unit || 'unit',
 				location: offer.location,
+				// Offer (Wire-Projektion) trägt kein source/availability — Edit
+				// = Vorbefüllung nur der vorhandenen Felder; Rest bleibt leer.
 				source: '',
+				currency: offer.currency || 'UEC',
+				quality: '',
+				hidden: false,
+				availability: '',
+				images: [],
 				hours: '168',
 				// Bearbeiten = vorbelegtes Formular: die Kategorie der Bestands-
 				// listung vorwählen (falls im /categories-Pool vorhanden).
@@ -1416,30 +1522,87 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// 2-Schritt: prüft das Settings-Modell (M2b-2). ConfirmEveryAction = immer
 	// bestätigen, ConfirmDeleteOnly = nur das Abmelden; Anlegen läuft direkt.
 	// Die Formular-Validierung (inkl. Kategorie-Pflicht, M2b-Review-Fix
-	// t_6e26ec82) passiert VOR dem Confirm — der Nutzer bestätigt nur ein
-	// vollständiges Formular, und ohne Auswahl erscheint nie ein Write-Dialog.
+	// t_6e26ec82 + MC-Pflichtregel) passiert VOR dem Confirm — der Nutzer
+	// bestätigt nur ein vollständiges Formular, und ohne Auswahl erscheint
+	// nie ein Write-Dialog.
+	//
+	// MC (t_5faaf946): Pflicht-Regel — alle als (optional) markierten Felder
+	// sind optional (Item Source, Quality, Hide Listing, Availability, Bilder),
+	// ALLE ANDEREN Pflicht. Fehlermeldungen pro Feld (deutsch), gesammelt in
+	// `advertErrors`, kein stiller API-Fehler (UEX-400 wird nie verschluckt).
+	type AdvertErrors = Partial<
+		Record<
+			| 'title'
+			| 'description'
+			| 'category'
+			| 'item'
+			| 'location'
+			| 'price'
+			| 'quantity'
+			| 'unit'
+			| 'currency'
+			| 'quality'
+			| 'hours'
+			| 'images',
+			string
+		>
+	>;
+	let advertErrors = $state<AdvertErrors>({});
+	// UEX-Pflichtfeld-Referenzen lt. Doku [7] + UEX-Maske (Screenshot).
+	const SOURCE_CHOICES = ['looted', 'pledged', 'purchased_in_game', 'pirated', 'gifted', 'crafted'];
+	const CURRENCY_CHOICES = ['UEC', 'WIF', 'MGS'];
+	const AVAILABILITY_CHOICES = [
+		'immediate', 'ready_pickup', 'on_demand', 'pre_order', 'work_order',
+		'reserve_only', 'scheduled', 'in_progress', 'negotiable'
+	];
+	// Unit-Referenzen je Listing-Type (Doku [7]): type=item / service / contract.
+	const UNIT_MAP: Record<'item' | 'service' | 'contract', string[]> = {
+		item: ['box', 'crate', 'cscu', 'dozen', 'hundred', 'pack', 'pair', 'scu', 'set', 'stack', 'thousand', 'unit'],
+		service: ['contract', 'cycle', 'day', 'event', 'expedition', 'gm', 'hour', 'minute', 'mission', 'month', 'operation', 'route', 'run', 'service', 'session', 'shift', 'trip', 'week'],
+		contract: ['contract', 'mission']
+	};
+	function validateAdvertise(f: AdvertiseForm): AdvertErrors {
+		const errs: AdvertErrors = {};
+		if (!f.title.trim()) errs.title = 'Titel ist Pflicht.';
+		else if (f.title.trim().length > 140) errs.title = 'Titel max. 140 Zeichen (Doku).';
+		if (!f.description.trim()) errs.description = 'Beschreibung ist Pflicht.';
+		else if (f.description.trim().length > 65535) errs.description = 'Beschreibung max. 65.535 Zeichen (Doku).';
+		const catId = Number(f.category);
+		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
+			errs.category = 'Bitte eine Kategorie wählen (Pflicht für Item-/Contract-Listings).';
+		}
+		// Item ist PFLICHT nur bei type=item (Task-Regel „Pflicht wenn Type=Item").
+		if (f.listing_type === 'item' && !f.item_id) {
+			errs.item = 'Bitte ein Item wählen (Pflicht für Item-Listings).';
+		}
+		if (!f.location.trim()) errs.location = 'Ort ist Pflicht.';
+		const price = Math.round(Number(f.price));
+		if (!Number.isFinite(price) || price <= 0) errs.price = 'Preis muss eine positive Ganzzahl sein.';
+		const qty = Math.round(Number(f.quantity));
+		if (!Number.isFinite(qty) || qty <= 0) errs.quantity = 'Menge muss eine positive Ganzzahl sein.';
+		if (!f.unit.trim()) errs.unit = 'Einheit ist Pflicht.';
+		if (!f.currency.trim()) errs.currency = 'Währung ist Pflicht.';
+		if (f.quality !== '' && (!Number.isFinite(Number(f.quality)) || Number(f.quality) < 0 || Number(f.quality) > 100)) {
+			errs.quality = 'Quality muss zwischen 0 und 100 liegen.';
+		}
+		if (!f.hours) errs.hours = 'Laufzeit ist Pflicht.';
+		if (f.images.length > 5) errs.images = 'Maximal 5 Bilder (UEX-Limit).';
+		return errs;
+	}
+	function applyAdvertErrors(errs: AdvertErrors): boolean {
+		advertErrors = errs;
+		if (Object.keys(errs).length > 0) {
+			advertNote = 'Bitte die markierten Felder korrigieren.';
+			advertOpen = true;
+			return false;
+		}
+		advertNote = '';
+		return true;
+	}
 	function requestAdvertise() {
 		if (writeBusy) return;
 		const f = advertForm;
-		if (!f.title.trim() || !f.description.trim()) {
-			advertNote = 'Titel und Beschreibung sind Pflicht.';
-			return;
-		}
-		const catId = Number(f.category);
-		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
-			advertNote = 'Bitte eine Kategorie wählen (Pflicht für Item-Listings).';
-			return;
-		}
-		const price = Math.round(Number(f.price));
-		const qty = Math.round(Number(f.quantity));
-		if (!Number.isFinite(price) || price <= 0) {
-			advertNote = 'Preis muss eine positive Ganzzahl sein.';
-			return;
-		}
-		if (!Number.isFinite(qty) || qty <= 0) {
-			advertNote = 'Menge muss eine positive Ganzzahl sein.';
-			return;
-		}
+		if (!applyAdvertErrors(validateAdvertise(f))) return;
 		const confirmMode = cfg?.marketplace_confirm ?? 'every_action';
 		if (confirmMode === 'every_action') {
 			confirmAction = { kind: 'advertise' };
@@ -1451,37 +1614,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		confirmAction = null;
 		advertNote = '';
 		const f = advertForm;
-		if (!f.title.trim() || !f.description.trim()) {
-			advertNote = 'Titel und Beschreibung sind Pflicht.';
-			advertOpen = true;
-			return;
-		}
-		// M2b-Review-Fix (t_6e26ec82): id_category ist für type=item PFLICHT.
-		// Ohne Auswahl kein Write — deutsche Meldung wie die übrigen Formular-
-		// Validierungen (UEX würde sonst 400 missing_id_category senden).
+		if (!applyAdvertErrors(validateAdvertise(f))) return;
 		const catId = Number(f.category);
-		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
-			advertNote = 'Bitte eine Kategorie wählen (Pflicht für Item-Listings).';
-			advertOpen = true;
-			return;
-		}
 		const price = Math.round(Number(f.price));
 		const qty = Math.round(Number(f.quantity));
-		if (!Number.isFinite(price) || price <= 0) {
-			advertNote = 'Preis muss eine positive Ganzzahl sein.';
-			advertOpen = true;
-			return;
-		}
-		if (!Number.isFinite(qty) || qty <= 0) {
-			advertNote = 'Menge muss eine positive Ganzzahl sein.';
-			advertOpen = true;
-			return;
-		}
 		// Nach jedem Write PULL (M2b-4) — kein Optimismus. Fehlerpfad: kein
 		// Retry, Meldung + Deep-Link-Button (M2b-3).
 		writeBusy = true;
+		// MC (t_5faaf946): neue Felder mit UEX-Feldnamen; `quality` als
+		// eigenes Feld (UEX-Output + Maske führen es), Availability nur wenn
+		// gewählt, Bilder doku-konform als EIN image_data (erstes Bild, Base64).
 		const payload = {
-			id_item: null,
+			id_item: f.listing_type === 'item' && f.item_id ? Number(f.item_id) : null,
 			// id_category: gewählte Kategorie (Pflichtfeld, s. o.)
 			id_category: catId,
 			id_star_system: null,
@@ -1489,19 +1633,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			id_organization: null,
 			operation: f.operation,
 			language: 'de_DE',
-			type: 'item',
+			type: f.listing_type,
 			unit: f.unit.trim() || 'unit',
 			price,
-			currency: 'UEC',
+			currency: f.currency.trim() || 'UEC',
 			title: f.title.trim(),
 			description: f.description.trim(),
 			source: f.source.trim() || null,
-			availability: 'immediate',
+			availability: f.availability.trim() || null,
 			durability: null,
+			quality: f.quality !== '' ? Math.round(Number(f.quality)) : null,
 			location: f.location.trim() || null,
 			in_stock: qty,
 			hours_expiration: Number(f.hours) || null,
-			is_hidden: null,
+			is_hidden: f.hidden ? 1 : null,
+			image_data: f.images.length ? f.images[0] : null,
 			is_production: 1
 		};
 		try {
@@ -1548,7 +1694,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 		writeBusy = false;
 	}
-	const UNIT_CHOICES = ['unit', 'scu', 'box', 'crate', 'pack', 'hundred', 'thousand'];
+	// MC (t_5faaf946): Unit-Auswahl hängt vom Listing-Type ab (Doku [7] —
+	// separate Referenzliste für item/service/contract); UNIT_MAP oben.
+	function unitsFor(type: AdvertiseForm['listing_type']): string[] {
+		return UNIT_MAP[type] || UNIT_MAP.item;
+	}
+	// Laufzeit: >24h als Tage anzeigen (48→2d … 720→30d), ≤24h in h bleiben.
+	// Der gespeicherte Wert bleibt unverändert die Stundenzahl (API erwartet h).
+	function hourLabel(h: string): string {
+		const n = Number(h);
+		if (!Number.isFinite(n)) return h + ' h';
+		return n > 24 ? (n / 24) + 'd' : n + ' h';
+	}
 	const HOUR_CHOICES = ['1', '2', '3', '5', '12', '24', '48', '72', '120', '168', '336', '720'];
 
 	// ---- Handelsrouten (Karte t_128b7547) ------------------------------------
@@ -3339,7 +3496,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								Setzen
 							</button>
 							{#if cfg?.uex_api_key_set}
-							<button type="button" class="btn-ghost" onclick={removeApiKey}>Entfernen</button>
+							<button type="button" class="btn-ghost btn-danger" onclick={removeApiKey}>Entfernen</button>
 							{/if}
 						</div>
 						{#if apiKeyNote}
@@ -3371,7 +3528,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								Setzen
 							</button>
 							{#if cfg?.uex_secret_key_set}
-							<button type="button" class="btn-ghost" onclick={removeSecretKey}>Entfernen</button>
+							<button type="button" class="btn-ghost btn-danger" onclick={removeSecretKey}>Entfernen</button>
 							{/if}
 						</div>
 						{#if secretKeyNote}
@@ -3427,7 +3584,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{errorMsg ?? status?.last_error ?? 'Keine Verbindung'}<br />
 						Cache-Stand: {cacheAge()}
 					</div>
-					<span class="btn" onclick={retrySync}>Erneut versuchen</span>
+					<span class="btn-ghost" onclick={retrySync}>Erneut versuchen</span>
 					<div class="sm" style="margin-top: 10px">
 						<b style="color: var(--fgdim)">O</b> Offline mit Cache fortsetzen
 					</div>
@@ -3478,7 +3635,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="md-desc empty">Keine Beschreibung.</div>
 						{/if}
 						<div class="md-actions">
-							<span class="btn" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+							<span class="btn-ghost" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
 							<span class="btn-ghost" onclick={() => (offerDetail = null)}>Zurück</span>
 						</div>
 						<div class="md-note">
@@ -3714,7 +3871,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							}}
 						/>
 						<span
-							class="btn"
+							class="btn-ghost"
 							onclick={() => {
 								persistShopUser(shopUser);
 								void loadShop();
@@ -3733,7 +3890,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
 								<div class="sm">Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
-								<span class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</span>
+								<span class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</span>
 							</div>
 						</div>
 					{:else if !cfg?.uex_secret_key_set}
@@ -3745,7 +3902,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Secret-Key fehlt oder ist falsch — siehe Einstellungen</div>
 								<div class="sm">User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
-								<button type="button" class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</button>
+								<button type="button" class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</button>
 							</div>
 						</div>
 					{:else if shopLoading}
@@ -3759,7 +3916,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
 								<div class="sm">{shopErr}</div>
-								<span class="btn" onclick={() => void loadShop()}>Erneut versuchen</span>
+								<span class="btn-ghost" onclick={() => void loadShop()}>Erneut versuchen</span>
 								<span class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
 							</div>
 						</div>
@@ -3800,38 +3957,171 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<span class="m-lbl">Art</span>
 																<button type="button" class="chip" class:is-on={advertForm.operation === 'sell'} onclick={() => (advertForm.operation = 'sell')}>Verkauf (sell)</button>
 																<button type="button" class="chip" class:is-on={advertForm.operation === 'buy'} onclick={() => (advertForm.operation = 'buy')}>Kauf (buy)</button>
+																<span class="m-lbl">Listing Type</span>
+																<SelectCombo
+																	bind:value={advertForm.listing_type}
+																	ariaLabel="Listing Type"
+																	options={[
+																		{ value: 'item', label: 'Item' },
+																		{ value: 'service', label: 'Service' },
+																		{ value: 'contract', label: 'Contract' }
+																	]}
+																	onselect={() => {
+																		// Unit-Referenzliste wechselt mit dem Type (Doku [7]);
+																		// fallback auf die erste Unit der neuen Liste.
+																		const u = unitsFor(advertForm.listing_type);
+																		if (!u.includes(advertForm.unit)) advertForm.unit = u[0];
+																	}}
+																/>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Titel</span>
-																<input class="rtext" placeholder="Artikelname (alphanumerisch + -)" bind:value={advertForm.title} />
-																<span class="m-lbl">Preis (UEC)</span>
+																<input class="rtext" placeholder="Artikelname (alphanumerisch + -)" maxlength="140" bind:value={advertForm.title} />
+																{#if advertErrors.title}<span class="chip warn" style="margin-left: 4px">{advertErrors.title}</span>{/if}
+																<span class="m-lbl">Preis</span>
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.price} />
+																{#if advertErrors.price}<span class="chip warn" style="margin-left: 4px">{advertErrors.price}</span>{/if}
+																<span class="m-lbl">Währung</span>
+																<SelectCombo bind:value={advertForm.currency} ariaLabel="Currency" placeholder="UEC" options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
+																{#if advertErrors.currency}<span class="chip warn" style="margin-left: 4px">{advertErrors.currency}</span>{/if}
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Menge</span>
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.quantity} />
+																{#if advertErrors.quantity}<span class="chip warn" style="margin-left: 4px">{advertErrors.quantity}</span>{/if}
+																<span class="m-lbl">Einheit</span>
+																<SelectCombo bind:value={advertForm.unit} ariaLabel="Einheit" options={unitsFor(advertForm.listing_type).map((u) => ({ value: u, label: u }))} />
+																{#if advertErrors.unit}<span class="chip warn" style="margin-left: 4px">{advertErrors.unit}</span>{/if}
+																<span class="m-lbl">Ort</span>
+																<div style="position: relative; display: inline-flex">
+																	<RoutesTypeahead
+																		bind:value={advertForm.location}
+																		options={advertLocOpts}
+																		placeholder="z. B. Port Tressler"
+																		ariaLabel="Ort Type-ahead — Locations, keine Shops"
+																		onselect={(v: string) => {
+																			advertForm.location = v;
+																			advertErrors.location = undefined;
+																		}}
+																	/>
+																</div>
+																{#if advertErrors.location}<span class="chip warn" style="margin-left: 4px">{advertErrors.location}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<!-- M2b-Review-Fix (t_6e26ec82): id_category ist für type=item Pflicht —
 																     UEX sendet sonst 400 missing_id_category. Die Auswahl kommt aus
 																     /categories (get_categories-IPC), angezeigt mit Section-Präfix. -->
 																<span class="m-lbl">Kategorie</span>
-																<select class="rtext" bind:value={advertForm.category} aria-label="Kategorie">
-																	<option value="">— bitte wählen —</option>
-																	{#each advertCategories as c}
-																		<option value={c.id}>{c.section ? c.section + ' › ' : ''}{c.name}</option>
-																	{/each}
-																</select>
+																<SelectCombo
+																	bind:value={advertForm.category}
+																	ariaLabel="Kategorie"
+																	placeholder="— bitte wählen —"
+																	options={[
+																		{ value: '', label: '— bitte wählen —' },
+																		...advertCategories.map((c) => ({
+																			value: String(c.id),
+																			label: (c.section ? c.section + ' › ' : '') + c.name
+																		}))
+																	]}
+																/>
+																{#if advertErrors.category}<span class="chip warn" style="margin-left: 4px">{advertErrors.category}</span>{/if}
+																{#if advertForm.listing_type === 'item'}
+																	<span class="m-lbl">Item</span>
+																	<div style="position: relative; display: inline-flex">
+																		<RoutesTypeahead
+																			bind:value={advertForm.item_label}
+																			options={advertItemOpts}
+																			placeholder="Item suchen (z. B. Custodian SMG)"
+																			ariaLabel="Item Type-ahead — Pflicht für Item-Listings"
+																			onselect={(v: string) => {
+																				advertForm.item_id = v;
+																				advertErrors.item = undefined;
+																			}}
+																		/>
+																	</div>
+																	{#if advertForm.item_id}
+																		<span class="chip" title="Item gewählt">✓ {advertForm.item_label}</span>
+																	{/if}
+																	{#if advertErrors.item}<span class="chip warn" style="margin-left: 4px">{advertErrors.item}</span>{/if}
+																{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Einheit</span>
-																<select class="rtext" bind:value={advertForm.unit}>{#each UNIT_CHOICES as u}<option value={u}>{u}</option>{/each}</select>
-																<span class="m-lbl">Ort</span>
-																<input class="rtext" placeholder="z. B. Port Tressler" bind:value={advertForm.location} />
 																<span class="m-lbl">Laufzeit</span>
-																<select class="rtext" bind:value={advertForm.hours}>{#each HOUR_CHOICES as h}<option value={h}>{h} h</option>{/each}</select>
+																<SelectCombo
+										bind:value={advertForm.hours}
+										ariaLabel="Laufzeit"
+										options={HOUR_CHOICES.map((h) => ({ value: h, label: hourLabel(h) }))}
+									/>
+																{#if advertErrors.hours}<span class="chip warn" style="margin-left: 4px">{advertErrors.hours}</span>{/if}
+																<span class="m-lbl">Item Source</span>
+																<SelectCombo
+																	bind:value={advertForm.source}
+																	ariaLabel="Item Source"
+																	placeholder="— (optional) —"
+																	options={[
+																		{ value: '', label: '— (optional) —' },
+																		...SOURCE_CHOICES.map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))
+																	]}
+																/>
+																<span class="m-lbl">Quality</span>
+																<input class="qnum" type="number" min="0" max="100" step="1" placeholder="0–100" bind:value={advertForm.quality} />
+																{#if advertErrors.quality}<span class="chip warn" style="margin-left: 4px">{advertErrors.quality}</span>{/if}
+																<span class="m-lbl">Availability</span>
+																<SelectCombo
+																	bind:value={advertForm.availability}
+																	ariaLabel="Availability"
+																	placeholder="— (optional) —"
+																	options={[
+																		{ value: '', label: '— (optional) —' },
+																		...AVAILABILITY_CHOICES.map((a) => ({ value: a, label: a.replace(/_/g, ' ') }))
+																	]}
+																/>
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Hide Listing</span>
+																<button
+																	type="button"
+																	class="chip"
+																	class:is-on={advertForm.hidden}
+																	onclick={() => (advertForm.hidden = !advertForm.hidden)}
+																	title="Verborgenes Listing erscheint erst nach manuellem UEX-Approval"
+																>{advertForm.hidden ? 'Ja' : 'No'}</button>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Beschreibung</span>
-																<input class="rtext" style="flex: 1" placeholder="Freitext" bind:value={advertForm.description} />
+																<input class="rtext" style="flex: 1" placeholder="Freitext (Markdown ok, max. 65.535 Zeichen)" maxlength="65535" bind:value={advertForm.description} />
+																{#if advertErrors.description}<span class="chip warn" style="margin-left: 4px">{advertErrors.description}</span>{/if}
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px; align-items: center">
+																<span class="m-lbl">Bilder (bis 5, JPG/PNG)</span>
+																<input
+																	class="rtext"
+																	type="file"
+																	accept="image/jpeg,image/png"
+																	multiple
+																	style="max-width: 260px"
+																	onchange={(e) => {
+																		const el = e.currentTarget as HTMLInputElement;
+																		addAdvertImages(el.files);
+																		el.value = '';
+																	}}
+																/>
+																{#each advertForm.images as img, i (img + '#' + i)}
+																	<span style="position: relative; display: inline-block; margin: 2px" title="Bild {i + 1}">
+																		<img src={img} alt="Vorschau {i + 1}" style="width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,.2)" />
+																		<button
+																			type="button"
+																			class="chip warn"
+																			style="position: absolute; top: -8px; right: -8px; padding: 0 6px; line-height: 16px; min-height: 16px"
+																			title="Bild entfernen"
+																			onclick={() => (advertForm.images = advertForm.images.filter((_, k) => k !== i))}
+																		>✕</button>
+																	</span>
+																{/each}
+																{#if advertForm.images.length}
+																	<span class="sm" style="opacity: .6">UEX überträgt 1 Bild pro Listing (image_data) — das erste gewählte wird gesendet.</span>
+																{/if}
+																{#if advertErrors.images}<span class="chip warn" style="margin-left: 4px">{advertErrors.images}</span>{/if}
 															</div>
 															<div class="mbar2" style="margin-top: 8px">
 																<button type="button" class="btn" disabled={writeBusy} onclick={() => void requestAdvertise()}>{writeBusy ? 'Wird gesendet …' : 'Anlegen (2-Schritt)'}</button>
@@ -3915,33 +4205,47 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span>Zeige {recentNegotiations.length} von {myNegotiations.length} Marktplatz-Trades · Einzeldeal-Deep-Link bei UEX nicht dokumentiert → Listing-Seite im Browser.</span>
 								<span class="src">UEX Corp</span>
 							</div>
-														{:else}
-															<div class="row-empty" style="padding: 14px 16px">Noch keine Marktplatz-Trades (Verhandlungen/Abschlüsse) im Verlauf.</div>
+												{:else}
+													<div class="row-empty" style="padding: 14px 16px">Noch keine Marktplatz-Trades (Verhandlungen/Abschlüsse) im Verlauf.</div>
+												{/if}
+											{/if}
+											<!-- D3 (t_10be9255): 2-Schritt-Bestätigung als MODALES Popup über der
+													     Eingabemaske (dunkler Scrim). Vorher inline im Pane → auf dem
+													     Hauptbildschirm aus dem Fenster gelaufen (Buttons nicht erreich-
+													     bar). Jetzt: Karte mit Zusammenfassung + Bestätigen/Abbrechen,
+													     immer innerhalb der Overlay-Größe (interne Scroll-Region). Während
+													     der Bestätigungsphase sind die Eingaben gesperrt (Scrim + Lock). -->
+														{#if confirmAction}
+															<div class="confirm-scrim" role="presentation">
+																<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+																	<div class="center" style="padding: 0 0 10px">
+																		<div class="big" style="color: var(--alert)">
+																			{confirmAction.kind === 'delete' ? 'Listing ABMELDEN?' : 'Listing ANLEGEN?'}
+																		</div>
+																	</div>
+																	{#if confirmAction.kind === 'delete'}
+																		<div class="c-row"><b>Titel</b><span>{confirmAction.offer.title}</span></div>
+																		<div class="c-row"><b>Preis</b><span>{fmtPrice(confirmAction.offer.price)} {confirmAction.offer.currency}</span></div>
+																		<div class="c-row"><b>Menge</b><span>{fmtQty(confirmAction.offer.quantity)} {confirmAction.offer.unit || 'unit'}</span></div>
+																		<div class="c-row"><b>Ort</b><span>{confirmAction.offer.location || '—'}</span></div>
+																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Listing wird auf uexcorp.space ABGEMELDET.</div>
+																	{:else}
+																		<div class="c-row"><b>Titel</b><span>{advertForm.title}</span></div>
+																		<div class="c-row"><b>Art</b><span>{advertForm.operation === 'sell' ? 'Verkaufs-Angebot' : 'Kauf-Gesuch'} ({advertForm.listing_type})</span></div>
+																		<div class="c-row"><b>Preis</b><span>{advertForm.price} {advertForm.currency}</span></div>
+																		<div class="c-row"><b>Menge</b><span>{advertForm.quantity} {advertForm.unit}</span></div>
+																		<div class="c-row"><b>Ort</b><span>{advertForm.location || '—'}</span></div>
+																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt.</div>
+																	{/if}
+																	<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">
+																		<button type="button" class="btn" class:btn-danger={confirmAction.kind === 'delete'} disabled={writeBusy} onclick={() => confirmAction?.kind === 'delete' ? void doDelete(confirmAction.offer) : void doAdvertise()}>
+																			{confirmAction.kind === 'delete' ? 'JA, ABMELDEN' : 'JA, ANLEGEN'}
+																		</button>
+																		<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => (confirmAction = null)}>Abbrechen</button>
+																	</div>
+																</div>
+															</div>
 														{/if}
-													{/if}
-											{#if confirmAction}
-						{@const ca = confirmAction}
-						<!-- 2-Schritt-Bestätigung (M2b): jede schreibende Aktion verlangt
-							 eine zweite Bestätigung. Keine Batch-Aktionen. -->
-						<div class="pane-error" style="margin: 10px 0; border-color: var(--alert)">
-							<div class="center">
-								<div class="big" style="color: var(--alert)">
-									{ca.kind === 'delete' ? 'Listing ABMELDEN?' : 'Listing ANLEGEN?'}
-								</div>
-								{#if ca.kind === 'delete'}
-									<div class="sm">{ca.offer.title} (@{fmtPrice(ca.offer.price)} · {fmtQty(ca.offer.quantity)} {ca.offer.unit || 'unit'}) wird auf uexcorp.space ABGEMELDET.</div>
-								{:else}
-									<div class="sm">{advertForm.operation === 'sell' ? 'Verkaufs-' : 'Kauf-'}Angebot „{advertForm.title}“ wird auf uexcorp.space ANGELEGT.</div>
-								{/if}
-								<div class="mbar2" style="margin-top: 10px; justify-content: center">
-									<button type="button" class="btn" disabled={writeBusy} onclick={() => ca.kind === 'delete' ? void doDelete(ca.offer) : void doAdvertise()}>
-										{ca.kind === 'delete' ? 'JA, ABMELDEN' : 'JA, ANLEGEN'}
-									</button>
-									<button type="button" class="btn-ghost" onclick={() => (confirmAction = null)}>Abbrechen</button>
-								</div>
-							</div>
-						</div>
-					{/if}
 				{:else if mLoading && !offers.length}
 					<div class="center">
 						<span class="spin"></span>
@@ -3952,7 +4256,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="center">
 							<div class="big" style="color: var(--alert)">Marketplace nicht erreichbar</div>
 							<div class="sm">{mNote}</div>
-							<span class="btn" onclick={() => loadMarket()}>Erneut versuchen</span>
+							<span class="btn-ghost" onclick={() => loadMarket()}>Erneut versuchen</span>
 						</div>
 					</div>
 				{:else}
