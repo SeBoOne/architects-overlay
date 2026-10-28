@@ -1305,21 +1305,14 @@ async fn user_trades_sends_secret_key_header_only_when_set() {
 
 /// M2b (Write-Layer): `POST /marketplace_advertise/` — ein neues Listing
 /// wird angelegt. Belegt den vollen Write-Pfad: Payload geht als JSON-Body
-/// mit Bearer + secret-key-Headern, die Antwort (das neue Listing als Objekt)
-/// wird auf `Offer` gemappt. KEIN Retry/Fn-Seite — Fehler steigen durch.
+/// mit Bearer + secret-key-Headern. M2b-Review-Fix (t_6e26ec82 R2): die
+/// Antwort ist KEINE ListingRow, sondern `{id, url}` (der Deep-Link) — die
+/// UI hängt die Erfolgsmeldung daran. KEIN Retry/Fn-Seite — Fehler steigen.
 #[tokio::test]
 async fn advertise_offer_posts_payload_and_maps_new_listing() {
     use provider::DataProvider;
 
     let server = MockServer::start().await;
-    // star_systems: map_listing_row_offer löst die Region auf (einmal).
-    Mock::given(method("GET"))
-        .and(path("/star_systems"))
-        .respond_with(json_response(
-            r#"{"status":"ok","http_code":200,"data":[{"id":68,"name":"Stanton","code":"ST"}]}"#,
-        ))
-        .mount(&server)
-        .await;
     // POST: matcht den secret-key-Header + JSON-Body-Schlüssel. M2b-Review-
     // Fix: der Payload muss id_category tragen (Pflicht für type=item) —
     // body_partial_json belegt, dass genau dieser Key auf dem Wire liegt.
@@ -1333,13 +1326,7 @@ async fn advertise_offer_posts_payload_and_maps_new_listing() {
             "price": 4500000,
         })))
         .respond_with(json_response(
-            r#"{"status":"ok","http_code":200,"data":{
-                "id": 9002, "operation": "sell", "type": "item",
-                "title": "DRAKE NETTLE S | Used", "price": "4500000",
-                "in_stock": 1, "unit": "unit", "currency": "UEC",
-                "id_star_system": 68, "location": "Port Tressler",
-                "slug": "drake-nettle-s-9002", "date_added": 1730000000
-            }}"#,
+            r#"{"status":"ok","http_code":200,"data":{"id":9002,"url":"https://uexcorp.space/marketplace/item/info/drake-nettle-s-9002"}}"#,
         ))
         .mount(&server)
         .await;
@@ -1382,9 +1369,10 @@ async fn advertise_offer_posts_payload_and_maps_new_listing() {
     };
     let offer = provider.advertise_offer(p).await.expect("advertise ok");
     assert_eq!(offer.id, 9002);
-    assert_eq!(offer.title, "DRAKE NETTLE S | Used");
-    assert_eq!(offer.price, 4_500_000.0);
-    assert_eq!(offer.region, "Stanton");
+    assert_eq!(
+        offer.url,
+        "https://uexcorp.space/marketplace/item/info/drake-nettle-s-9002"
+    );
 }
 
 /// M2b-Review-Fix (t_6e26ec82) — Wiremock-Gegenprobe zum Live-Defekt:
@@ -1496,13 +1484,7 @@ async fn advertise_offer_without_category_never_posts_and_maps_uex_400() {
         .and(header("secret-key", "my-super-secret-40"))
         .and(body_partial_json(serde_json::json!({ "id_category": 12 })))
         .respond_with(json_response(
-            r#"{"status":"ok","http_code":200,"data":{
-                "id": 9003, "operation": "sell", "type": "item",
-                "title": "DRAKE NETTLE S | Used", "price": "4500000",
-                "in_stock": 1, "unit": "unit", "currency": "UEC",
-                "id_star_system": 68, "location": "Port Tressler",
-                "slug": "drake-nettle-s-9003", "date_added": 1730000000
-            }}"#,
+            r#"{"status":"ok","http_code":200,"data":{"id":9003,"url":"https://uexcorp.space/marketplace/item/info/neu-9003"}}"#,
         ))
         .mount(&server2)
         .await;
@@ -1516,7 +1498,77 @@ async fn advertise_offer_without_category_never_posts_and_maps_uex_400() {
     .unwrap()
     .with_secret_key(Some("my-super-secret-40".into()));
     let ok = provider2.advertise_offer(with_category).await.expect("ok");
+    // M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort ist KEINE ListingRow —
+    // UEX liefert `{id, url}` (der Deep-Link). Darauf hängen wir die Erfolgs-
+    // meldung, NICHT an den Pull (Listings erscheinen erst nach Approval).
     assert_eq!(ok.id, 9003);
+    assert_eq!(
+        ok.url,
+        "https://uexcorp.space/marketplace/item/info/neu-9003"
+    );
+}
+
+/// M2b-Review-Fix (t_6e26ec82 R2): die echte UEX-Erfolgsantwort auf
+/// `POST /marketplace_advertise/` war live dieser Fall — `data` ohne
+/// ListingRow-Felder (der ListingRow-Parse warf „missing field id",
+/// OBWOHL der Server das Listing angelegt hatte). Das tolerante
+/// CreateResponse-DTO muss auch eine abweichende `data`-Struktur (hier:
+/// nur `url`) als Erfolg parsen — kein Fehler, id=0 und url bleiben nutzbar.
+#[tokio::test]
+async fn advertise_offer_parses_minimal_uex_data_without_id() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/marketplace_advertise/"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":{"url":"https://uexcorp.space/marketplace/item/info/neu-abcd"}}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+
+    let payload = provider::AdvertisePayload {
+        id_item: None,
+        id_category: Some(12),
+        id_star_system: None,
+        id_terminal: None,
+        id_organization: None,
+        operation: "sell".into(),
+        language: "en_US".into(),
+        r#type: "item".into(),
+        unit: "unit".into(),
+        price: 120_000,
+        currency: "UEC".into(),
+        location: Some("Port Tressler".into()),
+        title: "DRAKE NETTLE S | Used".into(),
+        description: "Minor scuffs on left wing. Fully functional.".into(),
+        source: Some("purchased_in_game".into()),
+        in_stock: 1,
+        availability: Some("ready_pickup".into()),
+        durability: Some(85),
+        hours_expiration: Some(168),
+        is_hidden: None,
+        is_production: 1,
+    };
+    let ok = provider
+        .advertise_offer(payload)
+        .await
+        .expect("ok despite minimal data");
+    assert_eq!(ok.id, 0, "id fehlt → 0 (tolerant)");
+    assert_eq!(
+        ok.url,
+        "https://uexcorp.space/marketplace/item/info/neu-abcd"
+    );
 }
 
 /// M2b (Write-Layer): `DELETE /marketplace_listings/?id=…&is_production=1` —
