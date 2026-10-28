@@ -202,6 +202,8 @@ async def main():
 
         # Pflichtangaben füllen (Titel + Beschreibung; Preis/Menge explizit —
         # emptyAdvertise startet price:'' und die App lehnt leeren Preis korrekt ab).
+        # M2b-Review-Fix: Kategorie ist Pflicht (id_category) — im <select>
+        # die erste angebotene Kategorie wählen.
         fill = ("(function(){"
                 "function setVal(sel,v){var i=typeof sel==='string'?document.querySelector(sel):sel;"
                 "var set=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;"
@@ -209,6 +211,8 @@ async def main():
                 "setVal('input[placeholder*=Artikelname]','DRAKE NETTLE S | Test');"
                 "setVal('input[placeholder*=Freitext]','Minimales M2b-Testlisting.');"
                 "setVal(document.querySelectorAll('input.qnum')[0],'120000');"
+                "var cat=document.querySelector('select[aria-label=Kategorie]');"
+                "if(cat){cat.value=cat.options[1].value;cat.dispatchEvent(new Event('change',{bubbles:true}));}"
                 "return true;})()")
         await js(fill)
         await asyncio.sleep(0.3)
@@ -233,6 +237,17 @@ async def main():
         after = json.loads(str(await js("JSON.stringify(window.__calls||[])")) or "[]")
         adv = [c for c in after if "marketplace_advertise" in c]
         check("w1-marketplace_advertise-fired", len(adv) >= 1, str(adv[:1]))
+        # M2b-Review-Fix: der Payload trägt id_category (Zahl, nicht null) —
+        # ohne sie lehnt UEX den Item-Create mit 400 missing_id_category ab.
+        payload_cat = None
+        for c in after:
+            if "marketplace_advertise" in c:
+                try:
+                    args = json.loads(c.split(":", 1)[1])
+                    payload_cat = args.get("payload", {}).get("id_category")
+                except Exception:
+                    pass
+        check("w1-payload-carries-id_category", isinstance(payload_cat, int) and payload_cat > 0, "id_category=" + str(payload_cat))
         # PULL: neues Listing ist in der Offers-Liste sichtbar.
         title_shown = await js("document.body.innerText.includes('DRAKE NETTLE S | Test')")
         check("w1-pull-shows-new-offer", title_shown is True)
@@ -286,7 +301,7 @@ async def main():
         await enter_shop()
         await click_chip("Anlegen")
         await asyncio.sleep(0.4)
-        await js("(function(){function setVal(sel,v){var i=typeof sel==='string'?document.querySelector(sel):sel;var set=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;set.call(i,v);i.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:v}));}setVal('input[placeholder*=Artikelname]','Desperation A');setVal('input[placeholder*=Freitext]','Delete-only Test.');setVal(document.querySelectorAll('input.qnum')[0],'45000');return true;})()")
+        await js("(function(){function setVal(sel,v){var i=typeof sel==='string'?document.querySelector(sel):sel;var set=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;set.call(i,v);i.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:v}));}setVal('input[placeholder*=Artikelname]','Desperation A');setVal('input[placeholder*=Freitext]','Delete-only Test.');setVal(document.querySelectorAll('input.qnum')[0],'45000');var cat=document.querySelector('select[aria-label=Kategorie]');if(cat){cat.value=cat.options[1].value;cat.dispatchEvent(new Event('change',{bubbles:true}));}return true;})()")
         await asyncio.sleep(0.3)
         await click_btn("Anlegen (2-Schritt)")
         await asyncio.sleep(0.6)
@@ -331,6 +346,42 @@ async def main():
         a4 = json.loads(str(await js("JSON.stringify(window.__calls||[])")) or "[]")
         check("w4-no-auto-retry", len(a4) == len(b4), f"invokes before/after={len(b4)}/{len(a4)}")
         await shot("shop-w4-error-path.png")
+
+        # ---------------------------------------------------------------
+        # W5 — KATEGORIE-PFLICHT (M2b-Review-Fix t_6e26ec82): Formular ohne
+        #      Kategorie-Auswahl → deutsche Meldung + KEIN Write (UEX würde
+        #      400 missing_id_category senden — die UI verhindert den POST).
+        # ---------------------------------------------------------------
+        await navigate(
+            "window.__stubState.uex_api_key_set = true;"
+            "window.__stubState.uex_secret_key_set = true;"
+            "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
+            "window.__SHOP_OFFERS__ = " + SHOP_OFFERS + ";"
+            "window.__stubState.marketplace_confirm = 'every_action';"
+        )
+        await invoke_watch()
+        await enter_shop()
+        await click_chip("Anlegen")
+        await asyncio.sleep(0.6)
+        # Kategorien-Dropdown ist geladen (get_categories-Stub).
+        cats = await js("[...document.querySelectorAll('select[aria-label=Kategorie] option')].map(function(o){return o.value;})")
+        check("w5-category-dropdown-loaded", isinstance(cats, list) and len(cats) >= 2, "options=" + str(cats))
+        # Formular OHNE Kategorie füllen (Default '' = bitte wählen).
+        await js("(function(){function setVal(sel,v){var i=typeof sel==='string'?document.querySelector(sel):sel;var set=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;set.call(i,v);i.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:v}));}setVal('input[placeholder*=Artikelname]','Keine Kategorie');setVal('input[placeholder*=Freitext]','Soll ohne Kategorie scheitern.');setVal(document.querySelectorAll('input.qnum')[0],'5000');return true;})()")
+        await asyncio.sleep(0.3)
+        await click_btn("Anlegen (2-Schritt)")
+        await asyncio.sleep(0.5)
+        # Confirm-Dialog darf NICHT erscheinen; stattdessen deutsche Meldung.
+        no_confirm5 = await js("!document.body.innerText.includes('Listing ANLEGEN?')")
+        check("w5-no-confirm-without-category", no_confirm5 is True)
+        # Die Meldung rendert als .chip.warn im Formular (innerText verdeckt
+        # sie wegen overflow-clipped Container — DOM-Assertion auf das Element).
+        msg5 = await js("(function(){var c=[...document.querySelectorAll('.chip.warn')].find(function(x){return (x.textContent||'').includes('Bitte eine Kategorie wählen');}); return !!c;})()")
+        check("w5-german-category-message", msg5 is True)
+        after5 = json.loads(str(await js("JSON.stringify(window.__calls||[])")) or "[]")
+        adv5 = [c for c in after5 if "marketplace_advertise" in c]
+        check("w5-no-write-without-category", len(adv5) == 0, "kein marketplace_advertise")
+        await shot("shop-w5-missing-category-blocked.png")
 
     # Cleanup
     proc.terminate()

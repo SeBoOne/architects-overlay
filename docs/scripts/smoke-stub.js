@@ -172,7 +172,7 @@ window.__TAURI_INTERNALS__ = {
 				// Neues Listing an den OWN-OFFERS-Array anfügen (Pull im UI zeigt es).
 				window.__SHOP_OFFERS__ = [{
 					id: nid, title: p.title || 'Neu', description: p.description || '',
-					item_id: 0, category_id: 0, operation: p.operation || 'sell',
+					item_id: 0, category_id: Number(p.id_category || 0), operation: p.operation || 'sell',
 					listing_type: 'item', price: Number(p.price || 0), currency: 'UEC',
 					unit: p.unit || 'unit', quantity: Number(p.in_stock || 1),
 					location: p.location || '—', region: 'Stanton', seller: stubState.uex_username || 'sebo_one',
@@ -193,6 +193,16 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_set_marketplace_confirm':
 				stubState.marketplace_confirm = a.mode || 'every_action';
 				return { marketplace_confirm: stubState.marketplace_confirm };
+			case 'get_categories':
+				// M2b-Review-Fix (t_6e26ec82): Kategorien für die Anlegen-Form —
+				// UEX /categories (id + Anzeigename), Mirror der Provider-DTOs.
+				return [
+					{ id: 1, name: 'Arms', section: 'Armor' },
+					{ id: 2, name: 'Backpacks', section: 'Armor' },
+					{ id: 3, name: 'Armor', section: null },
+					{ id: 4, name: 'Weapons', section: null },
+					{ id: 5, name: 'MedPens', section: null }
+				];
 			case 'open_marketplace_listing':
 				// Nur Tracken — kein echtes Browserfenster im Headless-Smoke.
 				return 'https://uexcorp.space/marketplace/item/info/' + encodeURIComponent(a.slug || '');
