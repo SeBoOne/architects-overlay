@@ -974,6 +974,17 @@ pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
     Ok(url)
 }
 
+/// M3a: ein Listing-Foto als Base64-Data-URI holen (für den Angebots-Detail).
+/// Der CDN liefert `application/octet-stream` — Chromiums ORB blockt direkte
+/// <img>-Ladungen in der Webview (live belegt), daher proxied das Backend.
+/// Hardening + Sniff liegen in `uex_client::fetch_listing_photo`.
+#[tauri::command]
+pub async fn marketplace_photo(_app: AppHandle, url: String) -> Result<String, String> {
+    uex_client::fetch_listing_photo(&url)
+        .await
+        .map_err(|e| friendly(e))
+}
+
 /// Exakter Ziel-Link aller „Listings verwalten"-Buttons (B3): der
 /// Listings-Tab des Marketplace-Managers. Fallback `/marketplace/` nur dort,
 /// wo bewusst der allgemeine Marktplatz gemeint ist (z. B.
@@ -2022,6 +2033,8 @@ mod tests {
                 updated: 1,
                 expires: None,
                 slug: "s".into(),
+                photos: Vec::new(),
+                approved: true,
             }])
             .unwrap();
         let resp = get_marketplace(state.clone(), provider::MarketplaceFilter::default())
@@ -2326,6 +2339,8 @@ mod tests {
                     updated: 1730000000,
                     expires: None,
                     slug: "drake-nettle-s".into(),
+                    photos: Vec::new(),
+                    approved: true,
                 }])
             }
         }
@@ -2428,6 +2443,8 @@ mod tests {
                     updated: 1730000000,
                     expires: None,
                     slug: "drake-nettle-s".into(),
+                    photos: Vec::new(),
+                    approved: true,
                 }],
                 "sebo_one",
             )
@@ -2483,6 +2500,8 @@ mod tests {
                     updated: 1730000000,
                     expires: None,
                     slug: "drake-nettle-s".into(),
+                    photos: Vec::new(),
+                    approved: true,
                 }],
                 "sebo_one",
             )

@@ -46,6 +46,7 @@ use provider::{
 use dto::{
     CategoryRow, CommodityRouteRow, CommodityRow, CreateResponse, ItemPriceRow, ItemRow,
     ListingRow, NegotiationRow, PriceRow, StarSystemRow, TerminalRow, UserTradeRow, VehicleRow,
+    split_photos,
 };
 
 /// Search result page size served from the cache.
@@ -439,6 +440,8 @@ impl DataProvider for UexProvider {
                     updated: r.date_added,
                     expires: r.date_expiration,
                     slug: r.slug,
+                    photos: split_photos(&r.photos),
+                    approved: r.date_approved > 0,
                 });
             }
         }
@@ -1630,10 +1633,68 @@ impl UexProvider {
                     updated: r.date_added,
                     expires: r.date_expiration,
                     slug: r.slug,
+                    photos: split_photos(&r.photos),
+                    approved: r.date_approved > 0,
                 }
             })
             .collect())
     }
+}
+
+/// M3a: CDN-Listing-Foto als Data-URI holen. Der Webview-Kontext kann die
+/// Bilder NICHT direkt laden — der CDN ausliefert sie als
+/// `application/octet-stream`, was Chromiums ORB (Opaque Response Blocking)
+/// auf fremden Seiten blockiert (live belegt: `net::ERR_BLOCKED_BY_ORB`).
+/// Das Backend fetched therefore proxied → Base64-Data-URI. Hardening: nur
+/// `https://cdn.uexcorp.space/…`, Max. 2 MB, JPG/PNG-Magic-Bytes-Sniff.
+pub async fn fetch_listing_photo(url: &str) -> Result<String> {
+    use base64::Engine as _;
+    const MAX_BYTES: usize = 2 * 1024 * 1024;
+    let parsed = reqwest::Url::parse(url.trim())
+        .map_err(|e| ProviderError::Config(format!("ungültige Foto-URL: {e}")))?;
+    let host_ok = matches!(
+        parsed.host_str(),
+        Some(h) if h.eq_ignore_ascii_case("cdn.uexcorp.space")
+    );
+    if parsed.scheme() != "https" || !host_ok {
+        return Err(ProviderError::Config(
+            "Nur https://cdn.uexcorp.space-Fotos werden geladen.".into(),
+        ));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent(concat!("architects-overlay/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| ProviderError::Config(format!("http client: {e}")))?;
+    let resp = client
+        .get(parsed)
+        .send()
+        .await
+        .map_err(|_| ProviderError::Timeout)?;
+    if !resp.status().is_success() {
+        return Err(ProviderError::Json(format!(
+            "Foto-HTTP {}",
+            resp.status().as_u16()
+        )));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|_| ProviderError::Json("Foto-Body nicht lesbar".into()))?;
+    if bytes.len() > MAX_BYTES {
+        return Err(ProviderError::Json("Foto größer als 2 MB".into()));
+    }
+    let mime = if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        "image/jpeg"
+    } else if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        "image/png"
+    } else {
+        return Err(ProviderError::Json("Foto ist weder JPG noch PNG".into()));
+    };
+    Ok(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&bytes)
+    ))
 }
 
 /// Unix-Sekunden (Lokalzeit unabhängig).
@@ -2055,6 +2116,8 @@ mod tests {
             updated: 1000 + id,
             expires: None,
             slug: "slug".into(),
+            photos: Vec::new(),
+            approved: true,
         }
     }
 
@@ -2689,6 +2752,8 @@ mod tests {
             updated: 1730000000,
             expires: None,
             slug: "drake-nettle-s".into(),
+            photos: Vec::new(),
+            approved: true,
         }
     }
 
@@ -2901,6 +2966,26 @@ mod tests {
         assert!(
             result.is_ok(),
             "type=item mit id_category muss validieren: {result:?}"
+        );
+    }
+
+    /// M3a-R1 (t_f2e70b16): fetch_listing_photo-Härtung — nur
+    /// https://cdn.uexcorp.space wird geladen (offline prüfbar, kein Netz).
+    #[tokio::test]
+    async fn fetch_listing_photo_rejects_non_cdn_and_http() {
+        let e = crate::fetch_listing_photo("https://evil.example.com/a-t.jpg")
+            .await
+            .unwrap_err();
+        assert!(
+            e.to_string().contains("cdn.uexcorp.space"),
+            "fremder Host abgelehnt: {e}"
+        );
+        let e = crate::fetch_listing_photo("http://cdn.uexcorp.space/a-t.jpg")
+            .await
+            .unwrap_err();
+        assert!(
+            e.to_string().contains("https"),
+            "http-Scheme abgelehnt: {e}"
         );
     }
 }

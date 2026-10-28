@@ -387,6 +387,8 @@ mod tests {
             updated,
             expires: None,
             slug: "slug".into(),
+            photos: Vec::new(),
+            approved: true,
         };
         let offers = vec![
             mk(1, 300.0, 100, MarketOperation::Sell),

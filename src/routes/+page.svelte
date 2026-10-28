@@ -122,6 +122,10 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		updated: number;
 		expires: number | null;
 		slug: string;
+		// M3a: CDN-Bild-URLs (Thumbnail-Variante -t.jpg) + Freigabe-Status
+		// (date_approved > 0; pending erscheint nur im eigenen Secret-Key-Pull).
+		photos: string[];
+		approved: boolean;
 	};
 	type MarketResponse = {
 		source: 'cache' | 'live' | 'offline';
@@ -1138,6 +1142,33 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let mNote = $state<string | null>(null);
 	let mSel = $state(0);
 	let offerDetail = $state<Offer | null>(null);
+	// M3a-R1 (t_f2e70b16): CDN-Thumbs kommen als `application/octet-stream` +
+	// `X-Content-Type-Options: nosniff` — der Webview (Chromium ORB) blockt
+	// direkte <img>-Ladungen (live belegt: net::ERR_BLOCKED_BY_ORB). Das
+	// Backend proxied (Base64-Data-URI via `marketplace_photo`); Fehler
+	// (403/Timeout/kein JPG/PNG) → null → Kachel weggelassen bzw. Leerzustand.
+	let offerPhotoUris = $state<(string | null)[]>([]);
+	$effect(() => {
+		const detail = offerDetail;
+		offerPhotoUris = [];
+		if (!detail?.photos?.length) return;
+		let cancelled = false;
+		offerPhotoUris = detail.photos.map(() => null);
+		Promise.all(
+			detail.photos.map(async (url) => {
+				try {
+					return await invoke<string>('marketplace_photo', { url });
+				} catch {
+					return null;
+				}
+			}),
+		).then((uris) => {
+			if (!cancelled) offerPhotoUris = uris;
+		});
+		return () => {
+			cancelled = true;
+		};
+	});
 	let mSort = $state<OfferSort>('newest');
 	let mOp = $state<'all' | MarketOp>('all');
 	// Qualitäts-Filter (clientseitig — die UEX-API bietet keinen Qualitäts-
@@ -1322,10 +1353,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// marketplace_listings kein eigenes Status-Feld): ohne Ende → „aktiv",
 	// Zukunft → „läuft ab", Vergangenheit → „abgelaufen".
 	function shopStatus(o: Offer): string {
+		if (!o.approved) return 'wartet auf Freigabe';
 		if (!o.expires) return 'aktiv';
 		if (o.expires <= Math.floor(Date.now() / 1000)) return 'abgelaufen';
 		return 'läuft ab ' + new Date(o.expires * 1000).toLocaleDateString('de-DE');
 	}
+	// M3a: Mein-Shop-Filter (Alle/Aktiv/Wartend) — clientseitig, denn UEX
+	// /marketplace_listings bietet keinen Status-Query-Parameter (live geprüft:
+	// nur username=; Freigabe steckt im Feld date_approved, 0 = wartend).
+	let shopFilter = $state<'all' | 'active' | 'pending'>('all');
+	const shopOffersFiltered = $derived(
+		shopFilter === 'all'
+			? myOffers
+			: myOffers.filter((o) => (shopFilter === 'pending' ? !o.approved : o.approved))
+	);
 	// Letzte 5 Marktplatz-Trades (neueste zuerst, t_350c4300 B2) — Aktivität
 	// nach date_modified (letzte Interaktion, inkl. Abschluss), Fallback auf
 	// date_added. Die letzten-5-Logik liegt laut Entscheidung in der UI; der
@@ -1478,6 +1519,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// 2-Schritt: Zustand, welche Aktion gerade auf Bestätigung wartet.
 	let advertForm = $state(emptyAdvertise());
 	let advertOpen = $state(false);
+	// M3a (Popup): Verwerfen-Frage bei ungespeicherten Eingaben. `advertBase`
+	// friert den Formularzustand beim Öffnen ein; `advertDirty` vergleicht.
+	let advertDiscard = $state(false);
+	let advertBase = $state('');
+
+	function advertDirty(): boolean {
+		try {
+			return JSON.stringify(advertForm) !== advertBase;
+		} catch {
+			return false;
+		}
+	}
+
+	/** Popup schließen: ungespeicherte Eingaben → kurze Verwerfen-Frage. */
+	function requestCloseAdvert() {
+		if (advertDirty()) {
+			advertDiscard = true;
+			return;
+		}
+		advertOpen = false;
+		advertDiscard = false;
+		editingOffer = null;
+	}
 	let advertNote = $state('');
 	// MC (t_5faaf946): Ort- + Item-Typeahead-Optionen (async geladen).
 	// Ort: `location_suggest` (EntityKind::Locations, NUR Locations — Shops/
@@ -1583,6 +1647,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			advertForm = emptyAdvertise();
 		}
 		advertOpen = true;
+		advertDiscard = false;
+		try {
+			advertBase = JSON.stringify(advertForm);
+		} catch {
+			advertBase = '';
+		}
 		advertNote = '';
 	}
 	// 2-Schritt: prüft das Settings-Modell (M2b-2). ConfirmEveryAction = immer
@@ -1730,6 +1800,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const res = await invoke<AdvertiseResult>('marketplace_advertise', { payload });
 			editingOffer = null;
 			advertOpen = false;
+			advertDiscard = false;
 			advertForm = emptyAdvertise();
 			// M2b-4: Pull nach jedem Write (Bestätigung durch den Response/GET).
 			// Ein frisch angelegtes Listing fehlt bis zum UEX-Approval — Erfolg
@@ -2928,6 +2999,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			captureShortcut(e);
 			return;
 		}
+		// M3a: Advert-Popup offen → Navigation/Escape des Marktplatzes
+		// laufen NICHT mehr (Enter im Titel-Feld würde sonst das Detail
+		// öffnen, Esc das Overlay schließen). Esc: Discard-Frage → Popup.
+		if (advertOpen) {
+			if (k === 'Escape') {
+				e.preventDefault();
+				if (confirmAction) confirmAction = null;
+				else if (advertDiscard) advertDiscard = false;
+				else requestCloseAdvert();
+			}
+			return;
+		}
 		// PB (t_1c9bc240, B1): Mode-Hotkey-Capture — VOR allen anderen Shortcuts,
 		// damit die gedrückte F-Taste hier landet und keinen Modus auslöst.
 		if (hkCapture) {
@@ -3820,6 +3903,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span><b>Qualität</b> {offerDetail.quality}</span>
 							{/if}
 						</div>
+						<!-- M3a-R1: Bilder per Backend-Proxy (Base64-Data-URI) — direkte
+						     CDN-URLs werden im Webview ORB-blockiert (octet-stream+nosniff).
+						     Fehlgeschlagene Fotos (403/Timeout/kein JPG/PNG) → Kachel weg;
+						     wenn KEIN Foto lädt → Leerzustand "Kein Bild hinterlegt." -->
+						{#if offerDetail.photos?.length}
+							<div class="md-photos">
+								{#each offerDetail.photos as ph, pi (ph + '#' + pi)}
+									{#if offerPhotoUris[pi]}
+										<button
+											type="button"
+											class="md-photo"
+											title="Bild groß öffnen (uexcorp.space)"
+											onclick={() => void openListingDeepLink(offerDetail!.slug)}
+										>
+											<img src={offerPhotoUris[pi]} alt={'Bild ' + (pi + 1) + ' von „' + offerDetail!.title + '“'} loading="lazy" />
+										</button>
+									{/if}
+								{/each}
+								{#if offerPhotoUris.length > 0 && offerPhotoUris.every((u) => u === null)}
+									<div class="md-desc empty">Kein Bild hinterlegt.</div>
+								{/if}
+							</div>
+						{:else}
+							<div class="md-desc empty">Kein Bild hinterlegt.</div>
+						{/if}
 						{#if offerDetail.description}
 							<div class="md-desc">{offerDetail.description}</div>
 						{:else}
@@ -4133,12 +4241,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											{/if}
 											<div class="mbar2" style="margin-top: 10px">
 													<span class="m-lbl">Eigene Offers ({myOffers.length})</span>
+													<!-- M3a: Filter Alle/Aktiv/Wartend (kleine Chips) — pending
+													     Listings (date_approved = 0) bleiben sichtbar statt
+													     unsichtbar zu sein, bis UEX sie freigibt. -->
+													<button type="button" class="chip" class:is-on={shopFilter === 'all'} onclick={() => (shopFilter = 'all')}>Alle</button>
+													<button type="button" class="chip" class:is-on={shopFilter === 'active'} onclick={() => (shopFilter = 'active')}>Aktiv</button>
+													<button type="button" class="chip" class:is-on={shopFilter === 'pending'} onclick={() => (shopFilter = 'pending')}>Wartend</button>
 													<span class="m-spacer"></span>
 													<span class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
 													<span class="chip" title="Marketplace auf uexcorp.space öffnen" onclick={() => void openListingDeepLink(null)}>Im Browser öffnen ↗</span>
 												</div>
 												{#if advertOpen}
-													<div class="pane-error" style="margin: 10px 0; background: rgba(255,255,255,.03)">
+												<!-- M3a: das „Neues Listing“-Formular als modales Popup
+												     (gleiches Muster wie die 2-Schritt-Bestätigung: Scrim +
+												     feste Karte). Passt in die Overlay-Größe, mlist-Body
+												     scrollt intern, Button-Leiste bleibt erreichbar. -->
+													<div class="advert-scrim" role="presentation">
+														<div class="advert-modal" role="dialog" aria-modal="true" aria-label="Neues Listing anlegen">
+													<div class="pane-error advert-pane" style="background: rgba(255,255,255,.03)">
 														<div class="mbar2"><span class="m-lbl">{editingOffer ? 'NEU ANLEGEN (Bearbeiten = erst Abmelden, dann Neu)' : 'NEUES LISTING ANLEGEN'}</span></div>
 														{#if editingOffer}
 															<div class="row-empty" style="padding: 8px 12px">Dieses Formular ist VORBEFÜLLT mit „{editingOffer.title}“. Für eine Änderung musst du das alte Listing zuerst ABmelden (unten) und dann mit den neuen Werten neu anlegen — UEX unterstützt kein Bearbeiten.</div>
@@ -4333,17 +4453,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																{/if}
 																{#if advertErrors.images}<span class="chip warn" style="margin-left: 4px">{advertErrors.images}</span>{/if}
 															</div>
-															<div class="mbar2" style="margin-top: 8px">
+															<div class="mbar2 advert-foot" style="margin-top: 8px">
 																<button type="button" class="btn" disabled={writeBusy} onclick={() => void requestAdvertise()}>{writeBusy ? 'Wird gesendet …' : 'Anlegen (2-Schritt)'}</button>
-																<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => { advertOpen = false; editingOffer = null; }}>Abbrechen</button>
+																<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => requestCloseAdvert()}>Abbrechen</button>
 																{#if advertNote}<span class="chip warn" style="margin-left: 8px">{advertNote}</span>{/if}
 															</div>
-														</div>
-													</div>
+																												</div>
+																											</div>
+																											<!-- M3a: Ungespeicherte Eingaben → kurze Verwerfen-Frage
+														     statt verlustfreiem Wegwerfen. -->
+														{#if advertDiscard}
+															<div class="advert-discard">
+																<div class="big" style="color: var(--alert)">Eingaben verwerfen?</div>
+																<div class="sm" style="color: var(--fgdim)">Es wurden noch keine Daten an UEX gesendet.</div>
+																<div class="mbar2" style="margin-top: 10px; justify-content: center; border: 0; background: transparent; padding: 0">
+																	<button type="button" class="btn btn-danger" onclick={() => { advertOpen = false; advertDiscard = false; editingOffer = null; advertForm = emptyAdvertise(); }}>Verwerfen</button>
+																	<button type="button" class="btn-ghost" onclick={() => (advertDiscard = false)}>Weiter bearbeiten</button>
+																</div>
+															</div>
+														{/if}
+																	</div>
+																</div>
 												{/if}
-												{#if myOffers.length}
+												{#if shopOffersFiltered.length}
 							<div class="mlist">
-								{#each myOffers as o, i (o.id)}
+								{#each shopOffersFiltered as o, i (o.id)}
 									<div
 										class="mrow"
 										role="option"
@@ -4357,6 +4491,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<div class="m-main">
 											<div class="m-title">{o.title}</div>
 											<div class="m-sub">{o.location || '—'}{o.region ? ' · ' + o.region : ''} · {shopStatus(o)}</div>
+											{#if !o.approved}
+												<span class="chip warn" title="UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.">wartet auf Freigabe</span>
+											{/if}
 										</div>
 																				<div class="m-right">
 																					<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
@@ -4375,7 +4512,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{:else}
 							<div class="row-empty" style="padding: 14px 16px">
-								{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Benutzername oben eintragen und Laden drücken.'}
+								{#if shopFilter !== 'all' && myOffers.length}
+									Keine Offers im Filter „{shopFilter === 'pending' ? 'Wartend' : 'Aktiv'}“.
+								{:else}
+									{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Benutzername oben eintragen und Laden drücken.'}
+								{/if}
 							</div>
 						{/if}
 						<div class="mbar2" style="margin-top: 14px">
