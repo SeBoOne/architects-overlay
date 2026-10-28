@@ -1167,6 +1167,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let mNote = $state<string | null>(null);
 	let mSel = $state(0);
 	let offerDetail = $state<Offer | null>(null);
+	// MQ (t_d6ff5212): Bild-Lightbox — Inline-Zoom im Overlay. Klick auf ein
+	// Offer-Foto öffnet das Modal statt den Browser-Deep-Link; Scrim-Klick
+	// oder Esc schließt. Die externen Links bleiben den Buttons vorbehalten.
+	let lightbox = $state<{ uri: string; title: string } | null>(null);
 	// M3a-R1 (t_f2e70b16): CDN-Thumbs kommen als `application/octet-stream` +
 	// `X-Content-Type-Options: nosniff` — der Webview (Chromium ORB) blockt
 	// direkte <img>-Ladungen (live belegt: net::ERR_BLOCKED_BY_ORB). Das
@@ -3322,6 +3326,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				}
 				return; // Routen-Tab: keine Offer-Shortcuts
 			}
+			// MQ (t_d6ff5212): Lightbox offen → sie schluckt die Tastatur. Esc
+			// schließt, alle anderen Offer-/Market-Shortcuts laufen nicht.
+			if (lightbox) {
+				if (k === 'Escape') {
+					lightbox = null;
+					e.preventDefault();
+				}
+				return;
+			}
 			if (k === 'ArrowDown' && !offerDetail && !inStepper) {
 				mMove(1);
 				e.preventDefault();
@@ -3339,6 +3352,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			if (k === 'ArrowLeft' && offerDetail) {
 				offerDetail = null;
+				lightbox = null;
 				e.preventDefault();
 				return;
 			}
@@ -3355,6 +3369,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			if (k === 'Escape') {
 				if (offerDetail) {
 					offerDetail = null;
+					lightbox = null;
 				} else {
 					// Esc verlässt den Market-Modus zurück zur Suche — blendet
 					// das Overlay NICHT aus (Fokus liegt in der Ergebnisliste).
@@ -3999,9 +4014,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					
 												<div class="cfg-key-status" style="margin-top: 12px">
 							Schreibbestätigung (2-Schritt):
-							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>Nach jeder Aktion (Default)</button>
-							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>Nur beim Abmelden</button>
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>Nach jeder Aktion (empfohlen)</button>
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>Nur beim Abmelden/Löschen eines Listings</button>
 						</div>
+						<!-- MQ (t_d6ff5212): „Nur beim Abmelden“ war unklar → eindeutige
+						     Labels + 1-Zeilen-Erklärung, was jeweils bestätigt wird. -->
+						<div class="cfg-note">Bestätigungspflicht beim Anlegen von Listings vs. nur beim Entfernen.</div>
 						{#if mktConfirmNote}
 							<div class="cfg-note">{mktConfirmNote}</div>
 						{/if}
@@ -4090,8 +4108,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<button
 											type="button"
 											class="md-photo"
-											title="Bild groß öffnen (uexcorp.space)"
-											onclick={() => void openListingDeepLink(offerDetail!.slug)}
+											title="Bild vergrößern (Inline-Lightbox im Overlay)"
+											onclick={() => {
+												const uri = offerPhotoUris[pi];
+												if (uri && offerDetail) lightbox = { uri, title: offerDetail.title };
+											}}
 										>
 											<img src={offerPhotoUris[pi]} alt={'Bild ' + (pi + 1) + ' von „' + offerDetail!.title + '“'} loading="lazy" />
 										</button>
@@ -4110,12 +4131,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="md-desc empty">Keine Beschreibung.</div>
 						{/if}
 						<div class="md-actions">
+							<!-- MQ (t_d6ff5212): Verhandlungs-Einstieg sichtbar machen. Die
+							     API bietet KEIN POST /marketplace_negotiations (Research) —
+							     Deals entstehen auf der UEX-Webseite → Deep-Link-Button. -->
+							<span class="btn" title="Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)" onclick={() => void openListingDeepLink(offerDetail!.slug)}>VERHANDELN AUF UEX ↗</span>
 							<span class="btn-ghost" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
-							<span class="btn-ghost" onclick={() => (offerDetail = null)}>Zurück</span>
+							<span class="btn-ghost" onclick={() => { offerDetail = null; lightbox = null; }}>Zurück</span>
 						</div>
 						<div class="md-note">
-							Öffnet <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — nur Lesen, keine Änderungen.
+							Verhandeln startet auf <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter.
 						</div>
+						{#if lightbox}
+							<!-- MQ (t_d6ff5212): Bild-Lightbox — Inline-Zoom statt Browser.
+							     Klick auf den Scrim (oder Esc) schließt; Klick aufs Bild nicht. -->
+							<div class="lightbox-scrim" role="presentation" onclick={() => (lightbox = null)}>
+								<div class="lightbox-modal" role="dialog" aria-modal="true" aria-label="Bild vergrößert">
+									<img src={lightbox.uri} alt={'Vergrößert: ' + lightbox.title} onclick={(ev) => ev.stopPropagation()} />
+									<div class="lightbox-cap">{lightbox.title} — Klick außerhalb oder Esc schließt</div>
+								</div>
+							</div>
+						{/if}
 					</div>
 				{:else if mTab === 'routes'}
 					{#if rDetail}
@@ -4389,6 +4424,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<span class="m-lbl">Deals</span>
 							<span class="chip" onclick={() => void loadDeals(true)}>Aktualisieren</span>
 							<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
+						</div>
+						<!-- MQ (t_d6ff5212): Deal-Einstieg sichtbar machen — Deals KANN das
+						     Overlay nicht starten (API hat kein POST /marketplace_negotiations).
+						     Sie entstehen auf uexcorp.space; hier nur verhandeln/chatten/beenden. -->
+						<div class="row-empty" style="padding: 8px 16px; text-align: left">
+							Deals entstehen auf <span class="src">uexcorp.space</span> — Deal auf der Angebotsseite starten („Deal“/„Negotiate“ am Listing), danach hier verhandeln, chatten und beenden.
 						</div>
 						{#if tradesLoading}
 							<div class="center">
@@ -4706,8 +4747,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																>{advertForm.hidden ? 'Ja' : 'No'}</button>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Beschreibung</span>
-																<input class="rtext" style="flex: 1" placeholder="Freitext (Markdown ok, max. 65.535 Zeichen)" maxlength="65535" bind:value={advertForm.description} />
+																<span class="m-lbl" style="align-self: flex-start; padding-top: 6px">Beschreibung</span>
+																<!-- MQ (t_d6ff5212): mehrzeiliges Textfeld (autogrow). API-Beleg
+																     [POST /marketplace_advertise Doku]: description string(65535),
+																     Newlines werden nicht eingeschränkt → \n wird 1:1 durchgereicht
+																     (Rust String, JSON-Encoder escaped sauber). -->
+																<textarea
+																	class="rtext advert-desc"
+																	rows="3"
+																	placeholder="Freitext, mehrzeilig (Markdown ok, max. 65.535 Zeichen) — Enter = neue Zeile"
+																	maxlength="65535"
+																	bind:value={advertForm.description}
+																	oninput={(e) => {
+																		const el = e.currentTarget;
+																		el.style.height = 'auto';
+																		el.style.height = el.scrollHeight + 'px';
+																	}}
+																></textarea>
 																{#if advertErrors.description}<span class="chip warn" style="margin-left: 4px">{advertErrors.description}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px; align-items: center">
@@ -4790,7 +4846,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																					<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
 																				</div>
 																				<div class="m-right" style="gap: 4px">
-																					<button type="button" class="btn-ghost" title="Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)" onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>✎ Neu</button>
+																					<button type="button" class="btn-ghost" title="Verhandeln startet auf uexcorp.space (API-seitig kein POST /marketplace_negotiations) — Angebotsseite im Browser öffnen" onclick={(ev) => { ev.stopPropagation(); void openListingDeepLink(o.slug); }}>💬 Verhandeln</button>
+									<button type="button" class="btn-ghost" title="Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)" onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>✎ Neu</button>
 																					<button type="button" class="btn-ghost" title="Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)" onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>Abmelden</button>
 																				</div>
 																			</div>
