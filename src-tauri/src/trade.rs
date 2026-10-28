@@ -999,6 +999,18 @@ pub async fn marketplace_delete(state: State<'_, TradeState>, id: u64) -> Result
     Ok(())
 }
 
+/// M2b-Review-Fix (t_6e26ec82): Marketplace-Kategorien für die Anlegen-Form.
+/// `POST /marketplace_advertise/` verlangt `id_category` für `type=item` —
+/// die Form braucht die Auswahl (id + Anzeigename), damit jeder Item-Create
+/// ein gültiges Payload bekommt (vorher hardcodiert `id_category: null` →
+/// UEX 400 missing_id_category).
+#[tauri::command]
+pub async fn get_categories(
+    state: State<'_, TradeState>,
+) -> Result<Vec<provider::Category>, String> {
+    state.provider.categories().await.map_err(friendly)
+}
+
 /// M2b: gibt das persistierte Bestätigungs-Modell zurück (UI entscheidet den
 /// 2-Schritt). Der volle Settings-Snapshot (`settings_get`) trägt
 /// `marketplace_confirm` bereits — dieser einfache Command ist für Probes.

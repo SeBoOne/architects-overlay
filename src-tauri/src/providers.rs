@@ -406,6 +406,11 @@ impl DataProvider for CompositeProvider {
         self.uex.user_trades().await
     }
 
+    async fn categories(&self) -> Result<Vec<provider::Category>> {
+        // Marketplace-Kategorien (Anlegen-Form) sind UEX-Referenzdaten.
+        self.uex.categories().await
+    }
+
     async fn advertise_offer(
         &self,
         payload: provider::AdvertisePayload,

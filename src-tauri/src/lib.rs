@@ -54,6 +54,7 @@ pub fn run() {
             trade::get_my_trades,
             trade::marketplace_advertise,
             trade::marketplace_delete,
+            trade::get_categories,
             trade::marketplace_confirm_mode,
             trade::open_marketplace_listing,
             trade::open_marketplace_trades,
