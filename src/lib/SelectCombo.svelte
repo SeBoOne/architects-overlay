@@ -21,6 +21,10 @@
 	let open = $state(false);
 	let hi = $state(0);
 	let query = $state('');
+	// NN (t_060d134e): fokussiert = der Nutzer editiert — der Label-Restore
+	// (Effekt unten) darf dann das Feld NICHT automatisch wieder auffüllen,
+	// sonst ist das Feld nie leer (Auto-Reinsert-Bug).
+	let focused = $state(false);
 
 	// Synchronisiere das Eingabefeld mit dem gewählten Wert (Label), wenn von
 	// außen gesetzt (z. B. Vorbefüllung beim Bearbeiten oder Unit-Wechsel).
@@ -33,9 +37,12 @@
 		}
 	});
 	// Initial-Label beim Mount/Option-Wechsel (z. B. CURRENCY_CHOICES laden).
+	// NN (t_060d134e): nur wenn das Feld NICHT fokussiert ist — sonst würde
+	// der Effekt die geleerte Eingabe sofort wieder mit dem alten Wert
+	// überschreiben (Auto-Reinsert).
 	$effect(() => {
 		const o = options.find((c) => c.value === value);
-		if (value !== '' && query === '') query = o ? o.label : value;
+		if (value !== '' && query === '' && !focused) query = o ? o.label : value;
 	});
 
 	let filtered = $derived.by(() => {
@@ -106,12 +113,23 @@
 	let blurTimer: ReturnType<typeof setTimeout> | null = null;
 	function onfocus() {
 		if (disabled) return;
+		focused = true;
 		open = true;
 		hi = 0;
 	}
 	function onblur() {
 		blurTimer = setTimeout(() => {
+			focused = false;
 			open = false;
+			// NN (t_060d134e): geleertes Feld bleibt leer — KEIN Auto-Reinsert
+			// des alten Werts. Der Value wird mitgeleert (Pflichtfelder melden
+			// sich über die Form-Validierung), bei Fokus zeigt die komplette
+			// Optionsliste; erst eine Auswahl setzt wieder einen Wert.
+			if (query.trim() === '') {
+				value = '';
+				lastExternal = '';
+				return;
+			}
 			// Text ohne Auswahl zurück auf das Label des gewählten Werts.
 			const o = options.find((c) => c.value === value);
 			query = o ? o.label : value;

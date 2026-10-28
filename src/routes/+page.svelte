@@ -1323,7 +1323,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	type AdvertiseForm = {
 		operation: 'sell' | 'buy';
 		// MC (t_5faaf946): Listing Type — UEX `type`: item|service|contract.
-		listing_type: 'item' | 'service' | 'contract';
+		// NN (t_060d134e): '' möglich — geleertes Dropdown leert den Wert;
+		// die Validierung verlangt vor dem Write erneut eine Auswahl.
+		listing_type: 'item' | 'service' | 'contract' | '';
 		// Item-Auswahl (Typeahead) — UEX `id_item`. Pflicht wenn listing_type=item.
 		item_id: string;
 		item_label: string;
@@ -1336,7 +1338,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		source: string;
 		// MC: Currency (UEC|WIF|MGS), Default UEC.
 		currency: string;
-		// MC: Quality 0–100 (optional).
+		// MC: Quality 0–1000 (optional). NN (t_060d134e): 1000 statt 100.
 		quality: string;
 		// MC: Hide Listing (optional, Default No) → is_hidden 1/0.
 		hidden: boolean;
@@ -1452,30 +1454,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let advertItemOpts = $derived(
 		advertItemSug.map((i) => ({ value: String(i.id), label: i.name })) as AdvertTypeaheadOpt[]
 	);
-	// MC: Bilder bis 5 — Dateiauswahl, Base64-Vorschau, X-Entfernen. UEX
-	// überträgt doku-konform das ERSTE Bild als image_data (Doku [7]).
+	// MC: Dateiauswahl, Base64-Vorschau, X-Entfernen. UEX überträgt doku-
+	// konform EIN Bild als image_data (Doku [7]). NN (t_060d134e): genau
+	// 1 Bild — eine neue Wahl ERSETZT das alte (keine 5er-Sammlung mehr).
 	let advertFileInput = $state<HTMLInputElement | null>(null);
 	function addAdvertImages(files: FileList | null) {
-		if (!files) return;
-		const room = 5 - advertForm.images.length;
-		for (const file of Array.from(files).slice(0, room)) {
-			if (!/^image\/(jpeg|png)$/.test(file.type)) {
-				advertNote = 'Nur JPG/PNG-Bilder sind erlaubt (UEX-Limit).';
-				continue;
-			}
-			if (file.size > 10 * 1024 * 1024) {
-				advertNote = 'Bild „' + file.name + '“ ist größer als 10 MB (UEX-Limit).';
-				continue;
-			}
-			const reader = new FileReader();
-			reader.onload = () => {
-				if (typeof reader.result === 'string') {
-					advertForm.images = [...advertForm.images, reader.result as string];
-				}
-			};
-			reader.readAsDataURL(file);
+		if (!files || !files.length) return;
+		const file = files[0];
+		if (!/^image\/(jpeg|png)$/.test(file.type)) {
+			advertNote = 'Nur JPG/PNG-Bilder sind erlaubt (UEX-Limit).';
+			return;
 		}
-		if (advertForm.images.length >= 5) advertNote = 'Maximal 5 Bilder (UEX-Limit).';
+		if (file.size > 10 * 1024 * 1024) {
+			advertNote = 'Bild „' + file.name + '“ ist größer als 10 MB (UEX-Limit).';
+			return;
+		}
+		const reader = new FileReader();
+		reader.onload = () => {
+			if (typeof reader.result === 'string') {
+				// Replace-Semantik: das neue Bild ersetzt ein ggf. vorhandenes.
+				advertForm.images = [reader.result as string];
+			}
+		};
+		reader.readAsDataURL(file);
 	}
 	let confirmAction = $state<null | { kind: 'advertise' } | { kind: 'delete'; offer: Offer }>(null);
 	let writeBusy = $state(false);
@@ -1542,6 +1543,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			| 'unit'
 			| 'currency'
 			| 'quality'
+			| 'listing_type'
 			| 'hours'
 			| 'images',
 			string
@@ -1563,6 +1565,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	};
 	function validateAdvertise(f: AdvertiseForm): AdvertErrors {
 		const errs: AdvertErrors = {};
+		// NN (t_060d134e): geleertes Listing-Type-Dropdown → Pflicht-Hinweis.
+		if (!f.listing_type) errs.listing_type = 'Listing Type ist Pflicht.';
 		if (!f.title.trim()) errs.title = 'Titel ist Pflicht.';
 		else if (f.title.trim().length > 140) errs.title = 'Titel max. 140 Zeichen (Doku).';
 		if (!f.description.trim()) errs.description = 'Beschreibung ist Pflicht.';
@@ -1582,11 +1586,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (!Number.isFinite(qty) || qty <= 0) errs.quantity = 'Menge muss eine positive Ganzzahl sein.';
 		if (!f.unit.trim()) errs.unit = 'Einheit ist Pflicht.';
 		if (!f.currency.trim()) errs.currency = 'Währung ist Pflicht.';
-		if (f.quality !== '' && (!Number.isFinite(Number(f.quality)) || Number(f.quality) < 0 || Number(f.quality) > 100)) {
-			errs.quality = 'Quality muss zwischen 0 und 100 liegen.';
+		// NN (t_060d134e): Quality-Bereich 0–1000 (UEX-Maske; 100 war zu eng).
+		if (f.quality !== '' && (!Number.isFinite(Number(f.quality)) || Number(f.quality) < 0 || Number(f.quality) > 1000)) {
+			errs.quality = 'Quality muss zwischen 0 und 1000 liegen.';
 		}
 		if (!f.hours) errs.hours = 'Laufzeit ist Pflicht.';
-		if (f.images.length > 5) errs.images = 'Maximal 5 Bilder (UEX-Limit).';
+		// NN (t_060d134e): UEX überträgt nur 1 Bild (image_data) — UI erlaubt
+		// genau 1 (neue Wahl ersetzt die alte), keine 5er-Sammlung mehr.
+		if (f.images.length > 1) errs.images = 'Maximal 1 Bild (UEX-Limit).';
 		return errs;
 	}
 	function applyAdvertErrors(errs: AdvertErrors): boolean {
@@ -1697,7 +1704,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// MC (t_5faaf946): Unit-Auswahl hängt vom Listing-Type ab (Doku [7] —
 	// separate Referenzliste für item/service/contract); UNIT_MAP oben.
 	function unitsFor(type: AdvertiseForm['listing_type']): string[] {
-		return UNIT_MAP[type] || UNIT_MAP.item;
+		if (type !== 'item' && type !== 'service' && type !== 'contract') return UNIT_MAP.item;
+		return UNIT_MAP[type];
 	}
 	// Laufzeit: >24h als Tage anzeigen (48→2d … 720→30d), ≤24h in h bleiben.
 	// Der gespeicherte Wert bleibt unverändert die Stundenzahl (API erwartet h).
@@ -1707,6 +1715,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return n > 24 ? (n / 24) + 'd' : n + ' h';
 	}
 	const HOUR_CHOICES = ['1', '2', '3', '5', '12', '24', '48', '72', '120', '168', '336', '720'];
+
+	// NN (t_060d134e): Preis-Eingabe mit Tausender-Punkten — angezeigt wird
+	// gruppiert (1.500.000.000), gespeichert bleibt die reine Ziffernfolge
+	// (advertForm.price), sodass Validierung/Parse unverändert Number() nutzt.
+	function fmtGroup(v: string): string {
+		const digits = String(v).replace(/\D/g, '');
+		return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+	}
+	function onPriceInput(e: Event) {
+		const el = e.currentTarget as HTMLInputElement;
+		const digits = el.value.replace(/\D/g, '').slice(0, 12);
+		advertForm.price = digits;
+		el.value = digits ? fmtGroup(digits) : '';
+	}
 
 	// ---- Handelsrouten (Karte t_128b7547) ------------------------------------
 	// Separater Tab im Marktmodus (Design-Empfehlung der Karte). Datenquelle:
@@ -3754,7 +3776,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{:else}
 						<div class="mbar2">
 							<span class="m-lbl">Schiff</span>
-							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder="Type-ahead Schiff" ariaLabel="Schiff Type-ahead — Tippen filtert, ↵ übernimmt" onselect={(v: string) => applyShipScu(v)} />
+							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder="z. B. Ironclad" ariaLabel="Schiff Type-ahead — Tippen filtert, ↵ übernimmt" onselect={(v: string) => applyShipScu(v)} />
 							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
 							<span class="m-lbl">Budget</span>
 							<div class="rb-wrap">
@@ -3972,14 +3994,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																		const u = unitsFor(advertForm.listing_type);
 																		if (!u.includes(advertForm.unit)) advertForm.unit = u[0];
 																	}}
-																/>
-															</div>
+																	/>
+																	{#if advertErrors.listing_type}<span class="chip warn" style="margin-left: 4px">{advertErrors.listing_type}</span>{/if}
+																	</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Titel</span>
-																<input class="rtext" placeholder="Artikelname (alphanumerisch + -)" maxlength="140" bind:value={advertForm.title} />
-																{#if advertErrors.title}<span class="chip warn" style="margin-left: 4px">{advertErrors.title}</span>{/if}
-																<span class="m-lbl">Preis</span>
-																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.price} />
+																				<!-- NN (t_060d134e): breit genug für lange Titel (z. B.
+																				     „Atzkav Sniper Rifle 970 Q Crafted …“) ohne Abschneiden. -->
+																				<input class="rtext" style="width: 560px" placeholder="Artikelname (alphanumerisch + -)" maxlength="140" bind:value={advertForm.title} />
+																				{#if advertErrors.title}<span class="chip warn" style="margin-left: 4px">{advertErrors.title}</span>{/if}
+																				<span class="m-lbl">Preis</span>
+																				<!-- NN (t_060d134e): breit für einstellige Milliarden +
+																				     Tausender-Punkte bei der Eingabe (gespeichert wird die
+																				     reine Ziffernfolge — Validierung/Parse unverändert). -->
+																				<input
+																					class="qnum"
+																					style="width: 170px"
+																					type="text"
+																					inputmode="numeric"
+																					placeholder="z. B. 1.500.000.000"
+																					aria-label="Preis (Ganzzahl, Tausender-Punkte werden bei der Eingabe angezeigt)"
+																					value={fmtGroup(advertForm.price)}
+																					oninput={onPriceInput}
+																				/>
 																{#if advertErrors.price}<span class="chip warn" style="margin-left: 4px">{advertErrors.price}</span>{/if}
 																<span class="m-lbl">Währung</span>
 																<SelectCombo bind:value={advertForm.currency} ariaLabel="Currency" placeholder="UEC" options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
@@ -4064,7 +4101,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	]}
 																/>
 																<span class="m-lbl">Quality</span>
-																<input class="qnum" type="number" min="0" max="100" step="1" placeholder="0–100" bind:value={advertForm.quality} />
+																<!-- NN (t_060d134e): Quality 0–1000 (war 0–100) — UEX-Maske
+												     erlaubt bis 1000, z. B. „970 Q Crafted“. -->
+								<input class="qnum" type="number" min="0" max="1000" step="1" placeholder="0–1000" title="Quality 0–1000" bind:value={advertForm.quality} />
 																{#if advertErrors.quality}<span class="chip warn" style="margin-left: 4px">{advertErrors.quality}</span>{/if}
 																<span class="m-lbl">Availability</span>
 																<SelectCombo
@@ -4093,13 +4132,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																{#if advertErrors.description}<span class="chip warn" style="margin-left: 4px">{advertErrors.description}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px; align-items: center">
-																<span class="m-lbl">Bilder (bis 5, JPG/PNG)</span>
-																<input
-																	class="rtext"
-																	type="file"
-																	accept="image/jpeg,image/png"
-																	multiple
-																	style="max-width: 260px"
+																<span class="m-lbl">Bild (JPG/PNG, 1 erlaubt)</span>
+																				<!-- NN (t_060d134e): genau 1 Bild — UEX überträgt nur 1
+																				     (image_data). Neue Wahl ersetzt die alte; Vorschau +
+																				     Entfernen bleiben. -->
+																				<input
+																					class="rtext"
+																					type="file"
+																					accept="image/jpeg,image/png"
+																					style="max-width: 260px"
 																	onchange={(e) => {
 																		const el = e.currentTarget as HTMLInputElement;
 																		addAdvertImages(el.files);
@@ -4119,7 +4160,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	</span>
 																{/each}
 																{#if advertForm.images.length}
-																	<span class="sm" style="opacity: .6">UEX überträgt 1 Bild pro Listing (image_data) — das erste gewählte wird gesendet.</span>
+																	<span class="sm" style="opacity: .6">UEX überträgt 1 Bild pro Listing (image_data) — ein neu gewähltes Bild ersetzt das alte.</span>
 																{/if}
 																{#if advertErrors.images}<span class="chip warn" style="margin-left: 4px">{advertErrors.images}</span>{/if}
 															</div>
@@ -4232,7 +4273,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	{:else}
 																		<div class="c-row"><b>Titel</b><span>{advertForm.title}</span></div>
 																		<div class="c-row"><b>Art</b><span>{advertForm.operation === 'sell' ? 'Verkaufs-Angebot' : 'Kauf-Gesuch'} ({advertForm.listing_type})</span></div>
-																		<div class="c-row"><b>Preis</b><span>{advertForm.price} {advertForm.currency}</span></div>
+																		<div class="c-row"><b>Preis</b><span>{fmtGroup(advertForm.price)} {advertForm.currency}</span></div>
 																		<div class="c-row"><b>Menge</b><span>{advertForm.quantity} {advertForm.unit}</span></div>
 																		<div class="c-row"><b>Ort</b><span>{advertForm.location || '—'}</span></div>
 																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt.</div>
