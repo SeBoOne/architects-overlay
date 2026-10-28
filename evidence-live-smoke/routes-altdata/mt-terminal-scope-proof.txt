@@ -19,3 +19,11 @@ MT (t_5a6706f7) — Belege Terminal-Typ-Filterung
    test live_commodity_price_direction_matches_player_view ... ok (nach 429-Rate-Limit einzeln gelaufen).
 
 4) GATE: fmt check 0, cargo check ok, cargo test alle Suiten 0 failed, svelte-check 0 errors, pnpm build ok.
+
+5) END-TO-END gegen KOPIE der echten User-Cache-DB (Temp-Test, danach gelöscht):
+   Phase 1: Cache::open → v10-Migration: terminal_prices 26.727 → 0 Zeilen (Purge belegt).
+   Phase 2: 4 Zeilen in die frische v10-Tabelle injiziert (Ship Weapons t289 buy 2530,
+   Refinery t196 + Dumper's t114 buy 6000 für Stileron; Positiv-Kontrolle Commodity-Shop
+   t665 buy 283500 für Osoian Hides).
+   Phase 3: route_locations: osoian-hides buys=1 sells=0 bad=[] (nur Golden Riviera),
+   stileron buys=0 sells=0 bad=[] — Ghosts ausgeschlossen, legitimer Shop sichtbar.
