@@ -1302,3 +1302,145 @@ async fn user_trades_sends_secret_key_header_only_when_set() {
         "user_trades mit secret-key muss Ok sein (Header gesendet)"
     );
 }
+
+/// M2b (Write-Layer): `POST /marketplace_advertise/` — ein neues Listing
+/// wird angelegt. Belegt den vollen Write-Pfad: Payload geht als JSON-Body
+/// mit Bearer + secret-key-Headern, die Antwort (das neue Listing als Objekt)
+/// wird auf `Offer` gemappt. KEIN Retry/Fn-Seite — Fehler steigen durch.
+#[tokio::test]
+async fn advertise_offer_posts_payload_and_maps_new_listing() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    // star_systems: map_listing_row_offer löst die Region auf (einmal).
+    Mock::given(method("GET"))
+        .and(path("/star_systems"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[{"id":68,"name":"Stanton","code":"ST"}]}"#,
+        ))
+        .mount(&server)
+        .await;
+    // POST: matcht den secret-key-Header + JSON-Body-Schlüssel.
+    Mock::given(method("POST"))
+        .and(path("/marketplace_advertise/"))
+        .and(header("secret-key", "my-super-secret-40"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":{
+                "id": 9002, "operation": "sell", "type": "item",
+                "title": "DRAKE NETTLE S | Used", "price": "4500000",
+                "in_stock": 1, "unit": "unit", "currency": "UEC",
+                "id_star_system": 68, "location": "Port Tressler",
+                "slug": "drake-nettle-s-9002", "date_added": 1730000000
+            }}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+
+    let p = provider::AdvertisePayload {
+        id_item: None,
+        id_category: None,
+        id_star_system: None,
+        id_terminal: None,
+        id_organization: None,
+        operation: "sell".into(),
+        language: "en_US".into(),
+        r#type: "item".into(),
+        unit: "unit".into(),
+        price: 4_500_000,
+        currency: "UEC".into(),
+        location: Some("Port Tressler".into()),
+        title: "DRAKE NETTLE S | Used".into(),
+        description: "Minor scuffs on left wing. Fully functional.".into(),
+        source: Some("purchased_in_game".into()),
+        in_stock: 1,
+        availability: Some("ready_pickup".into()),
+        durability: Some(85),
+        hours_expiration: Some(168),
+        is_hidden: None,
+        is_production: 1,
+    };
+    let offer = provider.advertise_offer(p).await.expect("advertise ok");
+    assert_eq!(offer.id, 9002);
+    assert_eq!(offer.title, "DRAKE NETTLE S | Used");
+    assert_eq!(offer.price, 4_500_000.0);
+    assert_eq!(offer.region, "Stanton");
+}
+
+/// M2b (Write-Layer): `DELETE /marketplace_listings/?id=…&is_production=1` —
+/// Erfolg = `{"status":"ok"}` (kein data), die Antwort wird als Ok verstanden.
+#[tokio::test]
+async fn delete_offer_deletes_listing_with_secret_key() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/marketplace_listings/"))
+        .and(query_param("id", "847291"))
+        .and(query_param("is_production", "1"))
+        .and(header("secret-key", "my-super-secret-40"))
+        .respond_with(json_response(r#"{"status":"ok","http_code":200,"data":null}"#))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+
+    provider
+        .delete_offer(847_291)
+        .await
+        .expect("delete ok");
+}
+
+/// M2b (Write-Layer): Fehlerpfad — DELETE mit unserem Secret-Key-Header, aber
+/// UEX antwortet 403 invalid_secret_key → Provider liefert den Err (KEIN
+/// Retry-Spam), die IPC-Ebene übersetzt es in die deutsche Meldung.
+#[tokio::test]
+async fn delete_offer_surfaces_http_error_no_retry() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/marketplace_listings/"))
+        .respond_with(ResponseTemplate::new(403).set_body_raw(
+            r#"{"status":"invalid_secret_key","http_code":403,"data":null}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("wrong-key".into()));
+
+    let err = provider.delete_offer(1).await.unwrap_err();
+    match err {
+        provider::ProviderError::Http { status, body } => {
+            assert_eq!(status, 403);
+            assert!(body.contains("invalid_secret_key"), "{body}");
+        }
+        other => panic!("expected Http error, got {other:?}"),
+    }
+}

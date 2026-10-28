@@ -373,10 +373,11 @@ pub fn normalized_or(input: Option<&str>, fallback: &str) -> String {
 /// Abmelden bestätigt, Anlegen läuft direkt. Keine Batch-Aktionen — jeder
 /// Write ist einzeln.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
 pub enum MarketplaceConfirm {
     #[default]
+    #[serde(rename = "every_action")]
     ConfirmEveryAction,
+    #[serde(rename = "delete_only")]
     ConfirmDeleteOnly,
 }
 
@@ -1191,6 +1192,40 @@ mod tests {
         // Alt+Zahl ist intern die Badge-Navigation (ignoriert weitere Mods).
         let err = validate_shortcut_combo("Ctrl+Alt+3").unwrap_err();
         assert!(err.contains("Alt+3"), "conflict list: {err}");
+    }
+
+    #[test]
+    fn marketplace_confirm_roundtrip_and_parse() {
+        assert_eq!(
+            MarketplaceConfirm::from_name("every_action"),
+            Some(MarketplaceConfirm::ConfirmEveryAction)
+        );
+        assert_eq!(
+            MarketplaceConfirm::from_name("DELETE_ONLY"),
+            Some(MarketplaceConfirm::ConfirmDeleteOnly)
+        );
+        assert_eq!(MarketplaceConfirm::from_name("bogus"), None);
+        // Default = ConfirmEveryAction (sicherstes Verhalten, M2b-2).
+        assert_eq!(MarketplaceConfirm::default(), MarketplaceConfirm::ConfirmEveryAction);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        let mut s = Settings::with_path(path.clone());
+        s.set_marketplace_confirm(MarketplaceConfirm::ConfirmDeleteOnly);
+        s.save().unwrap();
+        assert_eq!(
+            Settings::load_from(&path).unwrap().marketplace_confirm(),
+            MarketplaceConfirm::ConfirmDeleteOnly
+        );
+        // TOML-Bestand (für Handsichts/Lesbarkeit).
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("marketplace_confirm = \"delete_only\""), "{content}");
+        // Fehlendes Feld (Legacy-Konfig) → Default every_action.
+        std::fs::write(&path, "[ui]\n").unwrap();
+        assert_eq!(
+            Settings::load_from(&path).unwrap().marketplace_confirm(),
+            MarketplaceConfirm::ConfirmEveryAction
+        );
     }
 
     #[test]

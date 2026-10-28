@@ -501,6 +501,43 @@ pub struct Offer {
 mod tests {
     use super::SearchHit;
 
+    /// M2b (Write-Layer): der Advertise-Payload serialisiert snake_case und
+    /// lässt ungesetzte Optionale WEG (FEHLT im JSON — nicht "null") — exakt
+    /// das Doku-Schema [Research §1]. Verhindert, dass wir versehentlich
+    /// `id_category: null` etc. an UEX schicken (Pflichtfeld-Semantik).
+    #[test]
+    fn advertise_payload_serializes_snake_case_and_skips_none() {
+        let p = super::AdvertisePayload::minimal_sell_item();
+        let json = serde_json::to_string(&p).unwrap();
+        // Pflichtfelder an Bord, in offizieller Schreibweise.
+        for key in [
+            "\"operation\":\"sell\"",
+            "\"language\":\"en_US\"",
+            "\"type\":\"item\"",
+            "\"unit\":\"unit\"",
+            "\"price\":120000",
+            "\"currency\":\"UEC\"",
+            "\"title\":\"DRAKE NETTLE S | Used\"",
+            "\"in_stock\":1",
+            "\"hours_expiration\":168",
+            "\"is_production\":1",
+        ] {
+            assert!(json.contains(key), "payload lacks {key}: {json}");
+        }
+        // Optionale ohne Wert fehlen KOMPLETT (nicht "field":null).
+        for skipped in ["id_item", "id_category", "id_terminal", "id_organization", "is_hidden"] {
+            assert!(
+                !json.contains(&format!("\"{skipped}\"")),
+                "Optional {skipped} must be omitted (skip_serializing_if), got {json}"
+            );
+        }
+        // Gesetzte Optionale sind dabei.
+        assert!(json.contains("\"location\":\"Port Tressler\""));
+        assert!(json.contains("\"source\":\"purchased_in_game\""));
+        assert!(json.contains("\"availability\":\"ready_pickup\""));
+        assert!(json.contains("\"durability\":85"));
+    }
+
     /// Regression (t_925a577a): über IPC wird die SearchHit-ID als STRING
     /// serialisiert (Wiki-IDs > 2^53 runden als JS-Number still —
     /// 404707429735935130 → …35100); beim Lesen bleiben Number und String
