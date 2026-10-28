@@ -475,6 +475,15 @@ impl DataProvider for UexProvider {
         self.advertise_offer_impl(payload).await
     }
 
+    /// Marketplace-Kategorien für die Anlegen-Form (M2b-Review-Fix,
+    /// t_6e26ec82). `POST /marketplace_advertise/` VERLANGT `id_category`
+    /// für `type=item` (Doku [7]) — das Anlegen-Formular braucht also eine
+    /// Kategorie-Auswahl mit Anzeigenamen. Kleine öffentliche Referenzliste;
+    /// live gefetcht (kein User-Credential nötig).
+    async fn categories(&self) -> Result<Vec<provider::Category>> {
+        self.categories_impl().await
+    }
+
     /// Write-Layer (M2b): `DELETE /marketplace_listings/?id=…` — Listing
     /// abmelden (Delegation).
     async fn delete_offer(&self, id: u64) -> Result<()> {
@@ -1375,9 +1384,35 @@ impl UexProvider {
         Ok(())
     }
 
+    /// Kategorien für die Anlegen-Form: `GET /categories` (öffentlich).
+    /// Kleine Referenzliste — live gefetcht; die Form öffnet nur bei Bedarf,
+    /// ein Cache mit TTL wäre hier zusätzlicher Overhead ohne Rate-Limit-\
+    /// Gewinn (ein Request pro Formular-Öffnung, Nutzer-ausgelöst).
+    async fn categories_impl(&self) -> Result<Vec<provider::Category>> {
+        let rows: Vec<CategoryRow> = self.http.get("/categories", &[]).await?;
+        Ok(rows
+            .into_iter()
+            // Null-Härtung: `name` ist null-tolerant via DTO ("" statt Fehler);
+            // Kategorien ohne Anzeigenamen würden im Dropdown nur Raute zeigen —
+            // sie filtern (die Form braucht Namen, nicht "id 47").
+            .filter(|r| !r.name.is_empty())
+            .map(|r| provider::Category {
+                id: r.id,
+                name: r.name,
+                section: r.section.filter(|s| !s.is_empty()),
+            })
+            .collect())
+    }
+
     /// Pflichtfeld-Validierung des Advertise-Payloads (Doku-Schema §1): die
     /// Pflichtangaben für type=item müssen gesetzt sein, sonst deutsche
     /// Config-Meldung statt roher API-Antwort.
+    ///
+    /// `id_category` ist laut Doku [7] für `type=item`/`contract` PFLICHT —
+    /// Review t_6e26ec82 (missing_id_category): ein Item-Create ohne Kategorie
+    /// lehnt die API mit 400 ab. Der Payload trägt es als `Option` (kein Edit-/
+    /// Batch-Fall übergibt `None`), die Form erzwingt eine Auswahl; hier wird
+    /// es zusätzlich als Pflichtfeld validiert.
     fn validate_advertise(payload: &provider::AdvertisePayload) -> Result<()> {
         let mut missing: Vec<&str> = Vec::new();
         if payload.operation.trim().is_empty() {
@@ -1388,6 +1423,9 @@ impl UexProvider {
         }
         if payload.r#type.trim().is_empty() {
             missing.push("type (item/service/contract)");
+        }
+        if payload.r#type.trim() == "item" && payload.id_category.is_none() {
+            missing.push("Kategorie (id_category)");
         }
         if payload.unit.trim().is_empty() {
             missing.push("unit");
@@ -1415,6 +1453,13 @@ impl UexProvider {
                 missing.join(", ")
             )))
         }
+    }
+
+    /// Test-only: exponiert `validate_advertise` (privater Helfer) für die
+    /// Unit-Tests der Pflichtfeld-Logik — kein Payload geht aufs Wire.
+    #[cfg(test)]
+    pub(crate) fn advertise_offer_test_probe(payload: &provider::AdvertisePayload) -> Result<()> {
+        Self::validate_advertise(payload)
     }
 
     /// Ein einzelnes ListingRow → Offer (Shared mit `map_listing_rows`,
@@ -2616,5 +2661,63 @@ mod tests {
         .unwrap();
         let trades = provider.user_trades().await.unwrap();
         assert!(trades.is_empty(), "leere Historie → Ok([]), kein Fehler");
+    }
+
+    // --- M2b-Review-Fix (t_6e26ec82): id_category ist Pflicht für type=item --
+
+    /// Payload mit type=item OHNE id_category → deutsche Config-Meldung,
+    /// NIEMALS ein POST (UEX würde 400 missing_id_category senden). Das ist
+    /// der Wiremock-Gegenprobe-Kern: der Client blockt vor dem Wire.
+    fn basic_item_payload(id_category: Option<u64>) -> provider::AdvertisePayload {
+        provider::AdvertisePayload {
+            id_item: None,
+            id_category,
+            id_star_system: None,
+            id_terminal: None,
+            id_organization: None,
+            operation: "sell".into(),
+            language: "en_US".into(),
+            r#type: "item".into(),
+            unit: "unit".into(),
+            price: 120_000,
+            currency: "UEC".into(),
+            location: Some("Port Tressler".into()),
+            title: "DRAKE NETTLE S | Used".into(),
+            description: "Minor scuffs on left wing. Fully functional.".into(),
+            source: Some("purchased_in_game".into()),
+            in_stock: 1,
+            availability: Some("ready_pickup".into()),
+            durability: Some(85),
+            hours_expiration: Some(168),
+            is_hidden: None,
+            is_production: 1,
+        }
+    }
+
+    #[test]
+    fn validate_advertise_requires_category_for_item_type() {
+        let payload = basic_item_payload(None);
+        assert!(payload.id_category.is_none(), "fixture: no category set");
+        match crate::UexProvider::advertise_offer_test_probe(&payload) {
+            Err(provider::ProviderError::Config(msg)) => {
+                assert!(
+                    msg.contains("Kategorie") && msg.contains("id_category"),
+                    "deutsche Pflichtfeld-Meldung erwartet, got {msg}"
+                );
+            }
+            other => panic!("Config-Error erwartet, got {other:?}"),
+        }
+    }
+
+    /// type=item MIT id_category → validiert sauber durch (kein fehlendes
+    /// Pflichtfeld). Die weiteren Pflichtfelder des Fixtures sind gesetzt.
+    #[test]
+    fn validate_advertise_accepts_item_with_category() {
+        let payload = basic_item_payload(Some(12));
+        let result = crate::UexProvider::advertise_offer_test_probe(&payload);
+        assert!(
+            result.is_ok(),
+            "type=item mit id_category muss validieren: {result:?}"
+        );
     }
 }

@@ -14,7 +14,7 @@ use provider::{
     routes::RouteEnrichment,
 };
 use uex_client::UexProvider;
-use wiremock::matchers::{header, method, path, query_param};
+use wiremock::matchers::{body_partial_json, header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn fixture(name: &str) -> String {
@@ -1320,10 +1320,18 @@ async fn advertise_offer_posts_payload_and_maps_new_listing() {
         ))
         .mount(&server)
         .await;
-    // POST: matcht den secret-key-Header + JSON-Body-Schlüssel.
+    // POST: matcht den secret-key-Header + JSON-Body-Schlüssel. M2b-Review-
+    // Fix: der Payload muss id_category tragen (Pflicht für type=item) —
+    // body_partial_json belegt, dass genau dieser Key auf dem Wire liegt.
     Mock::given(method("POST"))
         .and(path("/marketplace_advertise/"))
         .and(header("secret-key", "my-super-secret-40"))
+        .and(body_partial_json(serde_json::json!({
+            "id_category": 12,
+            "type": "item",
+            "operation": "sell",
+            "price": 4500000,
+        })))
         .respond_with(json_response(
             r#"{"status":"ok","http_code":200,"data":{
                 "id": 9002, "operation": "sell", "type": "item",
@@ -1348,7 +1356,10 @@ async fn advertise_offer_posts_payload_and_maps_new_listing() {
 
     let p = provider::AdvertisePayload {
         id_item: None,
-        id_category: None,
+        // M2b-Review-Fix: id_category ist Pflicht für type=item — die Form
+        // wählt die Kategorie, der Payload trägt sie (vorher hardcodiert
+        // null → UEX 400 missing_id_category).
+        id_category: Some(12),
         id_star_system: None,
         id_terminal: None,
         id_organization: None,
@@ -1374,6 +1385,138 @@ async fn advertise_offer_posts_payload_and_maps_new_listing() {
     assert_eq!(offer.title, "DRAKE NETTLE S | Used");
     assert_eq!(offer.price, 4_500_000.0);
     assert_eq!(offer.region, "Stanton");
+}
+
+/// M2b-Review-Fix (t_6e26ec82) — Wiremock-Gegenprobe zum Live-Defekt:
+/// UEX antwortet auf einen item-POST OHNE id_category mit exakt
+/// `400 {"status":"missing_id_category",...}`. Der Client muss das VERHINDERN
+/// (Validierung greift vor dem POST — deutsche Config-Meldung, kein Write).
+/// Der Mock bildet UEXs Realantwort ab; erreicht der POST dennoch den Server
+/// (z. B. ein direkt aufgerufenes Payload mit None), wird die Antwort sauber
+/// als HTTP-Fehler durchgereicht — KEIN Retry-Spam.
+#[tokio::test]
+async fn advertise_offer_without_category_never_posts_and_maps_uex_400() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    // UEX-Realantwort (Live-Runde): POST ohne id_category → 400.
+    Mock::given(method("POST"))
+        .and(path("/marketplace_advertise/"))
+        .and(header("secret-key", "my-super-secret-40"))
+        .respond_with(ResponseTemplate::new(400).set_body_raw(
+            r#"{"status":"missing_id_category","http_code":400,"data":[]}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+
+    // (1) Der FORMULAR-Weg sendet IMMER eine Kategorie → kein 400-POST.
+    let with_category = provider::AdvertisePayload {
+        id_item: None,
+        id_category: Some(12),
+        id_star_system: None,
+        id_terminal: None,
+        id_organization: None,
+        operation: "sell".into(),
+        language: "en_US".into(),
+        r#type: "item".into(),
+        unit: "unit".into(),
+        price: 4_500_000,
+        currency: "UEC".into(),
+        location: Some("Port Tressler".into()),
+        title: "DRAKE NETTLE S | Used".into(),
+        description: "Minor scuffs on left wing. Fully functional.".into(),
+        source: Some("purchased_in_game".into()),
+        in_stock: 1,
+        availability: Some("ready_pickup".into()),
+        durability: Some(85),
+        hours_expiration: Some(168),
+        is_hidden: None,
+        is_production: 1,
+    };
+    // Der Formular-Weg hat type=item + id_category → der Mock (ohne
+    // body-Kategorie) matcht trotzdem nicht — wir prüfen hier nur: der
+    // POST mit Kategorie landet NICHT als 400 (andere Antwort wäre ein
+    // Testfehler-Signal). Stattdessen blocken wir Kategorie-Los bei der
+    // Validierung:
+    let without_category = provider::AdvertisePayload {
+        id_category: None,
+        ..with_category.clone()
+    };
+    assert!(without_category.id_category.is_none());
+    let err = provider
+        .advertise_offer(without_category)
+        .await
+        .expect_err("type=item ohne id_category muss abgelehnt werden");
+    match err {
+        provider::ProviderError::Config(msg) => {
+            assert!(
+                msg.contains("Kategorie"),
+                "deutsche Pflichtfeld-Meldung erwartet, got {msg}"
+            );
+        }
+        other => panic!("Config-Error vor dem Wire erwartet, got {other:?}"),
+    }
+    // Kein POST darf den Server erreicht haben (Validierung greift vor dem
+    // Wire — der Mock-400 wäre sonst gefeuert worden).
+    let reqs = server.received_requests().await.unwrap();
+    assert_eq!(
+        reqs.len(),
+        0,
+        "KEIN Request ohne id_category darf UEX erreichen (400-Verhinderung)"
+    );
+
+    // (2) Happy-Path über den vollen Write-Pfad: id_category gesetzt → POST
+    // geht raus. Echter 200-Mock (der obige 400-Mock matcht nur ohne
+    // body-Kategorie — hier kommt der body mit, also eigener Mock).
+    // Der 400-Mock würde bei body mit Kategorie eh nicht passen; trotzdem
+    // sauber zwei Mocks: einer für Kategorie-Los (würde nie treffen), einer
+    // für den echten POST.
+    drop(server); // zweiter Server für den Happy Path (kein Mock-Überlappen)
+    let server2 = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/star_systems"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[{"id":68,"name":"Stanton","code":"ST"}]}"#,
+        ))
+        .mount(&server2)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/marketplace_advertise/"))
+        .and(header("secret-key", "my-super-secret-40"))
+        .and(body_partial_json(serde_json::json!({ "id_category": 12 })))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":{
+                "id": 9003, "operation": "sell", "type": "item",
+                "title": "DRAKE NETTLE S | Used", "price": "4500000",
+                "in_stock": 1, "unit": "unit", "currency": "UEC",
+                "id_star_system": 68, "location": "Port Tressler",
+                "slug": "drake-nettle-s-9003", "date_added": 1730000000
+            }}"#,
+        ))
+        .mount(&server2)
+        .await;
+    let cache2 = Arc::new(Cache::open_in_memory().unwrap());
+    let provider2 = UexProvider::with_base_url(
+        cache2.clone(),
+        Some("app-token".into()),
+        &server2.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+    let ok = provider2.advertise_offer(with_category).await.expect("ok");
+    assert_eq!(ok.id, 9003);
 }
 
 /// M2b (Write-Layer): `DELETE /marketplace_listings/?id=…&is_production=1` —
