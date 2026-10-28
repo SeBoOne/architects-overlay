@@ -14,8 +14,9 @@ mod model;
 pub mod routes;
 
 pub use crate::model::{
-    Entity, EntityKind, ListingType, LocationPrices, MarketOperation, MarketplaceFilter, Offer,
-    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, Trade,
+    AdvertisePayload, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
+    MarketplaceFilter, Offer, OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup,
+    Trade,
     deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
 };
 
@@ -180,6 +181,23 @@ pub trait DataProvider: Send + Sync {
     /// user credential on the source. Default reports unsupported.
     async fn user_trades(&self) -> Result<Vec<Trade>> {
         Err(ProviderError::Unsupported("user trades".to_string()))
+    }
+
+    /// Write-Layer (M2b): ein neues Marketplace-Listing anlegen via
+    /// `POST /marketplace_advertise/`. Payload exakt nach Doku-Schema
+    /// ([`AdvertisePayload`]); kein Edit — Bearbeiten = Abmelden + Neu anlegen.
+    /// Der Provider validiert die Pflichtfelder und sendet KEINEN Retry bei
+    /// 429/403 (Fehlerpfad: Meldung + Deep-Link, die UI entscheidet das
+    /// Weiterleiten). Default reports unsupported.
+    async fn advertise_offer(&self, _payload: AdvertisePayload) -> Result<Offer> {
+        Err(ProviderError::Unsupported("advertise offer".to_string()))
+    }
+
+    /// Write-Layer (M2b): ein bestehendes Listing ABMELDEN via
+    /// `DELETE /marketplace_listings/?id=…`. Nur der Secret-Key ist nötig
+    /// (Research §1). Kein Retry-Spam bei 429/403. Default unsupported.
+    async fn delete_offer(&self, _id: u64) -> Result<()> {
+        Err(ProviderError::Unsupported("delete offer".to_string()))
     }
 
     /// Handelsrouten (Karte t_128b7547): bester Einkauf → bester Verkauf je

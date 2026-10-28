@@ -469,6 +469,18 @@ impl DataProvider for UexProvider {
         self.user_trades_impl().await
     }
 
+    /// Write-Layer (M2b): `POST /marketplace_advertise/` — neues Listing
+    /// anlegen (Delegation auf die Inherent-Implementierung).
+    async fn advertise_offer(&self, payload: provider::AdvertisePayload) -> Result<Offer> {
+        self.advertise_offer_impl(payload).await
+    }
+
+    /// Write-Layer (M2b): `DELETE /marketplace_listings/?id=…` — Listing
+    /// abmelden (Delegation).
+    async fn delete_offer(&self, id: u64) -> Result<()> {
+        self.delete_offer_impl(id).await
+    }
+
     async fn fetch_entities(&self, kind: EntityKind) -> Result<Vec<Entity>> {
         match kind {
             EntityKind::Commodities => {
@@ -1327,6 +1339,117 @@ impl UexProvider {
             }
         }
         Ok(out)
+    }
+
+    /// Write-Layer (M2b): `POST /marketplace_advertise/` — ein neues Listing
+    /// anlegen (im Inherent-Block, aufgerufen über die `DataProvider`-Trait-
+    /// Delegation `advertise_offer`). Payload exakt nach Doku-Schema
+    /// (`AdvertisePayload`); kein Edit (Bearbeiten = Abmelden+Neu). Kein Retry
+    /// bei 429/403 — der Fehler steigt durch, die UI entscheidet Deep-Link.
+    async fn advertise_offer_impl(&self, payload: provider::AdvertisePayload) -> Result<Offer> {
+        Self::validate_advertise(&payload)?;
+        let body = serde_json::to_value(&payload)
+            .map_err(|e| ProviderError::Json(format!("advertise payload: {e}")))?;
+        // POST-Antwort: UEX liefert das neue Listing als `data` (einzelnes
+        // Objekt). Wir parsen es als ListingRow und mappen es auf `Offer`.
+        // KEIN Retry bei 429/403 — der Fehler steigt durch (M2b-3: Meldung +
+        // Deep-Link entscheidet die UI).
+        let row: ListingRow = self
+            .http
+            .post("/marketplace_advertise/", self.secret_key.as_deref(), &body)
+            .await?;
+        self.map_listing_row_offer(row).await
+    }
+
+    async fn delete_offer_impl(&self, id: u64) -> Result<()> {
+        self.http
+            .delete(
+                "/marketplace_listings/",
+                &[
+                    ("id".to_string(), id.to_string()),
+                    ("is_production".to_string(), "1".to_string()),
+                ],
+                self.secret_key.as_deref(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Pflichtfeld-Validierung des Advertise-Payloads (Doku-Schema §1): die
+    /// Pflichtangaben für type=item müssen gesetzt sein, sonst deutsche
+    /// Config-Meldung statt roher API-Antwort.
+    fn validate_advertise(payload: &provider::AdvertisePayload) -> Result<()> {
+        let mut missing: Vec<&str> = Vec::new();
+        if payload.operation.trim().is_empty() {
+            missing.push("operation (buy/sell)");
+        }
+        if payload.language.trim().is_empty() {
+            missing.push("language");
+        }
+        if payload.r#type.trim().is_empty() {
+            missing.push("type (item/service/contract)");
+        }
+        if payload.unit.trim().is_empty() {
+            missing.push("unit");
+        }
+        if payload.price == 0 {
+            missing.push("price");
+        }
+        if payload.currency.trim().is_empty() {
+            missing.push("currency");
+        }
+        if payload.title.trim().is_empty() {
+            missing.push("title");
+        }
+        if payload.description.trim().is_empty() {
+            missing.push("description");
+        }
+        if payload.in_stock == 0 {
+            missing.push("in_stock (Menge)");
+        }
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(ProviderError::Config(format!(
+                "Anlegen abgebrochen — Pflichtangaben fehlen: {}",
+                missing.join(", ")
+            )))
+        }
+    }
+
+    /// Ein einzelnes ListingRow → Offer (Shared mit `map_listing_rows`,
+    /// aber für genau EINE Zeile, ohne Username-Fallback namenszusätzlich).
+    async fn map_listing_row_offer(&self, r: ListingRow) -> Result<Offer> {
+        let regions = self.star_system_names().await?;
+        let region = if r.id_star_system != 0 {
+            regions.get(&r.id_star_system).cloned().unwrap_or_default()
+        } else {
+            String::new()
+        };
+        Ok(Offer {
+            id: r.id,
+            title: r.title,
+            description: r.description,
+            item_id: r.id_item,
+            category_id: r.id_category,
+            operation: r.operation.parse().unwrap_or(MarketOperation::Sell),
+            listing_type: r.r#type.parse().unwrap_or(ListingType::Item),
+            price: r.price.parse::<f64>().unwrap_or(0.0),
+            currency: if r.currency.is_empty() {
+                "UEC".into()
+            } else {
+                r.currency
+            },
+            unit: r.unit,
+            quantity: r.in_stock,
+            location: r.location,
+            region,
+            seller: r.user_name,
+            quality: r.quality.unwrap_or(0),
+            updated: r.date_added,
+            expires: r.date_expiration,
+            slug: r.slug,
+        })
     }
 
     /// Eigene Marketplace-Offers live holen + Snapshot additiv aktualisieren.

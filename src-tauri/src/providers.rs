@@ -406,6 +406,17 @@ impl DataProvider for CompositeProvider {
         self.uex.user_trades().await
     }
 
+    async fn advertise_offer(&self, payload: provider::AdvertisePayload) -> Result<provider::Offer> {
+        // Write-Layer (M2b): Anlegen ist UEX-user-scoped (secret-key),
+        // source-unabhängig immer über den UEX-Client. Kein Edit.
+        self.uex.advertise_offer(payload).await
+    }
+
+    async fn delete_offer(&self, id: u64) -> Result<()> {
+        // Write-Layer (M2b): Abmelden ist UEX-user-scoped (secret-key).
+        self.uex.delete_offer(id).await
+    }
+
     async fn trade_routes(&self, filters: &provider::routes::RouteFilters) -> Result<RouteList> {
         // Handelsrouten bleiben bewusst UEX-EXKLUSIV (Karte t_128b7547):
         // unabhängig vom Primary-Source-Switch (wiki|uex) kommt der

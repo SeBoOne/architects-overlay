@@ -368,6 +368,105 @@ pub struct Trade {
     pub organization: Option<String>,
 }
 
+/// Write-Payload für `POST /marketplace_advertise/` (M2b, source-agnostic
+/// Container über dem Doku-Schema [Research §1]). Alle Felder tragen die
+/// offiziellen Input-Feldnamen (snake_case auf dem Wire) inkl. der
+/// Referenzlisten (unit/availability/source/…). Optionale Felder werden nur
+/// gesendet, wenn gesetzt — der UEX-CLIENT serialisiert das; ein `None` hier
+/// bedeutet „Feld weglassen“, nicht „null senden“.
+///
+/// Die Pflichtfelder des Doku-Schemas für type=item sind NICHT optionale:
+/// `operation`, `type`, `language`, `unit`, `price`, `currency`, `title`,
+/// `description`, `in_stock`. Der UEX-Provider validiert sie vor dem POST
+/// und übersetzt eine fehlende Pflichtangabe in eine deutsche
+/// Konfigurations-Fehlermeldung (keine rohe API-Antwort).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdvertisePayload {
+    /// Link zu `get_items` (type=item). Optional — UEX akzeptiert auch
+    /// reine Text-Listings über title/description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_item: Option<u64>,
+    /// Link zu `get_categories` (Pflicht für type=item laut Doku).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_category: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_star_system: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_terminal: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_organization: Option<u64>,
+    /// `buy` | `sell` | `rent` | `trade`.
+    pub operation: String,
+    /// `en_US`, `de_DE`, … (Referenzliste Research §1).
+    pub language: String,
+    /// `item` | `service` | `contract`.
+    pub r#type: String,
+    /// Für type=item: `box`, `crate`, `cscu`, `dozen`, `hundred`, `pack`,
+    /// `pair`, `scu`, `set`, `stack`, `thousand`, `unit`.
+    pub unit: String,
+    /// Preis als Ganzzahl (Doku: integer only).
+    pub price: u64,
+    /// `UEC` | `WIF` | `MGS`.
+    pub currency: String,
+    /// Trade-Location, z. B. „Port Tressler“.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    /// Alphanumerisch + Bindestriche, max 140 Zeichen.
+    pub title: String,
+    /// Freitext, max 65535 Zeichen.
+    pub description: String,
+    /// `looted` | `pledged` | `purchased_in_game` | `pirated` | `gifted` | `crafted`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Verfügbare Menge.
+    pub in_stock: u64,
+    /// `immediate` | `ready_pickup` | `on_demand` | … (Referenzliste).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability: Option<String>,
+    /// 0–100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub durability: Option<u8>,
+    /// Offer-Laufzeit in Std.: 1|2|3|5|12|24|48|72|120|168|336|720.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hours_expiration: Option<u64>,
+    /// 1 = hidden (nicht veröffentlichen), 0/null = veröffentlichen nach Approval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_hidden: Option<u8>,
+    /// 1 = Production, 0 = Sandbox/Test. Wir senden IMMER explizit 1 in
+    /// der Produktions-App (Research: `is_production=0` für Tests).
+    pub is_production: u8,
+}
+
+impl AdvertisePayload {
+    /// Minimales, selbstkonsistentes Test-Fixture (type=item, sell).
+    #[cfg(test)]
+    pub fn minimal_sell_item() -> Self {
+        AdvertisePayload {
+            id_item: None,
+            id_category: None,
+            id_star_system: None,
+            id_terminal: None,
+            id_organization: None,
+            operation: "sell".into(),
+            language: "en_US".into(),
+            r#type: "item".into(),
+            unit: "unit".into(),
+            price: 120_000,
+            currency: "UEC".into(),
+            location: Some("Port Tressler".into()),
+            title: "DRAKE NETTLE S | Used".into(),
+            description: "Minor scuffs on left wing. Fully functional.".into(),
+            source: Some("purchased_in_game".into()),
+            in_stock: 1,
+            availability: Some("ready_pickup".into()),
+            durability: Some(85),
+            hours_expiration: Some(168),
+            is_hidden: None,
+            is_production: 1,
+        }
+    }
+}
+
 /// A live marketplace offer (source-agnostic projection of a listing).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Offer {

@@ -367,6 +367,42 @@ pub fn normalized_or(input: Option<&str>, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_owned())
 }
 
+/// M2b Sicherheitsmodell (Write-Layer): Wann eine schreibende Aktion eine
+/// 2-Schritt-Bestätigung verlangt. `ConfirmEveryAction` (Default): jede
+/// schreibende Aktion (Anlegen + Abmelden). `ConfirmDeleteOnly`: nur Löschen/
+/// Abmelden bestätigt, Anlegen läuft direkt. Keine Batch-Aktionen — jeder
+/// Write ist einzeln.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MarketplaceConfirm {
+    #[default]
+    ConfirmEveryAction,
+    ConfirmDeleteOnly,
+}
+
+impl MarketplaceConfirm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MarketplaceConfirm::ConfirmEveryAction => "every_action",
+            MarketplaceConfirm::ConfirmDeleteOnly => "delete_only",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<MarketplaceConfirm> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "every_action" => Some(MarketplaceConfirm::ConfirmEveryAction),
+            "delete_only" => Some(MarketplaceConfirm::ConfirmDeleteOnly),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for MarketplaceConfirm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct RawConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -428,6 +464,10 @@ struct UiSection {
     // cannot break the layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scale: Option<u16>,
+    /// M2b: 2-Schritt-Bestätigung für schreibende Marktplatz-Aktionen
+    /// (Default every_action — jede Aktion bestätigen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    marketplace_confirm: Option<MarketplaceConfirm>,
 }
 
 /// Settings I/O failures.
@@ -468,6 +508,8 @@ pub struct Settings {
     detail_variant: DetailVariant,
     commodity_source: CommoditySource,
     scale: u16,
+    /// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes.
+    marketplace_confirm: MarketplaceConfirm,
     /// C2a: kanonische Kürzel-Strings (siehe `parse_shortcut_combo`).
     shortcut_toggle: String,
     shortcut_click_through: String,
@@ -487,6 +529,7 @@ impl Default for Settings {
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
+            marketplace_confirm: MarketplaceConfirm::default(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
@@ -538,6 +581,11 @@ impl Settings {
                 .and_then(|u| u.scale)
                 .map(norm_scale)
                 .unwrap_or(SCALE_DEFAULT),
+            marketplace_confirm: raw
+                .ui
+                .as_ref()
+                .and_then(|u| u.marketplace_confirm)
+                .unwrap_or_default(),
             // Erstmigration: fehlende/ungültige Kürzel → Defaults (U/O).
             shortcut_toggle: normalized_or(
                 raw.shortcuts.as_ref().and_then(|s| s.toggle.as_deref()),
@@ -570,6 +618,7 @@ impl Settings {
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
+            marketplace_confirm: MarketplaceConfirm::default(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
@@ -649,6 +698,17 @@ impl Settings {
         self.scale = norm_scale(pct);
     }
 
+    /// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (Default:
+    /// every action). `delete_only` bestätigt nur noch das Abmelden.
+    pub fn marketplace_confirm(&self) -> MarketplaceConfirm {
+        self.marketplace_confirm
+    }
+
+    /// Set the marketplace confirmation mode in memory (persist via save).
+    pub fn set_marketplace_confirm(&mut self, mode: MarketplaceConfirm) {
+        self.marketplace_confirm = mode;
+    }
+
     /// Overlay-Toggle-Kürzel (kanonisch, z. B. `Ctrl+Shift+U`).
     pub fn shortcut_toggle(&self) -> &str {
         &self.shortcut_toggle
@@ -696,6 +756,7 @@ impl Settings {
                 palette: Some(self.palette),
                 detail_variant: Some(self.detail_variant),
                 scale: Some(self.scale),
+                marketplace_confirm: Some(self.marketplace_confirm),
             }),
             data: Some(DataSection {
                 commodity_source: Some(self.commodity_source),

@@ -92,6 +92,88 @@ pub struct TradeState {
     /// Extra wiki-dataset sync (commodities + locations, own TTLs). `None`
     /// in tests with stub providers.
     pub wiki_sync: Option<Arc<dyn crate::providers::WikiSync>>,
+    /// M2b-Write-Gate (Rate-Limit-Sicherheit, Anforderung 5): verhindert, dass
+    /// die UI mehr als ~2 Schreibaktionen pro Minute an UEX feuert, auch wenn
+    /// sie theoretisch mehr erlaubt. Jede schreibende Aktion (Anlegen/Abmelden)
+    /// muss vor dem Request hier passieren.
+    pub write_gate: Arc<WriteGate>,
+}
+
+/// Clientseitiges Rate-Limit-Fenster für MARKTPLATZ-WRITES (M2b, Anforderung
+/// 5). Erlaubt höchstens `MAX_WRITES_PER_WINDOW` Writes in
+/// `WINDOW_SECS` (Fenster gleitet: ein Kandidat wird abgelehnt, wenn im
+/// Zeitfenster [now-WINDOW, now] schon `MAX` erfolgreiche Writes registriert
+/// sind). Das UI darf theoretisch mehr erlauben — dieses Gate greift als
+/// letzte Hürde, inklusive deutscher Meldung mit Wartezeit.
+///
+/// Thread-sicher (std Mutex), nie über await gehalten.
+#[derive(Debug)]
+pub struct WriteGate {
+    /// Unix-Sekunden der durchgelassenen Writes (Zeitfenster gleitet).
+    recent: Mutex<Vec<u64>>,
+    max_per_window: usize,
+    window_secs: u64,
+}
+
+/// Default-Fenster gemäß Entscheidung: max 2 Writes pro Minute.
+pub const WRITE_WINDOW_SECS: u64 = 60;
+pub const WRITE_MAX_PER_WINDOW: usize = 2;
+
+impl WriteGate {
+    pub fn new() -> Self {
+        WriteGate {
+            recent: Mutex::new(Vec::new()),
+            max_per_window: WRITE_MAX_PER_WINDOW,
+            window_secs: WRITE_WINDOW_SECS,
+        }
+    }
+
+    /// Mit explizitem Fenster (Tests: winziges Fenster ohne echtes Warten).
+    pub fn with_window(max_per_window: usize, window_secs: u64) -> Self {
+        WriteGate {
+            recent: Mutex::new(Vec::new()),
+            max_per_window,
+            window_secs,
+        }
+    }
+
+    /// Versucht, einen Write zu registrieren. `Err` = Rate-Limit greift (die
+    /// Meldung enthält die Sekunden bis zum nächsten freien Slot). `Ok` = der
+    /// Write läuft; `record_write` nach dem request braucht nur bei Erfolg
+    /// aufgerufen zu werden, damit fehlgeschlagene Writes das Fenster NICHT
+    /// belegen (kein Retry-Spam + kein Selbst-Sperren nach Fehlern).
+    pub fn try_acquire(&self, now_secs: u64) -> Result<(), String> {
+        let mut recent = self.recent.lock().expect("write gate mutex poisoned");
+        // Fenster gleiten lassen: alte Einträge rauswerfen.
+        let cutoff = now_secs.saturating_sub(self.window_secs);
+        recent.retain(|&t| t > cutoff);
+        if recent.len() >= self.max_per_window {
+            // Nächster freier Slot = ältester Eintrag + Fensterlänge.
+            let oldest = recent.iter().min().copied().unwrap_or(now_secs);
+            let wait = oldest + self.window_secs - now_secs;
+            return Err(format!(
+                "Rate-Limit: maximal {MAX} Schreibaktionen pro Minute — bitte {wait} s warten.",
+                MAX = self.max_per_window
+            ));
+        }
+        Ok(())
+    }
+
+    /// Nach einem ERFOLGREICHEN Write registrieren (bewusst NUR Erfolg —
+    /// Fehler belegen das Fenster nicht, sonst würde ein 429 den Client für
+    /// das ganze Fenster blockieren und einen Retry-Spam erzwingen).
+    pub fn record_write(&self, now_secs: u64) {
+        let mut recent = self.recent.lock().expect("write gate mutex poisoned");
+        let cutoff = now_secs.saturating_sub(self.window_secs);
+        recent.retain(|&t| t > cutoff);
+        recent.push(now_secs);
+    }
+}
+
+impl Default for WriteGate {
+    fn default() -> Self {
+        WriteGate::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -861,6 +943,71 @@ fn listing_deep_link(slug: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// M2b — Write-Layer: Anlegen + Abmelden (2-Schritt-Bestätigung, kein Edit,
+// Rate-Limit-Gate, kein Retry-Spam; Fehlerpfad: Meldung + Deep-Link-Button).
+// ---------------------------------------------------------------------------
+
+/// Write-Layer (M2b): ein neues Marketplace-Listing anlegen
+/// (`POST /marketplace_advertise/`). Payload exakt nach Doku-Schema
+/// ([`provider::AdvertisePayload`]) — kein Edit (Bearbeiten = Abmelden + Neu).
+///
+/// Sicherheits- & Fehlerverhalten (beschlossen):
+/// * 2-Schritt-Bestätigung erledigt die UI (diese Karte: Settings-Einstellung
+///   `marketplace_confirm`, Default every_action); das Backend erzwingt nur
+///   das Rate-Limit-Gate.
+/// * Rate-Limit: max ~2 Writes/min via [`WriteGate`] — auch wenn das UI mehr
+///   erlaubt. Fehlgeschlagene Writes belegen das Fenster NICHT.
+/// * KEIN Retry bei 429/403/Fehler — der Fehler steigt als deutsche Meldung
+///   durch; die UI zeigt die Meldung + Deep-Link-Button zur passenden
+///   UEX-Seite (hier: Marketplace-Home, da das Listing evtl. nicht existiert).
+async fn advertise_offer_cmd(
+    state: &State<'_, TradeState>,
+    payload: provider::AdvertisePayload,
+) -> Result<provider::Offer, String> {
+    let now = now_unix();
+    state.write_gate.try_acquire(now)?;
+    let offer = state.provider.advertise_offer(payload).await.map_err(friendly)?;
+    // Nur erfolgreiche Writes registrieren (Fehler belegen das Fenster nicht).
+    state.write_gate.record_write(now);
+    Ok(offer)
+}
+
+/// Tauri-Command: Anlegen (M2b). Validierung der Pflichtfelder liegt im
+/// Provider (deutsche Config-Meldung); sonstige Fehler = deutsche Meldung.
+#[tauri::command]
+pub async fn marketplace_advertise(
+    state: State<'_, TradeState>,
+    payload: provider::AdvertisePayload,
+) -> Result<provider::Offer, String> {
+    advertise_offer_cmd(&state, payload).await
+}
+
+/// M2b: ein Listing ABMELDEN (`DELETE /marketplace_listings/?id=…`). Kein
+/// Edit — nur löschen. Rate-Limit-Gate wie beim Anlegen; kein Retry-Spam.
+#[tauri::command]
+pub async fn marketplace_delete(
+    state: State<'_, TradeState>,
+    id: u64,
+) -> Result<(), String> {
+    let now = now_unix();
+    state.write_gate.try_acquire(now)?;
+    state.provider.delete_offer(id).await.map_err(friendly)?;
+    state.write_gate.record_write(now);
+    Ok(())
+}
+
+/// M2b: gibt das persistierte Bestätigungs-Modell zurück (UI entscheidet den
+/// 2-Schritt). Der volle Settings-Snapshot (`settings_get`) trägt
+/// `marketplace_confirm` bereits — dieser einfache Command ist für Probes.
+#[tauri::command]
+pub fn marketplace_confirm_mode(state: State<'_, TradeState>) -> String {
+    let _ = &state;
+    settings::Settings::load()
+        .map(|s| s.marketplace_confirm().as_str().to_owned())
+        .unwrap_or_else(|_| "every_action".to_owned())
+}
+
+// ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
 
@@ -1214,6 +1361,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1235,6 +1383,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1276,6 +1425,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1351,6 +1501,7 @@ mod tests {
             cache,
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1584,6 +1735,7 @@ mod tests {
             cache: cache.clone(),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1699,6 +1851,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -2080,6 +2233,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
         state
@@ -2133,6 +2287,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
         state
@@ -2189,6 +2344,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
         let resp = get_my_offers(state.clone(), "sebo_one".into())
@@ -2213,6 +2369,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
         // Kein Snapshot → sauberer Fehler (nicht leere Liste / kein Crash).
@@ -2239,6 +2396,186 @@ mod tests {
         let resp = get_my_trades(state).await.unwrap();
         assert_eq!(resp.source, "offline");
         assert_eq!(resp.trades[0].commodity, "Waste");
+        let _ = app;
+    }
+
+    // ---- M2b (Write-Layer): Rate-Limit-Gate + Advertise/Delete-IPC --------
+
+    #[test]
+    fn write_gate_limits_to_max_per_window() {
+        // Rate-Limit-Sicherheit (Anforderung M2b-5): max ~2 Writes/min.
+        let gate = WriteGate::with_window(2, 60);
+        let now = 1_000_000u64;
+        // Zwei Writes passieren, das Fenster ist nach 2 voll.
+        assert!(gate.try_acquire(now).is_ok());
+        gate.record_write(now);
+        assert!(gate.try_acquire(now + 1).is_ok());
+        gate.record_write(now + 1);
+        // Dritter Write im selben Fenster → abgelehnt, mit Wartezeit-Meldung.
+        let err = gate.try_acquire(now + 5).unwrap_err();
+        assert!(err.contains("Rate-Limit") && err.contains("warten"), "{err}");
+        assert!(err.contains("Schreibaktionen"), "{err}");
+        // Nach Ablauf des Fensters (ältester Eintrag + window) wieder frei.
+        assert!(gate.try_acquire(now + 61).is_ok());
+    }
+
+    #[test]
+    fn write_gate_failed_writes_do_not_consume_slots() {
+        // Fehler dürfen das Fenster NICHT belegen — sonst würde ein 429 den
+        // Client für das ganze Fenster sperren (Retry-Spam erzwingen). Nur
+        // erfolgreiche Writes zählen.
+        let gate = WriteGate::with_window(2, 60);
+        let now = 1_000_000u64;
+        // Ein Versuch ohne record_write (fehlgeschlagen) erscheint nicht.
+        assert!(gate.try_acquire(now).is_ok());
+        // (kein record_write → der Versuch ist weg)
+        assert!(gate.try_acquire(now + 1).is_ok());
+        gate.record_write(now + 1);
+        assert!(gate.try_acquire(now + 2).is_ok(), "nur 1 registriert → frei");
+    }
+
+    #[test]
+    fn write_gate_message_lists_wait_seconds() {
+        let gate = WriteGate::with_window(1, 60);
+        let now = 1_000_000u64;
+        gate.try_acquire(now).unwrap();
+        gate.record_write(now);
+        let err = gate.try_acquire(now + 5).unwrap_err();
+        // nächster freier Slot = ältester (now) + window (60) - now(5) = 55s.
+        assert!(err.contains("55 s"), "{err}");
+    }
+
+    /// Write-Provider-Stub: advertise liefert ein festes Offer, delete Ok —
+    /// prüft die IPC-Schicht (Gate vor dem Provider-Aufruf).
+    struct WriteProvider {
+        advertise_calls: std::sync::atomic::AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl DataProvider for WriteProvider {
+        async fn search(
+            &self,
+            _e: provider::SearchEntities,
+            _q: &str,
+        ) -> provider::Result<Vec<SearchHit>> {
+            Ok(vec![])
+        }
+        async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
+            Ok(vec![])
+        }
+        async fn marketplace_offers(
+            &self,
+            _f: provider::MarketplaceFilter,
+        ) -> provider::Result<Vec<provider::Offer>> {
+            Ok(vec![])
+        }
+        async fn fetch_entities(&self, _k: EntityKind) -> provider::Result<Vec<provider::Entity>> {
+            Ok(vec![])
+        }
+        fn name(&self) -> String {
+            "write".into()
+        }
+        async fn advertise_offer(
+            &self,
+            _p: provider::AdvertisePayload,
+        ) -> provider::Result<provider::Offer> {
+            let _ = self
+                .advertise_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(provider::Offer {
+                id: 9001,
+                title: "Neu Angelegt".into(),
+                description: String::new(),
+                item_id: 0,
+                category_id: 0,
+                operation: MarketOperation::Sell,
+                listing_type: ListingType::Item,
+                price: 999.0,
+                currency: "UEC".into(),
+                unit: "unit".into(),
+                quantity: 1,
+                location: "Lorville".into(),
+                region: "Stanton".into(),
+                seller: "sebo_one".into(),
+                quality: 0,
+                updated: 1,
+                expires: None,
+                slug: "neu-angelegt".into(),
+            })
+        }
+        async fn delete_offer(&self, _id: u64) -> provider::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn marketplace_advertise_command_gate_blocks_and_permits() {
+        // IPC-Anlegen geht durch's WriteGate: 2 OK, 3. blockiert.
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(WriteProvider {
+                advertise_calls: Default::default(),
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        let payload = provider::AdvertisePayload {
+            id_item: None,
+            id_category: None,
+            id_star_system: None,
+            id_terminal: None,
+            id_organization: None,
+            operation: "sell".into(),
+            language: "en_US".into(),
+            r#type: "item".into(),
+            unit: "unit".into(),
+            price: 120_000,
+            currency: "UEC".into(),
+            location: Some("Port Tressler".into()),
+            title: "DRAKE NETTLE S | Used".into(),
+            description: "Minor scuffs on left wing. Fully functional.".into(),
+            source: Some("purchased_in_game".into()),
+            in_stock: 1,
+            availability: Some("ready_pickup".into()),
+            durability: Some(85),
+            hours_expiration: Some(168),
+            is_hidden: None,
+            is_production: 1,
+        };
+        // 2 erfolgreiche Anlegen erlaubt.
+        assert!(marketplace_advertise(state.clone(), payload.clone())
+            .await
+            .is_ok());
+        assert!(marketplace_advertise(state.clone(), payload.clone())
+            .await
+            .is_ok());
+        // 3. → WriteGate greift (das echte Gate hat now=now_unix() als ein- und
+        // dieselbe Sekunde → beide Writes im selben 60s-Fenster).
+        let third = marketplace_advertise(state.clone(), payload).await;
+        assert!(third.is_err(), "rate-limit-Gate muss den 3. Write blockieren");
+        let msg = third.unwrap_err();
+        assert!(msg.contains("Rate-Limit"), "{msg}");
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn marketplace_delete_command_succeeds_through_gate() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(WriteProvider {
+                advertise_calls: Default::default(),
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        // DELETE erfolgreich (provider Ok, gate frei).
+        assert!(marketplace_delete(state.clone(), 847_291).await.is_ok());
         let _ = app;
     }
 }

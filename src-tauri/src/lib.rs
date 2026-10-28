@@ -52,6 +52,9 @@ pub fn run() {
             trade::get_marketplace,
             trade::get_my_offers,
             trade::get_my_trades,
+            trade::marketplace_advertise,
+            trade::marketplace_delete,
+            trade::marketplace_confirm_mode,
             trade::open_marketplace_listing,
             trade::open_marketplace_trades,
             inventory::inventory_list,
@@ -69,6 +72,7 @@ pub fn run() {
             app_settings::settings_set_uex_api_key,
             app_settings::settings_set_uex_secret_key,
             app_settings::settings_set_uex_username,
+            app_settings::settings_set_marketplace_confirm,
             app_settings::settings_set_commodity_source,
             app_settings::settings_set_scale,
             app_settings::settings_set_shortcut_toggle,
@@ -247,6 +251,7 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
             cache: cache.clone(),
             tracker: tracker.clone(),
             wiki_sync: Some(wiki_sync.clone()),
+            write_gate: Arc::new(trade::WriteGate::new()),
         },
     );
 

@@ -136,6 +136,10 @@ pub struct SettingsSnapshot {
     pub global_shortcuts_active: bool,
     /// C2b: persistierter Consent (einmalige Zustimmung, Default false).
     pub shortcuts_sync_omarchy: bool,
+    /// M2b Sicherheitsmodell: 2-Schritt-Bestätigung für Marktplatz-Writes
+    /// ("every_action" = jede schreibende Aktion, Default; "delete_only" = nur
+    /// Abmelden bestätigt). Keine Batch-Aktionen.
+    pub marketplace_confirm: String,
     /// C2b: Ist-Zustand der Compositor-Anbindung. Nur wenn BEIDES true ist,
     /// greift der OmaSettings-Pfad: Hyprland-Session aktiv
     /// (HYPRLAND_INSTANCE_SIGNATURE) und Plugin-Bin vorhanden. Sonst bleibt
@@ -163,6 +167,7 @@ impl SettingsSnapshot {
             shortcut_click_through: s.shortcut_click_through().to_owned(),
             global_shortcuts_active,
             shortcuts_sync_omarchy: s.shortcut_sync_omarchy(),
+            marketplace_confirm: s.marketplace_confirm().as_str().to_owned(),
             hyprland_session: crate::hyprland_sync::hyprland_session_active(),
             omasettings_available: crate::hyprland_sync::OmarchyPaths::detect().is_some(),
             sync_note: sync_note.to_owned(),
@@ -438,6 +443,28 @@ pub fn settings_set_uex_username(
     )
 }
 
+/// M2b Sicherheitsmodell: `.swap` marketplace_confirm-Modus für
+/// Marktplatz-Writes (every_action | delete_only). Ungültige Werte → 400
+/// Meldung; Default bleibt every_action.
+#[tauri::command]
+pub fn settings_set_marketplace_confirm(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    mode: String,
+) -> Result<SettingsSnapshot, String> {
+    let confirm = settings::MarketplaceConfirm::from_name(&mode)
+        .ok_or_else(|| format!("unbekannter Bestätigungs-Modus: {mode}"))?;
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_marketplace_confirm(confirm);
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    ))
+}
+
 /// Set the primary commodity price source (wiki | uex). Persists immediately
 /// AND flips the live source switch the composite provider reads on every
 /// price fetch — the next price request already uses the new source.
@@ -663,6 +690,8 @@ mod tests {
             // C2b (t_1adbc017): Consent-Flag + Compositor-Ist + Sync-Note —
             // dieselbe Snake-Case-Vertrag; camelCase wäre im UI unsichtbar.
             "shortcuts_sync_omarchy",
+            // M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (snake_case).
+            "marketplace_confirm",
             "hyprland_session",
             "omasettings_available",
             "sync_note",
