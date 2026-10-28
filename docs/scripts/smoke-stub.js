@@ -169,6 +169,10 @@ window.__TAURI_INTERNALS__ = {
 				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
 				const nid = 90000 + Math.floor(Math.random() * 9000);
 				const p = a.payload || {};
+				// MC (t_5faaf946): Payload-Capture für die Probe (neue Felder:
+				// type, id_item, currency, quality, availability, is_hidden,
+				// image_data). Die Probe assertet die Doku-konforme Übertragung.
+				window.__LAST_ADVERTISE_PAYLOAD__ = p;
 				// M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort von UEX ist
 				// KEIN Offer — `{ id, url }` (der Deep-Link der Listung). Daran
 				// hängt die UI-Erfolgsmeldung, NICHT an einem Pull.
@@ -176,11 +180,13 @@ window.__TAURI_INTERNALS__ = {
 				// Neues Listing an den OWN-OFFERS-Array anfügen (Pull im UI zeigt es).
 				window.__SHOP_OFFERS__ = [{
 					id: nid, title: p.title || 'Neu', description: p.description || '',
-					item_id: 0, category_id: Number(p.id_category || 0), operation: p.operation || 'sell',
-					listing_type: 'item', price: Number(p.price || 0), currency: 'UEC',
+					item_id: Number(p.id_item || 0), category_id: Number(p.id_category || 0),
+					operation: p.operation || 'sell',
+					listing_type: p.type || 'item',
+					price: Number(p.price || 0), currency: p.currency || 'UEC',
 					unit: p.unit || 'unit', quantity: Number(p.in_stock || 1),
 					location: p.location || '—', region: 'Stanton', seller: stubState.uex_username || 'sebo_one',
-					quality: 0, updated: Math.floor(Date.now() / 1000), expires: null,
+					quality: Number(p.quality || 0), updated: Math.floor(Date.now() / 1000), expires: null,
 					slug: 'neu-' + nid
 				}, ...window.__SHOP_OFFERS__];
 				window.__SHOP_OFFERS_SOURCE__ = 'live';
@@ -723,6 +729,16 @@ window.__TAURI_INTERNALS__ = {
 				const starts = locNames.filter((n) => n.toLowerCase().startsWith(q));
 				const contains = locNames.filter((n) => n.toLowerCase().includes(q) && !starts.includes(n));
 				return starts.concat(contains).slice(0, 12);
+			}
+			case 'item_suggest': {
+				// MC (t_5faaf946): Spiegel des Backend item_suggest — Items aus
+				// dem Cache-Pool (__itemPool), starts-first, max 12.
+				const q = String((a && a.query) || '').trim().toLowerCase();
+				if (!q) return [];
+				const pool = globalThis.__itemPool || [];
+				const starts = pool.filter((i) => i.name.toLowerCase().startsWith(q));
+				const contains = pool.filter((i) => i.name.toLowerCase().includes(q) && !starts.includes(i));
+				return starts.concat(contains).slice(0, 12).map((i) => ({ id: i.id, name: i.name, subtitle: i.subtitle || '' }));
 			}
 			case 'vehicles_scu': {
 				// SCU-Kapazitäten (lowercase name → SCU) — Smoke-Daten.
