@@ -159,16 +159,27 @@ impl UexProvider {
         min_interval: std::time::Duration,
     ) -> Result<UexProvider> {
         let http = UexHttpClient::new(base_url, api_key.clone(), None, min_interval)?;
-        Ok(UexProvider {
+        let provider = UexProvider {
             http,
             cache,
             last_terminal_types: std::sync::Mutex::new(HashMap::new()),
-            // User-scoped Endpunkte (user_trades, username-Filter) senden den
-            // Slot-Key ZUSÄTZLICH als `secret-key`-Header — UEX erwartet dort
-            // beide (Bearer + secret-key). Bewusst NICHT global am HTTP-Client
-            // gesetzt (dann ginge der secret-key auf allen Public-Reads mit).
-            secret_key: api_key,
-        })
+            // M2a-Fix (t_2f197d1c): NICHT mehr der App-Key als secret-key —
+            // der persönliche UEX-Secret-Key ist ein EIGENER Settings-Slot
+            // (Standard: None → User-scoped Calls senden KEINEN secret-key,
+            // UEX antwortet dann 400 user_not_found/403 invalid_secret_key,
+            // was die IPC als deutsche Meldung rendert).
+            secret_key: None,
+        };
+        Ok(provider)
+    }
+
+    /// M2a-Fix (t_2f197d1c): persönlichen UEX-Secret-Key setzen (Settings-Slot
+    /// `[uex] secret_key`). Nur User-scoped Reads (`/user_trades`, `/user`,
+    /// eigene `marketplace_listings`) senden ihn als `secret-key`-Header —
+    /// Public-Reads bleiben Bearer-only. Der Key wird NIE geloggt.
+    pub fn with_secret_key(mut self, secret_key: Option<String>) -> Self {
+        self.secret_key = secret_key;
+        self
     }
 
     /// Ensure the reference dataset for `kind` is usable in the local cache.

@@ -1079,6 +1079,15 @@ pub(crate) fn friendly(e: ProviderError) -> String {
             Some(secs) => format!("HTTP 429 · Rate-Limit (Retry in {secs} s)"),
             None => "HTTP 429 · Rate-Limit erreicht".to_string(),
         },
+        ProviderError::Http { status, body }
+            if (status == 400 || status == 403)
+                && (body.contains("user_not_found") || body.contains("invalid_secret_key")) =>
+        {
+            // M2a-Fix (t_2f197d1c): UEX-Auth-Codes der User-scoped Reads —
+            // deutscher Hinweis statt Rohfehler-Status/Text.
+            "Secret-Key fehlt oder ist falsch — siehe Einstellungen („UEX persönlicher Secret-Key“)."
+                .to_string()
+        }
         ProviderError::Http { status, .. } => {
             format!("HTTP {status} · UEX nicht erreichbar")
         }
@@ -1145,6 +1154,40 @@ mod tests {
             })
             .contains("500")
         );
+    }
+
+    /// M2a-Fix (t_2f197d1c): UEX-Auth-Codes der User-scoped Reads (400
+    /// user_not_found / 403 invalid_secret_key) → deutsche Meldung mit
+    /// Settings-Verweis statt Rohfehler (kein „HTTP … nicht erreichbar“).
+    #[test]
+    fn friendly_maps_secret_key_auth_codes_german() {
+        let msg_400 = friendly(ProviderError::Http {
+            status: 400,
+            body: "user_not_found".into(),
+        });
+        let msg_403 = friendly(ProviderError::Http {
+            status: 403,
+            body: "invalid_secret_key".into(),
+        });
+        for m in [&msg_400, &msg_403] {
+            assert!(
+                m.contains("Secret-Key fehlt oder ist falsch") && m.contains("Einstellungen"),
+                "unexpected friendly(): {m}"
+            );
+            assert!(!m.contains("HTTP"), "raw status leaked: {m}");
+        }
+        // Andere 400/403 ohne Auth-Code bleiben beim bisherigen Mapping.
+        let plain = friendly(ProviderError::Http {
+            status: 403,
+            body: "forbidden".into(),
+        });
+        assert!(plain.contains("HTTP 403"));
+        // UEX kapselt die Codes auch als envelope.status (body == status).
+        let enveloped = friendly(ProviderError::Http {
+            status: 400,
+            body: "{\"status\":\"user_not_found\"}".into(),
+        });
+        assert!(enveloped.contains("Secret-Key fehlt oder ist falsch"));
     }
 
     /// The grouped search contract: three groups in a fixed order, per-group

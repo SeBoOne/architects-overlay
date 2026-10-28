@@ -67,6 +67,8 @@ pub fn run() {
             app_settings::settings_set_palette,
             app_settings::settings_set_detail_variant,
             app_settings::settings_set_uex_api_key,
+            app_settings::settings_set_uex_secret_key,
+            app_settings::settings_set_uex_username,
             app_settings::settings_set_commodity_source,
             app_settings::settings_set_scale,
             app_settings::settings_set_shortcut_toggle,
@@ -206,9 +208,16 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     let api_key = settings::Settings::load()
         .ok()
         .and_then(|s| s.uex_api_key().map(str::to_owned));
+    // M2a-Fix (t_2f197d1c): persönlicher Secret-Key ist ein EIGENER Slot —
+    // User-scoped Reads (/user_trades, eigene marketplace_listings) senden ihn
+    // als `secret-key`-Header; der App-Token bleibt reiner Bearer.
+    let secret_key = settings::Settings::load()
+        .ok()
+        .and_then(|s| s.uex_secret_key().map(str::to_owned));
 
     let uex = uex_client::UexProvider::new(cache.clone(), api_key)
-        .map_err(|e| std::io::Error::other(format!("UEX provider init: {e}")))?;
+        .map_err(|e| std::io::Error::other(format!("UEX provider init: {e}")))?
+        .with_secret_key(secret_key);
     let wiki = wiki_client::WikiProvider::new(cache.clone())
         .map_err(|e| std::io::Error::other(format!("wiki provider init: {e}")))?;
 

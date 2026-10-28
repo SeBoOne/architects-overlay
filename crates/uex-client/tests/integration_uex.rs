@@ -14,7 +14,7 @@ use provider::{
     routes::RouteEnrichment,
 };
 use uex_client::UexProvider;
-use wiremock::matchers::{method, path, query_param};
+use wiremock::matchers::{header, method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn fixture(name: &str) -> String {
@@ -1252,4 +1252,53 @@ async fn enrichment_outage_keeps_existing_map_and_does_not_fail() {
     // Revalidation schlägt am Enrichment NICHT fehl (Fehler wird geloggt) —
     // alle anderen Pfade sind gemockt (Ok auch bei down).
     let _ = provider.revalidate_route_data().await.unwrap();
+}
+
+/// M2a-Fix (t_2f197d1c): User-scoped Reads senden den persönlichen Secret-Key
+/// NUR als `secret-key`-Header, wenn er via `with_secret_key` gesetzt ist —
+/// der App-Key bleibt reiner Bearer und geht NICHT als secret-key mit.
+/// Wiremock-matcht den Header: ein Request ohne den Header erfüllt den Mock
+/// nicht → 404 → Provider fällt in den Fehlerpfad (Test scheitert sonst).
+#[tokio::test]
+async fn user_trades_sends_secret_key_header_only_when_set() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/user_trades"))
+        .and(header("secret-key", "my-super-secret-40"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":[]}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    // Ohne with_secret_key → KEIN secret-key-Header → der obige Mock matcht
+    // nicht, /user_trades antwortet 404 → Fehler. Damit ist belegt, dass der
+    // Key NICHT automatisch (etwa aus dem App-Key) mitgesendet wird.
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let no_key = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()), // App-Key gesetzt — reicht NICHT für user_trades
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap();
+    assert!(
+        no_key.user_trades().await.is_err(),
+        "user_trades ohne secret-key muss fehlschlagen (UEX verlangt beides)"
+    );
+
+    // Mit with_secret_key → Request trägt den Header → Mock matcht → Ok.
+    let cache2 = Arc::new(Cache::open_in_memory().unwrap());
+    let with_key = UexProvider::with_base_url(
+        cache2.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+    assert!(
+        with_key.user_trades().await.is_ok(),
+        "user_trades mit secret-key muss Ok sein (Header gesendet)"
+    );
 }

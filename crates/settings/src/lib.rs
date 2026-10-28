@@ -383,6 +383,15 @@ struct RawConfig {
 struct UexSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
+    /// M2a-Fix (t_2f197d1c): persönlicher UEX-Secret-Key (40 Zeichen) für
+    /// user-scoped Reads (`/user_trades`, `/user`, eigene `marketplace_listings`).
+    /// Wird NIE im Snapshot/Logs ausgegeben — nur bool-only (`secret_key_set`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secret_key: Option<String>,
+    /// M2a-Fix: UEX-Benutzername (exakt wie auf UEX registriert) für den
+    /// `marketplace_listings?username=`-Pull des eigenen Shops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -451,6 +460,10 @@ pub type Result<T> = std::result::Result<T, SettingsError>;
 pub struct Settings {
     path: PathBuf,
     uex_api_key: Option<String>,
+    /// M2a-Fix (t_2f197d1c): persönlicher UEX-Secret-Key (user-scoped Reads).
+    uex_secret_key: Option<String>,
+    /// M2a-Fix: UEX-Benutzername für `marketplace_listings?username=`-Pull.
+    uex_username: Option<String>,
     palette: Palette,
     detail_variant: DetailVariant,
     commodity_source: CommoditySource,
@@ -468,6 +481,8 @@ impl Default for Settings {
         Settings {
             path: PathBuf::from(CONFIG_FILE),
             uex_api_key: None,
+            uex_secret_key: None,
+            uex_username: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
@@ -503,7 +518,9 @@ impl Settings {
         };
         Ok(Settings {
             path: path.to_path_buf(),
-            uex_api_key: raw.uex.and_then(|u| u.api_key),
+            uex_api_key: raw.uex.as_ref().and_then(|u| u.api_key.clone()),
+            uex_secret_key: raw.uex.as_ref().and_then(|u| u.secret_key.clone()),
+            uex_username: raw.uex.as_ref().and_then(|u| u.username.clone()),
             palette: raw.ui.as_ref().and_then(|u| u.palette).unwrap_or_default(),
             detail_variant: raw
                 .ui
@@ -547,6 +564,8 @@ impl Settings {
         Settings {
             path,
             uex_api_key: None,
+            uex_secret_key: None,
+            uex_username: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
@@ -565,6 +584,27 @@ impl Settings {
     /// Set the UEX API key in memory (persist via [`Settings::save`]).
     pub fn set_uex_api_key(&mut self, key: Option<String>) {
         self.uex_api_key = key;
+    }
+
+    /// Configured UEX personal secret key, or None (M2a-Fix t_2f197d1c).
+    /// Secret — darf NIE in Snapshot/Logs ausgegeben werden.
+    pub fn uex_secret_key(&self) -> Option<&str> {
+        self.uex_secret_key.as_deref()
+    }
+
+    /// Set the UEX secret key (persist via [`Settings::save`]).
+    pub fn set_uex_secret_key(&mut self, key: Option<String>) {
+        self.uex_secret_key = key;
+    }
+
+    /// Configured UEX username, or None (für `marketplace_listings?username=`).
+    pub fn uex_username(&self) -> Option<&str> {
+        self.uex_username.as_deref()
+    }
+
+    /// Set the UEX username (persist via [`Settings::save`]).
+    pub fn set_uex_username(&mut self, name: Option<String>) {
+        self.uex_username = name;
     }
 
     /// Active colour palette (default: Amber).
@@ -649,6 +689,8 @@ impl Settings {
         let raw = RawConfig {
             uex: Some(UexSection {
                 api_key: self.uex_api_key.clone(),
+                secret_key: self.uex_secret_key.clone(),
+                username: self.uex_username.clone(),
             }),
             ui: Some(UiSection {
                 palette: Some(self.palette),
@@ -701,6 +743,38 @@ pub fn set_uex_api_key(key: &str) {
     settings.set_uex_api_key(Some(key.to_string()));
     if let Err(e) = settings.save() {
         log::warn!("settings: could not persist UEX API key: {e}");
+    }
+}
+
+/// Returns the configured UEX personal secret key, or None if unset.
+/// M2a-Fix (t_2f197d1c): user-scoped Reads (`/user_trades`, `/user`, eigene
+/// `marketplace_listings`) verlangen zusätzlich zum App-Token diesen Key.
+pub fn uex_secret_key() -> Option<String> {
+    Settings::load().ok()?.uex_secret_key().map(str::to_owned)
+}
+
+/// Persist the UEX personal secret key (maskiert — nie loggen/ausgeben).
+pub fn set_uex_secret_key(key: &str) {
+    let mut settings = Settings::load().unwrap_or_else(|_| Settings::default());
+    settings.path = Settings::config_path().unwrap_or_else(|_| PathBuf::from("config.toml"));
+    settings.set_uex_secret_key(Some(key.to_string()));
+    if let Err(e) = settings.save() {
+        log::warn!("settings: could not persist UEX secret key: {e}");
+    }
+}
+
+/// Returns the configured UEX username, or None if unset.
+pub fn uex_username() -> Option<String> {
+    Settings::load().ok()?.uex_username().map(str::to_owned)
+}
+
+/// Persist the UEX username (für `marketplace_listings?username=`-Pull).
+pub fn set_uex_username(name: &str) {
+    let mut settings = Settings::load().unwrap_or_else(|_| Settings::default());
+    settings.path = Settings::config_path().unwrap_or_else(|_| PathBuf::from("config.toml"));
+    settings.set_uex_username(Some(name.to_string()));
+    if let Err(e) = settings.save() {
+        log::warn!("settings: could not persist UEX username: {e}");
     }
 }
 
@@ -845,6 +919,49 @@ mod tests {
         s2.set_uex_api_key(None);
         s2.save().unwrap();
         assert_eq!(Settings::load_from(&path).unwrap().uex_api_key(), None);
+    }
+
+    #[test]
+    fn roundtrip_persists_secret_key_and_username() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        let mut s = Settings::with_path(path.clone());
+        s.set_uex_secret_key(Some(String::from(
+            "sk-1234567890-1234567890-1234567890-1234567890",
+        )));
+        s.set_uex_username(Some(String::from("sebo_one")));
+        s.save().unwrap();
+
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(
+            loaded.uex_secret_key(),
+            Some("sk-1234567890-1234567890-1234567890-1234567890")
+        );
+        assert_eq!(loaded.uex_username(), Some("sebo_one"));
+
+        // Entfernen (None) löscht beide Felder wieder.
+        let mut s2 = Settings::with_path(path.clone());
+        s2.set_uex_secret_key(None);
+        s2.set_uex_username(None);
+        s2.save().unwrap();
+        let loaded2 = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded2.uex_secret_key(), None);
+        assert_eq!(loaded2.uex_username(), None);
+    }
+
+    #[test]
+    fn legacy_config_without_secret_fields_loads_defaults() {
+        // Konfig aus der Zeit VOR M2a-Fix: kein secret_key/username im TOML —
+        // Load darf nicht scheitern (serde(default)).
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[uex]\napi_key = \"old-key\"\n").unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.uex_api_key(), Some("old-key"));
+        assert_eq!(loaded.uex_secret_key(), None);
+        assert_eq!(loaded.uex_username(), None);
     }
 
     #[test]
