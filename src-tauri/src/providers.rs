@@ -396,6 +396,35 @@ impl DataProvider for CompositeProvider {
         self.uex.marketplace_offers(filters).await
     }
 
+    async fn my_offers(&self, username: String) -> Result<Vec<provider::Offer>> {
+        // Eigene Offers sind UEX-user-scoped (secret-key) — kein Source-Plug-in.
+        self.uex.my_offers(username).await
+    }
+
+    async fn user_trades(&self) -> Result<Vec<provider::Trade>> {
+        // Rede-Verlauf ist UEX-user-scoped (secret-key) — kein Source-Plug-in.
+        self.uex.user_trades().await
+    }
+
+    async fn categories(&self) -> Result<Vec<provider::Category>> {
+        // Marketplace-Kategorien (Anlegen-Form) sind UEX-Referenzdaten.
+        self.uex.categories().await
+    }
+
+    async fn advertise_offer(
+        &self,
+        payload: provider::AdvertisePayload,
+    ) -> Result<provider::AdvertiseResult> {
+        // Write-Layer (M2b): Anlegen ist UEX-user-scoped (secret-key),
+        // source-unabhängig immer über den UEX-Client. Kein Edit.
+        self.uex.advertise_offer(payload).await
+    }
+
+    async fn delete_offer(&self, id: u64) -> Result<()> {
+        // Write-Layer (M2b): Abmelden ist UEX-user-scoped (secret-key).
+        self.uex.delete_offer(id).await
+    }
+
     async fn trade_routes(&self, filters: &provider::routes::RouteFilters) -> Result<RouteList> {
         // Handelsrouten bleiben bewusst UEX-EXKLUSIV (Karte t_128b7547):
         // unabhängig vom Primary-Source-Switch (wiki|uex) kommt der
@@ -549,6 +578,12 @@ mod tests {
             }
         }
         async fn marketplace_offers(&self, _f: MarketplaceFilter) -> Result<Vec<provider::Offer>> {
+            Ok(vec![])
+        }
+        async fn my_offers(&self, _username: String) -> Result<Vec<provider::Offer>> {
+            Ok(vec![])
+        }
+        async fn user_trades(&self) -> Result<Vec<provider::Trade>> {
             Ok(vec![])
         }
         async fn fetch_entities(&self, _k: EntityKind) -> Result<Vec<Entity>> {

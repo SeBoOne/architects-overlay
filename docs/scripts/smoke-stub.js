@@ -41,13 +41,32 @@ function hangarUpsertStub(item) {
 
 window.isTauri = true;
 window.__TAURI__ = {};
+/* M2a Mein Shop (t_f1543d2a): Fixtures zur Laufzeit überschreibbar —
+   die Probe setzt window.__SHOP_*__ zwischen Szenarien, der Stub liest
+   sie bei jedem invoke-Aufruf (kein Reload nötig). */
+window.__SHOP_OFFERS__ = window.__SHOP_OFFERS__ || [];
+window.__SHOP_TRADES__ = window.__SHOP_TRADES__ || [];
+window.__SHOP_OFFERS_FAIL__ = !!window.__SHOP_OFFERS_FAIL__;
+window.__SHOP_TRADES_FAIL__ = !!window.__SHOP_TRADES_FAIL__;
+window.__SHOP_OFFERS_SOURCE__ = window.__SHOP_OFFERS_SOURCE__ || 'live';
+window.__SHOP_TRADES_SOURCE__ = window.__SHOP_TRADES_SOURCE__ || 'live';
+window.__SHOP_OFFERS_NOTE__ = window.__SHOP_OFFERS_NOTE__ || null;
+window.__SHOP_TRADES_NOTE__ = window.__SHOP_TRADES_NOTE__ || null;
 const stubState = {
 	palette: 'amber', detail_variant: 'c',
 	uex_api_key_set: false, commodity_source: 'wiki',
+	// M2a-Fix (t_2f197d1c): bool-only Secret-Key + Username — der Stub
+	// spiegelt beide wie den API-Key, damit die Probe den Gate (ohne
+	// Secret-Key → Meldung statt Request) fahren kann.
+	uex_secret_key_set: false,
+	uex_username: '',
+	// M2b (Write-Layer): 2-Schritt-Bestätigungs-Modell (every_action | delete_only).
+	marketplace_confirm: 'every_action',
 	// K2 (t_5fe8eb4c, P12): font/icon scale in % — mirrors Settings.scale in the
 	// Rust backend so the probe can A/B the scale live without a Tauri app.
 	scale: 100
 };
+window.__stubState = stubState;
 function stubSettings() {
 	// K2: letzter Snapshot als Spiegel — Probes prüfen damit, ob ein Setter
 	// IPC wirklich gefeuert hat (settings_set_scale etc.).
@@ -71,6 +90,16 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_set_palette':
 			case 'settings_set_detail_variant':
 			case 'settings_set_uex_api_key':
+				// M2a-Probe: Setter spiegelt den Zustand (analog
+				// commodity_source) — ohne Spiegel bliebe der Key-Status im
+				// Smoke-Harness permanent aus.
+				stubState.uex_api_key_set = a.key != null && String(a.key).trim() !== '';
+			case 'settings_set_uex_secret_key':
+				if (cmd === 'settings_set_uex_secret_key')
+					stubState.uex_secret_key_set = a.key != null && String(a.key).trim() !== '';
+			case 'settings_set_uex_username':
+				if (cmd === 'settings_set_uex_username')
+					stubState.uex_username = typeof a.name === 'string' && a.name.trim() !== '' ? a.name.trim() : '';
 			case 'settings_set_commodity_source':
 				if (cmd === 'settings_set_commodity_source') stubState.commodity_source = a.name || stubState.commodity_source;
 				return stubSettings();
@@ -112,6 +141,77 @@ window.__TAURI_INTERNALS__ = {
 			}
 			case 'hangar_export':
 				return JSON.stringify(window.__HANGAR_DATA__, null, 2);
+			case 'get_my_offers': {
+				// M2a Mein Shop — eigener Offers-Read (username-gefiltert).
+				// Wire-Feldnamen wie get_marketplace (snake_case über IPC).
+				if (window.__SHOP_OFFERS_FAIL__) throw new Error('HTTP 429 · Rate-Limit erreicht');
+				return {
+					source: window.__SHOP_OFFERS_SOURCE__,
+					fetched_at: Math.floor(Date.now() / 1000),
+					offers: window.__SHOP_OFFERS__,
+					note: window.__SHOP_OFFERS_NOTE__,
+					key_set: stubState.uex_api_key_set
+				};
+			}
+			case 'get_my_trades': {
+				// M2a Mein Shop — Trade-Verlauf (user-scoped).
+				if (window.__SHOP_TRADES_FAIL__) throw new Error('HTTP 403 · UEX nicht erreichbar');
+				return {
+					source: window.__SHOP_TRADES_SOURCE__,
+					fetched_at: Math.floor(Date.now() / 1000),
+					trades: window.__SHOP_TRADES__,
+					note: window.__SHOP_TRADES_NOTE__,
+					key_set: stubState.uex_api_key_set
+				};
+			}
+			// ---- M2b (Write-Layer): Anlegen + Abmelden + Confirm-Modus ---------
+			case 'marketplace_advertise': {
+				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
+				const nid = 90000 + Math.floor(Math.random() * 9000);
+				const p = a.payload || {};
+				// M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort von UEX ist
+				// KEIN Offer — `{ id, url }` (der Deep-Link der Listung). Daran
+				// hängt die UI-Erfolgsmeldung, NICHT an einem Pull.
+				const url = 'https://uexcorp.space/marketplace/item/info/neu-' + nid;
+				// Neues Listing an den OWN-OFFERS-Array anfügen (Pull im UI zeigt es).
+				window.__SHOP_OFFERS__ = [{
+					id: nid, title: p.title || 'Neu', description: p.description || '',
+					item_id: 0, category_id: Number(p.id_category || 0), operation: p.operation || 'sell',
+					listing_type: 'item', price: Number(p.price || 0), currency: 'UEC',
+					unit: p.unit || 'unit', quantity: Number(p.in_stock || 1),
+					location: p.location || '—', region: 'Stanton', seller: stubState.uex_username || 'sebo_one',
+					quality: 0, updated: Math.floor(Date.now() / 1000), expires: null,
+					slug: 'neu-' + nid
+				}, ...window.__SHOP_OFFERS__];
+				window.__SHOP_OFFERS_SOURCE__ = 'live';
+				return { id: nid, url: url };
+			}
+			case 'marketplace_delete': {
+				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 403 · UEX nicht erreichbar');
+				window.__SHOP_OFFERS__ = (window.__SHOP_OFFERS__ || []).filter((o) => o.id !== Number(a.id));
+				window.__SHOP_OFFERS_SOURCE__ = 'live';
+				return undefined;
+			}
+			case 'marketplace_confirm_mode':
+				return stubState.marketplace_confirm || 'every_action';
+			case 'settings_set_marketplace_confirm':
+				stubState.marketplace_confirm = a.mode || 'every_action';
+				return { marketplace_confirm: stubState.marketplace_confirm };
+			case 'get_categories':
+				// M2b-Review-Fix (t_6e26ec82): Kategorien für die Anlegen-Form —
+				// UEX /categories (id + Anzeigename), Mirror der Provider-DTOs.
+				return [
+					{ id: 1, name: 'Arms', section: 'Armor' },
+					{ id: 2, name: 'Backpacks', section: 'Armor' },
+					{ id: 3, name: 'Armor', section: null },
+					{ id: 4, name: 'Weapons', section: null },
+					{ id: 5, name: 'MedPens', section: null }
+				];
+			case 'open_marketplace_listing':
+				// Nur Tracken — kein echtes Browserfenster im Headless-Smoke.
+				return 'https://uexcorp.space/marketplace/item/info/' + encodeURIComponent(a.slug || '');
+			case 'open_marketplace_trades':
+				return 'https://uexcorp.space/marketplace/';
 			case 'get_prices': {
 				const name = String(a.commodity || '');
 				const now = Math.floor(Date.now() / 1000);

@@ -367,6 +367,43 @@ pub fn normalized_or(input: Option<&str>, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_owned())
 }
 
+/// M2b Sicherheitsmodell (Write-Layer): Wann eine schreibende Aktion eine
+/// 2-Schritt-Bestätigung verlangt. `ConfirmEveryAction` (Default): jede
+/// schreibende Aktion (Anlegen + Abmelden). `ConfirmDeleteOnly`: nur Löschen/
+/// Abmelden bestätigt, Anlegen läuft direkt. Keine Batch-Aktionen — jeder
+/// Write ist einzeln.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum MarketplaceConfirm {
+    #[default]
+    #[serde(rename = "every_action")]
+    ConfirmEveryAction,
+    #[serde(rename = "delete_only")]
+    ConfirmDeleteOnly,
+}
+
+impl MarketplaceConfirm {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MarketplaceConfirm::ConfirmEveryAction => "every_action",
+            MarketplaceConfirm::ConfirmDeleteOnly => "delete_only",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<MarketplaceConfirm> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "every_action" => Some(MarketplaceConfirm::ConfirmEveryAction),
+            "delete_only" => Some(MarketplaceConfirm::ConfirmDeleteOnly),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for MarketplaceConfirm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct RawConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -383,6 +420,15 @@ struct RawConfig {
 struct UexSection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
+    /// M2a-Fix (t_2f197d1c): persönlicher UEX-Secret-Key (40 Zeichen) für
+    /// user-scoped Reads (`/user_trades`, `/user`, eigene `marketplace_listings`).
+    /// Wird NIE im Snapshot/Logs ausgegeben — nur bool-only (`secret_key_set`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    secret_key: Option<String>,
+    /// M2a-Fix: UEX-Benutzername (exakt wie auf UEX registriert) für den
+    /// `marketplace_listings?username=`-Pull des eigenen Shops.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -419,6 +465,10 @@ struct UiSection {
     // cannot break the layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scale: Option<u16>,
+    /// M2b: 2-Schritt-Bestätigung für schreibende Marktplatz-Aktionen
+    /// (Default every_action — jede Aktion bestätigen).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    marketplace_confirm: Option<MarketplaceConfirm>,
 }
 
 /// Settings I/O failures.
@@ -451,10 +501,16 @@ pub type Result<T> = std::result::Result<T, SettingsError>;
 pub struct Settings {
     path: PathBuf,
     uex_api_key: Option<String>,
+    /// M2a-Fix (t_2f197d1c): persönlicher UEX-Secret-Key (user-scoped Reads).
+    uex_secret_key: Option<String>,
+    /// M2a-Fix: UEX-Benutzername für `marketplace_listings?username=`-Pull.
+    uex_username: Option<String>,
     palette: Palette,
     detail_variant: DetailVariant,
     commodity_source: CommoditySource,
     scale: u16,
+    /// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes.
+    marketplace_confirm: MarketplaceConfirm,
     /// C2a: kanonische Kürzel-Strings (siehe `parse_shortcut_combo`).
     shortcut_toggle: String,
     shortcut_click_through: String,
@@ -468,10 +524,13 @@ impl Default for Settings {
         Settings {
             path: PathBuf::from(CONFIG_FILE),
             uex_api_key: None,
+            uex_secret_key: None,
+            uex_username: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
+            marketplace_confirm: MarketplaceConfirm::default(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
@@ -503,7 +562,9 @@ impl Settings {
         };
         Ok(Settings {
             path: path.to_path_buf(),
-            uex_api_key: raw.uex.and_then(|u| u.api_key),
+            uex_api_key: raw.uex.as_ref().and_then(|u| u.api_key.clone()),
+            uex_secret_key: raw.uex.as_ref().and_then(|u| u.secret_key.clone()),
+            uex_username: raw.uex.as_ref().and_then(|u| u.username.clone()),
             palette: raw.ui.as_ref().and_then(|u| u.palette).unwrap_or_default(),
             detail_variant: raw
                 .ui
@@ -521,6 +582,11 @@ impl Settings {
                 .and_then(|u| u.scale)
                 .map(norm_scale)
                 .unwrap_or(SCALE_DEFAULT),
+            marketplace_confirm: raw
+                .ui
+                .as_ref()
+                .and_then(|u| u.marketplace_confirm)
+                .unwrap_or_default(),
             // Erstmigration: fehlende/ungültige Kürzel → Defaults (U/O).
             shortcut_toggle: normalized_or(
                 raw.shortcuts.as_ref().and_then(|s| s.toggle.as_deref()),
@@ -547,10 +613,13 @@ impl Settings {
         Settings {
             path,
             uex_api_key: None,
+            uex_secret_key: None,
+            uex_username: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
+            marketplace_confirm: MarketplaceConfirm::default(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
@@ -565,6 +634,27 @@ impl Settings {
     /// Set the UEX API key in memory (persist via [`Settings::save`]).
     pub fn set_uex_api_key(&mut self, key: Option<String>) {
         self.uex_api_key = key;
+    }
+
+    /// Configured UEX personal secret key, or None (M2a-Fix t_2f197d1c).
+    /// Secret — darf NIE in Snapshot/Logs ausgegeben werden.
+    pub fn uex_secret_key(&self) -> Option<&str> {
+        self.uex_secret_key.as_deref()
+    }
+
+    /// Set the UEX secret key (persist via [`Settings::save`]).
+    pub fn set_uex_secret_key(&mut self, key: Option<String>) {
+        self.uex_secret_key = key;
+    }
+
+    /// Configured UEX username, or None (für `marketplace_listings?username=`).
+    pub fn uex_username(&self) -> Option<&str> {
+        self.uex_username.as_deref()
+    }
+
+    /// Set the UEX username (persist via [`Settings::save`]).
+    pub fn set_uex_username(&mut self, name: Option<String>) {
+        self.uex_username = name;
     }
 
     /// Active colour palette (default: Amber).
@@ -609,6 +699,17 @@ impl Settings {
         self.scale = norm_scale(pct);
     }
 
+    /// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (Default:
+    /// every action). `delete_only` bestätigt nur noch das Abmelden.
+    pub fn marketplace_confirm(&self) -> MarketplaceConfirm {
+        self.marketplace_confirm
+    }
+
+    /// Set the marketplace confirmation mode in memory (persist via save).
+    pub fn set_marketplace_confirm(&mut self, mode: MarketplaceConfirm) {
+        self.marketplace_confirm = mode;
+    }
+
     /// Overlay-Toggle-Kürzel (kanonisch, z. B. `Ctrl+Shift+U`).
     pub fn shortcut_toggle(&self) -> &str {
         &self.shortcut_toggle
@@ -649,11 +750,14 @@ impl Settings {
         let raw = RawConfig {
             uex: Some(UexSection {
                 api_key: self.uex_api_key.clone(),
+                secret_key: self.uex_secret_key.clone(),
+                username: self.uex_username.clone(),
             }),
             ui: Some(UiSection {
                 palette: Some(self.palette),
                 detail_variant: Some(self.detail_variant),
                 scale: Some(self.scale),
+                marketplace_confirm: Some(self.marketplace_confirm),
             }),
             data: Some(DataSection {
                 commodity_source: Some(self.commodity_source),
@@ -701,6 +805,38 @@ pub fn set_uex_api_key(key: &str) {
     settings.set_uex_api_key(Some(key.to_string()));
     if let Err(e) = settings.save() {
         log::warn!("settings: could not persist UEX API key: {e}");
+    }
+}
+
+/// Returns the configured UEX personal secret key, or None if unset.
+/// M2a-Fix (t_2f197d1c): user-scoped Reads (`/user_trades`, `/user`, eigene
+/// `marketplace_listings`) verlangen zusätzlich zum App-Token diesen Key.
+pub fn uex_secret_key() -> Option<String> {
+    Settings::load().ok()?.uex_secret_key().map(str::to_owned)
+}
+
+/// Persist the UEX personal secret key (maskiert — nie loggen/ausgeben).
+pub fn set_uex_secret_key(key: &str) {
+    let mut settings = Settings::load().unwrap_or_else(|_| Settings::default());
+    settings.path = Settings::config_path().unwrap_or_else(|_| PathBuf::from("config.toml"));
+    settings.set_uex_secret_key(Some(key.to_string()));
+    if let Err(e) = settings.save() {
+        log::warn!("settings: could not persist UEX secret key: {e}");
+    }
+}
+
+/// Returns the configured UEX username, or None if unset.
+pub fn uex_username() -> Option<String> {
+    Settings::load().ok()?.uex_username().map(str::to_owned)
+}
+
+/// Persist the UEX username (für `marketplace_listings?username=`-Pull).
+pub fn set_uex_username(name: &str) {
+    let mut settings = Settings::load().unwrap_or_else(|_| Settings::default());
+    settings.path = Settings::config_path().unwrap_or_else(|_| PathBuf::from("config.toml"));
+    settings.set_uex_username(Some(name.to_string()));
+    if let Err(e) = settings.save() {
+        log::warn!("settings: could not persist UEX username: {e}");
     }
 }
 
@@ -845,6 +981,49 @@ mod tests {
         s2.set_uex_api_key(None);
         s2.save().unwrap();
         assert_eq!(Settings::load_from(&path).unwrap().uex_api_key(), None);
+    }
+
+    #[test]
+    fn roundtrip_persists_secret_key_and_username() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        let mut s = Settings::with_path(path.clone());
+        s.set_uex_secret_key(Some(String::from(
+            "sk-1234567890-1234567890-1234567890-1234567890",
+        )));
+        s.set_uex_username(Some(String::from("sebo_one")));
+        s.save().unwrap();
+
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(
+            loaded.uex_secret_key(),
+            Some("sk-1234567890-1234567890-1234567890-1234567890")
+        );
+        assert_eq!(loaded.uex_username(), Some("sebo_one"));
+
+        // Entfernen (None) löscht beide Felder wieder.
+        let mut s2 = Settings::with_path(path.clone());
+        s2.set_uex_secret_key(None);
+        s2.set_uex_username(None);
+        s2.save().unwrap();
+        let loaded2 = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded2.uex_secret_key(), None);
+        assert_eq!(loaded2.uex_username(), None);
+    }
+
+    #[test]
+    fn legacy_config_without_secret_fields_loads_defaults() {
+        // Konfig aus der Zeit VOR M2a-Fix: kein secret_key/username im TOML —
+        // Load darf nicht scheitern (serde(default)).
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "[uex]\napi_key = \"old-key\"\n").unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.uex_api_key(), Some("old-key"));
+        assert_eq!(loaded.uex_secret_key(), None);
+        assert_eq!(loaded.uex_username(), None);
     }
 
     #[test]
@@ -1013,6 +1192,46 @@ mod tests {
         // Alt+Zahl ist intern die Badge-Navigation (ignoriert weitere Mods).
         let err = validate_shortcut_combo("Ctrl+Alt+3").unwrap_err();
         assert!(err.contains("Alt+3"), "conflict list: {err}");
+    }
+
+    #[test]
+    fn marketplace_confirm_roundtrip_and_parse() {
+        assert_eq!(
+            MarketplaceConfirm::from_name("every_action"),
+            Some(MarketplaceConfirm::ConfirmEveryAction)
+        );
+        assert_eq!(
+            MarketplaceConfirm::from_name("DELETE_ONLY"),
+            Some(MarketplaceConfirm::ConfirmDeleteOnly)
+        );
+        assert_eq!(MarketplaceConfirm::from_name("bogus"), None);
+        // Default = ConfirmEveryAction (sicherstes Verhalten, M2b-2).
+        assert_eq!(
+            MarketplaceConfirm::default(),
+            MarketplaceConfirm::ConfirmEveryAction
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        let mut s = Settings::with_path(path.clone());
+        s.set_marketplace_confirm(MarketplaceConfirm::ConfirmDeleteOnly);
+        s.save().unwrap();
+        assert_eq!(
+            Settings::load_from(&path).unwrap().marketplace_confirm(),
+            MarketplaceConfirm::ConfirmDeleteOnly
+        );
+        // TOML-Bestand (für Handsichts/Lesbarkeit).
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("marketplace_confirm = \"delete_only\""),
+            "{content}"
+        );
+        // Fehlendes Feld (Legacy-Konfig) → Default every_action.
+        std::fs::write(&path, "[ui]\n").unwrap();
+        assert_eq!(
+            Settings::load_from(&path).unwrap().marketplace_confirm(),
+            MarketplaceConfirm::ConfirmEveryAction
+        );
     }
 
     #[test]

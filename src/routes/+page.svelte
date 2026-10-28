@@ -116,6 +116,45 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 	};
 
+	// M2a (Read-Phase): „Mein Shop" — eigene Offers + letzte Trades.
+	// Mirrors provider::Trade (seam-DTO) + IPC-Responses.
+	type Trade = {
+		id: number;
+		terminal_id: number;
+		commodity_id: number;
+		operation: MarketOp;
+		scu: number;
+		price: number;
+		date_added: number;
+		commodity: string;
+		terminal: string;
+		vehicle: string | null;
+		fleet_name: string | null;
+		organization: string | null;
+	};
+	type OwnOffersResponse = {
+		source: 'cache' | 'live' | 'offline';
+		fetched_at: number;
+		offers: Offer[];
+		note: string | null;
+		key_set: boolean;
+	};
+	type TradesResponse = {
+		source: 'cache' | 'live' | 'offline';
+		fetched_at: number;
+		trades: Trade[];
+		note: string | null;
+		key_set: boolean;
+	};
+	const SHOP_USER_KEY = 'architects-overlay.shop.username';
+	function loadShopUser(): string {
+		try {
+			return (localStorage.getItem(SHOP_USER_KEY) || '').trim();
+		} catch {
+			return '';
+		}
+	}
+
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	// Tray "Config öffnen" → Backend-Event (siehe overlay::TRAY_OPEN_CONFIG_EVENT).
 	const overlayTrayOpenConfig = 'tray-open-config';
@@ -169,6 +208,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		palette: string;
 		detail_variant: string;
 		uex_api_key_set: boolean;
+		// M2a-Fix (t_2f197d1c): bool-only (roher Key geht nie ans Frontend)
+		// + UEX-Benutzername für den marketplace_listings?username=-Pull.
+		uex_secret_key_set: boolean;
+		uex_username: string;
 		commodity_source: string;
 		// K2 (t_5fe8eb4c, P12): font/icon scale in % (Chips 80–125, backend 50–200).
 		scale: number;
@@ -179,6 +222,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		global_shortcuts_active: boolean;
 		// C2b (t_1adbc017): Consent (persistiert) + Compositor-Ist + Sync-Note.
 		shortcuts_sync_omarchy: boolean;
+		// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (every_action|delete_only).
+		marketplace_confirm: string;
 		hyprland_session: boolean;
 		omasettings_available: boolean;
 		sync_note: string;
@@ -187,6 +232,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let cfg = $state<SettingsSnapshot | null>(null);
 	let apiKeyInput = $state('');
 	let apiKeyNote = $state('');
+	// M2a-Fix (t_2f197d1c): zweites Credential + Username (F12-View).
+	let secretKeyInput = $state('');
+	let secretKeyNote = $state('');
+	let usernameInput = $state('');
+	let usernameNote = $state('');
 	// K6 (t_9b385831, P2): kurze Confirm-Zeile im Config-View nach Aktionen
 	// (Preisquelle umstellen) — analog K3 Notif-Timeout: verschwindet nach 3 s
 	// von selbst, damit die Wirkung sichtbar ist, ohne das View zuzumüllen.
@@ -356,7 +406,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// P1 t_a39f6811: F6 Handelsrouten — eigener Mode für die Rail/Keyhandler;
 	// intern bleibt es der Market-Phase mit mTab='routes'.
 	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
-	let mTab = $state<'offers' | 'routes'>('offers');
+	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
+	let mTab = $state<'offers' | 'routes' | 'shop'>('offers');
 	let railMode = $state<'inventory' | 'hangar' | null>(null);
 	let mode = $derived<Mode>(
 		railMode ??
@@ -715,6 +766,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_get');
 			applySettings(cfg);
+			// M2a-Fix (t_2f197d1c): Settings-Username ist die kanonische Quelle
+			// für den „Mein Shop"-Pull — localStorage nur als SSR-Fallback.
+			if (cfg?.uex_username && !shopUser.trim()) shopUser = cfg.uex_username.trim();
 		} catch {
 			// Ohne Tauri (SSR/vite-dev) → Palette bleibt am app.html-Default.
 		}
@@ -734,6 +788,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		dToast = '';
 		apiKeyInput = '';
 		apiKeyNote = '';
+		secretKeyInput = '';
+		secretKeyNote = '';
+		usernameInput = '';
+		usernameNote = '';
 		cancelShortcutCapture();
 		inConfig = true;
 		if (searchEl) searchEl.blur();
@@ -743,6 +801,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inConfig = false;
 		apiKeyInput = '';
 		apiKeyNote = '';
+		secretKeyInput = '';
+		secretKeyNote = '';
+		usernameInput = '';
+		usernameNote = '';
 		// Capture darf ein Schließen nicht überleben (kein Geister-Fenster-Modus).
 		cancelShortcutCapture();
 		cfgToast = '';
@@ -838,6 +900,65 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			apiKeyNote = 'API-Key entfernt.';
 		} catch (e) {
 			apiKeyNote = String(e);
+		}
+	}
+
+	// M2a-Fix (t_2f197d1c): zweites Credential + Username — dieselben Muster
+	// wie der App-Key (invoke, Suppression leerer Eingaben, Note beim Ergebnis).
+	async function saveSecretKey() {
+		const key = secretKeyInput.trim();
+		if (!key) return;
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key });
+			secretKeyInput = '';
+			secretKeyNote = 'Secret-Key gespeichert — wird NIE im Klartext angezeigt.';
+			if (!shopUser.trim() && cfg?.uex_username) shopUser = cfg.uex_username.trim();
+		} catch (e) {
+			secretKeyNote = String(e);
+		}
+	}
+
+	async function removeSecretKey() {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key: null });
+			secretKeyInput = '';
+			secretKeyNote = 'Secret-Key entfernt.';
+		} catch (e) {
+			secretKeyNote = String(e);
+		}
+	}
+
+	async function saveUsername() {
+		const name = usernameInput.trim();
+		if (!name) return;
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_uex_username', { name });
+			usernameInput = '';
+			usernameNote = 'UEX-Username gespeichert — wird für den „Mein Shop“-Pull verwendet.';
+			// Kanonische Quelle (Settings) → Shop-Input synchron halten.
+			shopUser = name;
+			try {
+				localStorage.setItem(SHOP_USER_KEY, name);
+			} catch {
+				/* localStorage incomplete — In-Memory bleibt aktiv. */
+			}
+		} catch (e) {
+			usernameNote = String(e);
+		}
+	}
+
+	// M2b (Write-Layer, Sicherheitsmodell): 2-Schritt-Bestätigung für
+	// schreibende Marktplatz-Aktionen umschalten (every_action → jede Aktion,
+	// delete_only → nur Abmelden). Keine Batch-Aktionen.
+	let mktConfirmNote = $state('');
+	async function setMarketplaceConfirm(mode: 'every_action' | 'delete_only') {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_marketplace_confirm', { mode });
+			mktConfirmNote = mode === 'every_action'
+				? 'Jede schreibende Aktion wird bestätigt (Default).'
+				: 'Nur beim ABMELDEN wird bestätigt — Anlegen läuft direkt.';
+		} catch (e) {
+			mktConfirmNote = String(e);
 		}
 	}
 
@@ -1038,6 +1159,364 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const top = Math.max(visOffers.length - 1, 0);
 		if (mSel > top || (visOffers.length === 0 && mSel !== 0)) mSel = top;
 	});
+
+	// ---- Mein Shop (M2a, Read-Phase): eigene Offers + letzte 5 Trades -----
+	let shopUser = $state(loadShopUser());
+	let myOffers = $state<Offer[]>([]);
+	let myTrades = $state<Trade[]>([]);
+	let shopLoading = $state(false);
+	let shopSource = $state<'cache' | 'live' | 'offline'>('live');
+	let shopNote = $state<string | null>(null);
+	let shopKeySet = $state(true);
+	let shopErr = $state<string | null>(null);
+	function persistShopUser(v: string) {
+		shopUser = v;
+		try {
+			if (v.trim()) localStorage.setItem(SHOP_USER_KEY, v.trim());
+			else localStorage.removeItem(SHOP_USER_KEY);
+		} catch {
+			/* localStorage incomplete — In-Memory bleibt aktiv. */
+		}
+		// M2a-Fix (t_2f197d1c): der Username lebt kanonisch in den Settings
+		// (F12) — der Shop-Input schreibt best-effort zurück, damit beide
+		// Sichten synchron bleiben. Kein await: UI darf hier nicht blockieren.
+		if (typeof invoke === 'function') {
+			invoke('settings_set_uex_username', { name: v.trim() || null }).catch(() => {});
+		}
+	}
+	async function loadShop(bg = false) {
+		// M2a-Fix (t_2f197d1c): ohne persönlichen Secret-Key KEINE Requests —
+		// UEX antwortet sonst nur 400 user_not_found/403 invalid_secret_key.
+		// Der Gate zeigt stattdessen die deutsche Meldung + Settings-Link
+		// (cfgs null = SSR/Probe ohne Backend → Verhalten wie bisher).
+		if (cfg && !cfg.uex_secret_key_set) {
+			shopLoading = false;
+			shopErr = null;
+			shopNote = null;
+			myOffers = [];
+			myTrades = [];
+			return;
+		}
+		shopLoading = !bg;
+		shopErr = null;
+		shopNote = null;
+		// M2b-Review-Fix: Erfolgs-Deep-Link nur für die letzte Create-Aktion —
+		// beim Neu-Laden des Shops verfallen (Listings stecken sowieso im
+		// UEX-Approval, ein fehlgeschlagener Write darf keinen alten Link zeigen).
+		if (!bg) shopCreatedUrl = null;
+		// Eigene Offers brauchen den username-Filter; ohne key kein Abschnitt.
+		// Beide Reads parallel — unabhängig voneinander, ein Fehler reißt den
+		// anderen nicht mit.
+		const results = await Promise.allSettled([
+			invoke<OwnOffersResponse>('get_my_offers', { username: shopUser.trim() }),
+			invoke<TradesResponse>('get_my_trades')
+		]);
+		shopLoading = false;
+
+		// Offers
+		if (results[0].status === 'fulfilled') {
+			const r = results[0].value;
+			myOffers = r.offers;
+			shopSource = r.source;
+			shopKeySet = r.key_set;
+			if (r.note) shopNote = r.note;
+		} else {
+			myOffers = [];
+			shopErr = String(results[0].reason);
+		}
+		// Trades (unabhängig vom Offers-Ergebnis)
+		if (results[1].status === 'fulfilled') {
+			const r = results[1].value;
+			myTrades = r.trades;
+			shopKeySet = shopKeySet || r.key_set;
+			if (r.note && !shopNote) shopNote = r.note;
+		} else if (!shopErr) {
+			shopErr = String(results[1].reason);
+		}
+	}
+	// Beim Betreten des Mein-Shop-Tabs laden (stale-first im Backend).
+	$effect(() => {
+		if (phase === 'market' && mTab === 'shop') void loadShop(true);
+	});
+	// Status einer eigenen Listung aus der Expiry ableiten (UEX liefert auf
+	// marketplace_listings kein eigenes Status-Feld): ohne Ende → „aktiv",
+	// Zukunft → „läuft ab", Vergangenheit → „abgelaufen".
+	function shopStatus(o: Offer): string {
+		if (!o.expires) return 'aktiv';
+		if (o.expires <= Math.floor(Date.now() / 1000)) return 'abgelaufen';
+		return 'läuft ab ' + new Date(o.expires * 1000).toLocaleDateString('de-DE');
+	}
+	// Letzte 5 Trades (neueste zuerst) — die letzten-5-Logik liegt laut
+	// Entscheidung in der UI; der Cache liefert den vollen Verlauf.
+	const recentTrades = $derived(
+		[...myTrades].sort((a, b) => b.date_added - a.date_added).slice(0, 5)
+	);
+	async function openListingDeepLink(slug: string | null) {
+		try {
+			// Leerer Slug → Marketplace-Startseite (Backend-Doku). Kein iframe —
+			// Systembrowser via tauri-plugin-opener, nichts Schreibendes.
+			await invoke<string>('open_marketplace_listing', { slug: slug ?? '' });
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
+	async function openMyShopDeepLink() {
+		try {
+			await invoke<string>('open_marketplace_trades');
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
+	// M2b-Review-Fix (t_6e26ec82 R2): öffnet den Permalink eines frisch
+	// angelegten Listings (Create-Antwort liefert eine volle URL). Falls leer,
+	// fällt der Button auf den Marketplace-Home zurück.
+	async function openCreatedListing(url: string) {
+		try {
+			if (url && url.startsWith('https://uexcorp.space/')) {
+				await invoke<string>('open_created_listing', { url });
+			} else {
+				await invoke<string>('open_marketplace_listing', { slug: '' });
+			}
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
+
+	// ---- M2b (Write-Layer): Anlegen + Abmelden — 2-Schritt-Bestätigung,
+	// kein Edit (Bearbeiten = Abmelden + Neu anlegen), Pull nach Write. ----
+	type AdvertiseForm = {
+		operation: 'sell' | 'buy';
+		title: string;
+		description: string;
+		price: string;
+		quantity: string;
+		unit: string;
+		location: string;
+		source: string;
+		hours: string;
+		// M2b-Review-Fix (t_6e26ec82): id_category ist für type=item Pflicht.
+		// Auswahl = value des <select> ('' = noch nichts gewählt / „bitte wählen").
+		category: string;
+	};
+	// UEX /categories — Kategorie-Auswahl für die Anlegen-Form (id + Name).
+	type MarketCategory = {
+		id: number;
+		name: string;
+		section: string | null;
+	};
+	// M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort von
+	// marketplace_advertise ist KEIN Offer — UEX liefert `{ id, url }`: die
+	// neue Listing-Id + den Permalink (Deep-Link-Target). Daran hängt die
+	// Erfolgsmeldung, NICHT an einem Pull (Listings erscheinen erst nach
+	// UEX-Approval in /marketplace_listings).
+	type AdvertiseResult = {
+		id: number;
+		url: string;
+	};
+	let advertCategories = $state<MarketCategory[]>([]);
+	let advertCatOpen = $state(false);
+	// Permalink eines frisch angelegten Listings (für den Erfolgs-Deep-Link).
+	let shopCreatedUrl = $state<string | null>(null);
+	$effect(() => {
+		// Beim Öffnen der Form die Kategorien laden (einmalig pro Session;
+		// UEX /categories ist klein + öffentlich). Ein Fehler hier blockiert
+		// das Anlegen NICHT — die Form-Validierung meldet dann, dass eine
+		// Kategorie fehlt, statt ohne Daten zu funktionieren.
+		if (advertOpen && !advertCatOpen) {
+			advertCatOpen = true;
+			invoke<MarketCategory[]>('get_categories')
+				.then((c) => (advertCategories = c))
+				.catch(() => {
+					advertCategories = [];
+				});
+		}
+		if (!advertOpen) {
+			advertCatOpen = false;
+		}
+	});
+	const emptyAdvertise = (): AdvertiseForm => ({
+		operation: 'sell',
+		title: '',
+		description: '',
+		price: '',
+		quantity: '1',
+		unit: 'unit',
+		location: '',
+		source: '',
+		hours: '168',
+		category: ''
+	});
+	// 2-Schritt: Zustand, welche Aktion gerade auf Bestätigung wartet.
+	let advertForm = $state(emptyAdvertise());
+	let advertOpen = $state(false);
+	let advertNote = $state('');
+	let confirmAction = $state<null | { kind: 'advertise' } | { kind: 'delete'; offer: Offer }>(null);
+	let writeBusy = $state(false);
+	// „Bearbeiten" gibt es NICHT als eigenen Zweig — das Formular wird beim
+	// Editieren nur VORBEFÜLLT; der Nutzer meldet die alte Listung separat ab
+	// und legt neu an (klare UX-Kennzeichnung, M2b-1).
+	let editingOffer = $state<Offer | null>(null);
+	function openAdvertise(offer: Offer | null) {
+		if (offer) {
+			editingOffer = offer;
+			advertForm = {
+				operation: offer.operation === 'buy' ? 'buy' : 'sell',
+				title: offer.title,
+				description: offer.description,
+				price: String(Math.round(offer.price)),
+				quantity: String(offer.quantity),
+				unit: offer.unit || 'unit',
+				location: offer.location,
+				source: '',
+				hours: '168',
+				// Bearbeiten = vorbelegtes Formular: die Kategorie der Bestands-
+				// listung vorwählen (falls im /categories-Pool vorhanden).
+				category: String(offer.category_id || '')
+			};
+		} else {
+			editingOffer = null;
+			advertForm = emptyAdvertise();
+		}
+		advertOpen = true;
+		advertNote = '';
+	}
+	// 2-Schritt: prüft das Settings-Modell (M2b-2). ConfirmEveryAction = immer
+	// bestätigen, ConfirmDeleteOnly = nur das Abmelden; Anlegen läuft direkt.
+	// Die Formular-Validierung (inkl. Kategorie-Pflicht, M2b-Review-Fix
+	// t_6e26ec82) passiert VOR dem Confirm — der Nutzer bestätigt nur ein
+	// vollständiges Formular, und ohne Auswahl erscheint nie ein Write-Dialog.
+	function requestAdvertise() {
+		if (writeBusy) return;
+		const f = advertForm;
+		if (!f.title.trim() || !f.description.trim()) {
+			advertNote = 'Titel und Beschreibung sind Pflicht.';
+			return;
+		}
+		const catId = Number(f.category);
+		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
+			advertNote = 'Bitte eine Kategorie wählen (Pflicht für Item-Listings).';
+			return;
+		}
+		const price = Math.round(Number(f.price));
+		const qty = Math.round(Number(f.quantity));
+		if (!Number.isFinite(price) || price <= 0) {
+			advertNote = 'Preis muss eine positive Ganzzahl sein.';
+			return;
+		}
+		if (!Number.isFinite(qty) || qty <= 0) {
+			advertNote = 'Menge muss eine positive Ganzzahl sein.';
+			return;
+		}
+		const confirmMode = cfg?.marketplace_confirm ?? 'every_action';
+		if (confirmMode === 'every_action') {
+			confirmAction = { kind: 'advertise' };
+		} else {
+			void doAdvertise();
+		}
+	}
+	async function doAdvertise() {
+		confirmAction = null;
+		advertNote = '';
+		const f = advertForm;
+		if (!f.title.trim() || !f.description.trim()) {
+			advertNote = 'Titel und Beschreibung sind Pflicht.';
+			advertOpen = true;
+			return;
+		}
+		// M2b-Review-Fix (t_6e26ec82): id_category ist für type=item PFLICHT.
+		// Ohne Auswahl kein Write — deutsche Meldung wie die übrigen Formular-
+		// Validierungen (UEX würde sonst 400 missing_id_category senden).
+		const catId = Number(f.category);
+		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
+			advertNote = 'Bitte eine Kategorie wählen (Pflicht für Item-Listings).';
+			advertOpen = true;
+			return;
+		}
+		const price = Math.round(Number(f.price));
+		const qty = Math.round(Number(f.quantity));
+		if (!Number.isFinite(price) || price <= 0) {
+			advertNote = 'Preis muss eine positive Ganzzahl sein.';
+			advertOpen = true;
+			return;
+		}
+		if (!Number.isFinite(qty) || qty <= 0) {
+			advertNote = 'Menge muss eine positive Ganzzahl sein.';
+			advertOpen = true;
+			return;
+		}
+		// Nach jedem Write PULL (M2b-4) — kein Optimismus. Fehlerpfad: kein
+		// Retry, Meldung + Deep-Link-Button (M2b-3).
+		writeBusy = true;
+		const payload = {
+			id_item: null,
+			// id_category: gewählte Kategorie (Pflichtfeld, s. o.)
+			id_category: catId,
+			id_star_system: null,
+			id_terminal: null,
+			id_organization: null,
+			operation: f.operation,
+			language: 'de_DE',
+			type: 'item',
+			unit: f.unit.trim() || 'unit',
+			price,
+			currency: 'UEC',
+			title: f.title.trim(),
+			description: f.description.trim(),
+			source: f.source.trim() || null,
+			availability: 'immediate',
+			durability: null,
+			location: f.location.trim() || null,
+			in_stock: qty,
+			hours_expiration: Number(f.hours) || null,
+			is_hidden: null,
+			is_production: 1
+		};
+		try {
+			// M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort ist KEIN Offer —
+			// UEX liefert `{ id, url }` (der Deep-Link). Die Erfolgsmeldung hängt
+			// an id/url aus der Antwort, NICHT an einem Pull (Listings erscheinen
+			// erst nach UEX-Approval in /marketplace_listings).
+			const res = await invoke<AdvertiseResult>('marketplace_advertise', { payload });
+			editingOffer = null;
+			advertOpen = false;
+			advertForm = emptyAdvertise();
+			// M2b-4: Pull nach jedem Write (Bestätigung durch den Response/GET).
+			// Ein frisch angelegtes Listing fehlt bis zum UEX-Approval — Erfolg
+			// wird trotzdem sauber gemeldet (Button öffnet die Listung via id/url).
+			await loadShop(true);
+			shopCreatedUrl = res.url || null;
+			shopNote = (f.operation === 'sell'
+				? 'Listing „' + f.title.trim() + '“ wurde angelegt.'
+				: 'Kauf-Gesuch „' + f.title.trim() + '“ wurde angelegt.') +
+				' Es erscheint nach UEX-Approval in deiner Offers-Liste.';
+		} catch (e) {
+			// KEIN Retry — Fehlermeldung + Deep-Link-Button (UI rendert shopErr).
+			shopErr = String(e);
+			advertOpen = true;
+		}
+		writeBusy = false;
+	}
+	// Abmelden bestätigt IMMER (any Modus — Löschen ist die riskantere Aktion,
+	// M2b-2 kein Retry/Spam, M2b-3 Fehlerpfad).
+	function requestDelete(offer: Offer) {
+		if (writeBusy) return;
+		confirmAction = { kind: 'delete', offer };
+	}
+	async function doDelete(offer: Offer) {
+		confirmAction = null;
+		writeBusy = true;
+		try {
+			await invoke('marketplace_delete', { id: offer.id });
+			// Pull statt Optimismus.
+			await loadShop(true);
+			shopNote = 'Listing „' + offer.title + '“ wurde abgemeldet.';
+		} catch (e) {
+			shopErr = String(e);
+		}
+		writeBusy = false;
+	}
+	const UNIT_CHOICES = ['unit', 'scu', 'box', 'crate', 'pack', 'hundred', 'thousand'];
+	const HOUR_CHOICES = ['1', '2', '3', '5', '12', '24', '48', '72', '120', '168', '336', '720'];
 
 	// ---- Handelsrouten (Karte t_128b7547) ------------------------------------
 	// Separater Tab im Marktmodus (Design-Empfehlung der Karte). Datenquelle:
@@ -2827,13 +3306,75 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								Setzen
 							</button>
 							{#if cfg?.uex_api_key_set}
-								<button type="button" class="btn-ghost" onclick={removeApiKey}>Entfernen</button>
+							<button type="button" class="btn-ghost" onclick={removeApiKey}>Entfernen</button>
 							{/if}
 						</div>
 						{#if apiKeyNote}
 							<div class="cfg-note">{apiKeyNote}</div>
 						{/if}
 					</section>
+					<section class="cfg-sect">
+						<div class="h">UEX persönlicher Secret-Key · UEX-Username</div>
+						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
+							Für den eigenen Shop („Mein Shop“, user-scoped Reads) braucht UEX
+							zusätzlich deinen persönlichen Secret-Key (40 Zeichen, noch maskierter
+							als der App-Key) und den Usernamen, exakt wie auf uexcorp.space registriert.
+						</div>
+						<div class="cfg-key-status">
+							Secret-Key:
+							<b class:ok={cfg?.uex_secret_key_set} class:off={!cfg?.uex_secret_key_set}>
+								{cfg?.uex_secret_key_set ? 'gesetzt' : 'nicht gesetzt'}
+							</b>
+						</div>
+						<div class="cfg-key-row">
+							<input
+								type="password"
+								autocomplete="off"
+								placeholder="Secret-Key einfügen … (maskiert)"
+								bind:value={secretKeyInput}
+								onkeydown={(e) => e.stopPropagation()}
+							/>
+							<button type="button" class="btn" onclick={saveSecretKey} disabled={!secretKeyInput.trim()}>
+								Setzen
+							</button>
+							{#if cfg?.uex_secret_key_set}
+							<button type="button" class="btn-ghost" onclick={removeSecretKey}>Entfernen</button>
+							{/if}
+						</div>
+						{#if secretKeyNote}
+							<div class="cfg-note">{secretKeyNote}</div>
+						{/if}
+						<div class="cfg-key-status" style="margin-top: 10px">
+							UEX-Username:
+							<b class:ok={cfg?.uex_username?.trim()} class:off={!cfg?.uex_username?.trim()}>
+								{cfg?.uex_username?.trim() ? cfg.uex_username.trim() : 'nicht gesetzt'}
+							</b>
+						</div>
+						<div class="cfg-key-row">
+							<input
+								type="text"
+								autocomplete="off"
+								placeholder="z. B. sebo_one"
+								bind:value={usernameInput}
+								onkeydown={(e) => e.stopPropagation()}
+							/>
+							<button type="button" class="btn" onclick={saveUsername} disabled={!usernameInput.trim()}>
+								Setzen
+							</button>
+						</div>
+						{#if usernameNote}
+							<div class="cfg-note">{usernameNote}</div>
+						{/if}
+					
+												<div class="cfg-key-status" style="margin-top: 12px">
+							Schreibbestätigung (2-Schritt):
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>Nach jeder Aktion (Default)</button>
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>Nur beim Abmelden</button>
+						</div>
+						{#if mktConfirmNote}
+							<div class="cfg-note">{mktConfirmNote}</div>
+						{/if}
+</section>
 				</div>
 			</div>
 		{:else if phase === 'loading'}
@@ -2866,6 +3407,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="mtabs" role="tablist">
 					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
 					<button type="button" role="tab" aria-selected={mTab === 'routes'} class="chip" class:is-on={mTab === 'routes'} onclick={() => (mTab = 'routes')}>Handelsrouten</button>
+				<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
 				</div>
 			{/if}
 			{#if offerDetail}
@@ -3118,6 +3660,249 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{:else}
 							<div class="row-empty" style="padding: 28px 16px">Keine Routen für diese Filter.</div>
 						{/if}
+					{/if}
+				{:else if mTab === 'shop'}
+					<div class="mbar">
+						<span class="m-lbl">UEX-Username</span>
+						<input
+							class="rtext"
+							placeholder="z. B. sebo_one"
+							aria-label="UEX-Benutzername — filtert deine eigenen Offers"
+							title="UEX-Benutzername aus den Settings/GitHub-Account"
+							bind:value={shopUser}
+							onkeydown={(e) => {
+								if (e.key === 'Enter') {
+									persistShopUser(shopUser);
+									void loadShop();
+								}
+							}}
+						/>
+						<span
+							class="btn"
+							onclick={() => {
+								persistShopUser(shopUser);
+								void loadShop();
+							}}
+						>Laden</span>
+						<span class="m-spacer"></span>
+						{#if shopLoading}<span class="chip">↻ …</span>{/if}
+						{#if shopSource === 'offline'}
+							<span class="chip warn"><span class="dot"></span>Offline-Snapshot</span>
+						{:else if shopSource === 'cache'}
+							<span class="chip"><span class="dot"></span>Cache</span>
+						{/if}
+					</div>
+					{#if !cfg?.uex_api_key_set}
+						<div class="pane-error" style="margin: 10px 0">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
+								<div class="sm">Eigene Offers + Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
+								<span class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</span>
+							</div>
+						</div>
+					{:else if !cfg?.uex_secret_key_set}
+						<!-- M2a-Fix (t_2f197d1c): ohne persönlichen Secret-Key KEIN
+						     Request (UEX antwortet sonst nur 400 user_not_found /
+						     403 invalid_secret_key) — stattdessen klare deutsche
+						     Meldung + Settings-Verweis. -->
+						<div class="pane-error" style="margin: 10px 0">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">Secret-Key fehlt oder ist falsch — siehe Einstellungen</div>
+								<div class="sm">User-scoped Reads (eigene Offers, Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
+								<button type="button" class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</button>
+							</div>
+						</div>
+					{:else if shopLoading}
+						<div class="center">
+							<span class="spin"></span>
+							<div class="big" style="margin-top: 12px">Lade Mein Shop …</div>
+							<div class="sm">Eigene Offers + letzte Trades vom UEX-Client.</div>
+						</div>
+					{:else if shopErr && !myOffers.length && !myTrades.length}
+						<div class="pane-error">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
+								<div class="sm">{shopErr}</div>
+								<span class="btn" onclick={() => void loadShop()}>Erneut versuchen</span>
+								<span class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+							</div>
+						</div>
+					{:else}
+						{#if shopErr}
+							<div class="row-empty" style="padding: 10px 16px; color: var(--alert); display: flex; align-items: center; gap: 12px" role="alert">
+								<span style="flex: 1">{shopErr}</span>
+								<!-- M2b-3: Fehlerpfad — Meldung + Deep-Link-Button (passende
+								     UEX-Seite: Marketplace-Home, dort weitermachen). Kein Retry. -->
+								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openListingDeepLink(null)}>AUF UEXCORP.SPACE ÖFFNEN ↗</button>
+							</div>
+						{/if}
+						{#if shopNote}
+												<div class="row-empty" style="padding: 10px 16px; display: flex; align-items: center; gap: 12px">
+													<span style="flex: 1">{shopNote}</span>
+													{#if shopCreatedUrl}
+														<!-- M2b-Review-Fix (t_6e26ec82 R2): Erfolgs-Deep-Link aus der
+														     Create-Antwort (Listings erscheinen erst nach UEX-Approval —
+														     der Pull kann sie nicht zeigen, der Direct-Link schon). -->
+														<button type="button" class="btn-ghost" onclick={() => void openCreatedListing(shopCreatedUrl!)}>ANGELEGTES LISTING ÖFFNEN ↗</button>
+													{/if}
+												</div>
+											{/if}
+											<div class="mbar2" style="margin-top: 10px">
+													<span class="m-lbl">Eigene Offers ({myOffers.length})</span>
+													<span class="m-spacer"></span>
+													<span class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
+													<span class="chip" title="Marketplace auf uexcorp.space öffnen" onclick={() => void openListingDeepLink(null)}>Im Browser öffnen ↗</span>
+												</div>
+												{#if advertOpen}
+													<div class="pane-error" style="margin: 10px 0; background: rgba(255,255,255,.03)">
+														<div class="mbar2"><span class="m-lbl">{editingOffer ? 'NEU ANLEGEN (Bearbeiten = erst Abmelden, dann Neu)' : 'NEUES LISTING ANLEGEN'}</span></div>
+														{#if editingOffer}
+															<div class="row-empty" style="padding: 8px 12px">Dieses Formular ist VORBEFÜLLT mit „{editingOffer.title}“. Für eine Änderung musst du das alte Listing zuerst ABmelden (unten) und dann mit den neuen Werten neu anlegen — UEX unterstützt kein Bearbeiten.</div>
+														{/if}
+														<div class="mlist" style="padding: 6px 14px">
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Art</span>
+																<button type="button" class="chip" class:is-on={advertForm.operation === 'sell'} onclick={() => (advertForm.operation = 'sell')}>Verkauf (sell)</button>
+																<button type="button" class="chip" class:is-on={advertForm.operation === 'buy'} onclick={() => (advertForm.operation = 'buy')}>Kauf (buy)</button>
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Titel</span>
+																<input class="rtext" placeholder="Artikelname (alphanumerisch + -)" bind:value={advertForm.title} />
+																<span class="m-lbl">Preis (UEC)</span>
+																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.price} />
+																<span class="m-lbl">Menge</span>
+																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.quantity} />
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<!-- M2b-Review-Fix (t_6e26ec82): id_category ist für type=item Pflicht —
+																     UEX sendet sonst 400 missing_id_category. Die Auswahl kommt aus
+																     /categories (get_categories-IPC), angezeigt mit Section-Präfix. -->
+																<span class="m-lbl">Kategorie</span>
+																<select class="rtext" bind:value={advertForm.category} aria-label="Kategorie">
+																	<option value="">— bitte wählen —</option>
+																	{#each advertCategories as c}
+																		<option value={c.id}>{c.section ? c.section + ' › ' : ''}{c.name}</option>
+																	{/each}
+																</select>
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Einheit</span>
+																<select class="rtext" bind:value={advertForm.unit}>{#each UNIT_CHOICES as u}<option value={u}>{u}</option>{/each}</select>
+																<span class="m-lbl">Ort</span>
+																<input class="rtext" placeholder="z. B. Port Tressler" bind:value={advertForm.location} />
+																<span class="m-lbl">Laufzeit</span>
+																<select class="rtext" bind:value={advertForm.hours}>{#each HOUR_CHOICES as h}<option value={h}>{h} h</option>{/each}</select>
+															</div>
+															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+																<span class="m-lbl">Beschreibung</span>
+																<input class="rtext" style="flex: 1" placeholder="Freitext" bind:value={advertForm.description} />
+															</div>
+															<div class="mbar2" style="margin-top: 8px">
+																<button type="button" class="btn" disabled={writeBusy} onclick={() => void requestAdvertise()}>{writeBusy ? 'Wird gesendet …' : 'Anlegen (2-Schritt)'}</button>
+																<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => { advertOpen = false; editingOffer = null; }}>Abbrechen</button>
+																{#if advertNote}<span class="chip warn" style="margin-left: 8px">{advertNote}</span>{/if}
+															</div>
+														</div>
+													</div>
+												{/if}
+												{#if myOffers.length}
+							<div class="mlist">
+								{#each myOffers as o, i (o.id)}
+									<div
+										class="mrow"
+										role="option"
+										aria-selected={false}
+										class:is-sel={false}
+										data-shop-offer-idx={i}
+										title="Listung auf uexcorp.space öffnen (nur Lesen)"
+										onclick={() => void openListingDeepLink(o.slug)}
+									>
+										<div class="m-op {o.operation}">{o.operation === 'sell' ? 'WTS' : 'WTB'}</div>
+										<div class="m-main">
+											<div class="m-title">{o.title}</div>
+											<div class="m-sub">{o.location || '—'}{o.region ? ' · ' + o.region : ''} · {shopStatus(o)}</div>
+										</div>
+																				<div class="m-right">
+																					<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
+																					<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
+																				</div>
+																				<div class="m-right" style="gap: 4px">
+																					<button type="button" class="btn-ghost" title="Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)" onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>✎ Neu</button>
+																					<button type="button" class="btn-ghost" title="Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)" onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>Abmelden</button>
+																				</div>
+																			</div>
+																		{/each}
+							</div>
+							<div class="m-foot">
+								<span>Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen.</span>
+								<span class="src">UEX Corp</span>
+							</div>
+						{:else}
+							<div class="row-empty" style="padding: 14px 16px">
+								{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Benutzername oben eintragen und Laden drücken.'}
+							</div>
+						{/if}
+						<div class="mbar2" style="margin-top: 14px">
+							<span class="m-lbl">Letzte 5 Trades</span>
+							<span class="m-spacer"></span>
+							<span class="chip" title="Trade-Verlauf auf uexcorp.space öffnen" onclick={openMyShopDeepLink}>Verlauf im Browser ↗</span>
+						</div>
+						{#if recentTrades.length}
+							<div class="mlist">
+								{#each recentTrades as t (t.id)}
+									<div
+										class="mrow"
+										role="option"
+										title="Trade-Verlauf auf uexcorp.space öffnen"
+										onclick={openMyShopDeepLink}
+									>
+										<div class="m-op {t.operation}">{t.operation === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-main">
+											<div class="m-title">{t.commodity}</div>
+											<div class="m-sub">
+												{t.terminal}
+												{t.vehicle ? ' · ' + t.vehicle : ''}
+												{t.fleet_name ? ` · Flotte „${t.fleet_name}“` : ''}
+												{t.organization ? ` · ${t.organization}` : ''}
+											</div>
+										</div>
+										<div class="m-right">
+											<div class="m-price {t.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(t.price)} <span class="m-meta">/SCU</span></div>
+											<div class="m-meta">{fmtQty(t.scu)} SCU · {new Date(t.date_added * 1000).toLocaleDateString('de-DE')}</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+							<div class="m-foot">
+								<span>Zeige {recentTrades.length} von {myTrades.length} Trades · Einzeltrade-Deep-Link bei UEX nicht dokumentiert → Verlauf im Browser.</span>
+								<span class="src">UEX Corp</span>
+							</div>
+												{:else}
+													<div class="row-empty" style="padding: 14px 16px">Noch keine Trades im Verlauf.</div>
+												{/if}
+											{/if}
+											{#if confirmAction}
+						{@const ca = confirmAction}
+						<!-- 2-Schritt-Bestätigung (M2b): jede schreibende Aktion verlangt
+							 eine zweite Bestätigung. Keine Batch-Aktionen. -->
+						<div class="pane-error" style="margin: 10px 0; border-color: var(--alert)">
+							<div class="center">
+								<div class="big" style="color: var(--alert)">
+									{ca.kind === 'delete' ? 'Listing ABMELDEN?' : 'Listing ANLEGEN?'}
+								</div>
+								{#if ca.kind === 'delete'}
+									<div class="sm">{ca.offer.title} (@{fmtPrice(ca.offer.price)} · {fmtQty(ca.offer.quantity)} {ca.offer.unit || 'unit'}) wird auf uexcorp.space ABGEMELDET.</div>
+								{:else}
+									<div class="sm">{advertForm.operation === 'sell' ? 'Verkaufs-' : 'Kauf-'}Angebot „{advertForm.title}“ wird auf uexcorp.space ANGELEGT.</div>
+								{/if}
+								<div class="mbar2" style="margin-top: 10px; justify-content: center">
+									<button type="button" class="btn" disabled={writeBusy} onclick={() => ca.kind === 'delete' ? void doDelete(ca.offer) : void doAdvertise()}>
+										{ca.kind === 'delete' ? 'JA, ABMELDEN' : 'JA, ANLEGEN'}
+									</button>
+									<button type="button" class="btn-ghost" onclick={() => (confirmAction = null)}>Abbrechen</button>
+								</div>
+							</div>
+						</div>
 					{/if}
 				{:else if mLoading && !offers.length}
 					<div class="center">

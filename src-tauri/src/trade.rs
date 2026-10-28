@@ -92,6 +92,90 @@ pub struct TradeState {
     /// Extra wiki-dataset sync (commodities + locations, own TTLs). `None`
     /// in tests with stub providers.
     pub wiki_sync: Option<Arc<dyn crate::providers::WikiSync>>,
+    /// M2b-Write-Gate (Rate-Limit-Sicherheit, Anforderung 5): verhindert, dass
+    /// die UI mehr als ~2 Schreibaktionen pro Minute an UEX feuert, auch wenn
+    /// sie theoretisch mehr erlaubt. Jede schreibende Aktion (Anlegen/Abmelden)
+    /// muss vor dem Request hier passieren.
+    pub write_gate: Arc<WriteGate>,
+}
+
+/// Clientseitiges Rate-Limit-Fenster für MARKTPLATZ-WRITES (M2b, Anforderung
+/// 5). Erlaubt höchstens `MAX_WRITES_PER_WINDOW` Writes in
+/// `WINDOW_SECS` (Fenster gleitet: ein Kandidat wird abgelehnt, wenn im
+/// Zeitfenster [now-WINDOW, now] schon `MAX` erfolgreiche Writes registriert
+/// sind). Das UI darf theoretisch mehr erlauben — dieses Gate greift als
+/// letzte Hürde, inklusive deutscher Meldung mit Wartezeit.
+///
+/// Thread-sicher (std Mutex), nie über await gehalten.
+#[derive(Debug)]
+pub struct WriteGate {
+    /// Unix-Sekunden der durchgelassenen Writes (Zeitfenster gleitet).
+    recent: Mutex<Vec<u64>>,
+    max_per_window: usize,
+    window_secs: u64,
+}
+
+/// Default-Fenster gemäß Entscheidung: max 2 Writes pro Minute.
+pub const WRITE_WINDOW_SECS: u64 = 60;
+pub const WRITE_MAX_PER_WINDOW: usize = 2;
+
+impl WriteGate {
+    pub fn new() -> Self {
+        WriteGate {
+            recent: Mutex::new(Vec::new()),
+            max_per_window: WRITE_MAX_PER_WINDOW,
+            window_secs: WRITE_WINDOW_SECS,
+        }
+    }
+
+    /// Test-Konstruktor mit explizitem Fenster (winziges Fenster ohne echtes
+    /// Warten). Nur im Test-Build — die App nutzt immer `new()` (2/60).
+    #[cfg(test)]
+    pub fn with_window(max_per_window: usize, window_secs: u64) -> Self {
+        WriteGate {
+            recent: Mutex::new(Vec::new()),
+            max_per_window,
+            window_secs,
+        }
+    }
+
+    /// Versucht, einen Write zu registrieren. `Err` = Rate-Limit greift (die
+    /// Meldung enthält die Sekunden bis zum nächsten freien Slot). `Ok` = der
+    /// Write läuft; `record_write` nach dem request braucht nur bei Erfolg
+    /// aufgerufen zu werden, damit fehlgeschlagene Writes das Fenster NICHT
+    /// belegen (kein Retry-Spam + kein Selbst-Sperren nach Fehlern).
+    pub fn try_acquire(&self, now_secs: u64) -> Result<(), String> {
+        let mut recent = self.recent.lock().expect("write gate mutex poisoned");
+        // Fenster gleiten lassen: alte Einträge rauswerfen.
+        let cutoff = now_secs.saturating_sub(self.window_secs);
+        recent.retain(|&t| t > cutoff);
+        if recent.len() >= self.max_per_window {
+            // Nächster freier Slot = ältester Eintrag + Fensterlänge.
+            let oldest = recent.iter().min().copied().unwrap_or(now_secs);
+            let wait = oldest + self.window_secs - now_secs;
+            return Err(format!(
+                "Rate-Limit: maximal {MAX} Schreibaktionen pro Minute — bitte {wait} s warten.",
+                MAX = self.max_per_window
+            ));
+        }
+        Ok(())
+    }
+
+    /// Nach einem ERFOLGREICHEN Write registrieren (bewusst NUR Erfolg —
+    /// Fehler belegen das Fenster nicht, sonst würde ein 429 den Client für
+    /// das ganze Fenster blockieren und einen Retry-Spam erzwingen).
+    pub fn record_write(&self, now_secs: u64) {
+        let mut recent = self.recent.lock().expect("write gate mutex poisoned");
+        let cutoff = now_secs.saturating_sub(self.window_secs);
+        recent.retain(|&t| t > cutoff);
+        recent.push(now_secs);
+    }
+}
+
+impl Default for WriteGate {
+    fn default() -> Self {
+        WriteGate::new()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +242,31 @@ pub struct MarketResponse {
     pub offers: Vec<provider::Offer>,
     /// Non-fatal note (e.g. last live fetch failed, showing stale snapshot).
     pub note: Option<String>,
+}
+
+/// „Mein Shop" — eigene Offers (M2a): gleiche Quellenkennung wie
+/// [`MarketResponse`]. `key_set` teilt der UI mit, ob ein API-Key gesetzt ist
+/// (ohne ihn bricht der User-scoped Read; die UI zeigt dann den Settings-Hin-
+/// weis statt einer rohen Fehlermeldung).
+#[derive(Clone, serde::Serialize)]
+pub struct OwnOffersResponse {
+    pub source: String,
+    pub fetched_at: u64,
+    pub offers: Vec<provider::Offer>,
+    pub note: Option<String>,
+    pub key_set: bool,
+}
+
+/// „Mein Shop" — letzte Trades (M2a): letzte-5-Logik übernimmt die UI (der
+/// Cache liefert den vollständig geladenen Verlauf); hier kommen die Trades
+/// des Caches/Live-Fetches.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct TradesResponse {
+    pub source: String,
+    pub fetched_at: u64,
+    pub trades: Vec<provider::Trade>,
+    pub note: Option<String>,
+    pub key_set: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +819,106 @@ pub async fn get_marketplace(
     }
 }
 
+/// Eigene Offers + Trades (M2a, Read-Phase, „Mein Shop") — je eigener Command
+/// mit Quellenkennung cache/live/offline wie get_marketplace. Kein Schreib-
+/// zugriff in dieser Phase; Deep-Links gehen an die UEX-Seite.
+#[tauri::command]
+pub async fn get_my_offers(
+    state: State<'_, TradeState>,
+    username: String,
+) -> Result<OwnOffersResponse, String> {
+    get_own_offers_cmd(&state, &username).await
+}
+
+/// Eigene Offers laden mit stale-first-Cache + offline-Fallback. `key_set`
+/// wird bei true nur dann zur Fehlerdifferenzierung benutzt (kein Key → die
+/// UI zeigt den Settings-Hinweis statt der rohen UEX-Auth-Fehlermeldung).
+async fn get_own_offers_cmd(
+    state: &State<'_, TradeState>,
+    username: &str,
+) -> Result<OwnOffersResponse, String> {
+    let key_set = api_key_set();
+    // Gleiche username-bewusste Frischeprüfung wie im Provider-Fresh-Shortcut:
+    // nur wenn TTL frisch UND der Snapshot zu genau diesem User gehört,
+    // liefert der Provider aus dem Cache (source "cache"). Sonst läuft
+    // der LIVE-Fetch — die Kennung stimmt also immer mit dem tatsächlichen
+    // Datenweg überein.
+    let cache_fresh = state.cache.own_offers_fresh_for(username).unwrap_or(false);
+    match state.provider.my_offers(username.to_string()).await {
+        Ok(offers) => Ok(OwnOffersResponse {
+            source: if cache_fresh {
+                "cache".into()
+            } else {
+                "live".into()
+            },
+            fetched_at: now_unix(),
+            offers,
+            note: None,
+            key_set,
+        }),
+        Err(e) => {
+            // Offline / Auth: letzter Snapshot NUR, wenn er zu genau diesem
+            // Username gehört (username-bewusst wie der Fresh-Pfad). Ein nach
+            // Kontowechsel mit Netz-/Auth-Fehler aufgefrischter View darf die
+            // Offers des VORHERIGEN Accounts nicht als „offline"-Eigendaten
+            // bekommen — sonst als leerer Fall an den Fehlerpfad.
+            match state.cache.own_offers_snapshot_for(username) {
+                Ok(Some(snapshot)) if !snapshot.is_empty() => Ok(OwnOffersResponse {
+                    source: "offline".into(),
+                    fetched_at: now_unix(),
+                    offers: snapshot,
+                    note: Some(friendly(e)),
+                    key_set,
+                }),
+                _ => Err(friendly(e)),
+            }
+        }
+    }
+}
+
+/// Eigene Trades laden (M2a) — stale-first + offline-Fallback.
+#[tauri::command]
+pub async fn get_my_trades(state: State<'_, TradeState>) -> Result<TradesResponse, String> {
+    let key_set = api_key_set();
+    let cache_fresh = state.cache.own_trades_fresh().unwrap_or(false);
+    match state.provider.user_trades().await {
+        Ok(trades) => Ok(TradesResponse {
+            source: if cache_fresh {
+                "cache".into()
+            } else {
+                "live".into()
+            },
+            fetched_at: now_unix(),
+            trades,
+            note: None,
+            key_set,
+        }),
+        Err(e) => match state.cache.own_trades_snapshot() {
+            Ok(snapshot) if !snapshot.is_empty() => Ok(TradesResponse {
+                source: "offline".into(),
+                fetched_at: now_unix(),
+                trades: snapshot,
+                note: Some(friendly(e)),
+                key_set,
+            }),
+            _ => Err(friendly(e)),
+        },
+    }
+}
+
+/// Open the user's own trade history page on uexcorp.space (the UEX
+/// marketplace manager / account page). A per-trade deep-link isn't
+/// documented; the trade LOG page is the continuation point. Pure external
+/// navigation, nothing written.
+#[tauri::command]
+pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
+    let url = "https://uexcorp.space/marketplace/".to_string();
+    let _ = &app;
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(url)
+}
+
 /// Open one listing's page on uexcorp.space in the system default browser.
 /// URL scheme verified against the live site (October 2026): both item and
 /// service listings live under `/marketplace/item/info/{slug}/`. No slug → the
@@ -733,6 +942,100 @@ fn listing_deep_link(slug: &str) -> String {
     } else {
         format!("https://uexcorp.space/marketplace/item/info/{slug}/")
     }
+}
+
+/// M2b-Review-Fix (t_6e26ec82 R2): öffnet den Permalink eines frisch
+/// ANGELEGTEN Listings (Create-Antwort liefert eine volle URL, kein Slug).
+/// Nur vertrauenswürdige uexcorp.space-URLs werden geöffnet — kein externes
+/// Öffnen beliebiger URLs. Grundlage: `POST /marketplace_advertise/` antwortet
+/// mit `{id, url}` (nicht mit der vollständigen ListingRow).
+#[tauri::command]
+pub fn open_created_listing(_app: AppHandle, url: String) -> Result<String, String> {
+    let url = url.trim().to_string();
+    if !url.starts_with("https://uexcorp.space/") {
+        return Err("Nur uexcorp.space-Links werden geöffnet.".into());
+    }
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(url)
+}
+
+// ---------------------------------------------------------------------------
+// M2b — Write-Layer: Anlegen + Abmelden (2-Schritt-Bestätigung, kein Edit,
+// Rate-Limit-Gate, kein Retry-Spam; Fehlerpfad: Meldung + Deep-Link-Button).
+// ---------------------------------------------------------------------------
+
+/// Write-Layer (M2b): ein neues Marketplace-Listing anlegen
+/// (`POST /marketplace_advertise/`). Payload exakt nach Doku-Schema
+/// ([`provider::AdvertisePayload`]) — kein Edit (Bearbeiten = Abmelden + Neu).
+///
+/// Sicherheits- & Fehlerverhalten (beschlossen):
+/// * 2-Schritt-Bestätigung erledigt die UI (diese Karte: Settings-Einstellung
+///   `marketplace_confirm`, Default every_action); das Backend erzwingt nur
+///   das Rate-Limit-Gate.
+/// * Rate-Limit: max ~2 Writes/min via [`WriteGate`] — auch wenn das UI mehr
+///   erlaubt. Fehlgeschlagene Writes belegen das Fenster NICHT.
+/// * KEIN Retry bei 429/403/Fehler — der Fehler steigt als deutsche Meldung
+///   durch; die UI zeigt die Meldung + Deep-Link-Button zur passenden
+///   UEX-Seite (hier: Marketplace-Home, da das Listing evtl. nicht existiert).
+async fn advertise_offer_cmd(
+    state: &State<'_, TradeState>,
+    payload: provider::AdvertisePayload,
+) -> Result<provider::AdvertiseResult, String> {
+    let now = now_unix();
+    state.write_gate.try_acquire(now)?;
+    let res = state
+        .provider
+        .advertise_offer(payload)
+        .await
+        .map_err(friendly)?;
+    // Nur erfolgreiche Writes registrieren (Fehler belegen das Fenster nicht).
+    state.write_gate.record_write(now);
+    Ok(res)
+}
+
+/// Tauri-Command: Anlegen (M2b). Validierung der Pflichtfelder liegt im
+/// Provider (deutsche Config-Meldung); sonstige Fehler = deutsche Meldung.
+#[tauri::command]
+pub async fn marketplace_advertise(
+    state: State<'_, TradeState>,
+    payload: provider::AdvertisePayload,
+) -> Result<provider::AdvertiseResult, String> {
+    advertise_offer_cmd(&state, payload).await
+}
+
+/// M2b: ein Listing ABMELDEN (`DELETE /marketplace_listings/?id=…`). Kein
+/// Edit — nur löschen. Rate-Limit-Gate wie beim Anlegen; kein Retry-Spam.
+#[tauri::command]
+pub async fn marketplace_delete(state: State<'_, TradeState>, id: u64) -> Result<(), String> {
+    let now = now_unix();
+    state.write_gate.try_acquire(now)?;
+    state.provider.delete_offer(id).await.map_err(friendly)?;
+    state.write_gate.record_write(now);
+    Ok(())
+}
+
+/// M2b-Review-Fix (t_6e26ec82): Marketplace-Kategorien für die Anlegen-Form.
+/// `POST /marketplace_advertise/` verlangt `id_category` für `type=item` —
+/// die Form braucht die Auswahl (id + Anzeigename), damit jeder Item-Create
+/// ein gültiges Payload bekommt (vorher hardcodiert `id_category: null` →
+/// UEX 400 missing_id_category).
+#[tauri::command]
+pub async fn get_categories(
+    state: State<'_, TradeState>,
+) -> Result<Vec<provider::Category>, String> {
+    state.provider.categories().await.map_err(friendly)
+}
+
+/// M2b: gibt das persistierte Bestätigungs-Modell zurück (UI entscheidet den
+/// 2-Schritt). Der volle Settings-Snapshot (`settings_get`) trägt
+/// `marketplace_confirm` bereits — dieser einfache Command ist für Probes.
+#[tauri::command]
+pub fn marketplace_confirm_mode(state: State<'_, TradeState>) -> String {
+    let _ = &state;
+    settings::Settings::load()
+        .map(|s| s.marketplace_confirm().as_str().to_owned())
+        .unwrap_or_else(|_| "every_action".to_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -954,6 +1257,15 @@ pub(crate) fn friendly(e: ProviderError) -> String {
             Some(secs) => format!("HTTP 429 · Rate-Limit (Retry in {secs} s)"),
             None => "HTTP 429 · Rate-Limit erreicht".to_string(),
         },
+        ProviderError::Http { status, body }
+            if (status == 400 || status == 403)
+                && (body.contains("user_not_found") || body.contains("invalid_secret_key")) =>
+        {
+            // M2a-Fix (t_2f197d1c): UEX-Auth-Codes der User-scoped Reads —
+            // deutscher Hinweis statt Rohfehler-Status/Text.
+            "Secret-Key fehlt oder ist falsch — siehe Einstellungen („UEX persönlicher Secret-Key“)."
+                .to_string()
+        }
         ProviderError::Http { status, .. } => {
             format!("HTTP {status} · UEX nicht erreichbar")
         }
@@ -974,6 +1286,15 @@ fn now_unix() -> u64 {
         .as_secs()
 }
 
+/// Ist ein UEX-API-Key am Settings-Slot gesetzt? (M2a: ohne Key liefert die
+/// UI einen sauberen Settings-Hinweis statt der rohen UEX-Auth-Meldung.)
+fn api_key_set() -> bool {
+    settings::Settings::load()
+        .ok()
+        .map(|s| s.uex_api_key().is_some())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     /// Regression (t_925a577a): get_prices nimmt die Row-ID als String ODER
@@ -992,6 +1313,8 @@ mod tests {
     use super::*;
     use tauri::Manager;
     use tauri::test::mock_app;
+    // M2a-Tests (Mein Shop): eigene Offers/Trades nutzen die Seam-Typen.
+    use provider::{ListingType, MarketOperation};
 
     #[test]
     fn friendly_rate_limit_is_german_and_actionable() {
@@ -1009,6 +1332,40 @@ mod tests {
             })
             .contains("500")
         );
+    }
+
+    /// M2a-Fix (t_2f197d1c): UEX-Auth-Codes der User-scoped Reads (400
+    /// user_not_found / 403 invalid_secret_key) → deutsche Meldung mit
+    /// Settings-Verweis statt Rohfehler (kein „HTTP … nicht erreichbar“).
+    #[test]
+    fn friendly_maps_secret_key_auth_codes_german() {
+        let msg_400 = friendly(ProviderError::Http {
+            status: 400,
+            body: "user_not_found".into(),
+        });
+        let msg_403 = friendly(ProviderError::Http {
+            status: 403,
+            body: "invalid_secret_key".into(),
+        });
+        for m in [&msg_400, &msg_403] {
+            assert!(
+                m.contains("Secret-Key fehlt oder ist falsch") && m.contains("Einstellungen"),
+                "unexpected friendly(): {m}"
+            );
+            assert!(!m.contains("HTTP"), "raw status leaked: {m}");
+        }
+        // Andere 400/403 ohne Auth-Code bleiben beim bisherigen Mapping.
+        let plain = friendly(ProviderError::Http {
+            status: 403,
+            body: "forbidden".into(),
+        });
+        assert!(plain.contains("HTTP 403"));
+        // UEX kapselt die Codes auch als envelope.status (body == status).
+        let enveloped = friendly(ProviderError::Http {
+            status: 400,
+            body: "{\"status\":\"user_not_found\"}".into(),
+        });
+        assert!(enveloped.contains("Secret-Key fehlt oder ist falsch"));
     }
 
     /// The grouped search contract: three groups in a fixed order, per-group
@@ -1035,6 +1392,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1056,6 +1414,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1097,6 +1456,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1172,6 +1532,7 @@ mod tests {
             cache,
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1405,6 +1766,7 @@ mod tests {
             cache: cache.clone(),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1520,6 +1882,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 
@@ -1801,5 +2164,446 @@ mod tests {
         assert_eq!(out[0].name, "Checkmate Station");
         assert_eq!(out[1].kind, "terminal");
         assert_eq!(out[1].id, 436);
+    }
+
+    // ---- M2a (Read-Phase): „Mein Shop" — eigene Offers + Trades --------
+
+    struct ShopProvider {
+        fail_offers: bool,
+        fail_trades: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl DataProvider for ShopProvider {
+        async fn search(
+            &self,
+            _e: provider::SearchEntities,
+            _q: &str,
+        ) -> provider::Result<Vec<SearchHit>> {
+            Ok(vec![])
+        }
+        async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
+            Ok(vec![])
+        }
+        async fn marketplace_offers(
+            &self,
+            _f: provider::MarketplaceFilter,
+        ) -> provider::Result<Vec<provider::Offer>> {
+            Ok(vec![])
+        }
+        async fn my_offers(&self, _u: String) -> provider::Result<Vec<provider::Offer>> {
+            if self.fail_offers {
+                Err(provider::ProviderError::Http {
+                    status: 403,
+                    body: "invalid_secret_key".into(),
+                })
+            } else {
+                Ok(vec![provider::Offer {
+                    id: 900,
+                    title: "Drake Nettle S".into(),
+                    description: String::new(),
+                    item_id: 0,
+                    category_id: 0,
+                    operation: MarketOperation::Sell,
+                    listing_type: ListingType::Item,
+                    price: 4500000.0,
+                    currency: "UEC".into(),
+                    unit: "unit".into(),
+                    quantity: 1,
+                    location: "Port Tressler".into(),
+                    region: "Stanton".into(),
+                    seller: "sebo_one".into(),
+                    quality: 72,
+                    updated: 1730000000,
+                    expires: None,
+                    slug: "drake-nettle-s".into(),
+                }])
+            }
+        }
+        async fn user_trades(&self) -> provider::Result<Vec<provider::Trade>> {
+            if self.fail_trades {
+                Err(provider::ProviderError::Http {
+                    status: 403,
+                    body: "not_allowed".into(),
+                })
+            } else {
+                Ok(vec![provider::Trade {
+                    id: 5,
+                    terminal_id: 1,
+                    commodity_id: 79,
+                    operation: MarketOperation::Sell,
+                    scu: 250,
+                    price: 10000.0,
+                    date_added: 1730000100,
+                    commodity: "Waste".into(),
+                    terminal: "Port Tressler".into(),
+                    vehicle: None,
+                    fleet_name: None,
+                    organization: None,
+                }])
+            }
+        }
+        async fn fetch_entities(&self, _k: EntityKind) -> provider::Result<Vec<provider::Entity>> {
+            Ok(vec![])
+        }
+        fn name(&self) -> String {
+            "shop".into()
+        }
+    }
+
+    #[tokio::test]
+    async fn my_offers_live_and_offline_fallback() {
+        // Offline-Szenario: Live schlägt fehl, aber ein Snapshot existiert →
+        // source "offline" + Note, der Snapshot bleibt sichtbar.
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: true,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        state
+            .cache
+            .store_own_offers(
+                &[provider::Offer {
+                    id: 900,
+                    title: "Drake Nettle S".into(),
+                    description: String::new(),
+                    item_id: 0,
+                    category_id: 0,
+                    operation: MarketOperation::Sell,
+                    listing_type: ListingType::Item,
+                    price: 4500000.0,
+                    currency: "UEC".into(),
+                    unit: "unit".into(),
+                    quantity: 1,
+                    location: "Port Tressler".into(),
+                    region: "Stanton".into(),
+                    seller: "sebo_one".into(),
+                    quality: 72,
+                    updated: 1730000000,
+                    expires: None,
+                    slug: "drake-nettle-s".into(),
+                }],
+                "sebo_one",
+            )
+            .unwrap();
+        let resp = get_my_offers(state.clone(), "sebo_one".into())
+            .await
+            .unwrap();
+        assert_eq!(resp.source, "offline");
+        assert_eq!(resp.offers.len(), 1, "snapshot survives");
+        assert_eq!(resp.offers[0].title, "Drake Nettle S");
+        assert!(resp.note.is_some());
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn my_offers_offline_fallback_is_username_aware() {
+        // Defekt 3 (R2-Probe): Snapshot gehört zu sebo_one, Live-Fetch für
+        // automator schlägt fehl → die automator-View darf die sebo_one-
+        // Offers NICHT als „offline"-Eigendaten bekommen, sondern muss den
+        // Fehlerpfad zeigen (wie der leere Fall). Kontowechsel-Leak.
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: true,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        state
+            .cache
+            .store_own_offers(
+                &[provider::Offer {
+                    id: 900,
+                    title: "Drake Nettle S".into(),
+                    description: String::new(),
+                    item_id: 0,
+                    category_id: 0,
+                    operation: MarketOperation::Sell,
+                    listing_type: ListingType::Item,
+                    price: 4500000.0,
+                    currency: "UEC".into(),
+                    unit: "unit".into(),
+                    quantity: 1,
+                    location: "Port Tressler".into(),
+                    region: "Stanton".into(),
+                    seller: "sebo_one".into(),
+                    quality: 72,
+                    updated: 1730000000,
+                    expires: None,
+                    slug: "drake-nettle-s".into(),
+                }],
+                "sebo_one",
+            )
+            .unwrap();
+        // Gleicher User → offline-Fallback serviert den Snapshot.
+        let ok = get_my_offers(state.clone(), "sebo_one".into())
+            .await
+            .unwrap();
+        assert_eq!(ok.source, "offline");
+        assert_eq!(ok.offers.len(), 1);
+        // Anderer User mit fehlschlagendem Fetch → Err, NIE sebo_one-Offers.
+        let err = get_my_offers(state.clone(), "automator".into()).await;
+        assert!(
+            err.is_err(),
+            "fremder Snapshot darf nicht als offline serviert werden"
+        );
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn my_offers_live_sets_snapshot() {
+        // Live-Pfad: der erfolgreiche Fetch füllt den eigenen Snapshot (der
+        // spätere Offline-Fallback kann ihn servieren).
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: false,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        let resp = get_my_offers(state.clone(), "sebo_one".into())
+            .await
+            .unwrap();
+        assert_eq!(resp.source, "live");
+        assert_eq!(resp.offers[0].title, "Drake Nettle S");
+        // Hinweis: den Snapshot füllt der echte uex_client-Provider (get_own_-
+        // offers_impl) — der IPC-Command delegiert nur. Das ist im uex_client-/
+        // cache-Test abgedeckt, nicht an der IPC-Stub-Grenze.
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn my_trades_fails_cleanly_without_snapshot_and_serves_offline() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: true,
+                fail_trades: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        // Kein Snapshot → sauberer Fehler (nicht leere Liste / kein Crash).
+        let err = get_my_trades(state.clone()).await.unwrap_err();
+        assert!(!err.is_empty(), "clean German error");
+        // Snapshot gesetzt → offline-Fallback.
+        state
+            .cache
+            .store_own_trades(&[provider::Trade {
+                id: 7,
+                terminal_id: 2,
+                commodity_id: 79,
+                operation: MarketOperation::Buy,
+                scu: 100,
+                price: 500.0,
+                date_added: 1730000200,
+                commodity: "Waste".into(),
+                terminal: "Lorville".into(),
+                vehicle: None,
+                fleet_name: None,
+                organization: None,
+            }])
+            .unwrap();
+        let resp = get_my_trades(state).await.unwrap();
+        assert_eq!(resp.source, "offline");
+        assert_eq!(resp.trades[0].commodity, "Waste");
+        let _ = app;
+    }
+
+    // ---- M2b (Write-Layer): Rate-Limit-Gate + Advertise/Delete-IPC --------
+
+    #[test]
+    fn write_gate_limits_to_max_per_window() {
+        // Rate-Limit-Sicherheit (Anforderung M2b-5): max ~2 Writes/min.
+        let gate = WriteGate::with_window(2, 60);
+        let now = 1_000_000u64;
+        // Zwei Writes passieren, das Fenster ist nach 2 voll.
+        assert!(gate.try_acquire(now).is_ok());
+        gate.record_write(now);
+        assert!(gate.try_acquire(now + 1).is_ok());
+        gate.record_write(now + 1);
+        // Dritter Write im selben Fenster → abgelehnt, mit Wartezeit-Meldung.
+        let err = gate.try_acquire(now + 5).unwrap_err();
+        assert!(
+            err.contains("Rate-Limit") && err.contains("warten"),
+            "{err}"
+        );
+        assert!(err.contains("Schreibaktionen"), "{err}");
+        // Nach Ablauf des Fensters (ältester Eintrag + window) wieder frei.
+        assert!(gate.try_acquire(now + 61).is_ok());
+    }
+
+    #[test]
+    fn write_gate_failed_writes_do_not_consume_slots() {
+        // Fehler dürfen das Fenster NICHT belegen — sonst würde ein 429 den
+        // Client für das ganze Fenster sperren (Retry-Spam erzwingen). Nur
+        // erfolgreiche Writes zählen.
+        let gate = WriteGate::with_window(2, 60);
+        let now = 1_000_000u64;
+        // Ein Versuch ohne record_write (fehlgeschlagen) erscheint nicht.
+        assert!(gate.try_acquire(now).is_ok());
+        // (kein record_write → der Versuch ist weg)
+        assert!(gate.try_acquire(now + 1).is_ok());
+        gate.record_write(now + 1);
+        assert!(
+            gate.try_acquire(now + 2).is_ok(),
+            "nur 1 registriert → frei"
+        );
+    }
+
+    #[test]
+    fn write_gate_message_lists_wait_seconds() {
+        let gate = WriteGate::with_window(1, 60);
+        let now = 1_000_000u64;
+        gate.try_acquire(now).unwrap();
+        gate.record_write(now);
+        let err = gate.try_acquire(now + 5).unwrap_err();
+        // nächster freier Slot = ältester (now) + window (60) - now(5) = 55s.
+        assert!(err.contains("55 s"), "{err}");
+    }
+
+    /// Write-Provider-Stub: advertise liefert ein festes Offer, delete Ok —
+    /// prüft die IPC-Schicht (Gate vor dem Provider-Aufruf).
+    struct WriteProvider {
+        advertise_calls: std::sync::atomic::AtomicU32,
+    }
+
+    #[async_trait::async_trait]
+    impl DataProvider for WriteProvider {
+        async fn search(
+            &self,
+            _e: provider::SearchEntities,
+            _q: &str,
+        ) -> provider::Result<Vec<SearchHit>> {
+            Ok(vec![])
+        }
+        async fn prices(&self, _c: &str) -> provider::Result<Vec<provider::PricePoint>> {
+            Ok(vec![])
+        }
+        async fn marketplace_offers(
+            &self,
+            _f: provider::MarketplaceFilter,
+        ) -> provider::Result<Vec<provider::Offer>> {
+            Ok(vec![])
+        }
+        async fn fetch_entities(&self, _k: EntityKind) -> provider::Result<Vec<provider::Entity>> {
+            Ok(vec![])
+        }
+        fn name(&self) -> String {
+            "write".into()
+        }
+        async fn advertise_offer(
+            &self,
+            _p: provider::AdvertisePayload,
+        ) -> provider::Result<provider::AdvertiseResult> {
+            let _ = self
+                .advertise_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(provider::AdvertiseResult {
+                id: 9001,
+                url: "https://uexcorp.space/marketplace/item/info/neu-angelegt".into(),
+            })
+        }
+        async fn delete_offer(&self, _id: u64) -> provider::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn marketplace_advertise_command_gate_blocks_and_permits() {
+        // IPC-Anlegen geht durch's WriteGate: 2 OK, 3. blockiert.
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(WriteProvider {
+                advertise_calls: Default::default(),
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        let payload = provider::AdvertisePayload {
+            id_item: None,
+            id_category: None,
+            id_star_system: None,
+            id_terminal: None,
+            id_organization: None,
+            operation: "sell".into(),
+            language: "en_US".into(),
+            r#type: "item".into(),
+            unit: "unit".into(),
+            price: 120_000,
+            currency: "UEC".into(),
+            location: Some("Port Tressler".into()),
+            title: "DRAKE NETTLE S | Used".into(),
+            description: "Minor scuffs on left wing. Fully functional.".into(),
+            source: Some("purchased_in_game".into()),
+            in_stock: 1,
+            availability: Some("ready_pickup".into()),
+            durability: Some(85),
+            hours_expiration: Some(168),
+            is_hidden: None,
+            is_production: 1,
+        };
+        // 2 erfolgreiche Anlegen erlaubt.
+        assert!(
+            marketplace_advertise(state.clone(), payload.clone())
+                .await
+                .is_ok()
+        );
+        assert!(
+            marketplace_advertise(state.clone(), payload.clone())
+                .await
+                .is_ok()
+        );
+        // 3. → WriteGate greift (das echte Gate hat now=now_unix() als ein- und
+        // dieselbe Sekunde → beide Writes im selben 60s-Fenster).
+        let third = marketplace_advertise(state.clone(), payload).await;
+        assert!(
+            third.is_err(),
+            "rate-limit-Gate muss den 3. Write blockieren"
+        );
+        let msg = third.unwrap_err();
+        assert!(msg.contains("Rate-Limit"), "{msg}");
+        let _ = app;
+    }
+
+    #[tokio::test]
+    async fn marketplace_delete_command_succeeds_through_gate() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(WriteProvider {
+                advertise_calls: Default::default(),
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        // DELETE erfolgreich (provider Ok, gate frei).
+        assert!(marketplace_delete(state.clone(), 847_291).await.is_ok());
+        let _ = app;
     }
 }

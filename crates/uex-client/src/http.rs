@@ -129,6 +129,157 @@ impl UexHttpClient {
         }
     }
 
+    /// Like [`UexHttpClient::get_optional`], but attaches an EXTRA `secret-key`
+    /// header (the user-scoped reads `/user_trades/` etc. require BOTH the
+    /// bearer token and the personal secret key — the settings slot holds one
+    /// value, sent as bearer for public reads and additionally as secret-key
+    /// here). Reads public endpoints (marketplace_listings?username=) work
+    /// with both; the user-scoped ones REQUIRE the secret-key.
+    pub async fn get_user<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        params: &[(String, String)],
+        secret_key: Option<&str>,
+    ) -> Result<T> {
+        self.pace().await;
+
+        let url = format!("{}{}", self.base_url, path);
+        let mut request = self.client.get(&url).query(params);
+        if let Some(key) = &self.api_key {
+            request = request.bearer_auth(key);
+        }
+        if let Some(secret) = secret_key {
+            request = request.header("secret-key", secret);
+        }
+
+        let response = request.send().await.map_err(map_reqwest_error)?;
+        let status = response.status();
+        let text = response.text().await.map_err(map_reqwest_error)?;
+
+        if !status.is_success() {
+            return Err(ProviderError::Http {
+                status: status.as_u16(),
+                body: text.chars().take(300).collect(),
+            });
+        }
+
+        let envelope: Envelope<serde_json::Value> =
+            serde_json::from_str(&text).map_err(|e| ProviderError::Json(e.to_string()))?;
+
+        if envelope.status != "ok" {
+            // user_trades meldet "no_trades_found" als status, wenn keine
+            // Trades existieren — kein Fehler, sondern eine leere Historie.
+            // Deserialisiere `[]` in den erwarteten Listen-Typ (alle Aufrufer
+            // lesen `Vec<T>`), damit die UI den Leer-Zustand rendert statt
+            // eines Fehlerpanels.
+            if envelope.status == "no_trades_found" {
+                return serde_json::from_value(serde_json::Value::Array(Vec::new()))
+                    .map_err(|e| ProviderError::Json(format!("empty history for {path}: {e}")));
+            }
+            return match envelope.status.as_str() {
+                "requests_limit_reached" => Err(ProviderError::RateLimit { retry_after: None }),
+                _ => Err(ProviderError::Http {
+                    status: envelope.http_code.unwrap_or(status.as_u16()),
+                    body: envelope.message.clone().unwrap_or(envelope.status.clone()),
+                }),
+            };
+        }
+
+        match envelope.data {
+            Some(v) if !v.is_null() => {
+                serde_json::from_value(v).map_err(|e| ProviderError::Json(e.to_string()))
+            }
+            _ => Err(ProviderError::Json(format!(
+                "response status ok but `data` missing for {path}"
+            ))),
+        }
+    }
+
+    /// POST `path` with a JSON body (write-layer, M2b — `marketplace_advertise/`).
+    /// Sends Bearer + secret-key headers (Beide Credentials laut Research §1).
+    /// Kein Retry bei Fehlern — der Aufrufer entscheidet (Error-Pfad: Meldung
+    /// + Deep-Link). Antwort-Envelope wird wie bei GET entfaltet; type-param
+    /// ist der erwartete `data`-Typ (meist das neue Listing).
+    pub async fn post<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        secret_key: Option<&str>,
+        body: &serde_json::Value,
+    ) -> Result<T> {
+        self.pace().await;
+        let url = format!("{}{}", self.base_url, path);
+        let mut request = self.client.post(&url).json(body);
+        if let Some(key) = &self.api_key {
+            request = request.bearer_auth(key);
+        }
+        if let Some(secret) = secret_key {
+            request = request.header("secret-key", secret);
+        }
+        self.unwrap_envelope(request, path).await
+    }
+
+    /// DELETE `path` (write-layer, M2b — `marketplace_listings/?id=…`).
+    /// Auth laut Research §1: NUR der `secret-key`-Header (kein Bearer nötig).
+    /// Query-Params tragen den `id`. Erfolg = `{"status":"ok"}` (kein data);
+    /// der generische `unwrap_envelope` liefert für leeres data `Ok(None)`-via
+    /// serde_null → diese Variante gibt `Result<()>` zurück.
+    pub async fn delete(
+        &self,
+        path: &str,
+        params: &[(String, String)],
+        secret_key: Option<&str>,
+    ) -> Result<()> {
+        self.pace().await;
+        let url = format!("{}{}", self.base_url, path);
+        let mut request = self.client.delete(&url).query(params);
+        if let Some(secret) = secret_key {
+            request = request.header("secret-key", secret);
+        }
+        // DELETE liefert kein `data` — nur status ok/Fehler. Durchlauf durch
+        // den Envelope-Parser (Fehler-Codes), aber den data-Teil verwerfen.
+        let _: Option<serde_json::Value> = self.unwrap_envelope(request, path).await?;
+        Ok(())
+    }
+
+    /// Shared: sende Request, entfalte Envelope, prüfe status, liefere `data`.
+    async fn unwrap_envelope<T: serde::de::DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+        _path: &str,
+    ) -> Result<T> {
+        let response = request.send().await.map_err(map_reqwest_error)?;
+        let status = response.status();
+        let text = response.text().await.map_err(map_reqwest_error)?;
+
+        if !status.is_success() {
+            return Err(ProviderError::Http {
+                status: status.as_u16(),
+                body: text.chars().take(300).collect(),
+            });
+        }
+
+        let envelope: Envelope<serde_json::Value> =
+            serde_json::from_str(&text).map_err(|e| ProviderError::Json(e.to_string()))?;
+
+        if envelope.status != "ok" {
+            return match envelope.status.as_str() {
+                "requests_limit_reached" => Err(ProviderError::RateLimit { retry_after: None }),
+                _ => Err(ProviderError::Http {
+                    status: envelope.http_code.unwrap_or(status.as_u16()),
+                    body: envelope.message.clone().unwrap_or(envelope.status.clone()),
+                }),
+            };
+        }
+
+        match envelope.data {
+            Some(v) if !v.is_null() => {
+                serde_json::from_value(v).map_err(|e| ProviderError::Json(e.to_string()))
+            }
+            _ => Ok(serde_json::from_value(serde_json::Value::Null)
+                .map_err(|e| ProviderError::Json(e.to_string()))?),
+        }
+    }
+
     /// Respect the pacing window: sleep until `min_interval` has passed since
     /// the previous request.
     async fn pace(&self) {

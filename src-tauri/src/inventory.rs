@@ -142,6 +142,7 @@ mod tests {
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(crate::trade::SyncTracker::default()),
             wiki_sync: None,
+            write_gate: Arc::new(crate::trade::WriteGate::new()),
         });
         let state = app.state::<TradeState>();
 

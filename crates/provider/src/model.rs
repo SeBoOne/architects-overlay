@@ -345,6 +345,141 @@ pub struct MarketplaceFilter {
     pub limit: u32,
 }
 
+/// One entry of the user's own trade history (UEX `/user_trades/`),
+/// source-agnostic projection. Mirrors the UEX wire row from the research
+/// doc: 1:1 all string/number fields, denormalized names already resolved
+/// by the source (commodity_name / terminal_name).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Trade {
+    pub id: u64,
+    pub terminal_id: u64,
+    pub commodity_id: u64,
+    pub operation: MarketOperation,
+    /// Menge in SCU (int auf dem Wire).
+    pub scu: u64,
+    /// Preis pro SCU (float auf dem Wire).
+    pub price: f64,
+    /// Unix-Timestamp (date_added).
+    pub date_added: u64,
+    pub commodity: String,
+    pub terminal: String,
+    pub vehicle: Option<String>,
+    pub fleet_name: Option<String>,
+    pub organization: Option<String>,
+}
+
+/// Marketplace category (source-agnostic projection of a `/categories` row).
+/// Used for the advertise-form dropdown — UEX REQUIRES `id_category` for
+/// `type=item`, so the user picks a display-name category whose `id` goes
+/// into `AdvertisePayload.id_category`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Category {
+    pub id: u64,
+    /// Display name, e.g. "Backpacks".
+    pub name: String,
+    /// Parent section as a human-readable group label, e.g. "Armor".
+    pub section: Option<String>,
+}
+
+/// Write-Payload für `POST /marketplace_advertise/` (M2b, source-agnostic
+/// Container über dem Doku-Schema [Research §1]). Alle Felder tragen die
+/// offiziellen Input-Feldnamen (snake_case auf dem Wire) inkl. der
+/// Referenzlisten (unit/availability/source/…). Optionale Felder werden nur
+/// gesendet, wenn gesetzt — der UEX-CLIENT serialisiert das; ein `None` hier
+/// bedeutet „Feld weglassen“, nicht „null senden“.
+///
+/// Die Pflichtfelder des Doku-Schemas für type=item sind NICHT optionale:
+/// `operation`, `type`, `language`, `unit`, `price`, `currency`, `title`,
+/// `description`, `in_stock`. Der UEX-Provider validiert sie vor dem POST
+/// und übersetzt eine fehlende Pflichtangabe in eine deutsche
+/// Konfigurations-Fehlermeldung (keine rohe API-Antwort).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdvertisePayload {
+    /// Link zu `get_items` (type=item). Optional — UEX akzeptiert auch
+    /// reine Text-Listings über title/description.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_item: Option<u64>,
+    /// Link zu `get_categories` (Pflicht für type=item laut Doku).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_category: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_star_system: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_terminal: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id_organization: Option<u64>,
+    /// `buy` | `sell` | `rent` | `trade`.
+    pub operation: String,
+    /// `en_US`, `de_DE`, … (Referenzliste Research §1).
+    pub language: String,
+    /// `item` | `service` | `contract`.
+    pub r#type: String,
+    /// Für type=item: `box`, `crate`, `cscu`, `dozen`, `hundred`, `pack`,
+    /// `pair`, `scu`, `set`, `stack`, `thousand`, `unit`.
+    pub unit: String,
+    /// Preis als Ganzzahl (Doku: integer only).
+    pub price: u64,
+    /// `UEC` | `WIF` | `MGS`.
+    pub currency: String,
+    /// Trade-Location, z. B. „Port Tressler“.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub location: Option<String>,
+    /// Alphanumerisch + Bindestriche, max 140 Zeichen.
+    pub title: String,
+    /// Freitext, max 65535 Zeichen.
+    pub description: String,
+    /// `looted` | `pledged` | `purchased_in_game` | `pirated` | `gifted` | `crafted`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Verfügbare Menge.
+    pub in_stock: u64,
+    /// `immediate` | `ready_pickup` | `on_demand` | … (Referenzliste).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub availability: Option<String>,
+    /// 0–100.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub durability: Option<u8>,
+    /// Offer-Laufzeit in Std.: 1|2|3|5|12|24|48|72|120|168|336|720.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hours_expiration: Option<u64>,
+    /// 1 = hidden (nicht veröffentlichen), 0/null = veröffentlichen nach Approval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_hidden: Option<u8>,
+    /// 1 = Production, 0 = Sandbox/Test. Wir senden IMMER explizit 1 in
+    /// der Produktions-App (Research: `is_production=0` für Tests).
+    pub is_production: u8,
+}
+
+impl AdvertisePayload {
+    /// Minimales, selbstkonsistentes Test-Fixture (type=item, sell).
+    #[cfg(test)]
+    pub fn minimal_sell_item() -> Self {
+        AdvertisePayload {
+            id_item: None,
+            id_category: None,
+            id_star_system: None,
+            id_terminal: None,
+            id_organization: None,
+            operation: "sell".into(),
+            language: "en_US".into(),
+            r#type: "item".into(),
+            unit: "unit".into(),
+            price: 120_000,
+            currency: "UEC".into(),
+            location: Some("Port Tressler".into()),
+            title: "DRAKE NETTLE S | Used".into(),
+            description: "Minor scuffs on left wing. Fully functional.".into(),
+            source: Some("purchased_in_game".into()),
+            in_stock: 1,
+            availability: Some("ready_pickup".into()),
+            durability: Some(85),
+            hours_expiration: Some(168),
+            is_hidden: None,
+            is_production: 1,
+        }
+    }
+}
+
 /// A live marketplace offer (source-agnostic projection of a listing).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Offer {
@@ -375,9 +510,68 @@ pub struct Offer {
     pub slug: String,
 }
 
+/// Ergebnis von `POST /marketplace_advertise/` (M2b): die frisch angelegte
+/// Listung. UEX liefert in der Create-Antwort KEINE vollständige ListingRow
+/// (die erscheint erst nach Approval in `/marketplace_listings`) — nur
+/// `id` + Permalink-`url`. Genau daran hängt die Erfolgsmeldung der UI
+/// (Review t_6e26ec82 Runde 2: vorher ListingRow-Parse → „missing field id"
+/// trotz erfolgreichem Server-Create).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AdvertiseResult {
+    /// Neue Listing-Id (0, wenn die Antwort sie nicht trug — erlaubt).
+    pub id: u64,
+    /// Permalink der Listung auf uexcorp.space (Deep-Link-Target). Leer,
+    /// wenn die Antwort sie nicht lieferte → UI fällt auf Marketplace-Home
+    /// zurück (M2b-4: Erfolgsmeldung an id/url, NICHT an den Pull).
+    pub url: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::SearchHit;
+
+    /// M2b (Write-Layer): der Advertise-Payload serialisiert snake_case und
+    /// lässt ungesetzte Optionale WEG (FEHLT im JSON — nicht "null") — exakt
+    /// das Doku-Schema [Research §1]. Verhindert, dass wir versehentlich
+    /// `id_category: null` etc. an UEX schicken (Pflichtfeld-Semantik).
+    #[test]
+    fn advertise_payload_serializes_snake_case_and_skips_none() {
+        let p = super::AdvertisePayload::minimal_sell_item();
+        let json = serde_json::to_string(&p).unwrap();
+        // Pflichtfelder an Bord, in offizieller Schreibweise.
+        for key in [
+            "\"operation\":\"sell\"",
+            "\"language\":\"en_US\"",
+            "\"type\":\"item\"",
+            "\"unit\":\"unit\"",
+            "\"price\":120000",
+            "\"currency\":\"UEC\"",
+            "\"title\":\"DRAKE NETTLE S | Used\"",
+            "\"in_stock\":1",
+            "\"hours_expiration\":168",
+            "\"is_production\":1",
+        ] {
+            assert!(json.contains(key), "payload lacks {key}: {json}");
+        }
+        // Optionale ohne Wert fehlen KOMPLETT (nicht "field":null).
+        for skipped in [
+            "id_item",
+            "id_category",
+            "id_terminal",
+            "id_organization",
+            "is_hidden",
+        ] {
+            assert!(
+                !json.contains(&format!("\"{skipped}\"")),
+                "Optional {skipped} must be omitted (skip_serializing_if), got {json}"
+            );
+        }
+        // Gesetzte Optionale sind dabei.
+        assert!(json.contains("\"location\":\"Port Tressler\""));
+        assert!(json.contains("\"source\":\"purchased_in_game\""));
+        assert!(json.contains("\"availability\":\"ready_pickup\""));
+        assert!(json.contains("\"durability\":85"));
+    }
 
     /// Regression (t_925a577a): über IPC wird die SearchHit-ID als STRING
     /// serialisiert (Wiki-IDs > 2^53 runden als JS-Number still —

@@ -44,8 +44,8 @@ use provider::{
 };
 
 use dto::{
-    CategoryRow, CommodityRouteRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow,
-    StarSystemRow, TerminalRow, VehicleRow,
+    CategoryRow, CommodityRouteRow, CommodityRow, CreateResponse, ItemPriceRow, ItemRow,
+    ListingRow, PriceRow, StarSystemRow, TerminalRow, UserTradeRow, VehicleRow,
 };
 
 /// Search result page size served from the cache.
@@ -135,6 +135,9 @@ pub fn route_terminal_flags_from_rows(rows: &[TerminalRow]) -> HashMap<u64, Rout
 pub struct UexProvider {
     http: UexHttpClient,
     cache: Arc<Cache>,
+    /// User-scoped Reads senden den Slot-Key ZUSÄTZLICH als `secret-key`-
+    /// Header (UEX /user_trades/ etc. verlangen Beide). Nur dort verwendet.
+    secret_key: Option<String>,
     /// Typ-Feld der zuletzt via `/terminals` geholten Zeilen (id → UEX type).
     /// Wird in `fetch_entities` gesetzt und in `ensure_fresh` als
     /// Ground-truth-Sidecar persistiert (P15a-Härtung).
@@ -155,12 +158,28 @@ impl UexProvider {
         base_url: &str,
         min_interval: std::time::Duration,
     ) -> Result<UexProvider> {
-        let http = UexHttpClient::new(base_url, api_key, None, min_interval)?;
-        Ok(UexProvider {
+        let http = UexHttpClient::new(base_url, api_key.clone(), None, min_interval)?;
+        let provider = UexProvider {
             http,
             cache,
             last_terminal_types: std::sync::Mutex::new(HashMap::new()),
-        })
+            // M2a-Fix (t_2f197d1c): NICHT mehr der App-Key als secret-key —
+            // der persönliche UEX-Secret-Key ist ein EIGENER Settings-Slot
+            // (Standard: None → User-scoped Calls senden KEINEN secret-key,
+            // UEX antwortet dann 400 user_not_found/403 invalid_secret_key,
+            // was die IPC als deutsche Meldung rendert).
+            secret_key: None,
+        };
+        Ok(provider)
+    }
+
+    /// M2a-Fix (t_2f197d1c): persönlichen UEX-Secret-Key setzen (Settings-Slot
+    /// `[uex] secret_key`). Nur User-scoped Reads (`/user_trades`, `/user`,
+    /// eigene `marketplace_listings`) senden ihn als `secret-key`-Header —
+    /// Public-Reads bleiben Bearer-only. Der Key wird NIE geloggt.
+    pub fn with_secret_key(mut self, secret_key: Option<String>) -> Self {
+        self.secret_key = secret_key;
+        self
     }
 
     /// Ensure the reference dataset for `kind` is usable in the local cache.
@@ -427,6 +446,51 @@ impl DataProvider for UexProvider {
                 .map_err(map_cache_err)?;
         }
         Ok(Self::apply_local(offers, &filters))
+    }
+
+    /// Eigene Marketplace-Offers des angemeldeten Users (M2a, Read-Phase).
+    ///
+    /// UEX filtert `/marketplace_listings` per `username=` (ein dedizierter
+    /// „own-listing"-Parameter existiert nicht — Research §3, Option 1).
+    /// Stale-first wie der allgemeine Snapshot: frischer Cache dient direkt,
+    /// sonst LIVE-Fetch (oder letzter Snapshot bei Offline — die IPC-Ebene
+    /// entscheidet die Quellenkennung). Der Snapshot wird additiv aktualisiert
+    /// (eigene Tabelle `own_offers`), die öffentliche marketplace-Tabelle
+    /// bleibt unberührt.
+    async fn my_offers(&self, username: String) -> Result<Vec<Offer>> {
+        self.my_offers_impl(username).await
+    }
+
+    /// Eigener Trade-Verlauf (M2a, Read-Phase).
+    ///
+    /// `GET /user_trades/` — user-scoped, braucht User-credential. Stale-first
+    /// wie der Rest; der letzte Snapshot (Tabelle `own_trades`) dient offline.
+    async fn user_trades(&self) -> Result<Vec<provider::Trade>> {
+        self.user_trades_impl().await
+    }
+
+    /// Write-Layer (M2b): `POST /marketplace_advertise/` — neues Listing
+    /// anlegen (Delegation auf die Inherent-Implementierung).
+    async fn advertise_offer(
+        &self,
+        payload: provider::AdvertisePayload,
+    ) -> Result<provider::AdvertiseResult> {
+        self.advertise_offer_impl(payload).await
+    }
+
+    /// Marketplace-Kategorien für die Anlegen-Form (M2b-Review-Fix,
+    /// t_6e26ec82). `POST /marketplace_advertise/` VERLANGT `id_category`
+    /// für `type=item` (Doku [7]) — das Anlegen-Formular braucht also eine
+    /// Kategorie-Auswahl mit Anzeigenamen. Kleine öffentliche Referenzliste;
+    /// live gefetcht (kein User-Credential nötig).
+    async fn categories(&self) -> Result<Vec<provider::Category>> {
+        self.categories_impl().await
+    }
+
+    /// Write-Layer (M2b): `DELETE /marketplace_listings/?id=…` — Listing
+    /// abmelden (Delegation).
+    async fn delete_offer(&self, id: u64) -> Result<()> {
+        self.delete_offer_impl(id).await
     }
 
     async fn fetch_entities(&self, kind: EntityKind) -> Result<Vec<Entity>> {
@@ -1288,6 +1352,234 @@ impl UexProvider {
         }
         Ok(out)
     }
+
+    /// Write-Layer (M2b): `POST /marketplace_advertise/` — ein neues Listing
+    /// anlegen (im Inherent-Block, aufgerufen über die `DataProvider`-Trait-
+    /// Delegation `advertise_offer`). Payload exakt nach Doku-Schema
+    /// (`AdvertisePayload`); kein Edit (Bearbeiten = Abmelden+Neu). Kein Retry
+    /// bei 429/403 — der Fehler steigt durch, die UI entscheidet Deep-Link.
+    async fn advertise_offer_impl(
+        &self,
+        payload: provider::AdvertisePayload,
+    ) -> Result<provider::AdvertiseResult> {
+        Self::validate_advertise(&payload)?;
+        let body = serde_json::to_value(&payload)
+            .map_err(|e| ProviderError::Json(format!("advertise payload: {e}")))?;
+        // POST-Antwort: UEX liefert das neue Listing NICHT als vollständige
+        // ListingRow (die erscheint erst nach Approval in
+        // /marketplace_listings) — nur `{id, url}` (der Deep-Link). Wir
+        // parsen das tolerante CreateResponse (Review t_6e26ec82 R2: der
+        // ListingRow-Parse warf „missing field id", obwohl der Server die
+        // Listung angelegt hatte) und reichen id/url an die UI für die
+        // Erfolgsmeldung weiter. KEIN Retry bei 429/403 (M2b-3).
+        let created: CreateResponse = self
+            .http
+            .post("/marketplace_advertise/", self.secret_key.as_deref(), &body)
+            .await?;
+        Ok(provider::AdvertiseResult {
+            id: created.id,
+            url: created.url,
+        })
+    }
+
+    async fn delete_offer_impl(&self, id: u64) -> Result<()> {
+        self.http
+            .delete(
+                "/marketplace_listings/",
+                &[
+                    ("id".to_string(), id.to_string()),
+                    ("is_production".to_string(), "1".to_string()),
+                ],
+                self.secret_key.as_deref(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Kategorien für die Anlegen-Form: `GET /categories` (öffentlich).
+    /// Kleine Referenzliste — live gefetcht; die Form öffnet nur bei Bedarf,
+    /// ein Cache mit TTL wäre hier zusätzlicher Overhead ohne Rate-Limit-\
+    /// Gewinn (ein Request pro Formular-Öffnung, Nutzer-ausgelöst).
+    async fn categories_impl(&self) -> Result<Vec<provider::Category>> {
+        let rows: Vec<CategoryRow> = self.http.get("/categories", &[]).await?;
+        Ok(rows
+            .into_iter()
+            // Null-Härtung: `name` ist null-tolerant via DTO ("" statt Fehler);
+            // Kategorien ohne Anzeigenamen würden im Dropdown nur Raute zeigen —
+            // sie filtern (die Form braucht Namen, nicht "id 47").
+            .filter(|r| !r.name.is_empty())
+            .map(|r| provider::Category {
+                id: r.id,
+                name: r.name,
+                section: r.section.filter(|s| !s.is_empty()),
+            })
+            .collect())
+    }
+
+    /// Pflichtfeld-Validierung des Advertise-Payloads (Doku-Schema §1): die
+    /// Pflichtangaben für type=item müssen gesetzt sein, sonst deutsche
+    /// Config-Meldung statt roher API-Antwort.
+    ///
+    /// `id_category` ist laut Doku [7] für `type=item`/`contract` PFLICHT —
+    /// Review t_6e26ec82 (missing_id_category): ein Item-Create ohne Kategorie
+    /// lehnt die API mit 400 ab. Der Payload trägt es als `Option` (kein Edit-/
+    /// Batch-Fall übergibt `None`), die Form erzwingt eine Auswahl; hier wird
+    /// es zusätzlich als Pflichtfeld validiert.
+    fn validate_advertise(payload: &provider::AdvertisePayload) -> Result<()> {
+        let mut missing: Vec<&str> = Vec::new();
+        if payload.operation.trim().is_empty() {
+            missing.push("operation (buy/sell)");
+        }
+        if payload.language.trim().is_empty() {
+            missing.push("language");
+        }
+        if payload.r#type.trim().is_empty() {
+            missing.push("type (item/service/contract)");
+        }
+        if payload.r#type.trim() == "item" && payload.id_category.is_none() {
+            missing.push("Kategorie (id_category)");
+        }
+        if payload.unit.trim().is_empty() {
+            missing.push("unit");
+        }
+        if payload.price == 0 {
+            missing.push("price");
+        }
+        if payload.currency.trim().is_empty() {
+            missing.push("currency");
+        }
+        if payload.title.trim().is_empty() {
+            missing.push("title");
+        }
+        if payload.description.trim().is_empty() {
+            missing.push("description");
+        }
+        if payload.in_stock == 0 {
+            missing.push("in_stock (Menge)");
+        }
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(ProviderError::Config(format!(
+                "Anlegen abgebrochen — Pflichtangaben fehlen: {}",
+                missing.join(", ")
+            )))
+        }
+    }
+
+    /// Test-only: exponiert `validate_advertise` (privater Helfer) für die
+    /// Unit-Tests der Pflichtfeld-Logik — kein Payload geht aufs Wire.
+    #[cfg(test)]
+    pub(crate) fn advertise_offer_test_probe(payload: &provider::AdvertisePayload) -> Result<()> {
+        Self::validate_advertise(payload)
+    }
+
+    /// Eigene Marketplace-Offers live holen + Snapshot additiv aktualisieren.
+    /// Stale-first: ein frischer username-bewusster Snapshot dient direkt aus
+    /// dem Cache (KEIN Netzwerk) — analog `marketplace_offers`. Sonst LIVE-Fetch
+    /// in die eigene Tabelle (username-gefiltert). Die Quellenkennung
+    /// cache/live/offline entscheidet die IPC-Ebene passend dazu.
+    async fn my_offers_impl(&self, username: String) -> Result<Vec<Offer>> {
+        let username = username.trim().to_owned();
+        if username.is_empty() {
+            return Err(ProviderError::Config(
+                "Bitte den UEX-Benutzernamen angeben, um deine Offers zu laden.".into(),
+            ));
+        }
+        // Fresh-Shortcut: frischer Snapshot für GENAU diesen User → keine
+        // Netzwerk-Requests (TTL + Username-Marker). username-bewusst, damit
+        // ein User-Wechsel nicht die Offers des vorherigen Accounts serviert.
+        if self
+            .cache
+            .own_offers_fresh_for(&username)
+            .map_err(map_cache_err)?
+        {
+            return self.cache.own_offers_snapshot().map_err(map_cache_err);
+        }
+        let rows: Vec<ListingRow> = self
+            .http
+            .get_user(
+                "/marketplace_listings",
+                &[("username".to_string(), username.clone())],
+                self.secret_key.as_deref(),
+            )
+            .await?;
+        let offers = self.map_listing_rows(rows, &username).await?;
+        self.cache
+            .store_own_offers(&offers, &username)
+            .map_err(map_cache_err)?;
+        Ok(offers)
+    }
+
+    /// Eigene Trades live holen + Snapshot additiv aktualisieren (Tabelle
+    /// `own_trades`). Stale-first: frischer Snapshot dient direkt (KEIN Netz),
+    /// sonst LIVE-Fetch. Handelt es sich um eine leere Historie
+    /// (`no_trades_found`), wird `Ok([])` geliefert — die UI zeigt dann den
+    /// Leer-Zustand statt eines Fehlers.
+    async fn user_trades_impl(&self) -> Result<Vec<provider::Trade>> {
+        if self.cache.own_trades_fresh().map_err(map_cache_err)? {
+            return self.cache.own_trades_snapshot().map_err(map_cache_err);
+        }
+        let rows: Vec<UserTradeRow> = self
+            .http
+            .get_user("/user_trades", &[], self.secret_key.as_deref())
+            .await?;
+        let trades = rows.into_iter().map(map_trade).collect::<Vec<_>>();
+        self.cache
+            .store_own_trades(&trades)
+            .map_err(map_cache_err)?;
+        Ok(trades)
+    }
+
+    /// Wire-/Listing-Rows → Seam-Offers, identische Mapping-Logik wie
+    /// `marketplace_offers` (inkl. Region-Auflösung). Der username-Filter
+    /// wurde schon serverseitig angewendet; `self` wird als seller-Fallback
+    /// gesetzt, falls eine Zeile keinen seller trägt.
+    async fn map_listing_rows(
+        &self,
+        rows: Vec<ListingRow>,
+        self_username: &str,
+    ) -> Result<Vec<Offer>> {
+        let regions = self.star_system_names().await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| {
+                let region = if r.id_star_system != 0 {
+                    regions.get(&r.id_star_system).cloned().unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                Offer {
+                    id: r.id,
+                    title: r.title,
+                    description: r.description,
+                    item_id: r.id_item,
+                    category_id: r.id_category,
+                    operation: r.operation.parse().unwrap_or(MarketOperation::Sell),
+                    listing_type: r.r#type.parse().unwrap_or(ListingType::Item),
+                    price: r.price.parse::<f64>().unwrap_or(0.0),
+                    currency: if r.currency.is_empty() {
+                        "UEC".into()
+                    } else {
+                        r.currency
+                    },
+                    unit: r.unit,
+                    quantity: r.in_stock,
+                    location: r.location,
+                    region,
+                    seller: if r.user_name.is_empty() {
+                        self_username.to_owned()
+                    } else {
+                        r.user_name
+                    },
+                    quality: r.quality.unwrap_or(0),
+                    updated: r.date_added,
+                    expires: r.date_expiration,
+                    slug: r.slug,
+                }
+            })
+            .collect())
+    }
 }
 
 /// Unix-Sekunden (Lokalzeit unabhängig).
@@ -1546,6 +1838,32 @@ fn map_route_enrichment(r: CommodityRouteRow) -> RouteEnrichment {
     }
 }
 
+/// Map a `/user_trades/` wire-row onto the seam [`provider::Trade`].
+fn map_trade(r: UserTradeRow) -> provider::Trade {
+    provider::Trade {
+        id: r.id,
+        terminal_id: r.id_terminal,
+        commodity_id: r.id_commodity,
+        operation: r
+            .operation
+            .parse()
+            .unwrap_or(provider::MarketOperation::Sell),
+        scu: r.scu,
+        price: r.price,
+        date_added: r.date_added,
+        commodity: r.commodity_name,
+        terminal: r.terminal_name,
+        vehicle: none_if_empty(r.vehicle_name),
+        fleet_name: none_if_empty(r.user_fleet_name),
+        organization: none_if_empty(r.organization_name),
+    }
+}
+
+/// `Some("")` → `None` (UEX liefert leere/Optionale Strings manchmal als "").
+fn none_if_empty(s: Option<String>) -> Option<String> {
+    s.filter(|v| !v.trim().is_empty())
+}
+
 /// Map a `/commodities_prices` row (commodity- OR terminal-scoped — same wire
 /// shape) onto the seam [`PricePoint`]. `fallback_commodity` is used when the
 /// row omits the name (ageing API rows); the terminal name falls back to a
@@ -1616,7 +1934,7 @@ fn map_item_price_point(r: ItemPriceRow, fallback_item: &str) -> PricePoint {
 pub mod private {
     pub use crate::dto::{
         CategoryRow, CommodityRouteRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow,
-        StarSystemRow, TerminalRow,
+        StarSystemRow, TerminalRow, UserTradeRow,
     };
     pub use crate::http::DEFAULT_BASE_URL;
 }
@@ -2174,5 +2492,209 @@ mod tests {
         let mut noop = vec![make_route(1, 1, 2)];
         p2.attach_route_enrichment(&mut noop).unwrap();
         assert!(noop[0].enrichment.is_none());
+    }
+
+    // --- M2a Review-Runde 2: echter stale-first + leere Historie ---
+
+    /// Frischer, username-passender Snapshot → der Fresh-Shortcut serviert
+    /// IHN aus dem Cache, OHNE einen HTTP-Request zu machen. Basis-URL
+    /// bewusst tot (127.0.0.1:1) — würde das impl einen Fetch versuchen,
+    /// schlüge der Test beim Connect fehl.
+    #[tokio::test]
+    async fn my_offers_serves_fresh_snapshot_without_network() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_offers(&[offers_offer(1)], "sebo_one")
+            .unwrap();
+        assert!(
+            cache.own_offers_fresh_for("sebo_one").unwrap(),
+            "frisch nach store"
+        );
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1", // tote URL — darf nie erreicht werden
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let offers = provider.my_offers("sebo_one".into()).await.unwrap();
+        assert_eq!(offers.len(), 1);
+        assert_eq!(offers[0].title, "Drake Nettle S");
+    }
+
+    /// Username-Wechsel nach frischem Snapshot → NICHT cache-servieren,
+    /// sondern live fetchen (tote URL → Fehler, kein Stale-Serve für den
+    /// falschen Account). Dasselbe für einen frischen Snapshot eines anderen
+    /// Users: `fresh_for` ist username-bewusst.
+    #[tokio::test]
+    async fn my_offers_does_not_serve_other_users_fresh_snapshot() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_offers(&[offers_offer(1)], "sebo_one")
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        // Anderer User: frisch-für-sebo_one heißt NICHT frisch-für-automator →
+        // Fetch versucht → tote URL → Fehler (kein Stale-Serve).
+        assert!(provider.my_offers("automator".into()).await.is_err());
+        // Identischer User ohne vs mit trim: lowercase tolerant.
+        assert!(provider.my_offers("  SeBo_One  ".into()).await.is_ok());
+    }
+
+    /// Frischer Trades-Snapshot → user_trades_impl serviert aus dem Cache
+    /// ohne Netz (tote URL belegt den Shortcut).
+    #[tokio::test]
+    async fn user_trades_serves_fresh_snapshot_without_network() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_trades(&[provider::Trade {
+                id: 7,
+                terminal_id: 2,
+                commodity_id: 79,
+                operation: MarketOperation::Buy,
+                scu: 100,
+                price: 500.0,
+                date_added: 1730000200,
+                commodity: "Waste".into(),
+                terminal: "Lorville".into(),
+                vehicle: None,
+                fleet_name: None,
+                organization: None,
+            }])
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let trades = provider.user_trades().await.unwrap();
+        assert_eq!(trades.len(), 1);
+        assert_eq!(trades[0].commodity, "Waste");
+    }
+
+    fn offers_offer(id: u64) -> provider::Offer {
+        provider::Offer {
+            id,
+            title: "Drake Nettle S".into(),
+            description: String::new(),
+            item_id: 0,
+            category_id: 0,
+            operation: MarketOperation::Sell,
+            listing_type: ListingType::Item,
+            price: 4500000.0,
+            currency: "UEC".into(),
+            unit: "unit".into(),
+            quantity: 1,
+            location: "Port Tressler".into(),
+            region: "Stanton".into(),
+            seller: "sebo_one".into(),
+            quality: 72,
+            updated: 1730000000,
+            expires: None,
+            slug: "drake-nettle-s".into(),
+        }
+    }
+
+    /// UEX meldet für leere Trade-Historien `no_trades_found` als status mit
+    /// HTTP 200 — das ist KEIN Fehler, sondern eine leere Liste. Der Client
+    /// muss `Ok([])` liefern (UI rendert „Noch keine Trades"), nicht
+    /// `Err(NotFound)`.
+    #[tokio::test]
+    async fn user_trades_empty_history_is_ok_not_error() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"no_trades_found","http_code":200,"data":null}"#;
+        std::thread::spawn(move || {
+            if let Ok(mut stream) = listener.incoming().next().unwrap() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let provider = UexProvider::with_base_url(
+            cache,
+            Some("some-secret-key".into()),
+            &format!("http://127.0.0.1:{port}"),
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let trades = provider.user_trades().await.unwrap();
+        assert!(trades.is_empty(), "leere Historie → Ok([]), kein Fehler");
+    }
+
+    // --- M2b-Review-Fix (t_6e26ec82): id_category ist Pflicht für type=item --
+
+    /// Payload mit type=item OHNE id_category → deutsche Config-Meldung,
+    /// NIEMALS ein POST (UEX würde 400 missing_id_category senden). Das ist
+    /// der Wiremock-Gegenprobe-Kern: der Client blockt vor dem Wire.
+    fn basic_item_payload(id_category: Option<u64>) -> provider::AdvertisePayload {
+        provider::AdvertisePayload {
+            id_item: None,
+            id_category,
+            id_star_system: None,
+            id_terminal: None,
+            id_organization: None,
+            operation: "sell".into(),
+            language: "en_US".into(),
+            r#type: "item".into(),
+            unit: "unit".into(),
+            price: 120_000,
+            currency: "UEC".into(),
+            location: Some("Port Tressler".into()),
+            title: "DRAKE NETTLE S | Used".into(),
+            description: "Minor scuffs on left wing. Fully functional.".into(),
+            source: Some("purchased_in_game".into()),
+            in_stock: 1,
+            availability: Some("ready_pickup".into()),
+            durability: Some(85),
+            hours_expiration: Some(168),
+            is_hidden: None,
+            is_production: 1,
+        }
+    }
+
+    #[test]
+    fn validate_advertise_requires_category_for_item_type() {
+        let payload = basic_item_payload(None);
+        assert!(payload.id_category.is_none(), "fixture: no category set");
+        match crate::UexProvider::advertise_offer_test_probe(&payload) {
+            Err(provider::ProviderError::Config(msg)) => {
+                assert!(
+                    msg.contains("Kategorie") && msg.contains("id_category"),
+                    "deutsche Pflichtfeld-Meldung erwartet, got {msg}"
+                );
+            }
+            other => panic!("Config-Error erwartet, got {other:?}"),
+        }
+    }
+
+    /// type=item MIT id_category → validiert sauber durch (kein fehlendes
+    /// Pflichtfeld). Die weiteren Pflichtfelder des Fixtures sind gesetzt.
+    #[test]
+    fn validate_advertise_accepts_item_with_category() {
+        let payload = basic_item_payload(Some(12));
+        let result = crate::UexProvider::advertise_offer_test_probe(&payload);
+        assert!(
+            result.is_ok(),
+            "type=item mit id_category muss validieren: {result:?}"
+        );
     }
 }

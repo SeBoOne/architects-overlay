@@ -14,9 +14,10 @@ mod model;
 pub mod routes;
 
 pub use crate::model::{
-    Entity, EntityKind, ListingType, LocationPrices, MarketOperation, MarketplaceFilter, Offer,
-    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, deserialize_id_flexible,
-    deserialize_opt_id_flexible, serialize_id_as_string,
+    AdvertisePayload, AdvertiseResult, Category, Entity, EntityKind, ListingType, LocationPrices,
+    MarketOperation, MarketplaceFilter, Offer, OfferSort, PricePoint, SearchEntities, SearchHit,
+    TerminalPriceGroup, Trade, deserialize_id_flexible, deserialize_opt_id_flexible,
+    serialize_id_as_string,
 };
 
 /// Domain error produced by a provider implementation.
@@ -168,6 +169,47 @@ pub trait DataProvider: Send + Sync {
     /// stale — a fresh fetch happens on every call; the last snapshot is kept
     /// locally for offline display only.
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>>;
+
+    /// The user's OWN marketplace offers, read via `user_trades`-scoped or
+    /// `marketplace_listings?username=<self>` filtering. Requires the source's
+    /// user credential. Default reports unsupported.
+    async fn my_offers(&self, _username: String) -> Result<Vec<Offer>> {
+        Err(ProviderError::Unsupported("own offers".to_string()))
+    }
+
+    /// The user's own trade history (last trades), source-scoped. Requires a
+    /// user credential on the source. Default reports unsupported.
+    async fn user_trades(&self) -> Result<Vec<Trade>> {
+        Err(ProviderError::Unsupported("user trades".to_string()))
+    }
+
+    /// Marketplace categories (for the advertise-form dropdown). UEX REQUIRES
+    /// `id_category` for `type=item`, so the form lets the user pick a
+    /// display-name category whose id goes into `AdvertisePayload.id_category`.
+    /// Small reference list — the provider fetches/caches it like other
+    /// reference data. Default reports unsupported.
+    async fn categories(&self) -> Result<Vec<Category>> {
+        Err(ProviderError::Unsupported("categories".to_string()))
+    }
+
+    /// Write-Layer (M2b): ein neues Marketplace-Listing anlegen via
+    /// `POST /marketplace_advertise/`. Payload exakt nach Doku-Schema
+    /// ([`AdvertisePayload`]); kein Edit — Bearbeiten = Abmelden + Neu anlegen.
+    /// Der Provider validiert die Pflichtfelder und sendet KEINEN Retry bei
+    /// 429/403 (Fehlerpfad: Meldung + Deep-Link, die UI entscheidet das
+    /// Weiterleiten). Liefert die neue Listung als `id` + Permalink-`url`
+    /// (UEX-Antwort ist NICHT die vollständige ListingRow — die erscheint erst
+    /// nach Approval in `/marketplace_listings`). Default reports unsupported.
+    async fn advertise_offer(&self, _payload: AdvertisePayload) -> Result<AdvertiseResult> {
+        Err(ProviderError::Unsupported("advertise offer".to_string()))
+    }
+
+    /// Write-Layer (M2b): ein bestehendes Listing ABMELDEN via
+    /// `DELETE /marketplace_listings/?id=…`. Nur der Secret-Key ist nötig
+    /// (Research §1). Kein Retry-Spam bei 429/403. Default unsupported.
+    async fn delete_offer(&self, _id: u64) -> Result<()> {
+        Err(ProviderError::Unsupported("delete offer".to_string()))
+    }
 
     /// Handelsrouten (Karte t_128b7547): bester Einkauf → bester Verkauf je
     /// Ware, aus dem eigenen Preis-Datensatz. Der Default meldet "nicht

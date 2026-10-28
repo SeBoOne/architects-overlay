@@ -115,6 +115,12 @@ pub struct SettingsSnapshot {
     pub palette: String,
     pub detail_variant: String,
     pub uex_api_key_set: bool,
+    /// M2a-Fix (t_2f197d1c): bool-only wie der API-Key — der rohe persönliche
+    /// Secret-Key verlässt das Backend NIE (Security-Auflage der Karte).
+    pub uex_secret_key_set: bool,
+    /// M2a-Fix: UEX-Benutzername (kein Secret — Textfeld-Wert für den
+    /// `marketplace_listings?username=`-Pull). Leer = nicht gesetzt.
+    pub uex_username: String,
     /// Primary commodity price source ("wiki" | "uex"); wiki first, UEX
     /// fallback. Exposed so the Config-View can A/B the sources.
     pub commodity_source: String,
@@ -130,6 +136,10 @@ pub struct SettingsSnapshot {
     pub global_shortcuts_active: bool,
     /// C2b: persistierter Consent (einmalige Zustimmung, Default false).
     pub shortcuts_sync_omarchy: bool,
+    /// M2b Sicherheitsmodell: 2-Schritt-Bestätigung für Marktplatz-Writes
+    /// ("every_action" = jede schreibende Aktion, Default; "delete_only" = nur
+    /// Abmelden bestätigt). Keine Batch-Aktionen.
+    pub marketplace_confirm: String,
     /// C2b: Ist-Zustand der Compositor-Anbindung. Nur wenn BEIDES true ist,
     /// greift der OmaSettings-Pfad: Hyprland-Session aktiv
     /// (HYPRLAND_INSTANCE_SIGNATURE) und Plugin-Bin vorhanden. Sonst bleibt
@@ -149,12 +159,15 @@ impl SettingsSnapshot {
             palette: s.palette().as_str().to_owned(),
             detail_variant: s.detail_variant().as_str().to_owned(),
             uex_api_key_set: s.uex_api_key().is_some(),
+            uex_secret_key_set: s.uex_secret_key().is_some(),
+            uex_username: s.uex_username().unwrap_or_default().to_owned(),
             commodity_source: s.commodity_source().as_str().to_owned(),
             scale: s.scale(),
             shortcut_toggle: s.shortcut_toggle().to_owned(),
             shortcut_click_through: s.shortcut_click_through().to_owned(),
             global_shortcuts_active,
             shortcuts_sync_omarchy: s.shortcut_sync_omarchy(),
+            marketplace_confirm: s.marketplace_confirm().as_str().to_owned(),
             hyprland_session: crate::hyprland_sync::hyprland_session_active(),
             omasettings_available: crate::hyprland_sync::OmarchyPaths::detect().is_some(),
             sync_note: sync_note.to_owned(),
@@ -390,6 +403,68 @@ pub fn settings_set_uex_api_key(
     )
 }
 
+/// M2a-Fix (t_2f197d1c): Set (Some) or remove (None) the UEX persönlicher
+/// Secret-Key. Persists immediately; the secret key is NEVER echoed back —
+/// the snapshot carries only the bool `uex_secret_key_set`.
+#[tauri::command]
+pub fn settings_set_uex_secret_key(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    key: Option<String>,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_uex_secret_key(key.filter(|k| !k.trim().is_empty()));
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
+}
+
+/// M2a-Fix (t_2f197d1c): Set (Some) or remove (None) the UEX-Username
+/// (exakt wie auf UEX registriert) — für den `marketplace_listings?username=`
+/// -Pull des eigenen Shops. Persists immediately.
+#[tauri::command]
+pub fn settings_set_uex_username(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    name: Option<String>,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_uex_username(name.filter(|n| !n.trim().is_empty()));
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
+}
+
+/// M2b Sicherheitsmodell: `.swap` marketplace_confirm-Modus für
+/// Marktplatz-Writes (every_action | delete_only). Ungültige Werte → 400
+/// Meldung; Default bleibt every_action.
+#[tauri::command]
+pub fn settings_set_marketplace_confirm(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    mode: String,
+) -> Result<SettingsSnapshot, String> {
+    let confirm = settings::MarketplaceConfirm::from_name(&mode)
+        .ok_or_else(|| format!("unbekannter Bestätigungs-Modus: {mode}"))?;
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_marketplace_confirm(confirm);
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    ))
+}
+
 /// Set the primary commodity price source (wiki | uex). Persists immediately
 /// AND flips the live source switch the composite provider reads on every
 /// price fetch — the next price request already uses the new source.
@@ -601,6 +676,10 @@ mod tests {
             "palette",
             "detail_variant",
             "uex_api_key_set",
+            // M2a-Fix (t_2f197d1c): bool-only Secret-Key + Username — dieselbe
+            // Snake-Case-Vertrag; camelCase wäre im UI unsichtbar.
+            "uex_secret_key_set",
+            "uex_username",
             "commodity_source",
             "scale",
             // C2a (t_6565fe8b): dieselbe Snake-Case-Vertrag gilt für die
@@ -611,6 +690,8 @@ mod tests {
             // C2b (t_1adbc017): Consent-Flag + Compositor-Ist + Sync-Note —
             // dieselbe Snake-Case-Vertrag; camelCase wäre im UI unsichtbar.
             "shortcuts_sync_omarchy",
+            // M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (snake_case).
+            "marketplace_confirm",
             "hyprland_session",
             "omasettings_available",
             "sync_note",
