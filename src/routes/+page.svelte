@@ -3627,7 +3627,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						</div>
 					{:else}
 						{#if shopErr}
-							<div class="row-empty" style="padding: 10px 16px; color: var(--alert)" role="alert">{shopErr}</div>
+							<div class="row-empty" style="padding: 10px 16px; color: var(--alert); display: flex; align-items: center; gap: 12px" role="alert">
+								<span style="flex: 1">{shopErr}</span>
+								<!-- M2b-3: Fehlerpfad — Meldung + Deep-Link-Button (passende
+								     UEX-Seite: Marketplace-Home, dort weitermachen). Kein Retry. -->
+								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openListingDeepLink(null)}>AUF UEXCORP.SPACE ÖFFNEN ↗</button>
+							</div>
 						{/if}
 						{#if shopNote}
 							<div class="row-empty" style="padding: 10px 16px">{shopNote}</div>
