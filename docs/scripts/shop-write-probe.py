@@ -248,6 +248,13 @@ async def main():
                 except Exception:
                     pass
         check("w1-payload-carries-id_category", isinstance(payload_cat, int) and payload_cat > 0, "id_category=" + str(payload_cat))
+        # M2b-Review-Fix (t_6e26ec82 R2): Erfolgsmeldung + Deep-Link hängen an
+        # der Create-Antwort `{ id, url }` (NICHT am Pull — frische Listings
+        # erscheinen erst nach UEX-Approval). PULL: lokale Liste neu laden.
+        success_note = await js("document.body.innerText.includes('wurde angelegt.')")
+        check("w1-success-note", success_note is True)
+        success_link = await js("(function(){var b=[...document.querySelectorAll('button, .btn-ghost')].find(function(x){return (x.textContent||'').includes('ANGELEGTES LISTING');}); return !!b;})()")
+        check("w1-success-deeplink", success_link is True, "Deep-Link aus Create-Response")
         # PULL: neues Listing ist in der Offers-Liste sichtbar.
         title_shown = await js("document.body.innerText.includes('DRAKE NETTLE S | Test')")
         check("w1-pull-shows-new-offer", title_shown is True)

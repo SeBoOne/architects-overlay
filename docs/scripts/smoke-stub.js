@@ -169,6 +169,10 @@ window.__TAURI_INTERNALS__ = {
 				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
 				const nid = 90000 + Math.floor(Math.random() * 9000);
 				const p = a.payload || {};
+				// M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort von UEX ist
+				// KEIN Offer — `{ id, url }` (der Deep-Link der Listung). Daran
+				// hängt die UI-Erfolgsmeldung, NICHT an einem Pull.
+				const url = 'https://uexcorp.space/marketplace/item/info/neu-' + nid;
 				// Neues Listing an den OWN-OFFERS-Array anfügen (Pull im UI zeigt es).
 				window.__SHOP_OFFERS__ = [{
 					id: nid, title: p.title || 'Neu', description: p.description || '',
@@ -180,7 +184,7 @@ window.__TAURI_INTERNALS__ = {
 					slug: 'neu-' + nid
 				}, ...window.__SHOP_OFFERS__];
 				window.__SHOP_OFFERS_SOURCE__ = 'live';
-				return { id: nid, title: p.title || 'Neu' };
+				return { id: nid, url: url };
 			}
 			case 'marketplace_delete': {
 				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 403 · UEX nicht erreichbar');
