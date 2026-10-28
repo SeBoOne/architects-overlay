@@ -619,8 +619,12 @@ window.__TAURI_INTERNALS__ = {
 					operation: 'sell', listing_type: 'item', price,
 					currency: 'UEC', unit: 'scu', quantity: 1200,
 					location, region: 'Stanton', seller, quality,
-					updated: now - id * 60, expires: null, slug: 'slug-' + id
+					updated: now - id * 60, expires: null, slug: 'slug-' + id,
+					// M3a: Bilder + Freigabe-Status (default: approved, kein Bild).
+					photos: [], approved: true
 				}, extra || {});
+				// M3a-Probe: kompletter Pool-Override möglich.
+				if (window.__MARKET_POOL__) return { source: 'cache', fetched_at: now, offers: window.__MARKET_POOL__, note: null };
 				const pool = [
 					O(1, 'Gold Ore (Raw)', 'Port Tressler', 'HaulerCo', 950, 4812),
 					O(2, 'Gold Ore (Refined)', 'Everus Harbor', 'HaulerCo', 880, 962),

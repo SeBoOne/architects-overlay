@@ -323,6 +323,41 @@ pub struct ListingRow {
     /// Permalink slug on uexcorp.space (deep-link target).
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub slug: String,
+    /// M3a (Faktencheck, Live-Probe 2026-10-28): `/marketplace_listings`
+    /// liefert `photos` als KOMMA-verbundene CDN-URLs (Thumbnail-Variante
+    /// `-t.jpg`; mit abschließendem Komma). Kann fehlen/null sein.
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub photos: String,
+    /// unix seconds of the UEX-Approval; `null`/`0` = Listing wartet auf
+    /// Freigabe (pending). Öffentliche Listings sind immer approved — der
+    /// Pending-Fall erscheint nur im eigenen Pull (secret-key).
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub date_approved: u64,
+}
+
+/// M3a: `photos`-Wire-Feld (`"url1,url2,"`) → saubere URL-Liste. Trimmt
+/// Leerraum, verwirft leere Segmente (abschließendes Komma ist normal).
+pub fn split_photos(photos: &str) -> Vec<String> {
+    photos
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+#[cfg(test)]
+mod photos_tests {
+    use super::split_photos;
+
+    #[test]
+    fn split_photos_handles_trailing_comma_and_gaps() {
+        assert_eq!(
+            split_photos("https://a/x-t.jpg,"),
+            vec!["https://a/x-t.jpg"]
+        );
+        assert_eq!(split_photos(""), Vec::<String>::new());
+        assert_eq!(split_photos(" , ,b ,"), vec!["b"]);
+    }
 }
 
 /// `/user_trades` row (eigener Trade-Verlauf, M2a). Null-Härtung wie überall:
@@ -475,6 +510,46 @@ mod tests {
         assert_eq!(row.name, "Agricium");
         assert_eq!(row.code.as_deref(), Some("AGRI"));
         assert_eq!(row.price_buy, 8631.0);
+    }
+
+    #[test]
+    fn listing_row_photos_and_approval_m3a() {
+        // M3a (Live-Probe 2026-10-28): `/marketplace_listings` trägt
+        // `photos` als Komma-Liste (abschließendes Komma!) und
+        // `date_approved` (0/null = wartet auf Freigabe).
+        let row: ListingRow = serde_json::from_str(
+            r#"{"id": 181946, "title": "SnowBlind", "description": "x",
+                 "id_item": 927, "id_category": 19, "id_star_system": 0,
+                 "operation": "sell", "type": "item", "price": "200000",
+                 "currency": "UEC", "unit": "unit", "in_stock": 1,
+                 "location": "", "user_name": "skuudy", "quality": 500,
+                 "hours_expiration": null, "date_added": 1793217025,
+                 "date_expiration": 1798401025, "slug": "snowblind-j0bujzBKci",
+                 "photos": "https://cdn.uexcorp.space/a-t.jpg,https://cdn.uexcorp.space/b-t.jpg,",
+                 "date_approved": 1793217625}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            split_photos(&row.photos),
+            vec![
+                "https://cdn.uexcorp.space/a-t.jpg",
+                "https://cdn.uexcorp.space/b-t.jpg"
+            ]
+        );
+        assert!(row.date_approved > 0);
+
+        // Pending: null/0 → wartet auf Freigabe; fehlendes photos → leer.
+        let pending: ListingRow = serde_json::from_str(
+            r#"{"id": 1, "title": "t", "description": "", "id_item": null,
+                 "id_category": null, "id_star_system": null, "operation": "sell",
+                 "type": "item", "price": "1", "currency": "UEC",
+                 "unit": "unit", "in_stock": 0, "location": "",
+                 "user_name": "u", "date_added": 1, "slug": "s",
+                 "date_approved": null, "photos": null}"#,
+        )
+        .unwrap();
+        assert_eq!(pending.date_approved, 0);
+        assert!(split_photos(&pending.photos).is_empty());
     }
 
     #[test]

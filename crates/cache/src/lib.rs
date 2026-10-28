@@ -189,6 +189,8 @@ CREATE TABLE IF NOT EXISTS marketplace_offers (
   updated      INTEGER NOT NULL,
   expires      INTEGER,
   slug         TEXT    NOT NULL DEFAULT '',
+  photos       TEXT    NOT NULL DEFAULT '',
+  approved     INTEGER NOT NULL DEFAULT 1,
   fetched_at   INTEGER NOT NULL
 );
 -- Eigene Marketplace-Offers des angemeldeten Users (M2a, Read-Phase):
@@ -214,6 +216,8 @@ CREATE TABLE IF NOT EXISTS own_offers (
   updated      INTEGER NOT NULL,
   expires      INTEGER,
   slug         TEXT    NOT NULL DEFAULT '',
+  photos       TEXT    NOT NULL DEFAULT '',
+  approved     INTEGER NOT NULL DEFAULT 1,
   fetched_at   INTEGER NOT NULL
 );
 -- eigene Trades (M2a, Read-Phase): Trade-Verlauf aus /user_trades/.
@@ -415,10 +419,32 @@ const MARKETPLACE_MIGRATIONS: &[(&str, &str)] = &[
         "slug",
         "ALTER TABLE marketplace_offers ADD COLUMN slug TEXT NOT NULL DEFAULT ''",
     ),
+    // M3a: Bild-URLs (Komma-Liste) + Approval-Status (0 = wartet auf
+    // Freigabe). Legacy-Zeilen gelten als approved (public Listings sind es).
+    (
+        "photos",
+        "ALTER TABLE marketplace_offers ADD COLUMN photos TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "approved",
+        "ALTER TABLE marketplace_offers ADD COLUMN approved INTEGER NOT NULL DEFAULT 1",
+    ),
+];
+
+/// M3a: gleiche Spalten-Nachrüstung für `own_offers` (identisches Schema).
+const OWN_OFFERS_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "photos",
+        "ALTER TABLE own_offers ADD COLUMN photos TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "approved",
+        "ALTER TABLE own_offers ADD COLUMN approved INTEGER NOT NULL DEFAULT 1",
+    ),
 ];
 
 fn migrate_columns(conn: &Connection) -> Result<()> {
-    for (column, alter) in MARKETPLACE_MIGRATIONS {
+    for (column, alter) in MARKETPLACE_MIGRATIONS.iter().chain(OWN_OFFERS_MIGRATIONS) {
         let has = conn
             .prepare("SELECT 1 FROM pragma_table_info('marketplace_offers') WHERE name = ?1")
             .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
@@ -1369,8 +1395,9 @@ impl Cache {
                 let mut stmt = tx.prepare(
                     "INSERT INTO marketplace_offers (id, title, description, item_id,
                         category_id, operation, listing_type, price, currency, unit,
-                        quantity, location, region, seller, quality, updated, expires, slug, fetched_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                        quantity, location, region, seller, quality, updated, expires, slug,
+                        photos, approved, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                 )?;
                 let now = now_unix() as i64;
                 for o in offers {
@@ -1393,6 +1420,8 @@ impl Cache {
                         o.updated as i64,
                         o.expires.map(|e| e as i64),
                         o.slug,
+                        o.photos.join(","),
+                        o.approved,
                         now
                     ])?;
                 }
@@ -1730,7 +1759,7 @@ impl Cache {
             let mut stmt = conn.prepare(
                 "SELECT id, title, description, item_id, category_id, operation,
                         listing_type, price, currency, unit, quantity, location, region, seller,
-                        quality, updated, expires, slug
+                        quality, updated, expires, slug, photos, approved
                  FROM marketplace_offers ORDER BY updated DESC, id DESC",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -1755,6 +1784,14 @@ impl Cache {
                     updated: row.get::<_, i64>(15)? as u64,
                     expires: row.get::<_, Option<i64>>(16)?.map(|e| e as u64),
                     slug: row.get(17)?,
+                    photos: row
+                        .get::<_, String>(18)
+                        .unwrap_or_default()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                    approved: row.get::<_, i64>(19).unwrap_or(1) != 0,
                 })
             })?;
             let mut out = Vec::new();
@@ -1823,9 +1860,10 @@ impl Cache {
                 let mut stmt = tx.prepare(
                     "INSERT INTO own_offers (id, title, description, item_id, category_id,
                         operation, listing_type, price, currency, unit, quantity, location,
-                        region, seller, quality, updated, expires, slug, fetched_at)
+                        region, seller, quality, updated, expires, slug, photos, approved,
+                        fetched_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                             ?15, ?16, ?17, ?18, ?19)",
+                             ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
                 )?;
                 let now = now_unix() as i64;
                 for o in offers {
@@ -1848,6 +1886,8 @@ impl Cache {
                         o.updated as i64,
                         o.expires.map(|e| e as i64),
                         o.slug,
+                        o.photos.join(","),
+                        o.approved,
                         now,
                     ])?;
                 }
@@ -1888,7 +1928,7 @@ impl Cache {
             let mut stmt = conn.prepare(
                 "SELECT id, title, description, item_id, category_id, operation,
                         listing_type, price, currency, unit, quantity, location, region, seller,
-                        quality, updated, expires, slug
+                        quality, updated, expires, slug, photos, approved
                  FROM own_offers ORDER BY updated DESC, id DESC",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -1913,6 +1953,14 @@ impl Cache {
                     updated: row.get::<_, i64>(15)? as u64,
                     expires: row.get::<_, Option<i64>>(16)?.map(|e| e as u64),
                     slug: row.get(17)?,
+                    photos: row
+                        .get::<_, String>(18)
+                        .unwrap_or_default()
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect(),
+                    approved: row.get::<_, i64>(19).unwrap_or(1) != 0,
                 })
             })?;
             let mut out = Vec::new();
@@ -2568,6 +2616,8 @@ mod tests {
             updated: 1_792_551_295,
             expires: Some(1_797_738_895),
             slug: "stark-compensator-2-UKCqAtSM3p".into(),
+            photos: Vec::new(),
+            approved: true,
         };
         cache
             .store_marketplace(&[offer(1, "a"), offer(2, "b")])
@@ -2649,6 +2699,8 @@ mod tests {
                 updated: 1,
                 expires: None,
                 slug: "s".into(),
+                photos: Vec::new(),
+                approved: true,
             }])
             .unwrap();
         let snap = cache.marketplace_snapshot().unwrap();
@@ -2912,6 +2964,8 @@ mod tests {
             updated: 1730000000 + id,
             expires: None,
             slug: format!("drake-nettle-s-{id}"),
+            photos: Vec::new(),
+            approved: true,
         }
     }
 

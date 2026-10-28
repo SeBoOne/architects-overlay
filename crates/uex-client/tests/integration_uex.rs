@@ -773,6 +773,8 @@ async fn rate_limit_on_marketplace_can_be_served_from_snapshot() {
             updated: now_unix() - 3600,
             expires: None,
             slug: "rescue-save-tanga-abc123".into(),
+            photos: Vec::new(),
+            approved: true,
         }])
         .unwrap();
     cache.set_marketplace_fetched_at(now_unix() - 301).unwrap();

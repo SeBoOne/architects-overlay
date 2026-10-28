@@ -534,6 +534,14 @@ pub struct Offer {
     pub expires: Option<u64>,
     /// Permalink slug on the source website (deep-link target).
     pub slug: String,
+    /// M3a: CDN-Bild-URLs (Thumbnail-Variante `-t.jpg`) des Listings —
+    /// Komma-Liste aus dem Wire-Feld `photos` gesplittet; leer wenn keins.
+    #[serde(default)]
+    pub photos: Vec<String>,
+    /// M3a: `date_approved > 0` (live verifiziert — public Listings tragen
+    /// immer einen Wert; pending erscheint nur im eigenen Secret-Key-Pull).
+    #[serde(default)]
+    pub approved: bool,
 }
 
 /// Ergebnis von `POST /marketplace_advertise/` (M2b): die frisch angelegte
