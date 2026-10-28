@@ -28,9 +28,10 @@ async fn live_commodity_price_direction_matches_player_view() {
             points.iter().all(|pt| pt.commodity_id == id),
             "{slug}: alle Zeilen müssen id_commodity={id} tragen (id-basiert, nicht namens-basiert)"
         );
-        // Spieler-Sicht (map_price_point): buy_price (Spieler kauft) ⇔ UEX
-        // price_sell > 0; sell_price (Spieler erhält) ⇔ UEX price_buy > 0.
-        // Jede Feed-Zeile ist einseitig — die Mappung muss das exakt spiegeln.
+        // Feed-Semantik (Review t_15e598e7): UEX price_buy = Spieler-Kauf-
+        // preis → App buy_price; price_sell = Spieler-Verkaufspreis →
+        // App sell_price. Jede Feed-Zeile ist einseitig — die Mappung muss
+        // das exakt spiegeln.
         for pt in &points {
             let row = raw
                 .iter()
@@ -41,8 +42,8 @@ async fn live_commodity_price_direction_matches_player_view() {
                         pt.terminal_id
                     )
                 });
-            let expect_buy = row.price_sell > 0.0; // Spieler kauft dort
-            let expect_sell = row.price_buy > 0.0; // Spieler verkauft dort
+            let expect_buy = row.price_buy > 0.0; // Spieler kauft dort (Origin)
+            let expect_sell = row.price_sell > 0.0; // Spieler verkauft dort
             assert_eq!(
                 pt.buy_price > 0.0,
                 expect_buy,

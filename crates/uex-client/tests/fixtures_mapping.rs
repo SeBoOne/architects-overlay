@@ -151,17 +151,19 @@ fn marketplace_fixture_maps_to_offers() {
     }
 }
 
-/// t_15e598e7 — Kauf-Richtung (Sebo-Beispiele Osoian Hides + Stileron):
-/// UEX-Feed-Konvention, live belegt (2026-10-28):
-///   * Osoian Hides (53): Devlin Scrap and Salvage (Verkäufer an den Spieler)
-///     `price_sell=870000, price_buy=0`; The Golden Riviera (Ankauf)
-///     `price_buy=283500, price_sell=0`.
-///   * Stileron (122): TDD Area18 (Verkäufer an den Spieler) `price_sell=140000,
-///     price_buy=0`; Bueno Ravine (Ankauf) `price_buy=122850, price_sell=0`.
+/// t_15e598e7 — Kauf-Richtung (Sebo-Beispiele Osoian Hides + Stileron),
+/// Feed-Semantik laut Review (Runde 1) gegen UEX-eigene commodities_routes +
+/// Profit-Arithmetik belegt: **UEX `price_buy` IST der Spieler-Kaufpreis,
+/// `price_sell` der Spieler-Verkaufspreis.**
+///   * Osoian Hides (53): UEX-Route-ORIGIN (Spieler kauft) = The Golden
+///     Riviera `price_buy=283500, price_sell=0`; Route-DESTINATION (Spieler
+///     verkauft) = Devlin Scrap and Salvage `price_sell=870000, price_buy=0`.
+///   * Stileron (122): Route-Origin = Bueno Ravine `price_buy=122850`;
+///     Route-Destination = Jackson's Swap `price_sell=130000`.
 ///   * Jede Feed-Zeile ist einseitig — eine Zeile mit beidseitig > 0 gibt es
 ///     nicht (Sweep: die Ware ist kaufbar ODER verkaufbar, nie beides zugleich).
-/// Die Spieler-Sicht-Mappung muss daraus exakt die richtigen KAUForTE bauen:
-/// Kaufort ⇔ UEX `price_sell` > 0, Verkaufsort ⇔ UEX `price_buy` > 0.
+/// Die Mappung muss daraus exakt die richtigen KAUForTE bauen:
+/// Kaufort ⇔ UEX `price_buy` > 0, Verkaufsort ⇔ UEX `price_sell` > 0.
 #[test]
 fn map_price_point_buy_direction_matches_uex_feed_semantics() {
     use uex_client::private::PriceRow;
@@ -181,32 +183,33 @@ fn map_price_point_buy_direction_matches_uex_feed_semantics() {
     };
     // Live-Werte der Gegenprobe (gekürzt auf die Richtungsfelder).
     let feed = vec![
-        // Osoian Hides: Verkäufer (Spieler KAUFT dort) + Ankauf.
-        row(53, 24, 0.0, 870_000.0),  // Devlin Scrap and Salvage
-        row(53, 665, 283_500.0, 0.0), // The Golden Riviera
-        // Stileron: TDD (Spieler kauft) + Ankauf (synthetisch, Richtung analog
-        // live Bueno Ravine — Live-Preise fluktuieren, nur die Richtung zählt).
-        row(122, 12, 0.0, 140_000.0), // TDD - Area 18
-        row(122, 10, 140_000.0, 0.0), // ArcCorp Mining Area 141 (Ankauf)
+        // Osoian Hides: Route-Destination (Verkauf) + Route-Origin (Kauf).
+        row(53, 24, 0.0, 870_000.0), // Devlin Scrap and Salvage — Verkaufsort
+        row(53, 665, 283_500.0, 0.0), // The Golden Riviera — KAUForT
+        // Stileron: Route-Destination (Verkauf, Richtung analog live
+        // Jackson's Swap — Live-Preise fluktuieren, nur die Richtung zählt)
+        // + Route-Origin (Kauf, live Bueno Ravine).
+        row(122, 12, 0.0, 140_000.0), // TDD - Area 18 — Verkaufsort
+        row(122, 10, 140_000.0, 0.0), // ArcCorp Mining Area 141 — KAUForT
     ];
     let term_ids = [24u64, 665, 12, 10];
     let mapped: Vec<_> = feed
         .into_iter()
         .map(|r| uex_client::map_price_point(r, ""))
         .collect();
-    // Devlin/TDD: Kauforte (Spieler zahlt) — NICHT als Verkaufsort.
+    // Devlin/TDD: Verkaufsorte (Spieler verkauft) — NICHT als Kaufort.
     for i in [0usize, 2] {
         assert!(
-            mapped[i].buy_price > 0.0 && mapped[i].sell_price == 0.0,
-            "Terminal {} (Spieler-kauft) muss als Kaufort gemappt werden: {mapped:?}",
+            mapped[i].sell_price > 0.0 && mapped[i].buy_price == 0.0,
+            "Terminal {} (price_sell>0) muss als Verkaufsort gemappt werden: {mapped:?}",
             term_ids[i]
         );
     }
-    // Golden Riviera/Mining-Outpost: Verkaufsorte (Spieler erhält).
+    // Golden Riviera/Mining-Outpost: Kauforte (Spieler kauft, price_buy>0).
     for i in [1usize, 3] {
         assert!(
-            mapped[i].sell_price > 0.0 && mapped[i].buy_price == 0.0,
-            "Terminal {} (Ankauf) muss als Verkaufsort gemappt werden: {mapped:?}",
+            mapped[i].buy_price > 0.0 && mapped[i].sell_price == 0.0,
+            "Terminal {} (price_buy>0) muss als Kaufort gemappt werden: {mapped:?}",
             term_ids[i]
         );
     }

@@ -184,10 +184,10 @@ impl UexProvider {
     }
 
     /// t_15e598e7 (Gegenprobe): Raw-Feed-Zeilen einer Ware — die UNMAPPTEN
-    /// UEX-Zeilen (`price_buy` zahlt das Terminal, `price_sell` zahlt der
-    /// Spieler). Kein Cache, kein Mappung — genau dafür gedacht, die
-    /// Spieler-Sicht-Mappung in [`map_price_point`] live gegen den Original-
-    /// Feed zu verifizieren. Nicht vom UI genutzt.
+    /// UEX-Zeilen (`price_buy` = Spieler-Kaufpreis, `price_sell` = Spieler-
+    /// Verkaufspreis, Review Runde 1). Kein Cache, keine Mappung — genau
+    /// dafür gedacht, die Mappung in [`map_price_point`] live gegen den
+    /// Original-Feed zu verifizieren. Nicht vom UI genutzt.
     pub async fn raw_price_rows_for_commodity(&self, id_commodity: u64) -> Result<Vec<PriceRow>> {
         self.http
             .get::<Vec<PriceRow>>(
@@ -2043,15 +2043,14 @@ fn none_if_empty(s: Option<String>) -> Option<String> {
 /// Map a `/commodities_prices` row (commodity- OR terminal-scoped — same wire
 /// shape) onto the seam [`PricePoint`]. `fallback_commodity` is used when the
 /// row omits the name (ageing API rows); the terminal name falls back to a
-/// readable id form. Spieler-Sicht
-/// (siehe `provider::routes` Modul-Kommentar): UEX versteht `price_buy` als
-/// Preis, den das TERMINAL an den Spieler zahlt (Spieler VERKAUFT dort), und
-/// `price_sell` als Preis, zu dem das Terminal an den Spieler VERKAUFT
-/// (Spieler kauft dort). Live-Beleg (Feed t_15e598e7): Osoian Hides —
-/// Devlin Scrap & Salvage (Verkäufer) hat `price_sell=870000, price_buy=0`,
-/// The Golden Riviera (Ankauf) `price_buy=283500, price_sell=0`. Die App-
-/// Felder heißen umgekehrt: `buy_price` = was der SPIELER zahlt, `sell_price`
-/// = was der Spieler erhält — also getauscht mappen (incl. Status/Stock).
+/// readable id form. UEX-Feldsemantik (Review t_15e598e7, gegen UEX-eigene
+/// commodities_routes + Profit-Arithmetik belegt): `price_buy` IST der
+/// SPIELER-Kaufpreis (Spieler kauft dort — UEX-Route-Origin), `price_sell`
+/// der Spieler-Verkaufspreis (Spieler verkauft dort — Route-Destination).
+/// Live-Beleg Osoian Hides: The Golden Riviera (Route-Origin/Kauf)
+/// `price_buy=283500, price_sell=0`; Devlin Scrap & Salvage (Route-
+/// Destination/Verkauf) `price_sell=870000, price_buy=0`. Mappung daher
+/// DIREKT: buy=price_buy / sell=price_sell (incl. Status/Stock).
 pub fn map_price_point(r: PriceRow, fallback_commodity: &str) -> PricePoint {
     PricePoint {
         commodity: if r.commodity_name.is_empty() {
@@ -2070,13 +2069,14 @@ pub fn map_price_point(r: PriceRow, fallback_commodity: &str) -> PricePoint {
             r.terminal_name
         },
         terminal_id: r.id_terminal,
-        // Spieler-Sicht: buy_price = Spieler kauft → UEX price_sell.
-        sell_price: r.price_buy,
-        buy_price: r.price_sell,
-        sell_stock: r.scu_buy_avg,
-        buy_stock: r.scu_sell_avg,
-        sell_status: r.status_buy,
-        buy_status: r.status_sell,
+        // UEX price_buy = Spieler-Kaufpreis, price_sell = Spieler-Verkaufs-
+        // preis (Review t_15e598e7) — direkte Mappung, kein Tausch.
+        sell_price: r.price_sell,
+        buy_price: r.price_buy,
+        sell_stock: r.scu_sell_avg,
+        buy_stock: r.scu_buy_avg,
+        sell_status: r.status_sell,
+        buy_status: r.status_buy,
         quality: r.quality,
         updated: r.date_modified,
     }

@@ -323,15 +323,14 @@ impl WikiProvider {
                     format!("{location} ({chain})")
                 },
                 terminal_id: e.terminal_id,
-                // Spieler-Sicht (t_15e598e7): UEX price_buy zahlt das
-                // TERMINAL an den Spieler (Spieler verkauft), price_sell
-                // zahlt der SPIELER (Spieler kauft) — getauscht mappen.
-                sell_price: e.price_buy,
-                buy_price: e.price_sell,
+                // UEX price_buy = Spieler-Kaufpreis, price_sell = Spieler-
+                // Verkaufspreis (Review t_15e598e7) — direkte Mappung.
+                sell_price: e.price_sell,
+                buy_price: e.price_buy,
                 sell_stock: 0.0,
                 buy_stock: 0.0,
-                sell_status: if e.price_buy > 0.0 { 1 } else { 0 },
-                buy_status: if e.price_sell > 0.0 { 1 } else { 0 },
+                sell_status: if e.price_sell > 0.0 { 1 } else { 0 },
+                buy_status: if e.price_buy > 0.0 { 1 } else { 0 },
                 quality: 0,
                 updated: e
                     .date_updated
@@ -615,10 +614,10 @@ mod tests {
         let points = WikiProvider::map_price_entries("Agricium", 42, entries);
         assert_eq!(points.len(), 2, "duplicates and id-less rows are dropped");
         assert_eq!(points[0].terminal_id, 778);
-        // Spieler-Sicht (t_15e598e7): UEX price_buy zahlt das Terminal an
-        // den Spieler → App sell_price (Spieler erhält); App buy_price = 0.
-        assert_eq!(points[0].sell_price, 8_379.0);
-        assert_eq!(points[0].buy_price, 0.0);
+        // UEX price_buy = Spieler-Kaufpreis (Review t_15e598e7) → App
+        // buy_price direkt; sell_price = 0.
+        assert_eq!(points[0].buy_price, 8_379.0);
+        assert_eq!(points[0].sell_price, 0.0);
         assert_eq!(points[0].commodity, "Agricium");
         assert_eq!(points[0].commodity_id, 42);
         assert_eq!(
@@ -630,8 +629,8 @@ mod tests {
             "ISO date must parse to unix secs"
         );
         assert_eq!(points[1].terminal_id, 802);
-        // Spieler-Sicht: UEX price_sell (Spieler zahlt) → App buy_price.
-        assert_eq!(points[1].buy_price, 9_800.0);
+        // UEX price_sell = Spieler-Verkaufspreis → App sell_price.
+        assert_eq!(points[1].sell_price, 9_800.0);
         assert_eq!(points[1].location, "STANTG", "code fallback when no name");
     }
 
@@ -728,9 +727,9 @@ mod tests {
 
         let points = p.prices_for("Agricium").await.expect("prices");
         assert_eq!(points.len(), 2);
-        // Spieler-Sicht (t_15e598e7): UEX price_buy zahlt das Terminal an
-        // den Spieler → App sell_price; buy_price (Spieler zahlt) = 0.
-        assert_eq!(points[0].sell_price, 8_379.0);
+        // UEX price_buy = Spieler-Kaufpreis (Review t_15e598e7) → App
+        // buy_price direkt.
+        assert_eq!(points[0].buy_price, 8_379.0);
         assert_eq!(points[0].terminal_id, 778);
 
         // Cached under source=wiki with its own freshness marker.
