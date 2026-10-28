@@ -3593,7 +3593,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 		{:else if phase === 'market'}
 			<div class="pane-market">
-			{#if !offerDetail}
+			<!-- PP t_e2cdb571 (2): Tablist nur im MARKTPLATZ-Mode (mode === 'market').
+			     Root-Cause des Reiter-Leaks: der bisherige Guard hing an der Phase
+			     (phase === 'market') — der Routen-View ist intern dieselbe Phase mit
+			     mTab='routes', also blieben „Angebote"/„Mein Shop" dort stehen.
+			     Der Tab-State selbst leakt nicht; die Tablist hing am falschen
+			     Zustand. Jetzt am abgeleiteten Mode (routes = kein Marktplatz-Reiter). -->
+			{#if !offerDetail && mode === 'market'}
 				<div class="mtabs" role="tablist">
 					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
 					<!-- t_350c4300 B1: kein „Handelsrouten"-Tab im Marktplatz — Routen
@@ -4179,8 +4185,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if recentNegotiations.length}
 							<div class="mlist">
 								{#each recentNegotiations as n (n.id)}
+									<!-- PP t_e2cdb571 (1): eigene trow-Klasse — die Offer-Grid-Spalten
+									     (26px Badge + 44px Op) passten nicht zur 3-Kinder-Struktur,
+									     was Op-Chip in den Badge-Slot und Text in 44px quetschte. -->
 									<div
-										class="mrow"
+										class="mrow trow"
 										role="option"
 										title="Marktplatz-Deal auf uexcorp.space öffnen (Listing-Seite)"
 										onclick={() => void openListingDeepLink(n.listing_slug)}
