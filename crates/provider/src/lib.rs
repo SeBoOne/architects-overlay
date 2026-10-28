@@ -15,8 +15,8 @@ pub mod routes;
 
 pub use crate::model::{
     AdvertisePayload, AdvertiseResult, Category, Entity, EntityKind, ListingType, LocationPrices,
-    MarketOperation, MarketplaceFilter, Offer, OfferSort, PricePoint, SearchEntities, SearchHit,
-    TerminalPriceGroup, Trade, deserialize_id_flexible, deserialize_opt_id_flexible,
+    MarketOperation, MarketplaceFilter, Negotiation, Offer, OfferSort, PricePoint, SearchEntities,
+    SearchHit, TerminalPriceGroup, Trade, deserialize_id_flexible, deserialize_opt_id_flexible,
     serialize_id_as_string,
 };
 
@@ -181,6 +181,18 @@ pub trait DataProvider: Send + Sync {
     /// user credential on the source. Default reports unsupported.
     async fn user_trades(&self) -> Result<Vec<Trade>> {
         Err(ProviderError::Unsupported("user trades".to_string()))
+    }
+
+    /// The user's MARKETPLACE deals (UEX `/marketplace_negotiations` —
+    /// Advertisement-Verhandlungen/-Abschlüsse des Accounts, als Anbieter
+    /// ODER Kunde). Das ist die korrekte Quelle für „Letzte 5 Trades" im
+    /// Mein-Shop-Abschnitt (t_350c4300 B2) — `/user_trades` ist commodity-
+    /// seitiger Cargo-Handel und gehört dort NICHT hin. User-scoped (secret
+    /// key). Default reports unsupported.
+    async fn marketplace_negotiations(&self) -> Result<Vec<Negotiation>> {
+        Err(ProviderError::Unsupported(
+            "marketplace negotiations".to_string(),
+        ))
     }
 
     /// Marketplace categories (for the advertise-form dropdown). UEX REQUIRES

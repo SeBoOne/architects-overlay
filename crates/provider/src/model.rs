@@ -368,6 +368,46 @@ pub struct Trade {
     pub organization: Option<String>,
 }
 
+/// One marketplace DEAL of the user's account (UEX `/marketplace_negotiations`,
+/// karte t_350c4300 B2) — source-agnostic projection. Das sind die ECHTEN
+/// Marktplatz-Transaktionen (Listing-Verhandlungen/-Abschlüsse als
+/// Advertiser ODER Client) — NICHT der commodity-seitige `/user_trades`
+/// Cargo-Verlauf (der bleibt fürs Trade-Route-Recording, ist im
+/// „Mein Shop"-Trade-Abschnitt aber falsch).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Negotiation {
+    pub id: u64,
+    /// Marketplace-Listing, um das verhandelt wurde.
+    pub listing_id: u64,
+    /// Negotiation-Identifier (UEX `hash`).
+    pub hash: String,
+    /// Angebotener Preis, als die Verhandlung started.
+    pub price: f64,
+    pub unit: String,
+    pub currency: String,
+    /// Final vereinbarter Deal-Wert („set by the paying side on successful
+    /// close\"); null = noch kein Abschluss. Null-Härtung auf Seam-Ebene:
+    /// 0 → None.
+    pub deal_value: Option<f64>,
+    pub deal_value_currency: String,
+    pub listing_title: String,
+    /// Permalink-Slug des Listings (Deep-Link-Ziel auf uexcorp.space).
+    pub listing_slug: String,
+    pub advertiser_name: String,
+    pub advertiser_username: String,
+    pub client_name: String,
+    pub client_username: String,
+    /// true = der eigene Account ist der Anbieter (Verkaufs-Seite des Deals),
+    /// false = der eigene Account ist der Kunde (Kauf-Seite).
+    pub is_listing_advertiser: bool,
+    /// Verhandlung gestartet (Timestamp).
+    pub date_added: u64,
+    /// Letzte Interaktion (Timestamp).
+    pub date_modified: u64,
+    /// Deal-Abschluss (Timestamp); 0 → None (= noch offen).
+    pub date_closed: Option<u64>,
+}
+
 /// Marketplace category (source-agnostic projection of a `/categories` row).
 /// Used for the advertise-form dropdown — UEX REQUIRES `id_category` for
 /// `type=item`, so the user picks a display-name category whose `id` goes
