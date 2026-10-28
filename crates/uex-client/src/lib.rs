@@ -45,8 +45,8 @@ use provider::{
 
 use dto::{
     CategoryRow, CommodityRouteRow, CommodityRow, CreateResponse, ItemPriceRow, ItemRow,
-    ListingRow, NegotiationRow, PriceRow, StarSystemRow, TerminalRow, UserTradeRow, VehicleRow,
-    split_photos,
+    ListingRow, MessageCreatedRow, NegotiationMessageRow, NegotiationRow, PriceRow, StarSystemRow,
+    TerminalRow, UserTradeRow, VehicleRow, split_photos,
 };
 
 /// Search result page size served from the cache.
@@ -488,6 +488,24 @@ impl DataProvider for UexProvider {
     /// Accounts (Anbieter ODER Kunde) — NICHT der Commodity-Cargo-Handel.
     async fn marketplace_negotiations(&self) -> Result<Vec<provider::Negotiation>> {
         self.negotiations_impl().await
+    }
+
+    async fn marketplace_negotiations_messages(
+        &self,
+        hash: &str,
+        id_negotiation: u64,
+    ) -> Result<Vec<provider::NegotiationMessage>> {
+        self.negotiations_messages_impl(hash, id_negotiation).await
+    }
+
+    async fn send_negotiation_message(
+        &self,
+        id_negotiation: u64,
+        hash: &str,
+        message: &str,
+    ) -> Result<u64> {
+        self.send_negotiation_message_impl(id_negotiation, hash, message)
+            .await
     }
 
     /// Write-Layer (M2b): `POST /marketplace_advertise/` — neues Listing
@@ -1588,6 +1606,91 @@ impl UexProvider {
         Ok(negotiations)
     }
 
+    /// `GET /marketplace_negotiations_messages` (M3b t_893761f1) — Chat-
+    /// Verlauf einer Verhandlung, identifiziert über `hash` (bevorzugt) oder
+    /// `id_negotiation`. Realtime-Endpoint — bewusst OHNE Cache: der Chat
+    /// wird nur bei ausgewähltem Deal + max 1/min gepollt (Research §5),
+    /// ein stale-first-Snapshot würde hier die Konversation verfälschen.
+    async fn negotiations_messages_impl(
+        &self,
+        hash: &str,
+        id_negotiation: u64,
+    ) -> Result<Vec<provider::NegotiationMessage>> {
+        if hash.is_empty() && id_negotiation == 0 {
+            return Err(ProviderError::Config(
+                "Verhandlung nicht eindeutig (hash oder id nötig)".into(),
+            ));
+        }
+        let mut params: Vec<(String, String)> = Vec::new();
+        if !hash.is_empty() {
+            params.push(("hash".into(), hash.to_string()));
+        } else {
+            params.push(("id_negotiation".into(), id_negotiation.to_string()));
+        }
+        let rows: Vec<NegotiationMessageRow> = self
+            .http
+            .get_user(
+                "/marketplace_negotiations_messages",
+                &params,
+                self.secret_key.as_deref(),
+            )
+            .await?;
+        // Älteste zuerst (Chat-Verlauf liest sich von oben nach unten);
+        // UEX liefert die Rows in GET-Reihenfolge — hier deterministisch sortiert.
+        let mut msgs: Vec<provider::NegotiationMessage> =
+            rows.into_iter().map(map_negotiation_message).collect();
+        msgs.sort_by_key(|m| (m.date_added, m.id));
+        Ok(msgs)
+    }
+
+    /// `POST /marketplace_negotiations_messages/` (M3b) — Payload exakt nach
+    /// Doku: `{id_negotiation, hash, message, is_production: 1}`. KEIN Retry
+    /// bei 429/403 (M2b-3-Muster): der Fehler steigt durch, die UI entscheidet
+    /// Deep-Link. Antwort ist `{id_message}`.
+    async fn send_negotiation_message_impl(
+        &self,
+        id_negotiation: u64,
+        hash: &str,
+        message: &str,
+    ) -> Result<u64> {
+        if message.trim().is_empty() {
+            return Err(ProviderError::Config("Nachricht ist leer".into()));
+        }
+        if message.len() > 65_535 {
+            return Err(ProviderError::Config(
+                "Nachricht zu lang (max. 65.535 Zeichen)".into(),
+            ));
+        }
+        if hash.is_empty() && id_negotiation == 0 {
+            return Err(ProviderError::Config(
+                "Verhandlung nicht eindeutig (hash oder id nötig)".into(),
+            ));
+        }
+        if self.secret_key.is_none() {
+            return Err(ProviderError::Config(
+                "UEX Secret-Key fehlt (Einstellungen → „UEX persönlicher Secret-Key“)".into(),
+            ));
+        }
+        // Beide Identifier mitsenden (Doku: „either id_negotiation OR hash
+        // alone may work; examples show both patterns") — serverseitig
+        // konsistent.
+        let body = serde_json::json!({
+            "id_negotiation": id_negotiation,
+            "hash": hash,
+            "message": message,
+            "is_production": 1,
+        });
+        let created: MessageCreatedRow = self
+            .http
+            .post(
+                "/marketplace_negotiations_messages/",
+                self.secret_key.as_deref(),
+                &body,
+            )
+            .await?;
+        Ok(created.id_message)
+    }
+
     /// Wire-/Listing-Rows → Seam-Offers, identische Mapping-Logik wie
     /// `marketplace_offers` (inkl. Region-Auflösung). Der username-Filter
     /// wurde schon serverseitig angewendet; `self` wird als seller-Fallback
@@ -1976,6 +2079,27 @@ fn map_negotiation(r: NegotiationRow) -> provider::Negotiation {
         date_added: r.date_added,
         date_modified: r.date_modified,
         date_closed: nonzero_opt_u64(r.date_closed),
+    }
+}
+
+/// Map a `/marketplace_negotiations_messages/` wire-row onto the seam
+/// [`provider::NegotiationMessage`] (M3b). Null-Felder → None/leer
+/// (Seam-Regel); `date_read` 0 → None (noch ungelesen).
+fn map_negotiation_message(r: NegotiationMessageRow) -> provider::NegotiationMessage {
+    provider::NegotiationMessage {
+        id: r.id,
+        id_listing: r.id_listing,
+        id_negotiation: r.id_negotiation,
+        event: r.event.filter(|e| !e.is_empty()),
+        message: r.message.filter(|m| !m.is_empty()),
+        listing_title: r.listing_title,
+        listing_slug: r.listing_slug,
+        negotiation_hash: r.negotiation_hash,
+        user_name: r.user_name,
+        user_username: r.user_username,
+        api_name: r.api_name,
+        date_added: r.date_added,
+        date_read: nonzero_opt_u64(r.date_read),
     }
 }
 
@@ -2793,6 +2917,161 @@ mod tests {
         .unwrap();
         let trades = provider.user_trades().await.unwrap();
         assert!(trades.is_empty(), "leere Historie → Ok([]), kein Fehler");
+    }
+
+    /// M3b (t_893761f1): GET /marketplace_negotiations_messages — Verlauf
+    /// wird geparst, gemappt und ÄLTESTE-ZUERST sortiert. Null-Härtung:
+    /// explizite `null`s (event/message/date_read) und String-Zahlen
+    /// (t_89d1e32e-Muster) dürfen nicht crashen.
+    #[tokio::test]
+    async fn negotiation_messages_live_fetch_parses_sorts_and_hardens() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"ok","http_code":200,"data":[
+            {"id":45022,"id_listing":589321,"id_negotiation":12847,"event":null,
+             "message":"Ja, gerne für 425k.","listing_title":"1x Draken Blackbird",
+             "listing_slug":"draken-blackbird","negotiation_hash":"a3f7c91d",
+             "user_name":"Semih Balci","user_username":"sebo_one","user_avatar":"",
+             "api_name":"uex-web","date_added":"1792900120","date_read":null},
+            {"id":45021,"id_listing":589321,"id_negotiation":"12847","event":"price_changed",
+             "message":null,"listing_title":"1x Draken Blackbird",
+             "listing_slug":"draken-blackbird","negotiation_hash":"a3f7c91d",
+             "user_name":"UEX","user_username":"uex","user_avatar":null,
+             "api_name":"uex-web","date_added":1792900000,"date_read":0}
+        ]}"#;
+        std::thread::spawn(move || {
+            if let Ok(mut stream) = listener.incoming().next().unwrap() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let provider = UexProvider::with_base_url(
+            cache,
+            Some("some-secret-key".into()),
+            &format!("http://127.0.0.1:{port}"),
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let msgs = provider
+            .marketplace_negotiations_messages("a3f7c91d", 0)
+            .await
+            .unwrap();
+        assert_eq!(msgs.len(), 2, "nulls + String-Zahlen dürfen nicht crashen");
+        assert_eq!(msgs[0].id, 45021, "älteste zuerst");
+        assert_eq!(msgs[1].message.as_deref(), Some("Ja, gerne für 425k."));
+        assert!(msgs[1].event.is_none(), "normale Nachricht → event None");
+        assert_eq!(msgs[1].date_read, None, "date_read 0/null → None");
+    }
+
+    /// M3b: POST /marketplace_negotiations_messages/ — Payload exakt nach
+    /// Doku (id_negotiation + hash + message + is_production=1) und Antwort
+    /// `{id_message}` wird geliefert. KEIN Retry-Verhalten hier (http-Layer).
+    #[tokio::test]
+    async fn negotiation_message_send_posts_doku_payload() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"ok","http_code":200,"data":{"id_message":9001}}"#;
+        let handle = std::thread::spawn(move || {
+            let mut stream = listener.incoming().next().unwrap().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                )
+                .ok();
+            stream.flush().ok();
+            req
+        });
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let provider = UexProvider::with_base_url(
+            cache,
+            Some("some-secret-key".into()),
+            &format!("http://127.0.0.1:{port}"),
+            std::time::Duration::ZERO,
+        )
+        .unwrap()
+        .with_secret_key(Some("secret-abc".into()));
+        let id = provider
+            .send_negotiation_message(12847, "a3f7c91d", "Test-Nachricht")
+            .await
+            .unwrap();
+        assert_eq!(id, 9001);
+        let req = handle.join().unwrap();
+        assert!(
+            req.contains("/marketplace_negotiations_messages/"),
+            "POST-Pfad: {req}"
+        );
+        assert!(
+            req.contains("secret-key: secret-abc"),
+            "secret-key-Header: {req}"
+        );
+        assert!(req.contains("\"id_negotiation\":12847"), "payload: {req}");
+        assert!(req.contains("\"hash\":\"a3f7c91d\""), "payload: {req}");
+        assert!(
+            req.contains("\"message\":\"Test-Nachricht\""),
+            "payload: {req}"
+        );
+        assert!(req.contains("\"is_production\":1"), "payload: {req}");
+    }
+
+    /// M3b: UEX meldet "no_messages_found" (Verhandlung ohne Nachrichten) —
+    /// kein Fehler, sondern leerer Verlauf (analog no_trades_found).
+    #[tokio::test]
+    async fn negotiation_messages_no_messages_found_is_empty_history() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"no_messages_found","http_code":200,"data":null}"#;
+        std::thread::spawn(move || {
+            if let Ok(mut stream) = listener.incoming().next().unwrap() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let provider = UexProvider::with_base_url(
+            cache,
+            Some("some-secret-key".into()),
+            &format!("http://127.0.0.1:{port}"),
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let msgs = provider
+            .marketplace_negotiations_messages("h", 5)
+            .await
+            .unwrap();
+        assert!(msgs.is_empty(), "leerer Verlauf → Ok([]), kein Fehler");
     }
 
     /// Frischer Negotiations-Snapshot → negotiations_impl serviert aus dem

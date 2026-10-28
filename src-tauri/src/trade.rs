@@ -959,6 +959,68 @@ pub async fn get_my_negotiations(
     }
 }
 
+/// Deal-Chat-Verlauf laden (M3b t_893761f1) — `GET
+/// /marketplace_negotiations_messages`. Realtime-Endpoint: bewusst OHNE
+/// Cache/offline-Fallback (ein veralteter Chat wäre falsch); das Frontend
+/// pollt max. 1/min im Idle (Research §5). Identifikation über hash
+/// (bevorzugt) oder id_negotiation.
+#[derive(serde::Serialize, Clone)]
+pub struct MessagesResponse {
+    pub source: String,
+    pub fetched_at: u64,
+    pub messages: Vec<provider::NegotiationMessage>,
+    pub note: Option<String>,
+    pub key_set: bool,
+}
+
+#[tauri::command]
+pub async fn get_negotiation_messages(
+    state: State<'_, TradeState>,
+    hash: String,
+    id_negotiation: u64,
+) -> Result<MessagesResponse, String> {
+    let key_set = api_key_set();
+    match state
+        .provider
+        .marketplace_negotiations_messages(&hash, id_negotiation)
+        .await
+    {
+        Ok(messages) => Ok(MessagesResponse {
+            source: "live".into(),
+            fetched_at: now_unix(),
+            messages,
+            note: None,
+            key_set,
+        }),
+        Err(e) => Err(friendly(e)),
+    }
+}
+
+/// Chat-Nachricht senden (M3b) — `POST /marketplace_negotiations_messages/`,
+/// Payload exakt nach Doku (id_negotiation + hash + message +
+/// is_production=1, gesetzt im Provider). KEIN Retry bei 429/403 (M2b-3):
+/// der Fehler steigt als deutsche Meldung durch, die UI zeigt ihn zusammen
+/// mit dem Deep-Link. Antwort: die neue Message-ID.
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct MessageSendResponse {
+    pub id_message: u64,
+}
+
+#[tauri::command]
+pub async fn send_negotiation_message(
+    state: State<'_, TradeState>,
+    id_negotiation: u64,
+    hash: String,
+    message: String,
+) -> Result<MessageSendResponse, String> {
+    let id = state
+        .provider
+        .send_negotiation_message(id_negotiation, &hash, &message)
+        .await
+        .map_err(friendly)?;
+    Ok(MessageSendResponse { id_message: id })
+}
+
 /// Open the user's OWN LISTINGS manager on uexcorp.space (t_350c4300 B3):
 /// alle „Listings verwalten"/„Angelegte Listings öffnen"-Buttons gehen auf
 /// den Listings-Tab des Marketplace-Managers — Login macht der Nutzer selbst
@@ -2295,6 +2357,26 @@ mod tests {
         fail_negotiations: bool,
     }
 
+    // M3b (t_893761f1): Chat-Mock-Fixture — Verlauf + Send-Fehlerpfad
+    // (429/403 → deutsche Meldung, KEIN Retry) werden im IPC-Layer belegt.
+    fn one_message() -> provider::NegotiationMessage {
+        provider::NegotiationMessage {
+            id: 45021,
+            id_listing: 589321,
+            id_negotiation: 12847,
+            event: None,
+            message: Some("Hallo — ist das Angebot noch da?".into()),
+            listing_title: "1x Draken Blackbird".into(),
+            listing_slug: "draken-blackbird".into(),
+            negotiation_hash: "a3f7c91d".into(),
+            user_name: "John Doe".into(),
+            user_username: "johndoe".into(),
+            api_name: "uex-web".into(),
+            date_added: 1_792_900_000,
+            date_read: None,
+        }
+    }
+
     #[async_trait::async_trait]
     impl DataProvider for ShopProvider {
         async fn search(
@@ -2395,6 +2477,27 @@ mod tests {
                     date_closed: Some(1730000200),
                 }])
             }
+        }
+        async fn marketplace_negotiations_messages(
+            &self,
+            hash: &str,
+            id_negotiation: u64,
+        ) -> provider::Result<Vec<provider::NegotiationMessage>> {
+            let _ = (hash, id_negotiation);
+            Ok(vec![one_message()])
+        }
+        async fn send_negotiation_message(
+            &self,
+            _id_negotiation: u64,
+            _hash: &str,
+            message: &str,
+        ) -> provider::Result<u64> {
+            if message == "429" {
+                // 429/403-Fehlerpfad: Rate-Limit steigt als RateLimit durch —
+                // friendly() macht „HTTP 429 · Rate-Limit erreicht" daraus.
+                return Err(provider::ProviderError::RateLimit { retry_after: None });
+            }
+            Ok(9001)
         }
         async fn fetch_entities(&self, _k: EntityKind) -> provider::Result<Vec<provider::Entity>> {
             Ok(vec![])
@@ -2661,6 +2764,47 @@ mod tests {
         assert_eq!(resp.negotiations[0].listing_title, "ARGO MPUV");
         assert!(!resp.negotiations[0].is_listing_advertiser);
         let _ = app2;
+    }
+
+    /// M3b (t_893761f1): Deal-Chat IPC — Verlauf wird durchgereicht (live,
+    /// kein Cache/offline-Fallback) und der Send-Pfad liefert die Message-ID;
+    /// 429 steigt als deutsche Rate-Limit-Meldung durch (KEIN Retry).
+    #[tokio::test]
+    async fn negotiation_messages_ipc_and_send_paths() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: false,
+                fail_trades: false,
+                fail_negotiations: false,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        let resp = get_negotiation_messages(state.clone(), "a3f7c91d".into(), 12847)
+            .await
+            .unwrap();
+        assert_eq!(resp.source, "live");
+        assert_eq!(resp.messages.len(), 1);
+        assert_eq!(resp.messages[0].id, 45021);
+        assert_eq!(
+            resp.messages[0].message.as_deref(),
+            Some("Hallo — ist das Angebot noch da?")
+        );
+
+        let sent = send_negotiation_message(state.clone(), 12847, "a3f7c91d".into(), "ok".into())
+            .await
+            .unwrap();
+        assert_eq!(sent.id_message, 9001);
+
+        let err = send_negotiation_message(state.clone(), 12847, "a3f7c91d".into(), "429".into())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "HTTP 429 · Rate-Limit erreicht");
+        let _ = app;
     }
 
     #[test]

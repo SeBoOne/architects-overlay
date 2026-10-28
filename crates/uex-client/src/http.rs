@@ -172,7 +172,10 @@ impl UexHttpClient {
             // Deserialisiere `[]` in den erwarteten Listen-Typ (alle Aufrufer
             // lesen `Vec<T>`), damit die UI den Leer-Zustand rendert statt
             // eines Fehlerpanels.
-            if envelope.status == "no_trades_found" {
+            // dito für den Deal-Chat (M3b): UEX meldet "no_messages_found",
+            // wenn die Verhandlung (noch) keine Nachrichten hat — keine
+            // Fehler, sondern ein leerer Verlauf.
+            if envelope.status == "no_trades_found" || envelope.status == "no_messages_found" {
                 return serde_json::from_value(serde_json::Value::Array(Vec::new()))
                     .map_err(|e| ProviderError::Json(format!("empty history for {path}: {e}")));
             }

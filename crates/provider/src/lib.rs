@@ -15,9 +15,9 @@ pub mod routes;
 
 pub use crate::model::{
     AdvertisePayload, AdvertiseResult, Category, Entity, EntityKind, ItemSuggestion, ListingType,
-    LocationPrices, MarketOperation, MarketplaceFilter, Negotiation, Offer, OfferSort, PricePoint,
-    SearchEntities, SearchHit, TerminalPriceGroup, Trade, deserialize_id_flexible,
-    deserialize_opt_id_flexible, serialize_id_as_string,
+    LocationPrices, MarketOperation, MarketplaceFilter, Negotiation, NegotiationMessage, Offer,
+    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, Trade,
+    deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
 };
 
 /// Domain error produced by a provider implementation.
@@ -192,6 +192,39 @@ pub trait DataProvider: Send + Sync {
     async fn marketplace_negotiations(&self) -> Result<Vec<Negotiation>> {
         Err(ProviderError::Unsupported(
             "marketplace negotiations".to_string(),
+        ))
+    }
+
+    /// Chat-Verlauf einer MARKETPLACE-Verhandlung (M3b t_893761f1,
+    /// `GET /marketplace_negotiations_messages`) — identifiziert über
+    /// `hash` (bevorzugt) oder `id_negotiation`. Realtime-Endpoint ohne
+    /// Cache-TTL (Research-Empfehlung: Polling max. 1/min im Idle).
+    /// User-scoped (secret key). Default reports unsupported.
+    async fn marketplace_negotiations_messages(
+        &self,
+        hash: &str,
+        id_negotiation: u64,
+    ) -> Result<Vec<NegotiationMessage>> {
+        let _ = (hash, id_negotiation);
+        Err(ProviderError::Unsupported(
+            "marketplace negotiations messages".to_string(),
+        ))
+    }
+
+    /// Chat-Nachricht senden (M3b, `POST /marketplace_negotiations_messages/`)
+    /// mit Payload exakt nach Doku: `{id_negotiation, hash, message,
+    /// is_production}`. KEIN Retry bei 429/403 — der Fehler steigt durch,
+    /// die UI entscheidet Deep-Link. Liefert die neue Message-ID. Default
+    /// reports unsupported.
+    async fn send_negotiation_message(
+        &self,
+        id_negotiation: u64,
+        hash: &str,
+        message: &str,
+    ) -> Result<u64> {
+        let _ = (id_negotiation, hash, message);
+        Err(ProviderError::Unsupported(
+            "send negotiation message".to_string(),
         ))
     }
 

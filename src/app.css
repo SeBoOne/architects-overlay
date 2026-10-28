@@ -3056,3 +3056,92 @@ html[data-window="spotlight"] .shell {
   display: flex;
   gap: 6px;
 }
+
+/* ---- M3b (t_893761f1): Trades-Reiter — Deal-Chat ----------------------- */
+/* Verlaufs-Scroller: flex:1 + min-height:0 (K2-Muster), scrollt innen. */
+.chat {
+  flex: 1;
+  min-height: 0;
+  max-height: min(48vh, 360px);
+  overflow: auto;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+/* Eine Nachricht: Panel-Karte; eigene (Username = Shop-Username) rechts-
+   ausgerichtet mit Akzent-Rand, Gegenpart links mit Panel2. */
+.chat-msg {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  max-width: 88%;
+  align-self: flex-start;
+}
+.chat-msg.own {
+  align-self: flex-end;
+  border-color: var(--accent-d);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel2));
+}
+.chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.chat-who {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.chat-msg.own .chat-who {
+  color: var(--accent-h);
+}
+.chat-time {
+  font-size: 10px;
+  color: var(--fgdim);
+}
+.chat-text {
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* System-Events (event != null, message == null): zentriert, dezent. */
+.chat-ev {
+  align-self: center;
+  font-size: 10px;
+  color: var(--fgdim);
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+/* neuer-Nachricht-Indikator in der Deal-Row (date_modified > gesehen). */
+.chat-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Eingabezeile unter dem Verlauf: Input + Senden (kein 2-Schritt — Chat ist
+   konversationell; Rate-Limit/Send-Fehlerpfad läuft über chatErr). */
+.chat-input {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+}
+.chat-input .rtext {
+  flex: 1;
+  min-width: 0;
+}

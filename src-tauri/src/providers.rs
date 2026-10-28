@@ -414,6 +414,30 @@ impl DataProvider for CompositeProvider {
         self.uex.marketplace_negotiations().await
     }
 
+    async fn marketplace_negotiations_messages(
+        &self,
+        hash: &str,
+        id_negotiation: u64,
+    ) -> Result<Vec<provider::NegotiationMessage>> {
+        // Deal-Chat (M3b t_893761f1) ist ebenfalls UEX-user-scoped — dieselbe
+        // Delegierungs-Regel wie `marketplace_negotiations` (Trait-Default
+        // meldet sonst „nicht unterstützt" und bricht den Trades-Reiter).
+        self.uex
+            .marketplace_negotiations_messages(hash, id_negotiation)
+            .await
+    }
+
+    async fn send_negotiation_message(
+        &self,
+        id_negotiation: u64,
+        hash: &str,
+        message: &str,
+    ) -> Result<u64> {
+        self.uex
+            .send_negotiation_message(id_negotiation, hash, message)
+            .await
+    }
+
     async fn categories(&self) -> Result<Vec<provider::Category>> {
         // Marketplace-Kategorien (Anlegen-Form) sind UEX-Referenzdaten.
         self.uex.categories().await
@@ -1041,6 +1065,45 @@ mod tests {
         assert!(
             !matches!(err, ProviderError::Unsupported(_)),
             "Composite fällt in den Trait-Default durch: {err:?}"
+        );
+    }
+
+    /// M3b (t_893761f1): dieselbe Delegierungs-Regel für den Deal-Chat —
+    /// ohne explizite Delegation bricht `get_negotiation_messages` mit
+    /// „Nicht unterstützt: marketplace negotiations messages".
+    #[tokio::test]
+    async fn composite_delegates_negotiation_messages_to_uex() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let uex = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let wiki = WikiProvider::with_base_url(
+            "http://127.0.0.1:2",
+            std::time::Duration::ZERO,
+            cache.clone(),
+        )
+        .unwrap();
+        let provider =
+            CompositeProvider::new(uex, wiki, SourceSwitch::new(CommoditySource::Wiki), cache);
+        let err = provider
+            .marketplace_negotiations_messages("h", 1)
+            .await
+            .unwrap_err();
+        assert!(
+            !matches!(err, ProviderError::Unsupported(_)),
+            "Composite fällt in den Trait-Default durch: {err:?}"
+        );
+        let err2 = provider
+            .send_negotiation_message(1, "h", "x")
+            .await
+            .unwrap_err();
+        assert!(
+            !matches!(err2, ProviderError::Unsupported(_)),
+            "Composite fällt in den Trait-Default durch: {err2:?}"
         );
     }
 }

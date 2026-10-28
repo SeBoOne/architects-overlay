@@ -203,6 +203,43 @@ window.__TAURI_INTERNALS__ = {
 					key_set: stubState.uex_api_key_set
 				};
 			}
+			// ---- M3b (t_893761f1): Deal-Chat (Trades-Reiter) --------------------
+			// GET /marketplace_negotiations_messages + POST — Fixtures via
+			// window.__TRADE_MSGS__ (Objekt: hash → Array), Send-Fehler via
+			// window.__CHAT_SEND_FAIL__. Payload-Capture für die Probe.
+			case 'get_negotiation_messages': {
+				if (window.__CHAT_MSGS_FAIL__) throw new Error(window.__CHAT_MSGS_ERR__ || 'HTTP 500 · UEX nicht erreichbar');
+				const msgs = (window.__TRADE_MSGS__ || {})[a.hash] || [];
+				return {
+					source: 'live',
+					fetched_at: Math.floor(Date.now() / 1000),
+					messages: msgs,
+					note: null,
+					key_set: stubState.uex_secret_key_set
+				};
+			}
+			case 'send_negotiation_message': {
+				window.__LAST_CHAT_PAYLOAD__ = { id_negotiation: a.id_negotiation, hash: a.hash, message: a.message };
+				if (window.__CHAT_SEND_FAIL__) throw new Error(window.__CHAT_SEND_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
+				const arr = (window.__TRADE_MSGS__ = window.__TRADE_MSGS__ || {})[a.hash] || [];
+				const nm = {
+					id: 90000 + arr.length,
+					id_listing: 1,
+					id_negotiation: a.id_negotiation,
+					event: null,
+					message: a.message,
+					listing_title: 'probe',
+					listing_slug: 'probe',
+					negotiation_hash: a.hash,
+					user_name: 'Semih Balci',
+					user_username: 'sebo_one',
+					api_name: 'uex-api',
+					date_added: Math.floor(Date.now() / 1000),
+					date_read: null
+				};
+				window.__TRADE_MSGS__[a.hash] = [...arr, nm];
+				return { id_message: nm.id };
+			}
 			// ---- M2b (Write-Layer): Anlegen + Abmelden + Confirm-Modus ---------
 			case 'marketplace_advertise': {
 				if (window.__SHOP_WRITE_FAIL__) throw new Error(window.__SHOP_WRITE_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
