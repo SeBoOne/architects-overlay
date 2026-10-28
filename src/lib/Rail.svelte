@@ -18,18 +18,52 @@
 		icon: 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
 	};
 
-	let { mode, compact = false, onselect }: { mode: Mode; compact?: boolean; onselect: (m: Mode) => void } =
-		$props();
+	let {
+		mode,
+		compact = false,
+		onselect,
+		// PB (t_1c9bc240, B1): persistierte Mode-Hotkeys (Snapshot der Settings).
+		// Fehlender/ungültiger Eintrag → Default (Migrationspfad zur neuen Belegung).
+		hotkeys
+	}: {
+		mode: Mode;
+		compact?: boolean;
+		onselect: (m: Mode) => void;
+		hotkeys?: Partial<Record<Mode, string>>;
+	} = $props();
 
 	// Inventar/Hangar: eigene Karten — hier nur Rail-Eintrag + Platzhalter-View.
 	const ENTRIES: Entry[] = [
 		{ id: 'search', key: 'F1', label: 'Suche', title: 'Suche (F1)', icon: 'search' },
 		{ id: 'market', key: 'F2', label: 'Marktplatz', title: 'Marktplatz (F2)', icon: 'market' },
-		{ id: 'routes', key: 'F6', label: 'Routen', title: 'Handelsrouten (F6)', icon: 'routes' },
-		{ id: 'inventory', key: 'F3', label: 'Inventar', title: 'Inventar — kommt bald (F3)', icon: 'inventory' },
-		{ id: 'hangar', key: 'F4', label: 'Hangar', title: 'Hangar — kommt bald (F4)', icon: 'hangar' },
+		{ id: 'routes', key: 'F3', label: 'Routen', title: 'Handelsrouten (F3)', icon: 'routes' },
+		{ id: 'inventory', key: 'F4', label: 'Inventar', title: 'Inventar — kommt bald (F4)', icon: 'inventory' },
+		{ id: 'hangar', key: 'F11', label: 'Hangar', title: 'Hangar — kommt bald (F11)', icon: 'hangar' },
 		{ id: 'settings', key: 'F12', label: 'Einstellungen', title: 'Einstellungen (F12)', icon: 'settings' }
 	];
+
+	// PB (t_1c9bc240, B1): angezeigte Taste = persistierter Wert (Settings-
+	// Snapshot) mit Fallback auf die Defaults — identische Quelle wie der
+	// Keyhandler in +page.svelte (lib/hotkeys.ts).
+	const DEFAULT_KEYS: Record<Mode, string> = {
+		search: 'F1',
+		market: 'F2',
+		routes: 'F3',
+		inventory: 'F4',
+		hangar: 'F11',
+		settings: 'F12'
+	};
+	function keyFor(id: Mode): string {
+		const k = hotkeys?.[id];
+		return typeof k === 'string' && /^F([1-9]|1[0-2])$/.test(k.trim().toUpperCase())
+			? k.trim().toUpperCase()
+			: DEFAULT_KEYS[id];
+	}
+	function titleFor(en: Entry): string {
+		const soon = en.id === 'inventory' || en.id === 'hangar' ? ' — kommt bald' : '';
+		const label = en.id === 'routes' ? 'Handelsrouten' : en.label;
+		return `${label}${soon} (${keyFor(en.id)})`;
+	}
 </script>
 
 <nav class="rail" class:is-compact={compact} aria-label="Modi">
@@ -39,8 +73,8 @@
 			class="rentry"
 			class:is-on={mode === en.id}
 			onclick={() => onselect(en.id)}
-			title={en.title}
-			aria-label={en.title}
+			title={titleFor(en)}
+			aria-label={titleFor(en)}
 			aria-current={mode === en.id ? 'true' : undefined}
 		>
 			<span class="ric">
@@ -81,7 +115,7 @@
 					</svg>
 				{/if}
 			</span>
-			<span class="rkey">{en.key}</span>
+			<span class="rkey">{keyFor(en.id)}</span>
 			<span class="rlbl">{en.label}</span>
 		</button>
 	{/each}

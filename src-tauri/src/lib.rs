@@ -52,6 +52,7 @@ pub fn run() {
             trade::get_marketplace,
             trade::get_my_offers,
             trade::get_my_trades,
+            trade::get_my_negotiations,
             trade::marketplace_photo,
             trade::marketplace_advertise,
             trade::marketplace_delete,
@@ -82,6 +83,8 @@ pub fn run() {
             app_settings::settings_set_shortcut_toggle,
             app_settings::settings_set_shortcut_click_through,
             app_settings::settings_set_shortcuts_sync,
+            app_settings::settings_set_mode_hotkey,
+            app_settings::settings_reset_mode_hotkeys,
             overlay::overlay_config_closed,
         ]);
     }

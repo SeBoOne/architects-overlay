@@ -45,7 +45,8 @@ use provider::{
 
 use dto::{
     CategoryRow, CommodityRouteRow, CommodityRow, CreateResponse, ItemPriceRow, ItemRow,
-    ListingRow, PriceRow, StarSystemRow, TerminalRow, UserTradeRow, VehicleRow, split_photos,
+    ListingRow, NegotiationRow, PriceRow, StarSystemRow, TerminalRow, UserTradeRow, VehicleRow,
+    split_photos,
 };
 
 /// Search result page size served from the cache.
@@ -386,7 +387,13 @@ impl DataProvider for UexProvider {
         // replace the general snapshot.
         let cacheable =
             filters.item_id.is_none() && resolved_ids.is_empty() && filters.operation.is_none();
-        if cacheable && self.cache.marketplace_fresh().map_err(map_cache_err)? {
+        // PB (t_1c9bc240, B2): F5-Resync — force_refresh umgeht die Frische-
+        // Prüfung (echter Live-Fetch, derselbe Snapshot-Speicherpfad wie der
+        // Hintergrund-Refresh), statt nur den Cache neu zu rendern.
+        if cacheable
+            && !filters.force_refresh
+            && self.cache.marketplace_fresh().map_err(map_cache_err)?
+        {
             let snapshot = self.cache.marketplace_snapshot().map_err(map_cache_err)?;
             return Ok(Self::apply_local(snapshot, &filters));
         }
@@ -469,6 +476,18 @@ impl DataProvider for UexProvider {
     /// wie der Rest; der letzte Snapshot (Tabelle `own_trades`) dient offline.
     async fn user_trades(&self) -> Result<Vec<provider::Trade>> {
         self.user_trades_impl().await
+    }
+
+    /// Eigene Marktplatz-Deals (t_350c4300 B2 — korrekte Quelle für
+    /// „Letzte 5 Trades" im Mein-Shop-Abschnitt).
+    ///
+    /// `GET /marketplace_negotiations/` — „List all advertisement deals
+    /// associated with a user" (UEX-Doku), user-scoped via secret-key
+    /// (wie `/user_trades`). Stale-first auf eigener Cache-Tabelle
+    /// (`own_negotiations`). Das sind Listing-Verhandlungen/-Abschlüsse des
+    /// Accounts (Anbieter ODER Kunde) — NICHT der Commodity-Cargo-Handel.
+    async fn marketplace_negotiations(&self) -> Result<Vec<provider::Negotiation>> {
+        self.negotiations_impl().await
     }
 
     /// Write-Layer (M2b): `POST /marketplace_advertise/` — neues Listing
@@ -1547,6 +1566,28 @@ impl UexProvider {
         Ok(trades)
     }
 
+    /// `GET /marketplace_negotiations/` (t_350c4300 B2) — user-scoped via
+    /// secret-key, stale-first auf `own_negotiations` (TTL analog
+    /// `TTL_OWN_SHOP`). Spiegel von `user_trades_impl`, aber mit der
+    /// MARKTPLATZ-seitigen Deal-Quelle statt des Commodity-Verlaufs.
+    async fn negotiations_impl(&self) -> Result<Vec<provider::Negotiation>> {
+        if self.cache.own_negotiations_fresh().map_err(map_cache_err)? {
+            return self
+                .cache
+                .own_negotiations_snapshot()
+                .map_err(map_cache_err);
+        }
+        let rows: Vec<NegotiationRow> = self
+            .http
+            .get_user("/marketplace_negotiations", &[], self.secret_key.as_deref())
+            .await?;
+        let negotiations = rows.into_iter().map(map_negotiation).collect::<Vec<_>>();
+        self.cache
+            .store_own_negotiations(&negotiations)
+            .map_err(map_cache_err)?;
+        Ok(negotiations)
+    }
+
     /// Wire-/Listing-Rows → Seam-Offers, identische Mapping-Logik wie
     /// `marketplace_offers` (inkl. Region-Auflösung). Der username-Filter
     /// wurde schon serverseitig angewendet; `self` wird als seller-Fallback
@@ -1910,6 +1951,42 @@ fn map_route_enrichment(r: CommodityRouteRow) -> RouteEnrichment {
         has_quantum_marker_destination: r.has_quantum_marker_destination != 0,
         date_added: r.date_added,
     }
+}
+
+/// Map a `/marketplace_negotiations/` wire-row onto the seam
+/// [`provider::Negotiation`] (t_350c4300 B2). Null-Felder → None/leer
+/// (Seam-Regel: u64 → 0, String → „\", Optionals → None).
+fn map_negotiation(r: NegotiationRow) -> provider::Negotiation {
+    provider::Negotiation {
+        id: r.id,
+        listing_id: r.id_listing,
+        hash: r.hash,
+        price: r.price,
+        unit: r.unit,
+        currency: r.currency,
+        deal_value: nonzero_opt_f64(r.deal_value),
+        deal_value_currency: r.deal_value_currency,
+        listing_title: r.listing_title,
+        listing_slug: r.listing_slug,
+        advertiser_name: r.advertiser_name,
+        advertiser_username: r.advertiser_username,
+        client_name: r.client_name,
+        client_username: r.client_username,
+        is_listing_advertiser: r.is_listing_advertiser != 0,
+        date_added: r.date_added,
+        date_modified: r.date_modified,
+        date_closed: nonzero_opt_u64(r.date_closed),
+    }
+}
+
+/// `Some(0)` → `None` (UEX „0/kein Abschluss“ = kein Wert auf Optional-Feldern).
+fn nonzero_opt_u64(v: Option<u64>) -> Option<u64> {
+    v.filter(|x| *x != 0)
+}
+
+/// `Some(0.0)` → `None` (analog [`nonzero_opt_u64`] für float).
+fn nonzero_opt_f64(v: Option<f64>) -> Option<f64> {
+    v.filter(|x| *x != 0.0)
 }
 
 /// Map a `/user_trades/` wire-row onto the seam [`provider::Trade`].
@@ -2716,6 +2793,120 @@ mod tests {
         .unwrap();
         let trades = provider.user_trades().await.unwrap();
         assert!(trades.is_empty(), "leere Historie → Ok([]), kein Fehler");
+    }
+
+    /// Frischer Negotiations-Snapshot → negotiations_impl serviert aus dem
+    /// Cache ohne Netz (tote URL belegt den Shortcut) — t_350c4300 B2.
+    #[tokio::test]
+    async fn negotiations_serves_fresh_snapshot_without_network() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_negotiations(&[provider::Negotiation {
+                id: 55,
+                listing_id: 4141,
+                hash: "h-55".into(),
+                price: 4_500_000.0,
+                unit: "unit".into(),
+                currency: "UEC".into(),
+                deal_value: Some(4_400_000.0),
+                deal_value_currency: "UEC".into(),
+                listing_title: "Drake Nettle S".into(),
+                listing_slug: "drake-nettle-s".into(),
+                advertiser_name: "Semih Balci".into(),
+                advertiser_username: "sebo_one".into(),
+                client_name: "John Doe".into(),
+                client_username: "johndoe".into(),
+                is_listing_advertiser: true,
+                date_added: 1730000100,
+                date_modified: 1730000200,
+                date_closed: Some(1730000200),
+            }])
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let negotiations = provider.marketplace_negotiations().await.unwrap();
+        assert_eq!(negotiations.len(), 1);
+        assert_eq!(negotiations[0].listing_title, "Drake Nettle S");
+        assert_eq!(negotiations[0].deal_value, Some(4_400_000.0));
+    }
+
+    /// Live-Fetch: `/marketplace_negotiations` gibt echte Marktplatz-Deals
+    /// (listing_title/slug, is_listing_advertiser, date_closed) — der Seam
+    /// mappt sie 1:1. Der Endpoint ist user-scoped und schickt den
+    /// secret-key-Header (Verhaltensanker; der Header-Fluss selbst ist im
+    /// http-Test abgedeckt).
+    #[tokio::test]
+    async fn negotiations_live_fetch_parses_and_maps_deals() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = r#"{"status":"ok","http_code":200,"data":[
+            {"id":5512,"id_listing":4141,"hash":"a1b2c3","price":4500000.0,
+             "unit":"unit","currency":"UEC","deal_value":null,
+             "deal_value_currency":null,"listing_title":"Drake Nettle S",
+             "listing_slug":"drake-nettle-s","advertiser_name":"Semih Balci",
+             "advertiser_username":"sebo_one","advertiser_avatar":null,
+             "client_name":"John Doe","client_username":"johndoe",
+             "client_avatar":null,"is_listing_advertiser":1,
+             "date_added":1730000100,"date_modified":1730000200,
+             "date_closed":null,"date_closed_client":null},
+            {"id":5513,"id_listing":4142,"hash":"x7","price":5000000.0,
+             "unit":"unit","currency":"UEC","deal_value":4900000.0,
+             "deal_value_currency":"UEC","listing_title":"Nettles",
+             "listing_slug":"nettles","advertiser_name":"a",
+             "advertiser_username":"u","advertiser_avatar":null,
+             "client_name":"c","client_username":"cu","client_avatar":null,
+             "is_listing_advertiser":0,"date_added":1730000100,
+             "date_modified":1730000300,"date_closed":1730000300,
+             "date_closed_client":1730000300}
+        ]}"#;
+        std::thread::spawn(move || {
+            if let Ok(mut stream) = listener.incoming().next().unwrap() {
+                let mut buf = [0u8; 4096];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.0 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
+                );
+                let _ = stream.flush();
+            }
+        });
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let provider = UexProvider::with_base_url(
+            Arc::clone(&cache),
+            Some("some-secret-key".into()),
+            &format!("http://127.0.0.1:{port}"),
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let negotiations = provider.marketplace_negotiations().await.unwrap();
+        assert_eq!(negotiations.len(), 2);
+        assert_eq!(negotiations[0].listing_title, "Drake Nettle S");
+        assert!(negotiations[0].is_listing_advertiser);
+        assert_eq!(negotiations[0].deal_value, None, "offener Deal");
+        assert_eq!(negotiations[1].deal_value, Some(4_900_000.0));
+        assert_eq!(negotiations[1].date_closed, Some(1730000300));
+        assert!(!negotiations[1].is_listing_advertiser);
+        // Cache wurde befüllt → zweiter Call ohne Netz bedient aus Snapshot.
+        let provider2 = UexProvider::with_base_url(
+            Arc::clone(&cache),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let again = provider2.marketplace_negotiations().await.unwrap();
+        assert_eq!(again.len(), 2, "stale-first: Snapshot statt Netz");
     }
 
     // --- M2b-Review-Fix (t_6e26ec82): id_category ist Pflicht für type=item --

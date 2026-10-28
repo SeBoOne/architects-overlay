@@ -15,6 +15,14 @@ Zwei globale Kürzel sind seit dieser Karte konfigurierbar:
 [shortcuts]
 toggle = "Ctrl+Shift+U"
 click_through = "Ctrl+Shift+O"
+
+[shortcuts.mode_hotkeys]
+search = "F1"
+market = "F2"
+routes = "F3"
+inventory = "F4"
+hangar = "F11"
+settings = "F12"
 ```
 
 Die Strings sind **kanonisch normalisiert**: Mod-Reihenfolge fix `Ctrl` → `Alt`
@@ -38,10 +46,36 @@ ist die einzige kanonische Quelle** — auch für Compositor-Binder (unten).
 1. ≥1 Mod-Taste **und** genau 1 Haupttaste (Strg/Alt/Shift/Win + Taste).
 2. **Escape als Kombination abgelehnt** (Esc = Capture-Abbruch / UI-Zurück).
 3. Keine Doppelvergabe: beide Felder dürfen nicht dieselbe Kombination haben.
-4. Intern belegt (Konfliktliste in der Meldung): `F1–F6`, `F12`, `Esc`,
-   `Enter`, `Tab`, Pfeiltasten, `m`, `Alt+Zahl` — die In-App-Handler prüfen
-   keine Mod-Tasten, dieselbe Taste global zu binden würde immer beide
-   Aktionen auslösen. `F7–F11` sind frei.
+4. Für globale Kürzel gesperrt (Konfliktliste in der Meldung): die F-Tasten
+   sind die Mode-Hotkeys (siehe unten, konfigurierbar), `F5` führt den
+   Resync aus; weitere interne Belegungen: `Esc`, `Enter`, `Tab`,
+   Pfeiltasten, `m`, `Alt+Zahl` — die In-App-Handler prüfen keine
+   Mod-Tasten, dieselbe Taste global zu binden würde immer beide Aktionen
+   auslösen.
+
+## Mode-Hotkeys (PB — t_1c9bc240)
+
+Die In-App-Modi wechseln per F-Taste (nur bei sichtbarem/fokussiertem
+Overlay — keine System-Binds). Belegung konfigurierbar in den Settings
+(Abschnitt „Mode-Hotkeys", Capture wie bei den globalen Kürzeln):
+
+| Modus | Default |
+|---|---|
+| Suche | `F1` (fix) |
+| Marktplatz | `F2` (fix) |
+| Handelsrouten | `F3` |
+| Inventar | `F4` |
+| Hangar | `F11` |
+| Einstellungen | `F12` (fix) |
+
+- **F5 ist fest reserviert** für den kontextsensitiven **Resync** und wirkt
+  NUR, wo Resync relevant ist: Marktplatz-Angebote (echter Live-Fetch,
+  `force_refresh`), Mein Shop (User-scoped Pull) und Routen-Sweep
+  (`sync_now`). Überall sonst macht F5 nichts und der Hinweis fehlt.
+- **Migration:** Configs ohne `[shortcuts.mode_hotkeys]` (Nutzer ohne eigene
+  Anpassung) landen automatisch auf der neuen Belegung; ungültige Werte
+  (Doppelbelegung, F5, kein F-Key) fallen beim Laden auf die Defaults
+  zurück.
 5. Unbekannte/Ziffernblock-Tasten abgelehnt; ungültige Hand-Edit-Werte in der
    config fallen beim Laden auf die Defaults zurück (App bootet trotzdem).
 

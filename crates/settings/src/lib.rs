@@ -450,6 +450,101 @@ struct ShortcutsSection {
     click_through: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     sync_omarchy: Option<bool>,
+    /// PB (t_1c9bc240, B1): F-Keys der In-App-Modi. Fehlend = Defaults — das
+    /// ist zugleich der Migrationspfad: Configs, die das Feld noch nicht
+    /// kennen (Nutzer, die nie geändert haben), landen automatisch auf der
+    /// NEUEN Belegung (F3 Routen, F4 Inventar, F11 Hangar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode_hotkeys: Option<ModeHotkeys>,
+}
+
+/// PB (t_1c9bc240, B1): Belegung der In-App-Mode-Hotkeys. Nur F-Keys
+/// (F1–F12), nur bei sichtbarem/fokussiertem Overlay aktiv — keine globalen
+/// System-Binds. `F5` ist reserviert für den kontextsensitiven Resync (B2)
+/// und ist als Mode-Taste unzulässig.
+///
+/// Default = neue Belegung: F1 Suche · F2 Marktplatz · F3 Handelsrouten ·
+/// F4 Inventar · F11 Hangar · F12 Einstellungen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeHotkeys {
+    pub search: String,
+    pub market: String,
+    pub routes: String,
+    pub inventory: String,
+    pub hangar: String,
+    pub settings: String,
+}
+
+/// Reservierte Taste: F5 führt den kontextsensitiven Resync aus (B2) und
+/// kann deshalb keinem Modus zugewiesen werden.
+pub const MODE_HOTKEY_RESERVED: &str = "F5";
+
+impl Default for ModeHotkeys {
+    fn default() -> Self {
+        ModeHotkeys {
+            search: "F1".to_owned(),
+            market: "F2".to_owned(),
+            routes: "F3".to_owned(),
+            inventory: "F4".to_owned(),
+            hangar: "F11".to_owned(),
+            settings: "F12".to_owned(),
+        }
+    }
+}
+
+/// Kanonische Form eines F-Keys: "F" + Zahl 1..12 (Trim + Uppercase).
+pub fn validate_fkey(raw: &str) -> std::result::Result<String, String> {
+    let key = raw.trim().to_ascii_uppercase();
+    let digits = key
+        .strip_prefix('F')
+        .ok_or_else(|| format!("unzulässige Taste „{raw}“ — nur F-Tasten (F1–F12)"))?;
+    let n: u8 = digits
+        .parse()
+        .map_err(|_| format!("unzulässige Taste „{raw}“ — nur F-Tasten (F1–F12)"))?;
+    if n == 0 || n > 12 {
+        return Err(format!("unzulässige Taste „{raw}“ — nur F1 bis F12"));
+    }
+    Ok(format!("F{n}"))
+}
+
+impl ModeHotkeys {
+    /// Trim + Uppercase aller Slots (kanonische Form für Persistenz/Vergleich).
+    pub fn normalize(&self) -> ModeHotkeys {
+        let norm = |s: &str| s.trim().to_ascii_uppercase();
+        ModeHotkeys {
+            search: norm(&self.search),
+            market: norm(&self.market),
+            routes: norm(&self.routes),
+            inventory: norm(&self.inventory),
+            hangar: norm(&self.hangar),
+            settings: norm(&self.settings),
+        }
+    }
+
+    /// Validierung: jede Taste ein gültiger F-Key (F1–F12), F5 reserviert,
+    /// keine Doppelbelegung.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        let slots = [
+            ("Suche", self.search.as_str()),
+            ("Marktplatz", self.market.as_str()),
+            ("Handelsrouten", self.routes.as_str()),
+            ("Inventar", self.inventory.as_str()),
+            ("Hangar", self.hangar.as_str()),
+            ("Einstellungen", self.settings.as_str()),
+        ];
+        let mut seen: Vec<String> = Vec::new();
+        for (slot, raw) in slots {
+            let key = validate_fkey(raw).map_err(|e| format!("{slot}: {e}"))?;
+            if key == MODE_HOTKEY_RESERVED {
+                return Err(format!("{slot}: F5 ist für den Resync reserviert"));
+            }
+            if seen.iter().any(|k| k == &key) {
+                return Err(format!("{slot}: {key} ist bereits belegt"));
+            }
+            seen.push(key);
+        }
+        Ok(())
+    }
 }
 
 /// UI preferences (palette, detail variant). Fields are optional in the file
@@ -517,6 +612,9 @@ pub struct Settings {
     /// C2b: Consent für die OmaSettings-Bind-Sync (Default false — ohne
     /// Zustimmung schreibt die App nie in die Systemkonfiguration).
     shortcut_sync_omarchy: bool,
+    /// PB (t_1c9bc240, B1): Mode-Hotkeys (F1–F12 der In-App-Modi). Fehlend in
+    /// der Config = neue Defaults (Migrationspfad, siehe ShortcutsSection).
+    mode_hotkeys: ModeHotkeys,
 }
 
 impl Default for Settings {
@@ -534,6 +632,7 @@ impl Default for Settings {
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
+            mode_hotkeys: ModeHotkeys::default(),
         }
     }
 }
@@ -605,6 +704,23 @@ impl Settings {
                 .as_ref()
                 .and_then(|s| s.sync_omarchy)
                 .unwrap_or(false),
+            // PB (t_1c9bc240, B1) Migration: fehlendes Feld → neue Defaults
+            // (Nutzer ohne eigene Anpassung wechseln auf die neue Belegung);
+            // ungültig gespeicherte Belegung (Doppel/F5/Nicht-F-Key) → ebenso
+            // Defaults, statt eine kaputte Belegung zu laden.
+            mode_hotkeys: raw
+                .shortcuts
+                .as_ref()
+                .and_then(|s| s.mode_hotkeys.as_ref())
+                .map(|h| {
+                    let n = h.normalize();
+                    if n.validate().is_ok() {
+                        n
+                    } else {
+                        ModeHotkeys::default()
+                    }
+                })
+                .unwrap_or_default(),
         })
     }
 
@@ -623,6 +739,7 @@ impl Settings {
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
+            mode_hotkeys: ModeHotkeys::default(),
         }
     }
 
@@ -744,6 +861,19 @@ impl Settings {
         self.shortcut_sync_omarchy = on;
     }
 
+    /// PB (t_1c9bc240, B1): persistierte Mode-Hotkeys (immer gültig — Load
+    /// fällt bei ungültiger Datei auf die Defaults zurück).
+    pub fn mode_hotkeys(&self) -> &ModeHotkeys {
+        &self.mode_hotkeys
+    }
+
+    /// Set the Mode-Hotkeys in memory (persist via [`Settings::save`]).
+    /// Normalisiert vor dem Speichern; Validierung macht der Aufrufer
+    /// (Command) VOR dem Setzen — hier wird nur kanonisch gehalten.
+    pub fn set_mode_hotkeys(&mut self, hotkeys: ModeHotkeys) {
+        self.mode_hotkeys = hotkeys.normalize();
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -766,6 +896,7 @@ impl Settings {
                 toggle: Some(self.shortcut_toggle.clone()),
                 click_through: Some(self.shortcut_click_through.clone()),
                 sync_omarchy: Some(self.shortcut_sync_omarchy),
+                mode_hotkeys: Some(self.mode_hotkeys.clone()),
             }),
         };
         let content = toml::to_string_pretty(&raw)
@@ -1253,5 +1384,83 @@ mod tests {
                 "canonical must roundtrip through validation: {canonical}"
             );
         }
+    }
+
+    // ---- PB (t_1c9bc240, B1): Mode-Hotkeys --------------------------------
+
+    #[test]
+    fn mode_hotkeys_default_is_new_mapping() {
+        let hk = ModeHotkeys::default();
+        assert_eq!(hk.search, "F1");
+        assert_eq!(hk.market, "F2");
+        assert_eq!(hk.routes, "F3");
+        assert_eq!(hk.inventory, "F4");
+        assert_eq!(hk.hangar, "F11");
+        assert_eq!(hk.settings, "F12");
+        hk.validate().expect("defaults must validate");
+    }
+
+    #[test]
+    fn mode_hotkeys_missing_field_migrates_to_new_defaults() {
+        // Migrationspfad B1: Config ohne [shortcuts] (bzw. ohne mode_hotkeys)
+        // → NEUE Belegung (F3 Routen, F4 Inventar, F11 Hangar), nicht die alte.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+        let settings = Settings::load_from(&path).unwrap();
+        let hk = settings.mode_hotkeys();
+        assert_eq!(hk.routes, "F3");
+        assert_eq!(hk.inventory, "F4");
+        assert_eq!(hk.hangar, "F11");
+    }
+
+    #[test]
+    fn mode_hotkeys_roundtrip_survives_save_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+        let mut s = Settings::with_path(path.clone());
+        let mut hk = ModeHotkeys::default();
+        hk.hangar = "F10".to_owned();
+        s.set_mode_hotkeys(hk);
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.mode_hotkeys().hangar, "F10");
+        assert_eq!(loaded.mode_hotkeys().routes, "F3");
+    }
+
+    #[test]
+    fn mode_hotkeys_invalid_stored_config_falls_back_to_defaults() {
+        // Kaputte Datei (F5 als Mode-Taste + Doppelbelegung) darf nicht
+        // geladen werden — Load fällt auf die Defaults zurück.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "[shortcuts]\ntoggle = \"Ctrl+Shift+U\"\nclick_through = \"Ctrl+Shift+O\"\n\n[shortcuts.mode_hotkeys]\nsearch = \"F1\"\nmarket = \"F2\"\nroutes = \"F3\"\ninventory = \"F5\"\nhangar = \"F3\"\nsettings = \"F12\"\n",
+        )
+        .unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(*loaded.mode_hotkeys(), ModeHotkeys::default());
+    }
+
+    #[test]
+    fn validate_fkey_accepts_only_f1_to_f12() {
+        assert_eq!(validate_fkey("f3").unwrap(), "F3");
+        assert_eq!(validate_fkey(" F11 ").unwrap(), "F11");
+        assert!(validate_fkey("F13").is_err());
+        assert!(validate_fkey("F0").is_err());
+        assert!(validate_fkey("Ctrl+F3").is_err());
+        assert!(validate_fkey("G3").is_err());
+    }
+
+    #[test]
+    fn mode_hotkeys_validation_rejects_f5_and_duplicates() {
+        let mut hk = ModeHotkeys::default();
+        hk.routes = "F5".to_owned();
+        assert!(hk.validate().unwrap_err().contains("reserviert"));
+
+        let mut hk = ModeHotkeys::default();
+        hk.hangar = "F3".to_owned(); // Doppelbelegung mit routes
+        assert!(hk.validate().unwrap_err().contains("bereits belegt"));
     }
 }

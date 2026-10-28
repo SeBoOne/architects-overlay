@@ -193,6 +193,10 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
 
     let handle = app.handle();
     spawn_game_poller(handle);
+    // Hyprland dialog events (dialog-suspend of the focus bridge) — no-op off
+    // Hyprland. NO workspace events: the overlay never reacts to (and never
+    // influences) workspace navigation (v2, t_6d26985e).
+    spawn_hyprland_events(handle);
 
     Ok(())
 }
@@ -472,7 +476,12 @@ pub fn close_config<R: Runtime>(app: &AppHandle<R>) {
 }
 
 /// Effective window visibility: the usual user intent × game condition, OR
-/// the tray-requested config view (independent of the game).
+/// the tray-requested config view (independent of the game). Workspace
+/// position plays NO role (v2, t_6d26985e): the overlay is a plain floating
+/// window on whatever workspace it was shown on and moves with that
+/// workspace — the app never reacts to workspace changes (no socket2
+/// workspace listener, no polling) and never dispatches workspace/focus
+/// navigation of its own.
 fn effective_visible(st: &OverlayState) -> bool {
     st.config_open.load(Ordering::SeqCst)
         || (st.user_visible.load(Ordering::SeqCst) && st.game_running.load(Ordering::SeqCst))
@@ -519,7 +528,26 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
     let worker = app.clone();
     let _ = receiver.run_on_main_thread(move || {
         if let Some(win) = worker.get_webview_window(SPOTLIGHT_LABEL) {
+            // The show request was computed by the caller; re-check the state
+            // here so a racing change (e.g. game quit) wins over the stale
+            // caller flag.
+            let visible = visible
+                && worker
+                    .try_state::<OverlayState>()
+                    .map(|st| effective_visible(st.inner()))
+                    .unwrap_or(visible);
             if visible {
+                // P3 (t_d340f851): opening ALWAYS behaves as focus mode — the
+                // compositor focus dispatch below takes keyboard focus regard-
+                // less of the persisted click-through flag, so the state and
+                // the status button must say FOKUS too. Persisted click-through
+                // intent is NOT restored on re-show; the user re-toggles it.
+                // v2 (t_6d26985e): NO workspace is captured or dispatched —
+                // the window simply maps on the user's CURRENT workspace and
+                // stays there (passive workspace coherence).
+                if let Some(st) = worker.try_state::<OverlayState>() {
+                    st.click_through.store(false, Ordering::Release);
+                }
                 // Pre-map geometry hint: while the window is unmapped,
                 // `set_size`/`set_position` land as GTK default-size/position
                 // for the upcoming map, and the Hyprland geometry dispatch is
@@ -539,10 +567,10 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // the (hidden-at-boot) window only now, when click-through is
                 // safe to apply. On Wayland the compositor may ignore the
                 // position hint — documented limitation.
-                if let Some(st) = worker.try_state::<OverlayState>() {
-                    let ignore = st.click_through.load(Ordering::SeqCst);
-                    let _ = win.set_ignore_cursor_events(ignore);
-                }
+                // P3: the state above was just forced to focus mode — shape
+                // the window accordingly (never ride a stale flag into the
+                // input shape).
+                let _ = win.set_ignore_cursor_events(false);
                 // Multi-monitor: span the full monitor under the pointer.
                 place_on_pointer_monitor(&win);
                 // ...and re-assert it AFTER the (async) map, when Hyprland's
@@ -556,12 +584,37 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // ("hl.focus: window not found"), so the immediate attempt
                 // always missed (verified via compositor_focus logging).
                 let label = SPOTLIGHT_WM_CLASS.to_string();
+                let win_probe = win.clone();
                 std::thread::spawn(move || {
                     for wait in [300u64, 600, 1200] {
                         std::thread::sleep(Duration::from_millis(wait));
+                        // If the overlay was hidden again meanwhile (game
+                        // quit), stop touching the compositor — a pending
+                        // focus grab on a hidden window would yank the user
+                        // out of whatever they switched to.
+                        if !win_probe.is_visible().unwrap_or(false) {
+                            return;
+                        }
                         compositor_focus(&label);
                     }
                 });
+                // v2 (t_6d26985e): arm the stay_focused bridge AFTER the map,
+                // from the app itself — the SC focus-steal workaround keeps
+                // working even on setups without the static rule. NOTE: NO
+                // `pin` is ever dispatched: the overlay lives on the
+                // workspace it was shown on and hides with it (passive
+                // workspace coherence). The dialog suspend/restore cycle
+                // (event listener) clears it again whenever one of our own
+                // dialogs needs the input.
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(500));
+                    if win.is_visible().unwrap_or(false) {
+                        arm_focus_ownership();
+                    }
+                });
+                // State changed (click_through forced off): publish once more,
+                // so the status button never lags behind the actual behaviour.
+                emit_state(&worker);
             } else {
                 let _ = win.hide();
                 // Hand keyboard focus back to the game.
@@ -893,6 +946,225 @@ fn compositor_focus(class: &str) {
     let _ = class;
 }
 
+/// Window title of the spotlight window as mapped by the compositor. Used to
+/// distinguish the MAIN overlay window from other same-class toplevels of our
+/// own process (the GTK file chooser of `<input type="file">` shares WM class
+/// AND pid with us — only the title differs).
+pub const SPOTLIGHT_TITLE: &str = "SC Architects Spotlight";
+
+// ---------------------------------------------------------------------------
+// Hyprland live behaviour (v2, t_6d26985e): passive workspace coherence +
+// stay_focused focus bridge + dialog suspend.
+//
+// v0.5.x (PA, t_d340f851) actively managed the workspace: every show bound
+// the overlay to the SC workspace, a socket2 `workspace>>` listener hid it
+// whenever the user left — and every hide dispatched focus back to the game,
+// yanking the user out of Discord/Browser/2nd monitor at every switch
+// attempt. Reverted in v0.4.6; NEVER return to active workspace/focus
+// dispatches.
+//
+// v2 is strictly passive:
+//
+//  * NO pin anywhere — static rule (hyprland.lua) and runtime dispatches
+//    removed. The overlay is a plain floating window: it maps on the
+//    workspace the user is currently on and disappears with it on workspace
+//    switches (stock Hyprland behaviour). Reaching the overlay is the
+//    user's business; the app never switches workspaces for them.
+//  * NO socket2 workspace events, NO polling that "corrects" the workspace,
+//    NO focus dispatch on workspace changes.
+//  * The stay_focused bridge stays (it is the OPPOSITE of the problem):
+//    while the overlay is visible it keeps keyboard focus against the
+//    game's focus-steal; `openwindow>>`/`closewindow>>` still detect our
+//    own in-process dialogs (file chooser) and suspend/restore that prop so
+//    the dialog is usable.
+//
+// All compositor calls are best-effort via the same hyprctl_limited budget
+// as the geometry/focus dispatchers; without Hyprland everything is a no-op.
+// ---------------------------------------------------------------------------
+
+/// Lua snippet arming/disarming `stay_focused` on a window selector. Pure so
+/// the exact string is unit-tested (Hyprland 0.56 Lua API: dispatchers must
+/// be wrapped in `hl.dispatch(...)`, set_prop takes STRING values, and the
+/// prop is `stay_focused` — `stayfocused` is rejected with "Invalid prop
+/// name", both probed live).
+fn stay_focused_lua(selector: &str, on: bool) -> String {
+    format!(
+        "hl.dispatch(hl.dsp.window.set_prop({{ window = \"{selector}\", \
+         prop = \"stay_focused\", value = \"{}\" }}))",
+        if on { 1 } else { 0 }
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn hypr_eval(lua: &str) {
+    match hyprctl_limited(&["eval", lua]) {
+        Some(out) => log::info!(
+            "hypr eval: out={:?}",
+            String::from_utf8_lossy(&out.stdout).trim()
+        ),
+        None => log::warn!("hypr eval: spawn failed or timed out"),
+    }
+}
+
+/// Address (`0x…`) of the MAIN spotlight window — same pid + class as any
+/// in-process GTK dialog, so the window TITLE is the discriminator.
+#[cfg(target_os = "linux")]
+fn hyprland_main_window_address() -> Option<String> {
+    let out = hyprctl_limited(&["-j", "clients"])?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    for c in v.as_array()? {
+        if c.get("pid")?.as_i64()? == std::process::id() as i64
+            && c.get("class")?.as_str()? == SPOTLIGHT_WM_CLASS
+            && c.get("title")?.as_str()? == SPOTLIGHT_TITLE
+        {
+            return c.get("address")?.as_str().map(str::to_owned);
+        }
+    }
+    None
+}
+
+/// Arm `stay_focused` on the main overlay window (post-map) — the SC
+/// focus-steal workaround, independent of whether the user's hyprland.lua
+/// still carries the static rule. NEVER pins (v2, t_6d26985e): pinning would
+/// make the overlay global across workspaces, which is exactly what must not
+/// happen again.
+#[cfg(target_os = "linux")]
+fn arm_focus_ownership() {
+    let Some(addr) = hyprland_main_window_address() else {
+        return;
+    };
+    let sel = format!("address:{addr}");
+    hypr_eval(&stay_focused_lua(&sel, true));
+}
+
+/// Suspend the focus bridge while one of our own dialogs (file chooser) needs
+/// focus/stacking. Best-effort: without a main window address nothing happens.
+#[cfg(target_os = "linux")]
+fn suspend_focus_ownership() {
+    let Some(addr) = hyprland_main_window_address() else {
+        return;
+    };
+    let sel = format!("address:{addr}");
+    hypr_eval(&stay_focused_lua(&sel, false));
+}
+
+/// Restore after the dialog closed. Skips the focus grab when the overlay hid
+/// itself meanwhile (game quit) — refocusing a hidden window would be a
+/// no-op at best.
+#[cfg(target_os = "linux")]
+fn restore_focus_ownership<R: Runtime>(app: &AppHandle<R>) {
+    let Some(addr) = hyprland_main_window_address() else {
+        return;
+    };
+    let sel = format!("address:{addr}");
+    hypr_eval(&stay_focused_lua(&sel, true));
+    let still_visible = app
+        .get_webview_window(SPOTLIGHT_LABEL)
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
+    if still_visible {
+        compositor_focus(SPOTLIGHT_WM_CLASS);
+    }
+}
+
+/// socket2 event path for this Hyprland instance (`$XDG_RUNTIME_DIR` first,
+/// the historical `/tmp/hypr` fallback second).
+#[cfg(target_os = "linux")]
+fn hyprland_event_socket(name: &str) -> Option<std::path::PathBuf> {
+    let sig = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+    if let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let p = std::path::PathBuf::from(runtime)
+            .join("hypr")
+            .join(&sig)
+            .join(name);
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    let p = std::path::PathBuf::from("/tmp/hypr").join(&sig).join(name);
+    p.exists().then_some(p)
+}
+
+/// Parse an `openwindow>>` event line: `openwindow>>ADDR,WORKSPACE,CLASS,TITLE…`
+/// (the title may contain commas — splitn keeps them).
+fn parse_openwindow(line: &str) -> Option<(String, String, String)> {
+    let payload = line.strip_prefix("openwindow>>")?;
+    let mut it = payload.splitn(4, ',');
+    let addr = it.next()?.trim().to_owned();
+    let _ws = it.next()?;
+    let class = it.next()?.trim().to_owned();
+    let title = it.next()?.trim().to_owned();
+    Some((addr, class, title))
+}
+
+/// Whether an opened window is one of our own in-process dialogs: it shares
+/// pid+class with the overlay, but is not the main window (title differs).
+/// The GTK file chooser spawned by `<input type="file">` matches exactly this.
+fn is_in_process_dialog(class: &str, title: &str) -> bool {
+    class == SPOTLIGHT_WM_CLASS && title != SPOTLIGHT_TITLE
+}
+
+/// Background listener on Hyprland's socket2 event stream. Reconnects with a
+/// backoff; every parse failure is logged and skipped (the event format is
+/// compositor-stable, but a malformed line must never kill the loop).
+#[cfg(target_os = "linux")]
+fn spawn_hyprland_events<R: Runtime>(handle: &AppHandle<R>) {
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+        return;
+    }
+    let app = handle.clone();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        loop {
+            let Some(path) = hyprland_event_socket(".socket2.sock") else {
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            };
+            match std::os::unix::net::UnixStream::connect(&path) {
+                Err(err) => {
+                    log::info!("socket2 connect failed ({err}); retrying");
+                    std::thread::sleep(Duration::from_secs(2));
+                }
+                Ok(stream) => {
+                    let mut dialog_addr: Option<String> = None;
+                    // v2 (t_6d26985e): workspace events (`workspace>>`,
+                    // `focusedmon…`) are deliberately IGNORED — the overlay
+                    // must never react to (let alone correct) the user's
+                    // workspace navigation. Only own-dialog events are
+                    // consumed, for the stay_focused suspend/restore cycle.
+                    let reader = std::io::BufReader::new(stream);
+                    for line in reader.lines() {
+                        let Ok(line) = line else { break };
+                        // Synthetic events (hl.dsp.event, probes) arrive with a
+                        // `custom>>` prefix — strip it so both shapes match.
+                        let line = line.strip_prefix("custom>>").unwrap_or(&line);
+                        if let Some((_addr, class, title)) = parse_openwindow(&line) {
+                            if is_in_process_dialog(&class, &title) {
+                                log::info!(
+                                    "own dialog opened ({title:?}) -> suspend focus ownership"
+                                );
+                                dialog_addr = Some(_addr);
+                                suspend_focus_ownership();
+                            }
+                        } else if let Some(addr) = line.strip_prefix("closewindow>>") {
+                            if dialog_addr.as_deref() == Some(addr.trim()) {
+                                log::info!("own dialog closed -> restore focus ownership");
+                                dialog_addr = None;
+                                restore_focus_ownership(&app);
+                            }
+                        }
+                    }
+                    // Stream dropped (compositor restart): loop reconnects.
+                    log::info!("socket2 stream ended; reconnecting");
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn spawn_hyprland_events<R: Runtime>(_handle: &AppHandle<R>) {}
+
 /// Background poller: every `POLL_INTERVAL_MS` re-checks whether Star Citizen
 /// runs and updates the overlay accordingly. Detached — dies with the process,
 /// so it needs no explicit shutdown signalling. Reading /proc on each tick is
@@ -1177,5 +1449,82 @@ mod tests {
         app.manage(OverlayState::new());
         app.manage(ShortcutBindings::new());
         app
+    }
+
+    // ---- t_6d26985e (v2): passive workspace coherence, dialog detection ----
+
+    /// v2: workspace position plays NO role in visibility — the overlay shows
+    /// purely on `config_open || (user_visible && game_running)`. There is no
+    /// bound/active workspace state left to consult; this pins that
+    /// regression surface (the PA active-workspace gating is gone).
+    #[test]
+    fn effective_visible_ignores_workspaces() {
+        let st = OverlayState::new();
+        st.user_visible.store(true, Ordering::Release);
+        st.game_running.store(true, Ordering::Release);
+        assert!(effective_visible(&st));
+        // Config view alone shows the overlay (independent of the game).
+        let st2 = OverlayState::new();
+        st2.config_open.store(true, Ordering::Release);
+        assert!(effective_visible(&st2));
+    }
+
+    /// `openwindow>>` parsing: address/workspace/class/title with commas in
+    /// the title intact.
+    #[test]
+    fn parse_openwindow_splits_with_commas_in_title() {
+        let (addr, class, title) =
+            parse_openwindow("openwindow>>0x649,4,architects-overlay,Open File, awesome")
+                .expect("parse");
+        assert_eq!(addr, "0x649");
+        assert_eq!(class, "architects-overlay");
+        assert_eq!(title, "Open File, awesome");
+        assert!(parse_openwindow("workspace>>3").is_none());
+    }
+
+    /// Dialog discriminator: same class, different title = our in-process
+    /// dialog; the main window title is never a dialog; foreign classes never.
+    #[test]
+    fn in_process_dialog_matches_only_same_class_other_title() {
+        assert!(is_in_process_dialog(SPOTLIGHT_WM_CLASS, "Datei auswählen"));
+        assert!(!is_in_process_dialog(SPOTLIGHT_WM_CLASS, SPOTLIGHT_TITLE));
+        assert!(!is_in_process_dialog("firefox", "Whatever"));
+    }
+
+    /// Exact dispatcher strings (live-probed on Hyprland 0.56.2): the Lua
+    /// bridge needs hl.dispatch-wrapping, string values, prop `stay_focused`.
+    #[test]
+    fn lua_snippets_are_bridge_exact() {
+        assert_eq!(
+            stay_focused_lua("address:0xabc", true),
+            "hl.dispatch(hl.dsp.window.set_prop({ window = \"address:0xabc\", \
+             prop = \"stay_focused\", value = \"1\" }))"
+        );
+        assert_eq!(
+            stay_focused_lua("address:0xabc", false),
+            "hl.dispatch(hl.dsp.window.set_prop({ window = \"address:0xabc\", \
+             prop = \"stay_focused\", value = \"0\" }))"
+        );
+    }
+
+    /// v2 regression pin (t_6d26985e): NO pin dispatch may ever exist again.
+    /// Grepping the source for the pin dispatcher is the cheapest guarantee —
+    /// if someone reintroduces the pin dispatcher (or a pin windowrule) this
+    /// test fails and the review sees it.
+    #[test]
+    fn no_pin_dispatches_exist() {
+        // Needles are split across string pieces so the test never matches
+        // its own source file.
+        let pin_dsp = "hl.dsp.window.".to_owned() + "pin";
+        let mvt = "movetowork".to_owned() + "space";
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for path in [dir.join("src/overlay.rs"), dir.join("src/lib.rs")] {
+            let src = std::fs::read_to_string(&path).unwrap_or_default();
+            assert!(
+                !src.contains(&pin_dsp) && !src.contains(&mvt),
+                "{} must not contain active workspace/pin dispatches (v2 ban)",
+                path.display()
+            );
+        }
     }
 }

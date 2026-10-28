@@ -237,6 +237,31 @@ CREATE TABLE IF NOT EXISTS own_trades (
   organization TEXT,
   fetched_at   INTEGER NOT NULL
 );
+-- eigene Marktplatz-Deals (t_350c4300 B2): Verhandlungen/Abschlüsse eigener
+-- Listing-Ads aus /marketplace_negotiations/ (ersetzt /user_trades als Quelle
+-- für „Letzte 5 Trades" im Mein-Shop — der Commodity-Verlauf ist dort falsch).
+-- Additiv, TTL analog TTL_OWN_SHOP.
+CREATE TABLE IF NOT EXISTS own_negotiations (
+  id                   INTEGER PRIMARY KEY,
+  listing_id           INTEGER NOT NULL DEFAULT 0,
+  hash                 TEXT    NOT NULL DEFAULT '',
+  price                REAL    NOT NULL DEFAULT 0,
+  unit                 TEXT    NOT NULL DEFAULT '',
+  currency             TEXT    NOT NULL DEFAULT '',
+  deal_value           REAL,
+  deal_value_currency  TEXT    NOT NULL DEFAULT '',
+  listing_title        TEXT    NOT NULL DEFAULT '',
+  listing_slug         TEXT    NOT NULL DEFAULT '',
+  advertiser_name      TEXT    NOT NULL DEFAULT '',
+  advertiser_username  TEXT    NOT NULL DEFAULT '',
+  client_name          TEXT    NOT NULL DEFAULT '',
+  client_username      TEXT    NOT NULL DEFAULT '',
+  is_listing_advertiser INTEGER NOT NULL DEFAULT 0,
+  date_added           INTEGER NOT NULL DEFAULT 0,
+  date_modified        INTEGER NOT NULL DEFAULT 0,
+  date_closed          INTEGER,
+  fetched_at           INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -386,6 +411,8 @@ const OWN_OFFERS_META_KEY: &str = "fetched_at:own_offers";
 const OWN_OFFERS_USER_KEY: &str = "user:own_offers";
 /// Frischemarker für die eigenen Trades (M2a) — analog marketplace.
 const OWN_TRADES_META_KEY: &str = "fetched_at:own_trades";
+/// Frischemarker für die eigenen Marktplatz-Deals (t_350c4300 B2).
+const OWN_NEGOTIATIONS_META_KEY: &str = "fetched_at:own_negotiations";
 
 /// Epoch stamp of the `route_matrix` artifact (`meta` keys, cf. v6 schema):
 /// the epoch VALUE describes the price dataset the matrix was built from.
@@ -507,7 +534,13 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   `own_trades` (eigener Trade-Verlauf) — Snapshot-Semantik wie
 ///   `marketplace_offers`, TTL analog. Rein additiv, keine Bestandsdaten
 ///   betroffen (CREATE TABLE IF NOT EXISTS erzeugt sie auf jedem Open).
-pub const SCHEMA_VERSION: i64 = 8;
+/// * v9 — MB (t_350c4300 B2): neue additive Tabelle `own_negotiations`
+///   (eigene Marktplatz-Deals aus `/marketplace_negotiations` — die korrekte
+///   Quelle für „Letzte 5 Trades" im Mein-Shop; `/user_trades` ist
+///   commodity-seitiger Cargo-Handel und bleibt nur fürs Route-Recording).
+///   Rein additiv — `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten
+///   betroffen.
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -2068,6 +2101,113 @@ impl Cache {
             Ok(out)
         })
     }
+
+    /// Frischemarker für die eigenen Marktplatz-Deals (t_350c4300 B2),
+    /// TTL analog [`TTL_OWN_SHOP`] — spiegelbildlich zu `own_trades_fresh`.
+    pub fn own_negotiations_fresh(&self) -> Result<bool> {
+        let Some(ttl) = TTL_OWN_SHOP else {
+            return Ok(false);
+        };
+        let fetched = self.meta_get(OWN_NEGOTIATIONS_META_KEY)?;
+        Ok(match fetched {
+            Some(ts) => now_unix().saturating_sub(ts) < ttl.as_secs(),
+            None => false,
+        })
+    }
+
+    /// Eigene Marktplatz-Deals als Snapshot ersetzen (M2a-Muster). Die
+    /// „letzten 5"-Logik ist UI-Verantwortung; der Cache hält den vollständig
+    /// geladenen Verlauf (bzw. was UEX geliefert hat).
+    pub fn store_own_negotiations(&self, n: &[provider::Negotiation]) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute("DELETE FROM own_negotiations", [])?;
+            {
+                let mut stmt = tx.prepare(
+                    "INSERT INTO own_negotiations (id, listing_id, hash, price, unit, currency,
+                        deal_value, deal_value_currency, listing_title, listing_slug,
+                        advertiser_name, advertiser_username, client_name, client_username,
+                        is_listing_advertiser, date_added, date_modified, date_closed, fetched_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                             ?15, ?16, ?17, ?18, ?19)",
+                )?;
+                let now = now_unix() as i64;
+                for x in n {
+                    stmt.execute(rusqlite::params![
+                        x.id as i64,
+                        x.listing_id as i64,
+                        x.hash,
+                        x.price,
+                        x.unit,
+                        x.currency,
+                        x.deal_value.map(|v| v as f64),
+                        x.deal_value_currency,
+                        x.listing_title,
+                        x.listing_slug,
+                        x.advertiser_name,
+                        x.advertiser_username,
+                        x.client_name,
+                        x.client_username,
+                        x.is_listing_advertiser as i64,
+                        x.date_added as i64,
+                        x.date_modified as i64,
+                        x.date_closed.map(|v| v as i64),
+                        now,
+                    ])?;
+                }
+            }
+            tx.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (OWN_NEGOTIATIONS_META_KEY, now_unix().to_string()),
+            )?;
+            tx.commit()
+        })
+    }
+
+    /// Letzter Snapshot der eigenen Marktplatz-Deals (stale-first;
+    /// Frischeentscheidung obliegt dem CALLER via [`Cache::own_negotiations_fresh`]).
+    pub fn own_negotiations_snapshot(&self) -> Result<Vec<provider::Negotiation>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, listing_id, hash, price, unit, currency, deal_value,
+                        deal_value_currency, listing_title, listing_slug,
+                        advertiser_name, advertiser_username, client_name, client_username,
+                        is_listing_advertiser, date_added, date_modified, date_closed
+                 FROM own_negotiations ORDER BY date_modified DESC, id DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(provider::Negotiation {
+                    id: row.get::<_, i64>(0)? as u64,
+                    listing_id: row.get::<_, i64>(1)? as u64,
+                    hash: row.get(2)?,
+                    price: row.get(3)?,
+                    unit: row.get(4)?,
+                    currency: row.get(5)?,
+                    deal_value: row.get::<_, Option<f64>>(6)?.filter(|v| *v != 0.0),
+                    deal_value_currency: row.get(7)?,
+                    listing_title: row.get(8)?,
+                    listing_slug: row.get(9)?,
+                    advertiser_name: row.get(10)?,
+                    advertiser_username: row.get(11)?,
+                    client_name: row.get(12)?,
+                    client_username: row.get(13)?,
+                    is_listing_advertiser: row.get::<_, i64>(14)? != 0,
+                    date_added: row.get::<_, i64>(15)? as u64,
+                    date_modified: row.get::<_, i64>(16)? as u64,
+                    date_closed: row
+                        .get::<_, Option<i64>>(17)?
+                        .map(|v| v as u64)
+                        .filter(|v| *v != 0),
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -3066,6 +3206,29 @@ mod tests {
         }
     }
 
+    fn shop_negotiation(id: u64) -> provider::Negotiation {
+        provider::Negotiation {
+            id,
+            listing_id: 4141,
+            hash: format!("hash-{id}"),
+            price: 4_500_000.0,
+            unit: "unit".into(),
+            currency: "UEC".into(),
+            deal_value: None,
+            deal_value_currency: String::new(),
+            listing_title: "Drake Nettle S".into(),
+            listing_slug: "drake-nettle-s".into(),
+            advertiser_name: "Semih Balci".into(),
+            advertiser_username: "sebo_one".into(),
+            client_name: "John Doe".into(),
+            client_username: "johndoe".into(),
+            is_listing_advertiser: true,
+            date_added: 1730000100 + id,
+            date_modified: 1730000200 + id,
+            date_closed: None,
+        }
+    }
+
     #[test]
     fn own_offers_roundtrip_and_fresh() {
         let cache = Cache::open_in_memory().unwrap();
@@ -3144,6 +3307,35 @@ mod tests {
         // Snapshot-Semantik: store ersetzt die alte Menge.
         cache.store_own_trades(&[shop_trade(9)]).unwrap();
         assert_eq!(cache.own_trades_snapshot().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn own_negotiations_roundtrip_and_fresh() {
+        let cache = Cache::open_in_memory().unwrap();
+        assert!(!cache.own_negotiations_fresh().unwrap());
+        assert!(cache.own_negotiations_snapshot().unwrap().is_empty());
+        cache
+            .store_own_negotiations(&[shop_negotiation(7), shop_negotiation(8)])
+            .unwrap();
+        assert!(cache.own_negotiations_fresh().unwrap());
+        let snap = cache.own_negotiations_snapshot().unwrap();
+        assert_eq!(snap.len(), 2);
+        assert_eq!(snap[0].listing_title, "Drake Nettle S");
+        // Offener Deal: deal_value/date_closed None bleiben None.
+        assert!(snap.iter().all(|n| n.deal_value.is_none()));
+        // Snapshot-Semantik: store ersetzt die alte Menge.
+        cache
+            .store_own_negotiations(&[shop_negotiation(9)])
+            .unwrap();
+        assert_eq!(cache.own_negotiations_snapshot().unwrap().len(), 1);
+        // Abgeschlossener Deal rundet durch (deal_value + date_closed).
+        let mut closed = shop_negotiation(11);
+        closed.deal_value = Some(4_900_000.0);
+        closed.date_closed = Some(1730000300);
+        cache.store_own_negotiations(&[closed]).unwrap();
+        let snap = cache.own_negotiations_snapshot().unwrap();
+        assert_eq!(snap[0].deal_value, Some(4_900_000.0));
+        assert_eq!(snap[0].date_closed, Some(1730000300));
     }
 
     #[test]

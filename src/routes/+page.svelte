@@ -18,8 +18,9 @@
 	//     tut Esc NICHTS — Ausblenden ausschließlich per globalem Toggle
 	//     (Hyprland-Bind CTRL+SHIFT+U → arch-overlay toggle, KEIN In-App-Esc)
 	//   - Pfeil-Navigation scrollt die Liste auf die fokussierte Zeile (auto)
-	// Modi (Karte t_315a26cc): F1 Suche · F2 Marktplatz · F3 Inventar ·
-	// F4 Hangar · F12 Einstellungen — In-App-Keyhandler, die nur greifen, wenn
+	// Modi (Karte t_315a26cc): Mode-Hotkeys konfigurierbar (PB t_1c9bc240) —
+	// Defaults: F1 Suche · F2 Marktplatz · F3 Routen · F4 Inventar · F11 Hangar ·
+	// F12 Einstellungen — In-App-Keyhandler, die nur greifen, wenn
 	// das Overlay sichtbar+fokussiert ist (compositor_focus beim Show); die Rail
 	// links zeigt die Modi mit F-Key-Label, aktiver Modus in Akzentfarbe.
 	// Market-Modus (F2 / Rail): DAS Haupt-Suchfeld durchsucht Offers
@@ -37,6 +38,16 @@
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	// PB (t_1c9bc240, B1): Mode-Hotkeys — Defaults, Validação e Lookup em UM módulo.
+	import {
+		DEFAULT_MODE_HOTKEYS,
+		MODE_HOTKEY_RESERVED,
+		hotkeyFor,
+		modeKeyMap,
+		normalizeFkey,
+		validateModeHotkeys,
+		type ModeHotkeys
+	} from '../lib/hotkeys';
 	import Inventory from '../lib/Inventory.svelte';
 	import RoutesTypeahead from '../lib/RoutesTypeahead.svelte';
 	// MD (t_10be9255, D2): dunkles, mausbedienbares Dropdown mit Typeahead —
@@ -123,21 +134,31 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 	};
 
-	// M2a (Read-Phase): „Mein Shop" — eigene Offers + letzte Trades.
-	// Mirrors provider::Trade (seam-DTO) + IPC-Responses.
-	type Trade = {
+	// M2a (Read-Phase): „Mein Shop" — eigene Offers + Marktplatz-Deals.
+	// t_350c4300 B2: die Trade-Quelle sind die MARKETPLACE-Negotiations
+	// (`/marketplace_negotiations` — Listing-Verhandlungen/-Abschlüsse des
+	// Accounts als Anbieter ODER Kunde). Der frühere /user_trades-Commodity-
+	// Verlauf (Agricium etc.) ist Cargo-Handel und gehört hier NICHT hin.
+	// Mirrors provider::Negotiation (seam-DTO) + IPC-Response.
+	type Negotiation = {
 		id: number;
-		terminal_id: number;
-		commodity_id: number;
-		operation: MarketOp;
-		scu: number;
+		listing_id: number;
+		hash: string;
 		price: number;
+		unit: string;
+		currency: string;
+		deal_value: number | null;
+		deal_value_currency: string;
+		listing_title: string;
+		listing_slug: string;
+		advertiser_name: string;
+		advertiser_username: string;
+		client_name: string;
+		client_username: string;
+		is_listing_advertiser: boolean;
 		date_added: number;
-		commodity: string;
-		terminal: string;
-		vehicle: string | null;
-		fleet_name: string | null;
-		organization: string | null;
+		date_modified: number;
+		date_closed: number | null;
 	};
 	type OwnOffersResponse = {
 		source: 'cache' | 'live' | 'offline';
@@ -146,10 +167,10 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 		key_set: boolean;
 	};
-	type TradesResponse = {
+	type NegotiationsResponse = {
 		source: 'cache' | 'live' | 'offline';
 		fetched_at: number;
-		trades: Trade[];
+		negotiations: Negotiation[];
 		note: string | null;
 		key_set: boolean;
 	};
@@ -229,6 +250,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		global_shortcuts_active: boolean;
 		// C2b (t_1adbc017): Consent (persistiert) + Compositor-Ist + Sync-Note.
 		shortcuts_sync_omarchy: boolean;
+		// PB (t_1c9bc240, B1): Mode-Hotkeys persistidos (null = SSR/Probe/Config
+		// antiga → Defaults aus lib/hotkeys.ts = Migration zur neuen Belegung).
+		mode_hotkeys: ModeHotkeys | null;
 		// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes (every_action|delete_only).
 		marketplace_confirm: string;
 		hyprland_session: boolean;
@@ -262,6 +286,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Konflikte, Doppelvergabe). Esc bricht die Capture ab. Fehler bleiben im
 	// Feld sichtbar, der Capture-Modus bleibt aktiv — alter Kürzel bleibt aktiv.
 	type ShortcutField = 'toggle' | 'click';
+	// PB (t_1c9bc240, B1): konfigurierbare Mode-Slots — Suche (F1), Marktplatz
+	// (F2) und Einstellungen (F12) bleiben fest belegt.
+	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory';
 	let scCapture = $state<ShortcutField | null>(null);
 	let scPreview = $state('');
 	let scNote = $state('');
@@ -377,6 +404,50 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			} catch { /* Overlay gerade zu — naechster Settings-Open holt die Note */ }
 		}, 3000);
 	}
+	// PB (t_1c9bc240, B1): Capture-Verwaltung der Mode-Hotkeys. Identisches
+	// Muster wie bei den globalen Kürzeln (C2a): nur EIN Capture scharf,
+	// Validierung Backend-seitig (nur F1–F12, F5 reserviert Resync,
+	// Doppelbelegung abgelehnt), Snapshot kommt inkl. sync_note zurück.
+	const modeHotkeyFields: { id: ModeHotkeyField; label: string }[] = [
+		{ id: 'hangar', label: 'Hangar' },
+		{ id: 'routes', label: 'Handelsrouten' },
+		{ id: 'inventory', label: 'Inventar' }
+	];
+	let hkCapture: ModeHotkeyField | null = $state(null);
+	let hkNote = $state('');
+	function startModeHotkeyCapture(id: ModeHotkeyField) {
+		scCapture = null;
+		hkCapture = id;
+		hkNote = '';
+	}
+	function cancelModeHotkeyCapture() {
+		hkCapture = null;
+		hkNote = '';
+	}
+	async function submitModeHotkey(field: ModeHotkeyField, key: string) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_mode_hotkey', { field, key });
+			applySettings(cfg);
+			const applied = cfg?.mode_hotkeys?.[field] ?? '';
+			hkCapture = null;
+			hkNote = '';
+			cfgConfirm(`Mode-Hotkey übernommen: ${applied} — gilt ab sofort.`);
+		} catch (err) {
+			hkNote = String(err);
+			hkCapture = null;
+		}
+	}
+	async function resetModeHotkeys() {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_reset_mode_hotkeys');
+			applySettings(cfg);
+			hkCapture = null;
+			hkNote = '';
+			cfgConfirm('Mode-Hotkeys auf Standard-Belegung zurückgesetzt.');
+		} catch (err) {
+			hkNote = String(err);
+		}
+	}
 	// C2b: Consent-Chip "Tastenkürzel mit System (Omarchy) synchronisieren".
 	// Erstanlass persistiert die Zustimmung; erst ab true führt die App die
 	// zwei arch-overlay-Binds im OmaSettings-Store (Backup vor erstem
@@ -406,11 +477,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let localVariant = $state<'a' | 'c' | null>(null);
 
 	// ---- Modi (Karte t_315a26cc) --------------------------------------------
-	// Zentraler Mode-State: F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar ·
-	// F12 Einstellungen. Der bestehende Market-Modus (F2/Rail) ist derselbe
+	// Zentraler Mode-State: Defaults F1 Suche · F2 Marktplatz · F3 Routen ·
+	// F4 Inventar · F11 Hangar · F12 Einstellungen (konfigurierbar, PB t_1c9bc240). Der bestehende Market-Modus (F2/Rail) ist derselbe
 	// State — `phase === 'market'` bleibt die Render-Quelle, Config bleibt
 	// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).
-	// P1 t_a39f6811: F6 Handelsrouten — eigener Mode für die Rail/Keyhandler;
+	// P1 t_a39f6811: Handelsrouten — eigener Mode für die Rail/Keyhandler;
 	// intern bleibt es der Market-Phase mit mTab='routes'.
 	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
 	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
@@ -800,6 +871,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		usernameInput = '';
 		usernameNote = '';
 		cancelShortcutCapture();
+		// PB (t_1c9bc240, B1): Config-Open startet immer sauber.
+		cancelModeHotkeyCapture();
 		inConfig = true;
 		if (searchEl) searchEl.blur();
 	}
@@ -814,6 +887,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		usernameNote = '';
 		// Capture darf ein Schließen nicht überleben (kein Geister-Fenster-Modus).
 		cancelShortcutCapture();
+		// PB (t_1c9bc240, B1): dasselbe für das Mode-Hotkey-Capture.
+		cancelModeHotkeyCapture();
 		cfgToast = '';
 		if (cfgToastTimer) clearTimeout(cfgToastTimer);
 		// Der Tray kann das Overlay (ohne laufendes Spiel) rein für die Config
@@ -1194,10 +1269,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (mSel > top || (visOffers.length === 0 && mSel !== 0)) mSel = top;
 	});
 
-	// ---- Mein Shop (M2a, Read-Phase): eigene Offers + letzte 5 Trades -----
+	// ---- Mein Shop (M2a, Read-Phase): eigene Offers + Marktplatz-Deals -----
 	let shopUser = $state(loadShopUser());
 	let myOffers = $state<Offer[]>([]);
-	let myTrades = $state<Trade[]>([]);
+	let myNegotiations = $state<Negotiation[]>([]);
 	let shopLoading = $state(false);
 	let shopSource = $state<'cache' | 'live' | 'offline'>('live');
 	let shopNote = $state<string | null>(null);
@@ -1228,7 +1303,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			shopErr = null;
 			shopNote = null;
 			myOffers = [];
-			myTrades = [];
+			myNegotiations = [];
 			return;
 		}
 		shopLoading = !bg;
@@ -1240,10 +1315,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (!bg) shopCreatedUrl = null;
 		// Eigene Offers brauchen den username-Filter; ohne key kein Abschnitt.
 		// Beide Reads parallel — unabhängig voneinander, ein Fehler reißt den
-		// anderen nicht mit.
+		// anderen nicht mit. t_350c4300 B2: der zweite Read ist die
+		// MARKTPLATZ-Quelle get_my_negotiations (nicht mehr get_my_trades —
+		// der /user_trades-Commodity-Verlauf zeigt hier die falschen Daten).
 		const results = await Promise.allSettled([
 			invoke<OwnOffersResponse>('get_my_offers', { username: shopUser.trim() }),
-			invoke<TradesResponse>('get_my_trades')
+			invoke<NegotiationsResponse>('get_my_negotiations')
 		]);
 		shopLoading = false;
 
@@ -1258,10 +1335,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			myOffers = [];
 			shopErr = String(results[0].reason);
 		}
-		// Trades (unabhängig vom Offers-Ergebnis)
+		// Marktplatz-Deals (unabhängig vom Offers-Ergebnis)
 		if (results[1].status === 'fulfilled') {
 			const r = results[1].value;
-			myTrades = r.trades;
+			myNegotiations = r.negotiations;
 			shopKeySet = shopKeySet || r.key_set;
 			if (r.note && !shopNote) shopNote = r.note;
 		} else if (!shopErr) {
@@ -1290,11 +1367,28 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			? myOffers
 			: myOffers.filter((o) => (shopFilter === 'pending' ? !o.approved : o.approved))
 	);
-	// Letzte 5 Trades (neueste zuerst) — die letzten-5-Logik liegt laut
-	// Entscheidung in der UI; der Cache liefert den vollen Verlauf.
-	const recentTrades = $derived(
-		[...myTrades].sort((a, b) => b.date_added - a.date_added).slice(0, 5)
+	// Letzte 5 Marktplatz-Trades (neueste zuerst, t_350c4300 B2) — Aktivität
+	// nach date_modified (letzte Interaktion, inkl. Abschluss), Fallback auf
+	// date_added. Die letzten-5-Logik liegt laut Entscheidung in der UI; der
+	// Cache liefert den vollen Verlauf.
+	const recentNegotiations = $derived(
+		[...myNegotiations]
+			.sort((a, b) => (b.date_modified || b.date_added) - (a.date_modified || a.date_added))
+			.slice(0, 5)
 	);
+	// Status-Zeile eines Deals (Marktplatz-Bezug statt Commodity-Trace):
+	// abgeschlossen = deal_value + date_closed, sonst laufende Verhandlung.
+	function dealStatus(n: Negotiation): string {
+		if (n.date_closed) {
+			const dv = n.deal_value ? ' · ' + fmtPrice(n.deal_value) + ' ' + (n.deal_value_currency || n.currency || '') : '';
+			return 'abgeschlossen' + dv;
+		}
+		return 'in Verhandlung · seit ' + new Date((n.date_added || 0) * 1000).toLocaleDateString('de-DE');
+	}
+	// Rolle des eigenen Accounts in diesem Deal (m-op-Anzeige).
+	function dealRole(n: Negotiation): 'sell' | 'buy' {
+		return n.is_listing_advertiser ? 'sell' : 'buy';
+	}
 	async function openListingDeepLink(slug: string | null) {
 		try {
 			// Leerer Slug → Marketplace-Startseite (Backend-Doku). Kein iframe —
@@ -1306,6 +1400,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	async function openMyShopDeepLink() {
 		try {
+			// t_350c4300 B3: Ziel ist der Manager-Listings-Tab
+			// (https://uexcorp.space/marketplace/manage/tab/listings/) — dort
+			// verwaltet der Nutzer seine Listings (und sieht die Deals dazu).
+			// Login macht er selbst im Browser.
 			await invoke<string>('open_marketplace_trades');
 		} catch (e) {
 			shopErr = String(e);
@@ -1331,7 +1429,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	type AdvertiseForm = {
 		operation: 'sell' | 'buy';
 		// MC (t_5faaf946): Listing Type — UEX `type`: item|service|contract.
-		listing_type: 'item' | 'service' | 'contract';
+		// NN (t_060d134e): '' möglich — geleertes Dropdown leert den Wert;
+		// die Validierung verlangt vor dem Write erneut eine Auswahl.
+		listing_type: 'item' | 'service' | 'contract' | '';
 		// Item-Auswahl (Typeahead) — UEX `id_item`. Pflicht wenn listing_type=item.
 		item_id: string;
 		item_label: string;
@@ -1344,7 +1444,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		source: string;
 		// MC: Currency (UEC|WIF|MGS), Default UEC.
 		currency: string;
-		// MC: Quality 0–100 (optional).
+		// MC: Quality 0–1000 (optional). NN (t_060d134e): 1000 statt 100.
 		quality: string;
 		// MC: Hide Listing (optional, Default No) → is_hidden 1/0.
 		hidden: boolean;
@@ -1483,30 +1583,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let advertItemOpts = $derived(
 		advertItemSug.map((i) => ({ value: String(i.id), label: i.name })) as AdvertTypeaheadOpt[]
 	);
-	// MC: Bilder bis 5 — Dateiauswahl, Base64-Vorschau, X-Entfernen. UEX
-	// überträgt doku-konform das ERSTE Bild als image_data (Doku [7]).
+	// MC: Dateiauswahl, Base64-Vorschau, X-Entfernen. UEX überträgt doku-
+	// konform EIN Bild als image_data (Doku [7]). NN (t_060d134e): genau
+	// 1 Bild — eine neue Wahl ERSETZT das alte (keine 5er-Sammlung mehr).
 	let advertFileInput = $state<HTMLInputElement | null>(null);
 	function addAdvertImages(files: FileList | null) {
-		if (!files) return;
-		const room = 5 - advertForm.images.length;
-		for (const file of Array.from(files).slice(0, room)) {
-			if (!/^image\/(jpeg|png)$/.test(file.type)) {
-				advertNote = 'Nur JPG/PNG-Bilder sind erlaubt (UEX-Limit).';
-				continue;
-			}
-			if (file.size > 10 * 1024 * 1024) {
-				advertNote = 'Bild „' + file.name + '“ ist größer als 10 MB (UEX-Limit).';
-				continue;
-			}
-			const reader = new FileReader();
-			reader.onload = () => {
-				if (typeof reader.result === 'string') {
-					advertForm.images = [...advertForm.images, reader.result as string];
-				}
-			};
-			reader.readAsDataURL(file);
+		if (!files || !files.length) return;
+		const file = files[0];
+		if (!/^image\/(jpeg|png)$/.test(file.type)) {
+			advertNote = 'Nur JPG/PNG-Bilder sind erlaubt (UEX-Limit).';
+			return;
 		}
-		if (advertForm.images.length >= 5) advertNote = 'Maximal 5 Bilder (UEX-Limit).';
+		if (file.size > 10 * 1024 * 1024) {
+			advertNote = 'Bild „' + file.name + '“ ist größer als 10 MB (UEX-Limit).';
+			return;
+		}
+		const reader = new FileReader();
+		reader.onload = () => {
+			if (typeof reader.result === 'string') {
+				// Replace-Semantik: das neue Bild ersetzt ein ggf. vorhandenes.
+				advertForm.images = [reader.result as string];
+			}
+		};
+		reader.readAsDataURL(file);
 	}
 	let confirmAction = $state<null | { kind: 'advertise' } | { kind: 'delete'; offer: Offer }>(null);
 	let writeBusy = $state(false);
@@ -1579,6 +1678,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			| 'unit'
 			| 'currency'
 			| 'quality'
+			| 'listing_type'
 			| 'hours'
 			| 'images',
 			string
@@ -1600,6 +1700,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	};
 	function validateAdvertise(f: AdvertiseForm): AdvertErrors {
 		const errs: AdvertErrors = {};
+		// NN (t_060d134e): geleertes Listing-Type-Dropdown → Pflicht-Hinweis.
+		if (!f.listing_type) errs.listing_type = 'Listing Type ist Pflicht.';
 		if (!f.title.trim()) errs.title = 'Titel ist Pflicht.';
 		else if (f.title.trim().length > 140) errs.title = 'Titel max. 140 Zeichen (Doku).';
 		if (!f.description.trim()) errs.description = 'Beschreibung ist Pflicht.';
@@ -1619,11 +1721,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (!Number.isFinite(qty) || qty <= 0) errs.quantity = 'Menge muss eine positive Ganzzahl sein.';
 		if (!f.unit.trim()) errs.unit = 'Einheit ist Pflicht.';
 		if (!f.currency.trim()) errs.currency = 'Währung ist Pflicht.';
-		if (f.quality !== '' && (!Number.isFinite(Number(f.quality)) || Number(f.quality) < 0 || Number(f.quality) > 100)) {
-			errs.quality = 'Quality muss zwischen 0 und 100 liegen.';
+		// NN (t_060d134e): Quality-Bereich 0–1000 (UEX-Maske; 100 war zu eng).
+		if (f.quality !== '' && (!Number.isFinite(Number(f.quality)) || Number(f.quality) < 0 || Number(f.quality) > 1000)) {
+			errs.quality = 'Quality muss zwischen 0 und 1000 liegen.';
 		}
 		if (!f.hours) errs.hours = 'Laufzeit ist Pflicht.';
-		if (f.images.length > 5) errs.images = 'Maximal 5 Bilder (UEX-Limit).';
+		// NN (t_060d134e): UEX überträgt nur 1 Bild (image_data) — UI erlaubt
+		// genau 1 (neue Wahl ersetzt die alte), keine 5er-Sammlung mehr.
+		if (f.images.length > 1) errs.images = 'Maximal 1 Bild (UEX-Limit).';
 		return errs;
 	}
 	function applyAdvertErrors(errs: AdvertErrors): boolean {
@@ -1735,7 +1840,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// MC (t_5faaf946): Unit-Auswahl hängt vom Listing-Type ab (Doku [7] —
 	// separate Referenzliste für item/service/contract); UNIT_MAP oben.
 	function unitsFor(type: AdvertiseForm['listing_type']): string[] {
-		return UNIT_MAP[type] || UNIT_MAP.item;
+		if (type !== 'item' && type !== 'service' && type !== 'contract') return UNIT_MAP.item;
+		return UNIT_MAP[type];
 	}
 	// Laufzeit: >24h als Tage anzeigen (48→2d … 720→30d), ≤24h in h bleiben.
 	// Der gespeicherte Wert bleibt unverändert die Stundenzahl (API erwartet h).
@@ -1745,6 +1851,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return n > 24 ? (n / 24) + 'd' : n + ' h';
 	}
 	const HOUR_CHOICES = ['1', '2', '3', '5', '12', '24', '48', '72', '120', '168', '336', '720'];
+
+	// NN (t_060d134e): Preis-Eingabe mit Tausender-Punkten — angezeigt wird
+	// gruppiert (1.500.000.000), gespeichert bleibt die reine Ziffernfolge
+	// (advertForm.price), sodass Validierung/Parse unverändert Number() nutzt.
+	function fmtGroup(v: string): string {
+		const digits = String(v).replace(/\D/g, '');
+		return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+	}
+	function onPriceInput(e: Event) {
+		const el = e.currentTarget as HTMLInputElement;
+		const digits = el.value.replace(/\D/g, '').slice(0, 12);
+		advertForm.price = digits;
+		el.value = digits ? fmtGroup(digits) : '';
+	}
 
 	// ---- Handelsrouten (Karte t_128b7547) ------------------------------------
 	// Separater Tab im Marktmodus (Design-Empfehlung der Karte). Datenquelle:
@@ -2564,7 +2684,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		void runSearch();
 	}
 
-	// ---- Modi-Wechsel (F1/F2/F3/F4/F6/F12 + Rail-Klicks) ------------------------
+	// ---- Modi-Wechsel (Mode-Hotkeys + Rail-Klicks) ------------------------------
 	// Ein zentraler Einstieg: räumt den jeweiligen Alt-Zustand auf (Market-
 	// Reset, Config schließen, Detail schließen) und behält den Tastaturfokus
 	// im Suchfeld — wie bisher nach Market-Exit/Detail-Schließen.
@@ -2583,9 +2703,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				enterMarket();
 				if (searchEl) searchEl.focus();
 			}
-			mTab = 'offers'; // F2 = Angebots-Tab (F6 trägt Routen)
+			mTab = 'offers'; // Marktplatz-Hotkey = Angebots-Tab (Routen tragen den Routen-Hotkey)
 		} else if (m === 'routes') {
-			// F6/Rail: Handelsrouten-Tab im Marktmodus (t_a39f6811 P1).
+			// Routen-Hotkey/Rail: Handelsrouten-Tab im Marktmodus (t_a39f6811 P1).
 			// railMode lösen (t_04e3d8c6): sonst bleibt aus Hangar/Inventar
 			// railMode gesetzt und mode $derived wechselt nie auf 'routes'.
 			railMode = null;
@@ -2616,7 +2736,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// Kern-Loader für den Marketplace (cache-first, progressive Limits).
 	// `bg = true`: Hintergrund-Refresh (P3) — kein Spinner, UI bleibt bedienbar.
-	async function fetchMarket(limit: number, showAll = false, bg = false) {
+	// PB (t_1c9bc240, B2): `force = true` (F5-Resync) umgeht die Cache-Frische
+	// im Backend → ECHTER Live-Fetch über denselben Snapshot-Pfad wie der
+	// Hintergrund-Sweep, statt nur den Cache neu zu rendern.
+	async function fetchMarket(limit: number, showAll = false, bg = false, force = false) {
 		if (showAll) mLoadingMore = true; else if (!bg) mLoading = true;
 		mNote = null;
 		const filterObj = {
@@ -2626,7 +2749,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			operation: mOp === 'all' ? null : mOp,
 			region: '',
 			sort: mSort,
-			limit
+			limit,
+			force_refresh: force
 		};
 		try {
 			const resp = await invoke<MarketResponse>('get_marketplace', { filters: filterObj });
@@ -2654,24 +2778,48 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		await fetchMarket(100, false, mode === 'bg');
 	}
 
-	// P4: F5 (app-lokal) — kontextsensitiver Sync.
-	//   Market-Modus → Market-Daten manuell syncen (Normal-Load mit Spinner,
-	//   kein Hintergrund-Refresh — der User hat explizit angefragt).
-	//   Normal/Detail-Modus → Commodity-Preise syncen (Backend `sync_now`).
-	// Feedback NUR in der Statuszeile (f5Msg), nie modal.
+	// P4/PB (t_1c9bc240, B2): F5 (app-lokal, nie Browser-Reload) — RESYNC NUR
+	// AN RELEVANTEN ORTEN. Wirksamkeits-Fix: der alte Market-Pfad war cache-
+	// first (UI-Reload des Snapshots, die „zuletzt gesynced“-Anzeigen blieben
+	// stehen). Jetzt führt F5 denselben Pfad aus wie der Hintergrund-Sweep:
+	//   Angebote-Tab   → get_marketplace mit force_refresh (echter Live-Fetch,
+	//                    Snapshot-Store identisch zum Background-Sweep).
+	//   Mein-Shop-Tab  → loadShop (User-scoped Pull mit eigener Quelle).
+	//   Routen-Tab     → Backend-Sweep `sync_now` (SYNC-Event aktualisiert die
+	//                    Statuszeile) + Routen-Reload.
+	// Überall sonst: KEIN Call, kein Feedback, kein Hinweis in der Fußzeile.
 	async function onF5() {
-		flashStatus('Sync läuft …');
-		if (phase === 'market') {
-			await loadMarket();
-			flashStatus(mNote ? `Market-Sync fehlgeschlagen · ${mNote}` : `Aktualisiert vor ${rel(mFetchedAt || nowSec())}`);
-		} else {
+		if (phase !== 'market' || offerDetail) return;
+		if (mTab === 'shop') {
+			flashStatus('Mein Shop sync läuft …');
+			await loadShop();
+			flashStatus(
+				shopErr
+					? `Shop-Sync fehlgeschlagen · ${shopErr}`
+					: `Mein Shop aktualisiert · Quelle ${shopSource === 'live' ? 'UEX live' : shopSource === 'cache' ? 'Cache' : 'Offline-Snapshot'}`
+			);
+			return;
+		}
+		if (mTab === 'routes') {
+			flashStatus('Routen-Sweep läuft …');
 			try {
 				status = await invoke<SyncStatus>('sync_now');
-				flashStatus(`Preise aktualisiert · Cache ${cacheAge(status)}`);
+				flashStatus(`Daten gesweept · Cache ${cacheAge(status)}`);
 			} catch (e) {
-				flashStatus(`Sync fehlgeschlagen · ${String(e)}`);
+				flashStatus(`Sweep fehlgeschlagen · ${String(e)}`);
+				return;
 			}
+			await loadRoutes();
+			return;
 		}
+		// Angebote-Tab: forcierte Market-Sync (echter Live-Fetch).
+		flashStatus('Market-Sync läuft …');
+		await fetchMarket(100, false, false, true);
+		flashStatus(
+			mNote
+				? `Market-Sync fehlgeschlagen · ${mNote}`
+				: `Market aktualisiert · ${offers.length} Angebote · vor ${rel(mFetchedAt || nowSec())}`
+		);
 	}
 
 	function flashStatus(t: string) {
@@ -2863,29 +3011,49 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			return;
 		}
+		// PB (t_1c9bc240, B1): Mode-Hotkey-Capture — VOR allen anderen Shortcuts,
+		// damit die gedrückte F-Taste hier landet und keinen Modus auslöst.
+		if (hkCapture) {
+			if (k === 'Escape') {
+				cancelModeHotkeyCapture();
+				e.preventDefault();
+				return;
+			}
+			if (/^F([1-9]|1[0-2])$/.test(k)) {
+				const field = hkCapture;
+				void submitModeHotkey(field, k);
+				e.preventDefault();
+				return;
+			}
+			// Keine F-Taste: Capture bleibt scharf (Hinweis bleibt stehen).
+			return;
+		}
 		// ---- F-Tasten: In-App-Moduswechsel (Karte t_315a26cc) ----------------
-		// F1 Suche · F2 Marktplatz · F6 Routen · F3 Inventar · F4 Hangar · F12 Einstellungen.
-		// KEINE Hyprland-Binds — die Tasten greifen nur, solange das Overlay
-		// sichtbar+fokussiert ist (compositor_focus beim Show): SC verliert nie
-		// Tasten. F-Tasten erzeugen keine Zeichen, sie können also auch bei
-		// Fokus im Suchfeld/Stepper nicht in Eingaben geraten; einzig gegen
+		// PB (t_1c9bc240, B1): Belegung KONFIGURIERBAR — Lookup über das
+		// persistierte Map (Settings/F12), Defaults in lib/hotkeys.ts:
+		// F1 Suche · F2 Marktplatz · F3 Routen · F4 Inventar · F11 Hangar ·
+		// F12 Einstellungen. F5 ist NICHT im Map — bleibt der kontextsensitive
+		// Resync (B2, weiter unten im Handler). KEINE Hyprland-Binds — die
+		// Tasten greifen nur, solange das Overlay sichtbar+fokussiert ist
+		// (compositor_focus beim Show): SC verliert nie Tasten. F-Tasten
+		// erzeugen keine Zeichen, sie können also auch bei Fokus im
+		// Suchfeld/Stepper nicht in Eingaben geraten; einzig gegen
 		// contentEditable-Editoren (die F-Tasten selbst belegen können) wird
 		// mit demselben Check geschützt wie die bestehenden m/o-Shortcuts.
-		if (/^F(1|2|3|4|6|12)$/.test(k)) {
+		if (/^F([1-9]|1[0-2])$/.test(k) && k !== 'F5') {
 			if (
 				typeof (e.target as HTMLElement | null)?.isContentEditable === 'boolean' &&
 				(e.target as HTMLElement).isContentEditable
 			) {
 				return; // Rich-Text-Editor behält seine F-Tasten
 			}
-			if (k === 'F1') setMode('search');
-			else if (k === 'F2') setMode('market');
-			else if (k === 'F3') setMode('inventory');
-			else if (k === 'F4') setMode('hangar');
-			else if (k === 'F6') setMode('routes');
-			else setMode('settings');
-			e.preventDefault();
-			return;
+			const modeKey = modeKeyMap(cfg).get(k);
+			if (modeKey) {
+				setMode(modeKey);
+				e.preventDefault();
+				return;
+			}
+			// Nicht belegte F-Taste (z. B. F6/F7–F10): fällt durch — kein Modus.
 		}
 		// Platzhalter-Modi (Inventar/Hangar): nur Esc/F-Tasten wirken — keine
 		// Ergebnis-Navigation, kein Enter im Leeren.
@@ -2933,11 +3101,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			return;
 		}
-		// P4: F5 ist app-lokal — nie Browser-Reload. Kontextsensitiv: Market-Modus
-		// syncen Market-Daten, sonst Commodity-Preise (Feedback in der Fußzeile).
+		// P4/PB (t_1c9bc240, B2): F5 ist app-lokal — nie Browser-Reload — und
+		// wirkt NUR, wo Resync relevant ist (Market-Modus: Angebote, Mein Shop,
+		// Routen). Suche/Detail/Rail-Modi (Inventar/Hangar)/Config: KEIN Call,
+		// KEIN Feedback (der Handler ist hier nur noch erreichbar, weil die
+		// F5-Behandlung NACH den railMode/inConfig-Rückgaben liegt).
 		if (k === 'F5') {
-			void onF5();
-			e.preventDefault();
+			if (phase === 'market' && !offerDetail) {
+				if (mTab === 'shop' && cfg && !cfg.uex_secret_key_set) {
+					e.preventDefault();
+					return; // ohne Secret-Key gibt es nichts zu syncen — kein Fake-Feedback
+				}
+				void onF5();
+				e.preventDefault();
+			}
+			// sonst: F5 fällt durch — kein Modus, kein Sync, kein Reload.
 			return;
 		}
 		// Marktplatz-Modus: Angebot-Navigation + Detail.
@@ -3119,11 +3297,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	<div class="shell" class:in-detail={inDetail}>
 		<i class="deco t1"></i><i class="deco t2"></i>
 
-		<!-- Rail: linke Modus-Leiste (F1/F2/F3/F4/F6/F12) — gehört nur zum Overlay.
+		<!-- Rail: linke Modus-Leiste (Mode-Hotkeys) — gehört nur zum Overlay.
 		     K2 (t_5fe8eb4c): palW ist die VIEWPORT-wide pal-root nuun (width moved
 		     onto .shell); Shell-Box = max(70vw,640px) clamp 94vw ⇒ Palette <520px
 		     only below ~553px viewport → threshold re-based accordingly. -->
-		<Rail mode={mode} compact={palW > 0 && palW < 553} onselect={setMode} />
+		<!-- PB (t_1c9bc240, B1): Rail zeigt die persistierten Mode-Hotkeys. -->
+		<Rail mode={mode} compact={palW > 0 && palW < 553} onselect={setMode} hotkeys={cfg?.mode_hotkeys ?? undefined} />
 
 		<div class="shell-main">
 		<!-- Suchzeile -->
@@ -3468,11 +3647,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{/each}
 						<!-- Konfliktliste + Ehrlichkeit zum Registrierungszustand
-						     (Preisquellen-Feedback-Muster, K6): die In-App-Handler
-						     prüfen keine Mod-Tasten, darum sind diese Tasten für
-						     globale Kürzel gesperrt. -->
+					     (Preisquellen-Feedback-Muster, K6): die In-App-Handler
+					     prüfen keine Mod-Tasten, darum sind diese Tasten für
+					     globale Kürzel gesperrt. -->
 						<div class="cfg-sc-note">
-							Intern belegt (nicht wählbar): F1–F6, F12, Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
+							Für globale Hotkeys gesperrt: F-Tasten sind die Mode-Hotkeys
+							(konfigurierbar, Abschnitt „Mode-Hotkeys“), F5 führt den Resync aus.
+							Weitere interne Belegungen: Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
 							{#if cfg && cfg.hyprland_session}
 								<!-- C2b (t_1adbc017): Hyprland führt die Kürzel als
 								     Compositor-Binds. OmaSettings-Pfad nur mit
@@ -3518,6 +3699,42 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{:else if cfg}
 								<div class="cfg-sc-ok" role="status">Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart.</div>
 							{/if}
+						</div>
+					</section>
+					<!-- PB (t_1c9bc240, B1): Mode-Hotkeys — konfigurierbare F-Tasten der
+					     In-App-Modi. Persistiert im Settings-Crate (TOML), Validierung:
+					     nur F1–F12, F5 reserviert für den Resync, keine Doppelbelegung.
+					     Capture-Muster identisch zu den globalen Kürzeln (C2a). -->
+					<section class="cfg-sect">
+						<div class="h">Mode-Hotkeys</div>
+						{#each modeHotkeyFields as f (f.id)}
+							<div class="cfg-sc-row" class:is-cap={hkCapture === f.id}>
+								<div class="cfg-sc-meta">
+									<div class="cfg-sc-lbl">{f.label}</div>
+									<div class="cfg-sc-active">
+										Aktiv: <b>{hotkeyFor(cfg, f.id)}</b>
+									</div>
+								</div>
+								<button
+									type="button"
+									class="chip cfg-sc-capture"
+									class:is-on={hkCapture === f.id}
+									onclick={() => (hkCapture === f.id ? (hkCapture = null) : startModeHotkeyCapture(f.id))}
+								>{hkCapture === f.id ? 'Abbrechen (Esc)' : 'Ändern'}</button>
+							</div>
+						{/each}
+						{#if hkCapture}
+							<div class="cfg-sc-help" role="status">
+								F-Taste drücken (F1–F12) für „{modeHotkeyFields.find((f) => f.id === hkCapture)?.label}“ — Esc bricht ab.
+							</div>
+						{/if}
+						{#if hkNote}
+							<div class="cfg-sc-err" role="alert">{hkNote}</div>
+						{/if}
+						<div class="cfg-sc-note">
+							F5 ist fest für den Resync reserviert (Marktplatz, Mein Shop, Routen-Sweep)
+							und kann keinem Modus zugewiesen werden. Änderungen gelten sofort.
+							<button type="button" class="chip" onclick={() => void resetModeHotkeys()}>Standard-Belegung</button>
 						</div>
 					</section>
 					<section class="cfg-sect">
@@ -3643,11 +3860,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 		{:else if phase === 'market'}
 			<div class="pane-market">
-			{#if !offerDetail}
+			<!-- PP t_e2cdb571 (2): Tablist nur im MARKTPLATZ-Mode (mode === 'market').
+			     Root-Cause des Reiter-Leaks: der bisherige Guard hing an der Phase
+			     (phase === 'market') — der Routen-View ist intern dieselbe Phase mit
+			     mTab='routes', also blieben „Angebote"/„Mein Shop" dort stehen.
+			     Der Tab-State selbst leakt nicht; die Tablist hing am falschen
+			     Zustand. Jetzt am abgeleiteten Mode (routes = kein Marktplatz-Reiter). -->
+			{#if !offerDetail && mode === 'market'}
 				<div class="mtabs" role="tablist">
 					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
-					<button type="button" role="tab" aria-selected={mTab === 'routes'} class="chip" class:is-on={mTab === 'routes'} onclick={() => (mTab = 'routes')}>Handelsrouten</button>
-				<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
+					<!-- t_350c4300 B1: kein „Handelsrouten"-Tab im Marktplatz — Routen
+					     sind nur noch über das Navigationsband (Rail) bzw. den
+					     Mode-Hotkey für Routen (Default F3, konfigurierbar)
+					     erreichbar (setMode('routes') → mTab='routes' bleibt der
+					     interne Mechanismus). -->
+					<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
 				</div>
 			{/if}
 			{#if offerDetail}
@@ -3826,7 +4053,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{:else}
 						<div class="mbar2">
 							<span class="m-lbl">Schiff</span>
-							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder="Type-ahead Schiff" ariaLabel="Schiff Type-ahead — Tippen filtert, ↵ übernimmt" onselect={(v: string) => applyShipScu(v)} />
+							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder="z. B. Ironclad" ariaLabel="Schiff Type-ahead — Tippen filtert, ↵ übernimmt" onselect={(v: string) => applyShipScu(v)} />
 							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
 							<span class="m-lbl">Budget</span>
 							<div class="rb-wrap">
@@ -3961,7 +4188,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="pane-error" style="margin: 10px 0">
 							<div class="center">
 								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
-								<div class="sm">Eigene Offers + Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
+								<div class="sm">Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
 								<span class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</span>
 							</div>
 						</div>
@@ -3973,7 +4200,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="pane-error" style="margin: 10px 0">
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Secret-Key fehlt oder ist falsch — siehe Einstellungen</div>
-								<div class="sm">User-scoped Reads (eigene Offers, Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
+								<div class="sm">User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
 								<button type="button" class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</button>
 							</div>
 						</div>
@@ -3981,9 +4208,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="center">
 							<span class="spin"></span>
 							<div class="big" style="margin-top: 12px">Lade Mein Shop …</div>
-							<div class="sm">Eigene Offers + letzte Trades vom UEX-Client.</div>
+							<div class="sm">Eigene Offers + Marktplatz-Trades vom UEX-Client.</div>
 						</div>
-					{:else if shopErr && !myOffers.length && !myTrades.length}
+					{:else if shopErr && !myOffers.length && !myNegotiations.length}
 						<div class="pane-error">
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
@@ -4056,14 +4283,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																		const u = unitsFor(advertForm.listing_type);
 																		if (!u.includes(advertForm.unit)) advertForm.unit = u[0];
 																	}}
-																/>
-															</div>
+																	/>
+																	{#if advertErrors.listing_type}<span class="chip warn" style="margin-left: 4px">{advertErrors.listing_type}</span>{/if}
+																	</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Titel</span>
-																<input class="rtext" placeholder="Artikelname (alphanumerisch + -)" maxlength="140" bind:value={advertForm.title} />
-																{#if advertErrors.title}<span class="chip warn" style="margin-left: 4px">{advertErrors.title}</span>{/if}
-																<span class="m-lbl">Preis</span>
-																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.price} />
+																				<!-- NN (t_060d134e): breit genug für lange Titel (z. B.
+																				     „Atzkav Sniper Rifle 970 Q Crafted …“) ohne Abschneiden. -->
+																				<input class="rtext" style="width: 560px" placeholder="Artikelname (alphanumerisch + -)" maxlength="140" bind:value={advertForm.title} />
+																				{#if advertErrors.title}<span class="chip warn" style="margin-left: 4px">{advertErrors.title}</span>{/if}
+																				<span class="m-lbl">Preis</span>
+																				<!-- NN (t_060d134e): breit für einstellige Milliarden +
+																				     Tausender-Punkte bei der Eingabe (gespeichert wird die
+																				     reine Ziffernfolge — Validierung/Parse unverändert). -->
+																				<input
+																					class="qnum"
+																					style="width: 170px"
+																					type="text"
+																					inputmode="numeric"
+																					placeholder="z. B. 1.500.000.000"
+																					aria-label="Preis (Ganzzahl, Tausender-Punkte werden bei der Eingabe angezeigt)"
+																					value={fmtGroup(advertForm.price)}
+																					oninput={onPriceInput}
+																				/>
 																{#if advertErrors.price}<span class="chip warn" style="margin-left: 4px">{advertErrors.price}</span>{/if}
 																<span class="m-lbl">Währung</span>
 																<SelectCombo bind:value={advertForm.currency} ariaLabel="Currency" placeholder="UEC" options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
@@ -4148,7 +4390,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	]}
 																/>
 																<span class="m-lbl">Quality</span>
-																<input class="qnum" type="number" min="0" max="100" step="1" placeholder="0–100" bind:value={advertForm.quality} />
+																<!-- NN (t_060d134e): Quality 0–1000 (war 0–100) — UEX-Maske
+												     erlaubt bis 1000, z. B. „970 Q Crafted“. -->
+								<input class="qnum" type="number" min="0" max="1000" step="1" placeholder="0–1000" title="Quality 0–1000" bind:value={advertForm.quality} />
 																{#if advertErrors.quality}<span class="chip warn" style="margin-left: 4px">{advertErrors.quality}</span>{/if}
 																<span class="m-lbl">Availability</span>
 																<SelectCombo
@@ -4177,13 +4421,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																{#if advertErrors.description}<span class="chip warn" style="margin-left: 4px">{advertErrors.description}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px; align-items: center">
-																<span class="m-lbl">Bilder (bis 5, JPG/PNG)</span>
-																<input
-																	class="rtext"
-																	type="file"
-																	accept="image/jpeg,image/png"
-																	multiple
-																	style="max-width: 260px"
+																<span class="m-lbl">Bild (JPG/PNG, 1 erlaubt)</span>
+																				<!-- NN (t_060d134e): genau 1 Bild — UEX überträgt nur 1
+																				     (image_data). Neue Wahl ersetzt die alte; Vorschau +
+																				     Entfernen bleiben. -->
+																				<input
+																					class="rtext"
+																					type="file"
+																					accept="image/jpeg,image/png"
+																					style="max-width: 260px"
 																	onchange={(e) => {
 																		const el = e.currentTarget as HTMLInputElement;
 																		addAdvertImages(el.files);
@@ -4203,7 +4449,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	</span>
 																{/each}
 																{#if advertForm.images.length}
-																	<span class="sm" style="opacity: .6">UEX überträgt 1 Bild pro Listing (image_data) — das erste gewählte wird gesendet.</span>
+																	<span class="sm" style="opacity: .6">UEX überträgt 1 Bild pro Listing (image_data) — ein neu gewähltes Bild ersetzt das alte.</span>
 																{/if}
 																{#if advertErrors.images}<span class="chip warn" style="margin-left: 4px">{advertErrors.images}</span>{/if}
 															</div>
@@ -4274,42 +4520,47 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{/if}
 						<div class="mbar2" style="margin-top: 14px">
-							<span class="m-lbl">Letzte 5 Trades</span>
+							<span class="m-lbl">Letzte 5 Marktplatz-Trades</span>
 							<span class="m-spacer"></span>
-							<span class="chip" title="Trade-Verlauf auf uexcorp.space öffnen" onclick={openMyShopDeepLink}>Verlauf im Browser ↗</span>
+							<!-- t_350c4300 B3: alle „Listings verwalten"-Buttons öffnen exakt
+							     den Manager-Listings-Tab (Backend open_marketplace_trades);
+							     Login macht der Nutzer selbst im Browser. -->
+							<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
 						</div>
-						{#if recentTrades.length}
+						{#if recentNegotiations.length}
 							<div class="mlist">
-								{#each recentTrades as t (t.id)}
+								{#each recentNegotiations as n (n.id)}
+									<!-- PP t_e2cdb571 (1): eigene trow-Klasse — die Offer-Grid-Spalten
+									     (26px Badge + 44px Op) passten nicht zur 3-Kinder-Struktur,
+									     was Op-Chip in den Badge-Slot und Text in 44px quetschte. -->
 									<div
-										class="mrow"
+										class="mrow trow"
 										role="option"
-										title="Trade-Verlauf auf uexcorp.space öffnen"
-										onclick={openMyShopDeepLink}
+										title="Marktplatz-Deal auf uexcorp.space öffnen (Listing-Seite)"
+										onclick={() => void openListingDeepLink(n.listing_slug)}
 									>
-										<div class="m-op {t.operation}">{t.operation === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? 'Verkauf' : 'Kauf'}</div>
 										<div class="m-main">
-											<div class="m-title">{t.commodity}</div>
+											<div class="m-title">{n.listing_title}</div>
 											<div class="m-sub">
-												{t.terminal}
-												{t.vehicle ? ' · ' + t.vehicle : ''}
-												{t.fleet_name ? ` · Flotte „${t.fleet_name}“` : ''}
-												{t.organization ? ` · ${t.organization}` : ''}
+												{n.is_listing_advertiser
+													? `Gegenüber ${n.client_username || n.client_name || '—'} (Käufer)`
+													: `Gegenüber ${n.advertiser_username || n.advertiser_name || '—'} (Anbieter)`}
 											</div>
 										</div>
 										<div class="m-right">
-											<div class="m-price {t.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(t.price)} <span class="m-meta">/SCU</span></div>
-											<div class="m-meta">{fmtQty(t.scu)} SCU · {new Date(t.date_added * 1000).toLocaleDateString('de-DE')}</div>
+											<div class="m-price {dealRole(n)}">{fmtPrice(n.deal_value ?? n.price)} <span class="m-meta">/{n.unit || 'unit'}</span></div>
+											<div class="m-meta">{dealStatus(n)}</div>
 										</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>Zeige {recentTrades.length} von {myTrades.length} Trades · Einzeltrade-Deep-Link bei UEX nicht dokumentiert → Verlauf im Browser.</span>
+								<span>Zeige {recentNegotiations.length} von {myNegotiations.length} Marktplatz-Trades · Einzeldeal-Deep-Link bei UEX nicht dokumentiert → Listing-Seite im Browser.</span>
 								<span class="src">UEX Corp</span>
 							</div>
 												{:else}
-													<div class="row-empty" style="padding: 14px 16px">Noch keine Trades im Verlauf.</div>
+													<div class="row-empty" style="padding: 14px 16px">Noch keine Marktplatz-Trades (Verhandlungen/Abschlüsse) im Verlauf.</div>
 												{/if}
 											{/if}
 											<!-- D3 (t_10be9255): 2-Schritt-Bestätigung als MODALES Popup über der
@@ -4335,7 +4586,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	{:else}
 																		<div class="c-row"><b>Titel</b><span>{advertForm.title}</span></div>
 																		<div class="c-row"><b>Art</b><span>{advertForm.operation === 'sell' ? 'Verkaufs-Angebot' : 'Kauf-Gesuch'} ({advertForm.listing_type})</span></div>
-																		<div class="c-row"><b>Preis</b><span>{advertForm.price} {advertForm.currency}</span></div>
+																		<div class="c-row"><b>Preis</b><span>{fmtGroup(advertForm.price)} {advertForm.currency}</span></div>
 																		<div class="c-row"><b>Menge</b><span>{advertForm.quantity} {advertForm.unit}</span></div>
 																		<div class="c-row"><b>Ort</b><span>{advertForm.location || '—'}</span></div>
 																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt.</div>
@@ -4683,7 +4934,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 						<div class="sect"><div class="h">Schnellzugriff</div></div>
 							<div class="recent">
-								<span class="r"><b>F2</b> Marktplatz · <b>F6</b> Routen</span>
+								<span class="r"><b>{hotkeyFor(cfg, 'market')}</b> Marktplatz · <b>{hotkeyFor(cfg, 'routes')}</b> Routen</span>
 								<span class="r"><b>F12</b> Einstellungen</span>
 								<span class="r"><b>Rechner</b> · =2*250+15%</span>
 								<span class="r"><b>Kategorie</b> · :c gold</span>
@@ -4699,9 +4950,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		<div class="foot">
 			<div class="hints">
 				{#if phase === 'market'}
+					<!-- PB (t_1c9bc240, B2): der F5-Hinweis erscheint nur an Orten mit
+					     Resync-Bezug (Angebote, Mein Shop, Routen) — nie global. -->
 					{#if offerDetail}
 						<span><kbd>Esc</kbd> zurück zur Liste</span>
 						<span><kbd>↵</kbd> im Browser öffnen</span>
+					{:else if mTab === 'shop'}
+						{#if cfg?.uex_secret_key_set}
+							<span><kbd>F5</kbd> Mein Shop syncen</span>
+						{/if}
+						<span><kbd>Esc</kbd> zurück zur Suche</span>
+					{:else if mTab === 'routes'}
+						<span><kbd>↑↓</kbd> Routen</span>
+						<span><kbd>↵</kbd> Detail</span>
+						<span><kbd>F5</kbd> Routen-Sweep</span>
+						<span><kbd>Esc</kbd> zurück zur Suche</span>
 					{:else}
 						<span><kbd>↑↓</kbd> Angebote</span>
 						<span><kbd>Alt+1..0</kbd> Offer</span>
@@ -4716,15 +4979,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<span><kbd>↵</kbd> Auswahl</span>
 					{/if}
 					<span>Suchfeld = Filter</span>
-					<span><kbd>F5</kbd> Preise syncen</span>
 					<span><kbd>Esc</kbd> zurück</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
 					<span><kbd>↵</kbd> Detail</span>
 					<span><kbd>Esc</kbd> zurück</span>
-					<span><kbd>F2</kbd> Marktplatz</span>
-					<span><kbd>F5</kbd> Preise syncen</span>
+					<span><kbd>{hotkeyFor(cfg, 'market')}</kbd> Marktplatz</span>
 				{/if}
 			</div>
 			{#if f5Msg}

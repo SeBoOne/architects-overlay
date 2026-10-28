@@ -46,12 +46,16 @@ window.__TAURI__ = {};
    sie bei jedem invoke-Aufruf (kein Reload nötig). */
 window.__SHOP_OFFERS__ = window.__SHOP_OFFERS__ || [];
 window.__SHOP_TRADES__ = window.__SHOP_TRADES__ || [];
+window.__SHOP_NEGOTIATIONS__ = window.__SHOP_NEGOTIATIONS__ || [];
 window.__SHOP_OFFERS_FAIL__ = !!window.__SHOP_OFFERS_FAIL__;
 window.__SHOP_TRADES_FAIL__ = !!window.__SHOP_TRADES_FAIL__;
+window.__SHOP_NEGOTIATIONS_FAIL__ = !!window.__SHOP_NEGOTIATIONS_FAIL__;
 window.__SHOP_OFFERS_SOURCE__ = window.__SHOP_OFFERS_SOURCE__ || 'live';
 window.__SHOP_TRADES_SOURCE__ = window.__SHOP_TRADES_SOURCE__ || 'live';
+window.__SHOP_NEGOTIATIONS_SOURCE__ = window.__SHOP_NEGOTIATIONS_SOURCE__ || 'live';
 window.__SHOP_OFFERS_NOTE__ = window.__SHOP_OFFERS_NOTE__ || null;
 window.__SHOP_TRADES_NOTE__ = window.__SHOP_TRADES_NOTE__ || null;
+window.__SHOP_NEGOTIATIONS_NOTE__ = window.__SHOP_NEGOTIATIONS_NOTE__ || null;
 const stubState = {
 	palette: 'amber', detail_variant: 'c',
 	uex_api_key_set: false, commodity_source: 'wiki',
@@ -62,6 +66,9 @@ const stubState = {
 	uex_username: '',
 	// M2b (Write-Layer): 2-Schritt-Bestätigungs-Modell (every_action | delete_only).
 	marketplace_confirm: 'every_action',
+	// PB (t_1c9bc240, B1): Mode-Hotkeys — null = Config ohne Feld (Migration
+	// zur neuen Belegung); die Probe kann sie vor dem Config-Open setzen.
+	mode_hotkeys: window.__STUB_MODE_HOTKEYS__ !== undefined ? window.__STUB_MODE_HOTKEYS__ : null,
 	// K2 (t_5fe8eb4c, P12): font/icon scale in % — mirrors Settings.scale in the
 	// Rust backend so the probe can A/B the scale live without a Tauri app.
 	scale: 100
@@ -105,6 +112,22 @@ window.__TAURI_INTERNALS__ = {
 				return stubSettings();
 			case 'settings_set_scale':
 				if (Number.isInteger(a.pct) && a.pct >= 50 && a.pct <= 200) stubState.scale = a.pct;
+				return stubSettings();
+			case 'settings_set_mode_hotkey': {
+				// PB (t_1c9bc240, B1): Spiegel der Backend-Validierung — nur die
+				// konfigurierbaren Slots, F5 reserviert, keine Doppelbelegung.
+				const MODE_KEYS = { search: 'F1', market: 'F2', routes: 'F3', inventory: 'F4', hangar: 'F11', settings: 'F12' };
+				if (a.key === 'F5') throw new Error('F5 ist für den Resync reserviert');
+				if (!['hangar', 'routes', 'inventory'].includes(a.field))
+					throw new Error('Modus nicht konfigurierbar: ' + a.field);
+				if (!stubState.mode_hotkeys) stubState.mode_hotkeys = MODE_KEYS;
+				for (const [slot, val] of Object.entries(stubState.mode_hotkeys))
+					if (slot !== a.field && val === a.key) throw new Error(slot + ': bereits belegt');
+				stubState.mode_hotkeys[a.field] = a.key;
+				return stubSettings();
+			}
+			case 'settings_reset_mode_hotkeys':
+				stubState.mode_hotkeys = { search: 'F1', market: 'F2', routes: 'F3', inventory: 'F4', hangar: 'F11', settings: 'F12' };
 				return stubSettings();
 			case 'sync_status':
 				return {
@@ -154,13 +177,29 @@ window.__TAURI_INTERNALS__ = {
 				};
 			}
 			case 'get_my_trades': {
-				// M2a Mein Shop — Trade-Verlauf (user-scoped).
+				// M2a Mein Shop — Trade-Verlauf (user-scoped). Commodity-seitig
+				// (/user_trades): seit t_350c4300 B2 NICHT mehr die Quelle des
+				// Mein-Shop-Trade-Abschnitts (get_my_negotiations), bleibt nur
+				// fürs spätere Route-Recording.
 				if (window.__SHOP_TRADES_FAIL__) throw new Error('HTTP 403 · UEX nicht erreichbar');
 				return {
 					source: window.__SHOP_TRADES_SOURCE__,
 					fetched_at: Math.floor(Date.now() / 1000),
 					trades: window.__SHOP_TRADES__,
 					note: window.__SHOP_TRADES_NOTE__,
+					key_set: stubState.uex_api_key_set
+				};
+			}
+			case 'get_my_negotiations': {
+				// t_350c4300 B2: Marktplatz-Deals des Accounts (user-scoped,
+				// /marketplace_negotiations) — die KORREKTE Quelle für „Letzte 5
+				// Marktplatz-Trades" im Mein-Shop.
+				if (window.__SHOP_NEGOTIATIONS_FAIL__) throw new Error('HTTP 403 · UEX nicht erreichbar');
+				return {
+					source: window.__SHOP_NEGOTIATIONS_SOURCE__,
+					fetched_at: Math.floor(Date.now() / 1000),
+					negotiations: window.__SHOP_NEGOTIATIONS__,
+					note: window.__SHOP_NEGOTIATIONS_NOTE__,
 					key_set: stubState.uex_api_key_set
 				};
 			}
@@ -611,6 +650,10 @@ window.__TAURI_INTERNALS__ = {
 			}
 			case 'get_marketplace': {
 				const filter = a.filters || {};
+				// PB (t_1c9bc240, B2): F5-Resync-Beleg — die Probe prüft, dass F5
+				// einen forcierten Fetch (force_refresh=true) auslöst.
+				window.__MKT_CALLS__ = window.__MKT_CALLS__ || [];
+				window.__MKT_CALLS__.push(filter);
 				// Offer-Pool (Qualität 0–1000, UEX-Skala) — deckt Name/Typ/
 				// Terminal/Verkäufer und Qualitäts-Spreizung für den Smoke ab.
 				const now = Math.floor(Date.now() / 1000);

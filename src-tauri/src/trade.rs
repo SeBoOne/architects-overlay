@@ -269,6 +269,21 @@ pub struct TradesResponse {
     pub key_set: bool,
 }
 
+/// „Mein Shop" — Marktplatz-Deals (t_350c4300 B2): die KORREKTE Quelle für
+/// „Letzte 5 Trades" sind die Marketplace-Negotiations
+/// (`/marketplace_negotiations`) — Listing-Verhandlungen/-Abschlüsse des
+/// Accounts als Anbieter oder Kunde. `/user_trades` bleibt als
+/// commodity-seitiger Cargo-Verlauf intern (Route-Recording), ist hier aber
+/// NICHT mehr die Quelle.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct NegotiationsResponse {
+    pub source: String,
+    pub fetched_at: u64,
+    pub negotiations: Vec<provider::Negotiation>,
+    pub note: Option<String>,
+    pub key_set: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -787,7 +802,9 @@ pub async fn get_marketplace(
 ) -> Result<MarketResponse, String> {
     // Was the snapshot already fresh before the call? Then the provider serves
     // it from cache (live only when item_id/operation filter forces a fetch).
-    let cache_fresh = state.cache.marketplace_fresh().unwrap_or(false);
+    // PB (t_1c9bc240, B2): F5-Resync (force_refresh) ist per Definition live —
+    // der Cache wurde umgangen, die Quelle darf nicht "cache" behaupten.
+    let cache_fresh = !filters.force_refresh && state.cache.marketplace_fresh().unwrap_or(false);
     match state.provider.marketplace_offers(filters.clone()).await {
         Ok(offers) => Ok(MarketResponse {
             source: if cache_fresh {
@@ -906,13 +923,51 @@ pub async fn get_my_trades(state: State<'_, TradeState>) -> Result<TradesRespons
     }
 }
 
-/// Open the user's own trade history page on uexcorp.space (the UEX
-/// marketplace manager / account page). A per-trade deep-link isn't
-/// documented; the trade LOG page is the continuation point. Pure external
-/// navigation, nothing written.
+/// Eigene Marktplatz-Deals laden (t_350c4300 B2) — stale-first + offline-
+/// Fallback, spiegelbildlich zu [`get_my_trades`], aber aus
+/// `/marketplace_negotiations` (Marktplatz-Transaktionen des Accounts) statt
+/// `/user_trades` (Commodity-Cargo-Handel — der bleibt nur noch als Quelle
+/// fürs spätere Trade-Route-Recording intern).
+#[tauri::command]
+pub async fn get_my_negotiations(
+    state: State<'_, TradeState>,
+) -> Result<NegotiationsResponse, String> {
+    let key_set = api_key_set();
+    let cache_fresh = state.cache.own_negotiations_fresh().unwrap_or(false);
+    match state.provider.marketplace_negotiations().await {
+        Ok(negotiations) => Ok(NegotiationsResponse {
+            source: if cache_fresh {
+                "cache".into()
+            } else {
+                "live".into()
+            },
+            fetched_at: now_unix(),
+            negotiations,
+            note: None,
+            key_set,
+        }),
+        Err(e) => match state.cache.own_negotiations_snapshot() {
+            Ok(snapshot) if !snapshot.is_empty() => Ok(NegotiationsResponse {
+                source: "offline".into(),
+                fetched_at: now_unix(),
+                negotiations: snapshot,
+                note: Some(friendly(e)),
+                key_set,
+            }),
+            _ => Err(friendly(e)),
+        },
+    }
+}
+
+/// Open the user's OWN LISTINGS manager on uexcorp.space (t_350c4300 B3):
+/// alle „Listings verwalten"/„Angelegte Listings öffnen"-Buttons gehen auf
+/// den Listings-Tab des Marketplace-Managers — Login macht der Nutzer selbst
+/// im Browser. (Auf der UEX-Webseite verwalten sich dort auch die
+/// Verhandlungen/Abschlüsse der eigenen Ads.) Pure external navigation,
+/// nothing written.
 #[tauri::command]
 pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
-    let url = "https://uexcorp.space/marketplace/".to_string();
+    let url = marketplace_manager_url().to_string();
     let _ = &app;
     tauri_plugin_opener::open_url(&url, None::<&str>)
         .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
@@ -928,6 +983,14 @@ pub async fn marketplace_photo(_app: AppHandle, url: String) -> Result<String, S
     uex_client::fetch_listing_photo(&url)
         .await
         .map_err(|e| friendly(e))
+}
+
+/// Exakter Ziel-Link aller „Listings verwalten"-Buttons (B3): der
+/// Listings-Tab des Marketplace-Managers. Fallback `/marketplace/` nur dort,
+/// wo bewusst der allgemeine Marktplatz gemeint ist (z. B.
+/// [`open_marketplace_listing`] mit leerem Slug) — hier nie.
+fn marketplace_manager_url() -> &'static str {
+    "https://uexcorp.space/marketplace/manage/tab/listings/"
 }
 
 /// Open one listing's page on uexcorp.space in the system default browser.
@@ -2229,6 +2292,7 @@ mod tests {
     struct ShopProvider {
         fail_offers: bool,
         fail_trades: bool,
+        fail_negotiations: bool,
     }
 
     #[async_trait::async_trait]
@@ -2303,6 +2367,35 @@ mod tests {
                 }])
             }
         }
+        async fn marketplace_negotiations(&self) -> provider::Result<Vec<provider::Negotiation>> {
+            if self.fail_negotiations {
+                Err(provider::ProviderError::Http {
+                    status: 403,
+                    body: "user_not_allowed".into(),
+                })
+            } else {
+                Ok(vec![provider::Negotiation {
+                    id: 55,
+                    listing_id: 4141,
+                    hash: "h-55".into(),
+                    price: 4_500_000.0,
+                    unit: "unit".into(),
+                    currency: "UEC".into(),
+                    deal_value: Some(4_400_000.0),
+                    deal_value_currency: "UEC".into(),
+                    listing_title: "Drake Nettle S".into(),
+                    listing_slug: "drake-nettle-s".into(),
+                    advertiser_name: "Semih Balci".into(),
+                    advertiser_username: "sebo_one".into(),
+                    client_name: "John Doe".into(),
+                    client_username: "johndoe".into(),
+                    is_listing_advertiser: true,
+                    date_added: 1730000100,
+                    date_modified: 1730000200,
+                    date_closed: Some(1730000200),
+                }])
+            }
+        }
         async fn fetch_entities(&self, _k: EntityKind) -> provider::Result<Vec<provider::Entity>> {
             Ok(vec![])
         }
@@ -2320,6 +2413,7 @@ mod tests {
             provider: Arc::new(ShopProvider {
                 fail_offers: true,
                 fail_trades: true,
+                fail_negotiations: false,
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
@@ -2376,6 +2470,7 @@ mod tests {
             provider: Arc::new(ShopProvider {
                 fail_offers: true,
                 fail_trades: true,
+                fail_negotiations: false,
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
@@ -2435,6 +2530,7 @@ mod tests {
             provider: Arc::new(ShopProvider {
                 fail_offers: false,
                 fail_trades: true,
+                fail_negotiations: false,
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
@@ -2460,6 +2556,7 @@ mod tests {
             provider: Arc::new(ShopProvider {
                 fail_offers: true,
                 fail_trades: true,
+                fail_negotiations: false,
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
@@ -2492,6 +2589,88 @@ mod tests {
         assert_eq!(resp.source, "offline");
         assert_eq!(resp.trades[0].commodity, "Waste");
         let _ = app;
+    }
+
+    #[tokio::test]
+    async fn my_negotiations_live_and_offline_fallback() {
+        // t_350c4300 B2: get_my_negotiations liefert MARKTPLATZ-Deals
+        // (listing_title statt commodity) — Quelle ist der neue Seam, NICHT
+        // /user_trades. Offline-Fallback spiegelbildlich zu get_my_trades.
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: false,
+                fail_trades: false,
+                fail_negotiations: false,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        let resp = get_my_negotiations(state.clone()).await.unwrap();
+        assert_eq!(resp.source, "live");
+        assert_eq!(resp.negotiations[0].listing_title, "Drake Nettle S");
+        assert!(resp.negotiations[0].is_listing_advertiser);
+        let _ = app;
+
+        // Offline-Szenario: Live schlägt fehl → Snapshot wird serviert.
+        let app2 = mock_app();
+        app2.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: true,
+                fail_trades: true,
+                fail_negotiations: true,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            wiki_sync: None,
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state2 = app2.state::<TradeState>();
+        assert!(
+            get_my_negotiations(state2.clone()).await.is_err(),
+            "ohne Snapshot kein stilles Leer-Ergebnis"
+        );
+        state2
+            .cache
+            .store_own_negotiations(&[provider::Negotiation {
+                id: 66,
+                listing_id: 4142,
+                hash: "h-66".into(),
+                price: 1_200_000.0,
+                unit: "unit".into(),
+                currency: "UEC".into(),
+                deal_value: None,
+                deal_value_currency: String::new(),
+                listing_title: "ARGO MPUV".into(),
+                listing_slug: "argo-mpuv".into(),
+                advertiser_name: "a".into(),
+                advertiser_username: "ad".into(),
+                client_name: "c".into(),
+                client_username: "cu".into(),
+                is_listing_advertiser: false,
+                date_added: 1730000100,
+                date_modified: 1730000200,
+                date_closed: None,
+            }])
+            .unwrap();
+        let resp = get_my_negotiations(state2).await.unwrap();
+        assert_eq!(resp.source, "offline");
+        assert_eq!(resp.negotiations[0].listing_title, "ARGO MPUV");
+        assert!(!resp.negotiations[0].is_listing_advertiser);
+        let _ = app2;
+    }
+
+    #[test]
+    fn marketplace_manager_deeplink_is_exact_url() {
+        // t_350c4300 B3: „Listings verwalten"/„Angelegte Listings öffnen"
+        // öffnet EXAKT diesen Link (Login macht der Nutzer im Browser).
+        assert_eq!(
+            marketplace_manager_url(),
+            "https://uexcorp.space/marketplace/manage/tab/listings/"
+        );
     }
 
     // ---- M2b (Write-Layer): Rate-Limit-Gate + Advertise/Delete-IPC --------

@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
-"""CDP-Probe M2a (t_f1543d2a) — „Mein Shop" auf feature/marketplace-mgr.
+"""CDP-Probe M2a/MB (t_f1543d2a + t_350c4300) — „Mein Shop" + Marktplatz-Nav.
 
 Belegt mit funktionalen DOM-Assertions (nicht nur Screenshots):
+  S0/B1 — Marktplatz: KEIN „Handelsrouten"-Tab im Tabstrip (t_350c4300 B1);
+          F6 öffnet Handelsrouten weiterhin (smode HANDELSROUTEN, Rail-Pfad
+          nutzt denselben setMode('routes')-Mechanismus).
   S1 — Key-Fehlverhalten (Req #4): ohne gesetzten UEX-API-Key zeigt der
        Mein-Shop-Tab einen sauberen Hinweis + Settings-Link (nicht leer,
        kein Crash); der Link öffnet die Konfiguration.
-  S2 — Echte Daten aus Fixtures: eigene Offers (Item/Preis/Menge/Terminal/
-       Status aus expires) + letzte 5 Trades (6 Fixtures → 5, neueste zuerst);
-       Klick auf eine OfferRow feuert open_marketplace_listing(slug), Klick
-       auf TradeRow feuert open_marketplace_trades (Deep-Link, kein iframe).
+  S2 — Echte Daten aus Fixtures: eigene Offers + letzte 5 MARKTPLATZ-Trades
+       (6 Negotiation-Fixtures → 5, neueste nach date_modified zuerst;
+       Listing-Titel statt Commodity-Trace — kein „Agricium" mehr; Status
+       abgeschlossen/in Verhandlung, Rolle Verkauf/Kauf); Klick auf eine
+       OfferRow feuert open_marketplace_listing(slug), Klick auf eine
+       DealRow feuert open_marketplace_listing(listing_slug), Klick auf
+       „Listings verwalten" feuert open_marketplace_trades (B3; die URL selbst
+       ist per Rust-Unit-Test marketplace_manager_deeplink_is_exact_url
+       belegt).
   S3 — Fehlerpfad: beide Reads schlagen fehl → „Mein Shop nicht erreichbar" +
        Fehlermeldung + „AUF UEXCORP.SPACE ÖFFNEN"; danach Offline-Fallback
        (Note + Offline-Snapshot-Chip, Daten bleiben sichtbar).
+  S4 — Leere Historie → Leer-Zustand (row-empty), kein Fehlerpane.
   S5 — M2a-Fix (t_2f197d1c): API-Key gesetzt, aber KEIN persönlicher
        Secret-Key → „Secret-Key fehlt oder ist falsch — siehe Einstellungen"
-       + Settings-Button, KEIN get_my_offers/get_my_trades-Request.
+       + Settings-Button, KEIN get_my_offers/get_my_negotiations-Request.
 
 Datenquelle: smoke-stub.js (JS-Mirror; die Rust-Seite ist durch cargo tests
 in src-tauri/trade.rs + crates/uex-client belegt). Screenshots nach docs/screens/.
@@ -38,7 +47,7 @@ def check(name, ok, detail=""):
     (PASS if ok else FAIL).append(name)
     print(("  PASS " if ok else "  FAIL ") + name + ((" — " + detail) if detail else ""))
 
-# ---- M2a-Fixtures (Wire-Feldnamen wie IPC-Serde, snake_case) --------------
+# ---- M2a/MB-Fixtures (Wire-Feldnamen wie IPC-Serde, snake_case) -------------
 NOW = int(time.time())  # echte Jetzt-Zeit — shopStatus vergleicht gegen Date.now()
 def offer(id_, title, location, op, price, qty, extra=None):
     o = {
@@ -52,15 +61,23 @@ def offer(id_, title, location, op, price, qty, extra=None):
     o.update(extra or {})
     return o
 
-def trade(id_, commodity, terminal, op, scu, price, date_added, extra=None):
-    t = {
-        "id": id_, "terminal_id": 100 + id_, "commodity_id": 10 + id_,
-        "operation": op, "scu": scu, "price": price, "date_added": date_added,
-        "commodity": commodity, "terminal": terminal,
-        "vehicle": None, "fleet_name": None, "organization": None
+def negotiation(id_, title, slug, is_advertiser, price, extra=None):
+    """marketplace_negotiations-Fixture — Listing-DEAL (t_350c4300 B2), kein
+    Commodity-Trade. Neueste Aktivität = date_modified."""
+    n = {
+        "id": id_, "listing_id": 4000 + id_, "hash": f"h-{id_}",
+        "price": price, "unit": "unit", "currency": "UEC",
+        "deal_value": None, "deal_value_currency": "",
+        "listing_title": title, "listing_slug": slug,
+        "advertiser_name": "Semih Balci", "advertiser_username": "sebo_one",
+        "client_name": "John Doe", "client_username": "johndoe",
+        "is_listing_advertiser": is_advertiser,
+        "date_added": NOW - 10 * 86400,          # Verhandlung startete vor 10 Tagen
+        "date_modified": NOW + id_ * 86400,      # Aktivität: id_ ↑ = neuer
+        "date_closed": None,
     }
-    t.update(extra or {})
-    return t
+    n.update(extra or {})
+    return n
 
 SHOP_OFFERS = json.dumps([
     # expires None → Status „aktiv"
@@ -71,13 +88,23 @@ SHOP_OFFERS = json.dumps([
     offer(3, "Iron Ore (Raw)", "Port Tressler", "buy", 512, 900, {"expires": NOW - 1000}),
 ], separators=(",", ":"))
 
-SHOP_TRADES = json.dumps([
-    trade(6, "Waste", "Lorville", "sell", 200, 229, NOW + 5 * 86400, {"fleet_name": "Corsair №1"}),
-    trade(5, "Hydrogen", "Port Tressler", "buy", 150, 782, NOW + 4 * 86400, {"vehicle": "Cutlass Black"}),
-    trade(4, "Laranite", "Port Tressler", "sell", 80, 7300, NOW + 3 * 86400),
-    trade(3, "Agricium", "Everus Harbor", "sell", 60, 9200, NOW + 2 * 86400, {"organization": "AAWA"}),
-    trade(2, "Distilled Spirits", "Orison", "buy", 300, 1427, NOW + 86400),
-    trade(1, "Helium", "ARC-L1", "sell", 250, 727, NOW),
+SHOP_NEGOTIATIONS = json.dumps([
+    # 6 Deals → UI slice(0,5); neueste Aktivität (date_modified) zuerst.
+    negotiation(6, "Drake Nettle S | Used", "drake-nettle-s-used", True, 4500000.0,
+                {"date_modified": NOW + 5 * 86400, "deal_value": 4400000.0,
+                 "deal_value_currency": "UEC", "date_closed": NOW + 5 * 86400,
+                 "client_username": "buyer_one"}),
+    negotiation(5, "ARGO MPUV Cargo", "argo-mpuv-cargo", False, 1200000.0,
+                {"date_modified": NOW + 4 * 86400, "advertiser_username": "trader_dave"}),
+    negotiation(4, "MedPen Pack", "medpen-pack", True, 120.0,
+                {"date_modified": NOW + 3 * 86400}),
+    negotiation(3, "Novikov Oversuit", "novikov-oversuit", False, 85000.0,
+                {"date_modified": NOW + 2 * 86400, "advertiser_username": "gear_gal"}),
+    negotiation(2, "Ranger CV", "ranger-cv", True, 2750000.0,
+                {"date_modified": NOW + 86400}),
+    negotiation(1, "Spartan", "spartan", False, 950000.0,
+                {"date_modified": NOW, "deal_value": 900000.0,
+                 "deal_value_currency": "UEC", "date_closed": NOW}),
 ], separators=(",", ":"))
 
 async def main():
@@ -161,7 +188,7 @@ async def main():
                 return "EXC:" + (r["exceptionDetails"].get("text") or "")
             return v
 
-        VK = {"F2": (113, "F2")}
+        VK = {"F2": (113, "F2"), "F6": (117, "F6")}
         async def key(k, ctrl=False):
             vk, code = VK[k]
             mods = 2 if ctrl else 0
@@ -193,9 +220,7 @@ async def main():
 
         async def enter_market():
             # Warmup wie in den bestehenden Proben: ein Such-Pass zwingt die
-            # App in den ready-Zustand; Marktplatz wird per F2 betreten
-            # (F-Tasten sind vom isFieldFocused(e)-Guard in onKey nicht
-            # betroffen — Ctrl+M würde bei Fokus im Suchfeld geschluckt).
+            # App in den ready-Zustand; Marktplatz wird per F2 betreten.
             await js("(function(){var i=document.querySelector('input.q'); if(i) i.focus();})()")
             if await js("!!document.querySelector('input.q')"):
                 set = ("(function(){"
@@ -216,30 +241,41 @@ async def main():
             smode = await js("document.querySelector('.smode') ? document.querySelector('.smode').innerText : 'NONE'")
             return str(smode).strip()
 
-        # invoke-Log
-        await js("""(function(){
-            var orig = window.__TAURI_INTERNALS__.invoke;
-            window.__calls = [];
-            window.__TAURI_INTERNALS__.invoke = function(cmd,args){
-                window.__calls.push(cmd + ':' + JSON.stringify(args || {}));
-                return orig(cmd,args);
-            };
-        })()""")
+        def hook_calls_js():
+            return """(function(){
+                var orig = window.__TAURI_INTERNALS__.invoke;
+                window.__calls = window.__calls || [];
+                window.__TAURI_INTERNALS__.invoke = function(cmd,args){
+                    window.__calls.push(cmd + ':' + JSON.stringify(args || {}));
+                    return orig(cmd,args);
+                };
+            })()"""
 
         # =====================================================================
-        # S1 — KEIN Key: sauberer Hinweis + Settings-Link (Req #4)
+        # S0/B1 — KEIN „Handelsrouten"-Tab im Marktplatz; F6 führt weiter hin
         # =====================================================================
         await navigate()
-        await js("""(function(){
-            var orig = window.__TAURI_INTERNALS__.invoke;
-            window.__calls = window.__calls || [];
-            window.__TAURI_INTERNALS__.invoke = function(cmd,args){
-                window.__calls.push(cmd + ':' + JSON.stringify(args || {}));
-                return orig(cmd,args);
-            };
-        })()""")
+        await js(hook_calls_js())
         smode = await enter_market()
         check("s0-market-entered", smode == "MARKETPLACE", smode)
+        no_routes_tab = await js(
+            "(function(){var chips=[...document.querySelectorAll('.mtabs .chip')].map(function(c){return c.textContent.trim()});"
+            "return JSON.stringify(chips);})()")
+        chips = json.loads(str(no_routes_tab) or "[]")
+        check("s0-b1-no-routes-tab", chips == ["Angebote", "Mein Shop"], str(chips))
+        # F6 → Handelsrouten trotzdem erreichbar (intern mTab='routes').
+        await key("F6")
+        await asyncio.sleep(1.0)
+        smode_f6 = await js("document.querySelector('.smode') ? document.querySelector('.smode').innerText : 'NONE'")
+        check("s0-b1-f6-opens-routes", str(smode_f6).strip() == "HANDELSROUTEN", str(smode_f6))
+        await shot("shop-s0-b1-f6-routes.png")
+        # PP t_e2cdb571 (2): Routen-View zeigt KEINE Marktplatz-Reiter.
+        mtabs_f6 = await js("document.querySelectorAll('.mtabs').length")
+        check("pp2-routes-no-mtabs", mtabs_f6 == 0, "mtabs=" + str(mtabs_f6))
+        await shot("pp2-routes-view-no-tabs.png")
+        # F2 zurück in den Marktplatz (Angebote-Tab); Reiter müssen wieder da sein.
+        await key("F2")
+        await asyncio.sleep(0.8)
         tab = await click_chip("Mein Shop")
         check("s1-shop-tab-visible", tab is True, "tab-click=" + str(tab))
         await asyncio.sleep(1.5)
@@ -255,23 +291,16 @@ async def main():
         await shot("shop-s1-no-key-hint.png")
 
         # =====================================================================
-        # S2 — Key gesetzt + Fixtures: Offers + letzte 5 Trades + Deep-Links
+        # S2 — Key gesetzt + Fixtures: Offers + letzte 5 Marktplatz-Trades
         # =====================================================================
         await navigate(
             "window.__stubState.uex_api_key_set = true;"
             "window.__stubState.uex_secret_key_set = true;"
             "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
             "window.__SHOP_OFFERS__ = " + SHOP_OFFERS + ";"
-            "window.__SHOP_TRADES__ = " + SHOP_TRADES + ";"
+            "window.__SHOP_NEGOTIATIONS__ = " + SHOP_NEGOTIATIONS + ";"
         )
-        await js("""(function(){
-            var orig = window.__TAURI_INTERNALS__.invoke;
-            window.__calls = window.__calls || [];
-            window.__TAURI_INTERNALS__.invoke = function(cmd,args){
-                window.__calls.push(cmd + ':' + JSON.stringify(args || {}));
-                return orig(cmd,args);
-            };
-        })()""")
+        await js(hook_calls_js())
         await enter_market()
         await click_chip("Mein Shop")
         await asyncio.sleep(2.0)
@@ -287,58 +316,83 @@ async def main():
         check("s2-status-abgelaufen", "abgelaufen" in statuses)
         check("s2-offer-terminal", "Port Tressler" in statuses and "Everus Harbor" in statuses)
 
-        trades_rows = await js("[...document.querySelectorAll('.mlist')].length")
-        check("s2-trades-section", int(trades_rows or 0) >= 2, "mlists=" + str(trades_rows))
         heads = await js("[...document.querySelectorAll('.mbar2 .m-lbl')].map(function(x){return x.textContent.trim()})")
-        check("s2-trades-heading", any("Letzte 5 Trades" in h for h in (heads or [])), str(heads))
-        # 6 Trades im Fixture → genau 5 gerendert (mlist[0]=Offers 3, mlist[1]=Trades 5)
+        check("s2-trades-heading", any("Letzte 5 Marktplatz-Trades" in h for h in (heads or [])), str(heads))
+        # 6 Negotiations im Fixture → genau 5 gerendert (mlist[0]=Offers 3, mlist[1]=Deals 5)
         mlists = json.loads(str(await js("JSON.stringify([...document.querySelectorAll('.mlist')].map(function(l){return l.querySelectorAll('.mrow').length}))") or "[]"))
         check("s2-offers-rows", mlists == [3, 5], "row counts=" + str(mlists))
-        check("s2-five-trades", len(mlists) == 2 and mlists[1] == 5, "trade rows=" + str(mlists))
-        first_trade = await js(
-            "(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(!l) return ''; var t=l.querySelector('.m-title'); var s=l.querySelector('.m-sub'); var p=l.querySelector('.m-price'); return ((t?t.textContent:'')+'|'+(s?s.textContent:'')+'|'+(p?p.textContent:'')).replace(/\\s+/g,' ').trim()})()"
+        check("s2-five-trades", len(mlists) == 2 and mlists[1] == 5, "deal rows=" + str(mlists))
+        first_deal = await js(
+            "(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(!l) return ''; var r0=l.querySelector('.mrow'); var t=r0.querySelector('.m-title'); var s=r0.querySelector('.m-sub'); var p=r0.querySelector('.m-price'); var mm=r0.querySelectorAll('.m-meta'); var m2=mm[mm.length-1]; return ((t?t.textContent:'')+'|'+(s?s.textContent:'')+'|'+(p?p.textContent:'')+'|'+(m2?m2.textContent:'')).replace(/\\s+/g,' ').trim()})()"
         )
-        check("s2-trades-newest-first", str(first_trade).startswith("Waste|Lorville · Flotte „Corsair №1“"), str(first_trade))
-        check("s2-trades-price-shown", "229" in str(first_trade), str(first_trade)[:120])
-        # Pane hat eine CSS-fixierte Höhe — die 5. Trade-Zeile liegt unter dem
-        # Fold; für den Beleg das Trades-Pane nach unten scrollen (DOM-Zähler
-        # [3,5] + Reihenfolge-Check belegen die 5 Zeilen unabhängig davon).
+        # Neueste Aktivität (date_modified) zuerst: Drake Nettle S (abgeschlossen)
+        check("s2-trades-newest-first", str(first_deal).startswith("Drake Nettle S | Used|"), str(first_deal))
+        check("s2-trades-marketplace-content", "Gegenüber buyer_one (Käufer)" in str(first_deal), str(first_deal)[:140])
+        check("s2-trades-deal-value", "4.400.000" in str(first_deal), str(first_deal)[:140])
+        check("s2-trades-closed-status", "abgeschlossen" in str(first_deal), str(first_deal)[:140])
+        # B2-Kern: KEIN Commodity-Trace mehr — weder Agricium noch Cargo-Größen
+        all_deals = await js("JSON.stringify([...document.querySelectorAll('.mlist')[1].querySelectorAll('.mrow')].map(function(r){return r.textContent.replace(/\\s+/g,' ').trim()}))")
+        all_deals = str(all_deals).lower()
+        for relic in ("agricium", "laranite", "/scu", " scU · "):
+            check(f"s2-no-commodity-trace-{relic.replace('/','').replace(' ','_')}", relic not in all_deals, relic)
         await js("(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(l) l.scrollTop = l.scrollHeight; var p=document.querySelector('.pane-market'); if(p) p.scrollTop = p.scrollHeight;})()")
         await asyncio.sleep(0.4)
-        await shot("shop-s2-offers-and-trades.png")
+        await shot("shop-s2-offers-and-marketplace-trades.png")
 
-        # Deep-Link: OfferRow-Klick → open_marketplace_listing(slug)
-        await js("(function(){var r=document.querySelector('[data-shop-offer-idx]'); if(r) r.click();})()")
+        # =====================================================================
+        # P1 — PP t_e2cdb571: Trades-Zeilen-Layout (kein Ellipsis, kein Quetsch)
+        # =====================================================================
+        trows = await js("JSON.stringify([...document.querySelectorAll('.mlist')[1].querySelectorAll('.mrow')].map(function(r){"
+                         "var cs=getComputedStyle(r); var op=r.querySelector('.m-op'); var cso=op?getComputedStyle(op):null;"
+                         "var t=r.querySelector('.m-title'); var cst=t?getComputedStyle(t):null;"
+                         "return {trow:r.classList.contains('trow'), cols:cs.gridTemplateColumns,"
+                         " opMin:cso?cso.minWidth:'', opWs:cso?cso.whiteSpace:'', titleWs:cst?cst.whiteSpace:'',"
+                         " ellip: t ? (t.scrollWidth > t.clientWidth + 1) : null};}))")
+        trowsj = json.loads(str(trows) or "[]")
+        check("pp1-trow-class", len(trowsj) == 5 and all(r["trow"] for r in trowsj), "rows=" + str(len(trowsj)))
+        # computed grid: auto→Op-Breite aufgelöst; 3 Spalten, erste NICHT die
+        # Offer-Badge-Spalten (26px/44px) — sonst ist das alte Grid aktiv.
+        cols0 = trowsj[0]["cols"].split(" ") if trowsj else []
+        check("pp1-grid-3cols-not-offer-grid", len(trowsj) == 5 and len(cols0) == 3
+              and float(cols0[0].replace("px", "")) >= 60, str(trowsj[0]["cols"]) if trowsj else "none")
+        check("pp1-op-fixed-minwidth", all(float(str(r["opMin"]).replace("px", "") or 0) >= 76 for r in trowsj), str(trowsj[0]["opMin"]) if trowsj else "none")
+        check("pp1-op-nowrap", all(r["opWs"] == "nowrap" for r in trowsj))
+        # Tatsächliche Op-Box-Breiten (BoundingRect): Kauf/Verkauf gleich breit.
+        widths = await js("JSON.stringify([...document.querySelectorAll('.mlist')[1].querySelectorAll('.m-op')].map(function(o){return Math.round(o.getBoundingClientRect().width)}))")
+        ws_ = json.loads(str(widths) or "[]")
+        check("pp1-op-equal-width", len(set(ws_)) == 1 and ws_[0] >= 76, str(ws_))
+        check("pp1-title-wraps", all(r["titleWs"] in ("normal",) for r in trowsj), str(trowsj[0]["titleWs"]) if trowsj else "none")
+        check("pp1-title-no-ellipsis", all(r["ellip"] is False for r in trowsj), str([r["ellip"] for r in trowsj]))
+        # F2 zurück in den Marktplatz: Reiter wieder sichtbar (Gegenprobe zu pp2).
+        mtabs_mkt = await js("document.querySelectorAll('.mtabs').length")
+        check("pp2-market-has-mtabs", mtabs_mkt == 1, "mtabs=" + str(mtabs_mkt))
+        await asyncio.sleep(0.3)
+        await shot("pp1-trades-rows-layout.png")
+
+        # Deep-Link B2: DealRow-Klick → open_marketplace_listing(listing_slug)
+        await js("(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(!l) return; var r=l.querySelector('.mrow'); if(r) r.click();})()")
         await asyncio.sleep(0.6)
         calls = json.loads(str(await js("JSON.stringify(window.__calls || [])")) or "[]")
         listing_calls = [c for c in calls if "open_marketplace_listing" in c]
-        check("s2-offer-deeplink", any("sebo-1" in c for c in listing_calls), str(listing_calls[:2]))
-        # TradeRow-Klick → open_marketplace_trades
-        await js("(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(!l) return; var r=l.querySelector('.mrow'); if(r) r.click();})()")
+        check("s2-deal-deeplink-listing-slug", any("drake-nettle-s-used" in c for c in listing_calls), str(listing_calls[:2]))
+        # Deep-Link B3: „Listings verwalten"-Chip → open_marketplace_trades
+        mgr_clicked = await click_chip("Listings verwalten ↗")
+        check("s2-manager-chip-clicked", mgr_clicked is True)
         await asyncio.sleep(0.6)
-        trades_calls = json.loads(str(await js("JSON.stringify(window.__calls || [])")) or "[]")
-        check("s2-trades-deeplink", any("open_marketplace_trades" in c for c in trades_calls),
-              str([c for c in trades_calls if "open_marketplace" in c][-3:]))
+        calls2 = json.loads(str(await js("JSON.stringify(window.__calls || [])")) or "[]")
+        check("s2-manager-deeplink", any("open_marketplace_trades" in c for c in calls2),
+              str([c for c in calls2 if "open_marketplace" in c][-3:]))
 
         # =====================================================================
         # S3 — Fehler → Meldung + Deep-Link-Button; danach Offline-Snapshot
         # =====================================================================
-        # FRISCHER Start (neues Dokument, keine Fixtures im JS-State) + beide
-        # Reads schlagen fehl → Fehlerpane statt leerem Abschnitt.
         await navigate(
             "window.__stubState.uex_api_key_set = true;"
             "window.__stubState.uex_secret_key_set = true;"
             "window.__SHOP_OFFERS_FAIL__ = true;"
-            "window.__SHOP_TRADES_FAIL__ = true;"
+            "window.__SHOP_NEGOTIATIONS_FAIL__ = true;"
         )
-        await js("""(function(){
-            var orig = window.__TAURI_INTERNALS__.invoke;
-            window.__calls = window.__calls || [];
-            window.__TAURI_INTERNALS__.invoke = function(cmd,args){
-                window.__calls.push(cmd + ':' + JSON.stringify(args || {}));
-                return orig(cmd,args);
-            };
-        })()""")
+        await js(hook_calls_js())
         await enter_market()
         await click_chip("Mein Shop")
         await asyncio.sleep(2.0)
@@ -346,7 +400,6 @@ async def main():
         check("s3-error-pane", err_big is True)
         err_msg = await js("document.querySelector('.pane-error .sm') ? document.querySelector('.pane-error .sm').textContent.trim() : ''")
         check("s3-msg-no-retry-spam", "429" in err_msg or "403" in err_msg, err_msg)
-        # KEIN Auto-Retry: nach dem Fehlschlag wächst das invoke-Log nicht weiter
         before = json.loads(str(await js("JSON.stringify(window.__calls || [])")) or "[]")
         await asyncio.sleep(1.5)
         after = json.loads(str(await js("JSON.stringify(window.__calls || [])")) or "[]")
@@ -362,43 +415,39 @@ async def main():
         await shot("shop-s3-error-path.png")
 
         # Offline-Fallback: Reads liefern wieder, aber als Offline-Snapshot
-        # (source='offline' + Note) — Cache-Fixtures bleiben sichtbar
         await js(
             "window.__SHOP_OFFERS__=" + SHOP_OFFERS + ";"
-            "window.__SHOP_TRADES__=" + SHOP_TRADES + ";"
-            "window.__SHOP_OFFERS_FAIL__=false; window.__SHOP_TRADES_FAIL__=false;"
-            "window.__SHOP_OFFERS_SOURCE__='offline'; window.__SHOP_TRADES_SOURCE__='offline';"
+            "window.__SHOP_NEGOTIATIONS__=" + SHOP_NEGOTIATIONS + ";"
+            "window.__SHOP_OFFERS_FAIL__=false; window.__SHOP_NEGOTIATIONS_FAIL__=false;"
+            "window.__SHOP_OFFERS_SOURCE__='offline'; window.__SHOP_NEGOTIATIONS_SOURCE__='offline';"
             "window.__SHOP_OFFERS_NOTE__='HTTP 429 · Rate-Limit erreicht';"
-            "window.__SHOP_TRADES_NOTE__='HTTP 403 · UEX nicht erreichbar';"
+            "window.__SHOP_NEGOTIATIONS_NOTE__='HTTP 403 · UEX nicht erreichbar';"
         )
-        # Fehlerpane verlassen: der „Erneut versuchen"-Button löst den
-        # (jetzt erfolgreichen offline) Load aus — kein „Laden"-Chip mehr da.
         retried = await click_btn("Erneut versuchen")
         check("s3-retry-clicked", retried is True)
         await asyncio.sleep(1.6)
         offline_chip = await js(has_text_expr(".chip", "Offline-Snapshot"))
         check("s3-offline-chip", offline_chip is True)
         notes = await js("JSON.stringify([...document.querySelectorAll('.row-empty')].map(function(x){return x.textContent.replace(/\\s+/g,' ').trim()}))")
-        # Die UI rendert eine Fehl-Note (Offers-429 hat Vorrang vor Trades-403)
         check("s3-offline-note", "429" in str(notes) or "403" in str(notes), str(notes)[:140])
         still = await js("[...document.querySelectorAll('[data-shop-offer-idx]')].length")
         check("s3-offline-data-survives", still == 3, "offers=" + str(still))
+        deals_still = await js(
+            "(function(){var l=[...document.querySelectorAll('.mlist')][1]; return l ? l.querySelectorAll('.mrow').length : -1})()")
+        check("s3-offline-deals-survive", deals_still == 5, "deals=" + str(deals_still))
         await shot("shop-s3-offline-fallback.png")
 
         # =====================================================================
-        # S4 — Review R2 (Defekt 2): leere Historie → LEER-Zustand statt
-        #       Fehlerpane. UEX meldet `no_trades_found` als 200/leere Liste —
-        #       der Client mappt das auf Ok([]); die UI rendert „Noch keine
-        #       Trades im Verlauf." (row-empty), NICHT „nicht erreichbar".
+        # S4 — leere Historie → LEER-Zustand statt Fehlerpane
         # =====================================================================
         await navigate(
             "window.__stubState.uex_api_key_set = true;"
             "window.__stubState.uex_secret_key_set = true;"
             "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
             "window.__SHOP_OFFERS__=[];"
-            "window.__SHOP_TRADES__=[];"
+            "window.__SHOP_NEGOTIATIONS__=[];"
             "window.__SHOP_OFFERS_FAIL__=false;"
-            "window.__SHOP_TRADES_FAIL__=false;"   # S3 setzte FAIL=true — zurücksetzen
+            "window.__SHOP_NEGOTIATIONS_FAIL__=false;"
         )
         await enter_market()
         await click_chip("Mein Shop")
@@ -406,45 +455,34 @@ async def main():
 
         offers_null = await js("[...document.querySelectorAll('[data-shop-offer-idx]')].length")
         check("s4-no-offers-rows", offers_null == 0, "offers=" + str(offers_null))
-        trades_empty_state = await js(has_text_expr(".row-empty", "Noch keine Trades im Verlauf."))
+        trades_empty_state = await js(has_text_expr(".row-empty", "Noch keine Marktplatz-Trades"))
         check("s4-empty-history-empty-state", trades_empty_state is True)
         err_pane_s4 = await js(has_text_expr(".pane-error .big", "Mein Shop nicht erreichbar"))
         check("s4-no-error-pane-on-empty", err_pane_s4 is False)
-        # Offers-Leerzustand mit Benutzername im Text (der andere row-empty).
         offers_empty = await js(has_text_expr(".row-empty", "Keine eigenen Offers"))
         check("s4-empty-offers-state", offers_empty is True)
         await shot("shop-s4-empty-history.png")
 
         # =====================================================================
-        # S5 — M2a-Fix (t_2f197d1c): API-Key gesetzt, aber KEIN persönlicher
-        #      Secret-Key → klare deutsche Meldung + Settings-Button, KEIN
-        #      Request (get_my_offers/get_my_trades werden gar nicht gefeuert).
+        # S5 — API-Key gesetzt, KEIN Secret-Key → Hinweis, KEIN Request
         # =====================================================================
         await navigate(
             "window.__stubState.uex_api_key_set = true;"
             "window.__stubState.uex_secret_key_set = false;"
             "localStorage.setItem('architects-overlay.shop.username','sebo_one');"
             "window.__SHOP_OFFERS__=" + SHOP_OFFERS + ";"
-            "window.__SHOP_TRADES__=" + SHOP_TRADES + ";"
+            "window.__SHOP_NEGOTIATIONS__=" + SHOP_NEGOTIATIONS + ";"
             "window.__SHOP_OFFERS_FAIL__=false;"
-            "window.__SHOP_TRADES_FAIL__=false;"
+            "window.__SHOP_NEGOTIATIONS_FAIL__=false;"
         )
-        await js("""(function(){
-            var orig = window.__TAURI_INTERNALS__.invoke;
-            window.__calls = window.__calls || [];
-            window.__TAURI_INTERNALS__.invoke = function(cmd,args){
-                window.__calls.push(cmd + ':' + JSON.stringify(args || {}));
-                return orig(cmd,args);
-            };
-        })()""")
+        await js(hook_calls_js())
         await enter_market()
         await click_chip("Mein Shop")
         await asyncio.sleep(1.5)
         sk_hint = await js(has_text_expr(".pane-error .big", "Secret-Key fehlt oder ist falsch"))
         check("s5-secret-key-hint-shown", sk_hint is True)
-        # KEIN Mein-Shop-Read getriggert (Gate greift VOR den Requests).
         sk_calls = json.loads(str(await js("JSON.stringify(window.__calls || [])")) or "[]")
-        shop_reads = [c for c in sk_calls if "get_my_offers" in c or "get_my_trades" in c]
+        shop_reads = [c for c in sk_calls if "get_my_offers" in c or "get_my_negotiations" in c]
         check("s5-no-shop-request-without-secret-key", len(shop_reads) == 0, str(shop_reads[:3]))
         await shot("shop-s5-secret-key-missing.png")
         sk_btn = await js(
@@ -452,9 +490,6 @@ async def main():
         )
         check("s5-secret-key-settings-link-clicked", sk_btn is True)
         await asyncio.sleep(0.6)
-        # Config-Pane nach unten scrollen, damit die neue Secret-Key-/Username-
-        # Sektion vollständig im Beleg-Screenshot steht (F12-View ist höhen-
-        # fixiert; der Scope oben zeigte nur Überschrift + Beschreibung).
         await js("(function(){var p=document.querySelector('.pane-config'); if(p) p.scrollTop = p.scrollHeight;})()")
         await asyncio.sleep(0.5)
         await shot("shop-s5-settings-secret-key-field.png")

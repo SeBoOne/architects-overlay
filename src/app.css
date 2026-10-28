@@ -1333,6 +1333,33 @@ html[data-window="spotlight"] .shell {
   grid-template-columns: 1fr auto;
 }
 
+/* PP t_e2cdb571 (1): Trade-Zeilen („Letzte 5 Marktplatz-Trades“) — eigene
+   Spaltenstruktur statt dem Offer-Grid (26px Badge + 44px Op + 1fr + auto).
+   Die Trades haben nur 3 Kinder (Op/Main/Preis): ohne trow rutschte der
+   Op-Chip in den 26px-Badge-Slot und der Text in die 44px-Spalte (Ellipsis
+   trotz Platz, gequetschte Kauf/Verkauf-Markierung). */
+.mrow.trow {
+	grid-template-columns: auto 1fr auto;
+}
+
+/* Kauf/Verkauf-Markierung: feste Mindestbreite + Ausrichtung, damit
+   „Kauf“/„Verkauf“ über alle Zeilen gleich breit und nicht gequetscht sind. */
+.mrow.trow .m-op {
+	min-width: 76px;
+	padding: 5px 8px;
+	white-space: nowrap;
+}
+
+/* Kein Ellipsis-Abkürzen in Trades: Titel/Gegenüber dürfen umbrechen bzw.
+   volle Breite nutzen (Platz ist da — die Quetschung war ein Grid-Artefakt). */
+.mrow.trow .m-title,
+.mrow.trow .m-sub {
+	white-space: normal;
+	overflow: visible;
+	text-overflow: clip;
+	overflow-wrap: anywhere;
+}
+
 .mrow {
   display: grid;
   grid-template-columns: 26px 44px 1fr auto;

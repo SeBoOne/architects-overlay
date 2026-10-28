@@ -523,6 +523,7 @@ async fn marketplace_offers_fetch_live_filter_and_sort() {
             region: "".into(),
             sort: Some(provider::OfferSort::PriceAsc),
             limit: 100,
+            force_refresh: false,
         })
         .await
         .unwrap();
