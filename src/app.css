@@ -1898,6 +1898,7 @@ html[data-window="spotlight"] .shell {
 
 .btn-ghost {
 	display: inline-block;
+	background: transparent;
 	padding: 7px 13px;
 	border: 1px solid var(--lineb);
 	color: var(--fgdim);
