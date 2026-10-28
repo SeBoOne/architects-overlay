@@ -148,18 +148,39 @@ class:^(architects-overlay)$` — unter Hyprland ≥0.55 ist Lua die
 unterstützte Konfiguration.)
 
 Ohne jede `size`-Regel entscheidet der GTK-Default-Size-Hint beim ersten Map,
-Danach die App — das ist der empfohlene Zustand: die Regeln oben (float/pin/
-stay_focused) reichen, die Geometrie kommt von der App.
+Danach die App — das ist der empfohlene Zustand: die Regel `float` reicht, die
+Geometrie kommt von der App.
+
+### Verhalten seit 0.5.x: Workspace-Bindung + Dialog-Suspend (t_d340f851)
+
+Die App verwaltet `pin` und `stay_focused` seit 0.5.x **selbst, dynamisch**
+(live per Lua-Dispatcher nach dem Map gesetzt, Hyprland ≥ 0.55):
+
+- **Workspace-Bindung:** Bei jedem Einblenden bindet sich das Overlay an den
+  Workspace des Star-Citizen-Fensters (`class:starcitizen.exe`). Verlässt man
+  diesen Workspace, versteckt sich das Overlay (Fokus geht zurück ans Spiel);
+  bei Rückkehr erscheint es wieder. `pin`/`stay_focused` gelten nur dort — auf
+  anderen Workspaces/Monitoren ist die Eingabe frei, das Scratchpad liegt wie
+  gewohnt über allem.
+- **Dialog-Suspend:** Öffnet die App einen eigenen Dialog (Bild-File-Chooser,
+  gleiche WM-Class + pid), suspendiert sie `stay_focused` + `pin` auf dem
+  Hauptfenster, solange der Dialog offen ist, und stellt beide danach wieder
+  her. Der Picker ist damit normal bedienbar (kein Fokus-Flackern mehr).
+- **Öffnen = Fokus-Modus:** Beim Einblenden schaltet das Overlay strikt in den
+  Fokus-Modus (auch wenn vorher Click-through aktiv war); der Status-Button
+  unten rechts zeigt konsistent `FOKUS`.
+
+Deshalb sind die statischen `pin`- und `stay_focused`-Regeln in der
+Compositor-Konfiguration **optional** (veraltet, aber nicht schädlich — die
+App überschreibt sie zur Laufzeit nach Bedarf). Empfohlen ist ab 0.5.x:
 
 ### hyprland.conf (ini)
 
 ```ini
 windowrulev2 = float, class:^(architects-overlay)$
-windowrulev2 = pin, class:^(architects-overlay)$
 windowrulev2 = nodecorate, class:^(architects-overlay)$
-# Das Spiel (Wine/Proton, fullscreen) fordert den Fokus ständig zurück —
-# stay_focused hält die Palette im Fokus, solange sie sichtbar ist.
-windowrulev2 = stay_focused, class:^(architects-overlay)$
+# pin/stay_focused: NICHT mehr nötig — die App setzt beide zur Laufzeit
+# (Workspace-Bindung an SC, Suspend während eigener Dialoge).
 # Input-Transparenz erzwingen, solange die App nicht in den Fokus-Modus schaltet:
 # windowrulev2 = noinput, class:^(architects-overlay)$
 ```
@@ -170,16 +191,16 @@ windowrulev2 = stay_focused, class:^(architects-overlay)$
 hl.window_rule({
   match = { class = "architects-overlay" },
   float = true,
-  pin = true,
   decorate = false,
   rounding = 0,
   no_blur = true,
-  stay_focused = true,
+  -- pin/stay_focused entfallen: dynamisch durch die App (siehe oben).
 })
 ```
 
 Verifikation nach dem Setzen: `hyprctl clients -j` muss für das Spotlight-Fenster
-`floating=true`, `pinned=true` und Vollmonitor-Größe zeigen.
+`floating=true` und Vollmonitor-Größe zeigen; `pinned` ist je nach Zustand
+(Sichtbarkeit im SC-Workspace, Dialog offen) true/false.
 
 Hinweis: `noinput` macht das Fenster pauschal klick-durchlässig. Wer den
 Fokus-Modus (Klicken im Overlay) nutzen will, lässt die Regel weg und steuert
