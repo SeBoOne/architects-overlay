@@ -406,6 +406,14 @@ impl DataProvider for CompositeProvider {
         self.uex.user_trades().await
     }
 
+    async fn marketplace_negotiations(&self) -> Result<Vec<provider::Negotiation>> {
+        // Marktplatz-Deals (Mein Shop, „Letzte 5 Trades") sind UEX-user-scoped
+        // (secret-key) — kein Source-Plug-in. Delegation MUSS explizit sein:
+        // der Trait-Default meldet „nicht unterstützt" und bricht den
+        // Mein-Shop-Abschnitt (t_1af18a08).
+        self.uex.marketplace_negotiations().await
+    }
+
     async fn categories(&self) -> Result<Vec<provider::Category>> {
         // Marketplace-Kategorien (Anlegen-Form) sind UEX-Referenzdaten.
         self.uex.categories().await
@@ -1000,6 +1008,39 @@ mod tests {
                 ProviderError::Other(_) | ProviderError::Timeout | ProviderError::Http { .. }
             ),
             "got {err:?}"
+        );
+    }
+
+    /// Regression t_1af18a08: `CompositeProvider` MUSS
+    /// `marketplace_negotiations` explizit an den UexProvider delegieren —
+    /// der Trait-Default meldet „nicht unterstützt" und bricht den
+    /// Mein-Shop-Abschnitt („Mein Shop nicht erreichbar: Nicht unterstützt:
+    /// marketplace negotiations"). Der Test nutzt den ECHTEN Composite
+    /// (nicht den StubUex-Mock, der die Methode direkt hat): offline/ohne
+    /// Secret-Key muss der Fehler ein Netz-/Config-Fehler sein, NIEMALS
+    /// `Unsupported` — sonst läuft der Call in den Trait-Default.
+    #[tokio::test]
+    async fn composite_delegates_marketplace_negotiations_to_uex() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        let uex = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        let wiki = WikiProvider::with_base_url(
+            "http://127.0.0.1:2",
+            std::time::Duration::ZERO,
+            cache.clone(),
+        )
+        .unwrap();
+        let provider =
+            CompositeProvider::new(uex, wiki, SourceSwitch::new(CommoditySource::Wiki), cache);
+        let err = provider.marketplace_negotiations().await.unwrap_err();
+        assert!(
+            !matches!(err, ProviderError::Unsupported(_)),
+            "Composite fällt in den Trait-Default durch: {err:?}"
         );
     }
 }
