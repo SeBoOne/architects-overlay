@@ -1,30 +1,49 @@
-t_15e598e7 — MR: BUG Alternativ-Orte — BELEGE
-2026-10-28 · Branch feature/routes-altdata-fix · Gate: fmt 0, cargo test --workspace grün (inkl. neu: terminal_prices_kind_isolation, snapshot-Test, map_price_point_buy_direction_matches_uex_feed_semantics), svelte-check 0 Errors, vite build OK
+t_15e598e7 — Review-Runde 1 Fix: Richtungs-Swap revertiert
+Branch feature/routes-altdata-fix @ 6e00c54 (Push per ls-remote verifiziert:
+6e00c54e60b0daf27c4c4d921109a68bf6fda1ce).
 
-LIVE-GEGENPROBE (Sebo-Beispiele Osoian Hides + Stileron):
-  cargo test -p uex_client --test live_api -- --ignored live_commodity
-    → test live_commodity_price_direction_matches_player_view ... ok
-  Jeder gemappte Kaufort/Verkaufsort gegen den RAW-Feed geprüft:
-  * Osoian Hides (53): 2 Zeilen — Devlin Scrap & Salvage (t24) price_sell=870000 → KAUF;
-    The Golden Riviera (t665) price_buy=283500 → VERKAUF.
-  * Stileron (122): 22 Zeilen — 21 Kauforte (price_sell 110000–170000, z. B. TDD Area18
-    t12, Levski t778, Admin GrimHEX t27), 1 Verkaufsort Bueno Ravine (t551) price_buy=122850.
-  * Jede Feed-Zeile ist einseitig; die Spieler-Sicht-Mappung spiegelt das exakt.
-  Feed-Sample: evidence-live-smoke/routes-altdata/feed-sample.json
+UEX-Feldsemantik (Reviewer-Gegenprobe übernommen, commodities_routes +
+Profit-Arithmetik): price_buy = SPIELER-Kaufpreis, price_sell = Spieler-
+Verkaufspreis. Mappung direkt, kein Tausch.
 
-ROOT-CAUSES + FIX (alle 4 Verdächtigen aus dem MR-Body):
-  1+4. Item/Commodity-ID-RAUM vermischt: der Terminal-Sweep mergte /items_prices-Zeilen
-     (id_item!) in dieselbe Tabelle und ÜBERSCHRIEB bei gleicher id sogar die Ware-Zeile.
-     Fix: cache SCHEMA v10 — terminal_prices bekommt `kind` ('commodity'/'item'),
-     PK (id_terminal,id_commodity,kind); Tabelle wird v10 einmalig neu aufgebaut;
-     terminal_price_rows_all liest NUR 'commodity'. Tests: kind_isolation.
-  2. Richtung invertiert: UEX price_buy zahlt das TERMINAL (Spieler VERKAUFT dort),
-     price_sell zahlt der SPIELER (Spieler kauft). Fix: map_price_point (uex-client)
-     + WikiProvider.map_price_entries tauschen buy/sell (incl. Stock/Status) auf
-     Spieler-Sicht. Live belegt via Osoian Hides/Stileron.
-  3. Stale/verwaiste Zeilen: store_terminal_prices war reiner Upsert → entfernte
-     Waren blieben für immer. Fix: Snapshot-Semantik je Kind (DELETE + INSERT; leere
-     Antwort löscht). Frontend: Alters-Chip „⏱ vor X" je Zeile; > 7 Tage (UEX
-     date_modified) in Warnfarbe (ROUTE_LOC_STALE_SECS, .r-chip-age.stale).
-  Bonus: Alternativ-Tabelle dedupliziert pro Terminal (bester Kauf = min buy_price,
-  bester Verkauf = max sell_price).
+Geändert (6 Dateien):
+1. crates/uex-client/src/lib.rs map_price_point: buy=r.price_buy /
+   sell=r.price_sell, buy_stock=scu_buy_avg, sell_stock=scu_sell_avg,
+   buy_status=status_buy, sell_status=status_sell (Rücktausch) + Doc-Kommentar
+   auf belegter Semantik umgeschrieben; raw_price_rows_for_commodity-Doku
+   korrigiert.
+2. crates/wiki-client/src/lib.rs map_price_entries: buy=e.price_buy /
+   sell=e.price_sell inkl. Status (Rücktausch).
+3. crates/uex-client/tests/fixtures_mapping.rs: Test-Prämisse korrigiert —
+   Kaufort ⇔ price_buy>0 (Golden Riviera 283500 / Mining Area141),
+   Verkaufsort ⇔ price_sell>0 (Devlin 870000 / TDD 140000).
+4. crates/uex-client/tests/live_api.rs live_commodity_price_direction_…:
+   expect_buy = raw.price_buy > 0, expect_sell = raw.price_sell > 0.
+5. crates/wiki-client/src/lib.rs Tests (2x): Assertions auf direkte Mappung.
+6. fixtures routes_prices_1/2.json: price_buy/price_sell getauscht (Mock war
+   auf die invertierte Prämisse gebaut — mit korrekter Semantik wäre die
+   P15a-Route ein Verlustgeschäft gewesen; jetzt wieder profit 150).
+
+GATE (Post-Fix, Exit-Belege im Log):
+- cargo fmt --all -- --check: OK (FMT_CHECK_OK)
+- cargo test --workspace: 22 Suiten "test result: ok", 0 FAILED
+- svelte-check: 0 errors (56 warnings)
+- pnpm build (vite): OK, "Wrote site to build"
+- Live-Gegenprobe: cargo test -p uex_client --test live_api
+  live_commodity_price_direction_matches_player_view -- --ignored → ok
+  (echter UEX-Feed, Osoian Hides 53 + Stileron 122, jede gemappte Zeile
+  einseitig gegen Raw-Feed verifiziert).
+
+Behalten aus Runde 0 (laut Review korrekt): kind-Isolation (Cache v10),
+Snapshot je Kind, Dedupe pro Terminal, Alters-Chip > 7 Tage.
+
+Rework t_52bf6ea5 (2026-10-29): feed-sample.json korrigiert — Labels und
+Listen auf direkte Mappung (Kaufort = price_buy>0, Verkaufsort =
+price_sell>0). Frische Live-Gegenprobe:
+  curl https://api.uexcorp.uk/2.0/commodities_prices?id_commodity=53
+  → t24 Devlin: buy 0 / sell 870000 (Verkaufsort)
+  → t665 Golden Riviera: buy 283500 / sell 0 (Kaufort)
+  id_commodity=122 → price_buy>0: nur t551 Bueno Ravine (122850);
+  price_sell>0: 21 Orte (Jackson's Swap, TDD Area18, Levski, GrimHEX, …).
+feed-sample.json dokumentiert jetzt dieselbe Semantik wie der Code
+(map_price_point/map_price_entries: buy=price_buy, sell=price_sell).

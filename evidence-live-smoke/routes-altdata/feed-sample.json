@@ -1,7 +1,7 @@
 {
   "source": "https://api.uexcorp.uk/2.0/commodities_prices?id_commodity=53|122",
   "fetched": "2026-10-28",
-  "note": "Richtung (Sebo-Beispiele): Kaufort = UEX price_sell>0 (Spieler kauft), Verkaufsort = UEX price_buy>0 (Spieler verkauft). Jede Feed-Zeile ist einseitig.",
+  "note": "Richtung (Spieler-Sicht, Live-Gegenprobe gegen UEX-Feed): Kaufort = UEX price_buy>0 (Spieler kauft dort), Verkaufort = UEX price_sell>0 (Spieler verkauft dort). Jede Feed-Zeile ist einseitig.",
   "commodities": [
     {
       "commodity": "Osoian Hides",
@@ -9,16 +9,16 @@
       "rows": 2,
       "kauforte": [
         {
-          "terminal": 24,
-          "name": "Devlin Scrap and Salvage",
-          "price_sell": 870000
+          "terminal": 665,
+          "name": "The Golden Riviera",
+          "price_buy": 283500
         }
       ],
       "verkaufsorte": [
         {
-          "terminal": 665,
-          "name": "The Golden Riviera",
-          "price_buy": 283500
+          "terminal": 24,
+          "name": "Devlin Scrap and Salvage",
+          "price_sell": 870000
         }
       ]
     },
@@ -27,6 +27,13 @@
       "id_commodity": 122,
       "rows": 22,
       "kauforte": [
+        {
+          "terminal": 551,
+          "name": "Bueno Ravine",
+          "price_buy": 122850
+        }
+      ],
+      "verkaufsorte": [
         {
           "terminal": 504,
           "name": "Jackson's Swap",
@@ -131,13 +138,6 @@
           "terminal": 742,
           "name": "Admin - Nyx Gateway (Pyro)",
           "price_sell": 170000
-        }
-      ],
-      "verkaufsorte": [
-        {
-          "terminal": 551,
-          "name": "Bueno Ravine",
-          "price_buy": 122850
         }
       ]
     }
