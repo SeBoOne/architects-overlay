@@ -269,7 +269,11 @@ async def main():
         smode_f6 = await js("document.querySelector('.smode') ? document.querySelector('.smode').innerText : 'NONE'")
         check("s0-b1-f6-opens-routes", str(smode_f6).strip() == "HANDELSROUTEN", str(smode_f6))
         await shot("shop-s0-b1-f6-routes.png")
-        # F2 zurück in den Marktplatz (Angebote-Tab).
+        # PP t_e2cdb571 (2): Routen-View zeigt KEINE Marktplatz-Reiter.
+        mtabs_f6 = await js("document.querySelectorAll('.mtabs').length")
+        check("pp2-routes-no-mtabs", mtabs_f6 == 0, "mtabs=" + str(mtabs_f6))
+        await shot("pp2-routes-view-no-tabs.png")
+        # F2 zurück in den Marktplatz (Angebote-Tab); Reiter müssen wieder da sein.
         await key("F2")
         await asyncio.sleep(0.8)
         tab = await click_chip("Mein Shop")
@@ -334,6 +338,36 @@ async def main():
         await js("(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(l) l.scrollTop = l.scrollHeight; var p=document.querySelector('.pane-market'); if(p) p.scrollTop = p.scrollHeight;})()")
         await asyncio.sleep(0.4)
         await shot("shop-s2-offers-and-marketplace-trades.png")
+
+        # =====================================================================
+        # P1 — PP t_e2cdb571: Trades-Zeilen-Layout (kein Ellipsis, kein Quetsch)
+        # =====================================================================
+        trows = await js("JSON.stringify([...document.querySelectorAll('.mlist')[1].querySelectorAll('.mrow')].map(function(r){"
+                         "var cs=getComputedStyle(r); var op=r.querySelector('.m-op'); var cso=op?getComputedStyle(op):null;"
+                         "var t=r.querySelector('.m-title'); var cst=t?getComputedStyle(t):null;"
+                         "return {trow:r.classList.contains('trow'), cols:cs.gridTemplateColumns,"
+                         " opMin:cso?cso.minWidth:'', opWs:cso?cso.whiteSpace:'', titleWs:cst?cst.whiteSpace:'',"
+                         " ellip: t ? (t.scrollWidth > t.clientWidth + 1) : null};}))")
+        trowsj = json.loads(str(trows) or "[]")
+        check("pp1-trow-class", len(trowsj) == 5 and all(r["trow"] for r in trowsj), "rows=" + str(len(trowsj)))
+        # computed grid: auto→Op-Breite aufgelöst; 3 Spalten, erste NICHT die
+        # Offer-Badge-Spalten (26px/44px) — sonst ist das alte Grid aktiv.
+        cols0 = trowsj[0]["cols"].split(" ") if trowsj else []
+        check("pp1-grid-3cols-not-offer-grid", len(trowsj) == 5 and len(cols0) == 3
+              and float(cols0[0].replace("px", "")) >= 60, str(trowsj[0]["cols"]) if trowsj else "none")
+        check("pp1-op-fixed-minwidth", all(float(str(r["opMin"]).replace("px", "") or 0) >= 76 for r in trowsj), str(trowsj[0]["opMin"]) if trowsj else "none")
+        check("pp1-op-nowrap", all(r["opWs"] == "nowrap" for r in trowsj))
+        # Tatsächliche Op-Box-Breiten (BoundingRect): Kauf/Verkauf gleich breit.
+        widths = await js("JSON.stringify([...document.querySelectorAll('.mlist')[1].querySelectorAll('.m-op')].map(function(o){return Math.round(o.getBoundingClientRect().width)}))")
+        ws_ = json.loads(str(widths) or "[]")
+        check("pp1-op-equal-width", len(set(ws_)) == 1 and ws_[0] >= 76, str(ws_))
+        check("pp1-title-wraps", all(r["titleWs"] in ("normal",) for r in trowsj), str(trowsj[0]["titleWs"]) if trowsj else "none")
+        check("pp1-title-no-ellipsis", all(r["ellip"] is False for r in trowsj), str([r["ellip"] for r in trowsj]))
+        # F2 zurück in den Marktplatz: Reiter wieder sichtbar (Gegenprobe zu pp2).
+        mtabs_mkt = await js("document.querySelectorAll('.mtabs').length")
+        check("pp2-market-has-mtabs", mtabs_mkt == 1, "mtabs=" + str(mtabs_mkt))
+        await asyncio.sleep(0.3)
+        await shot("pp1-trades-rows-layout.png")
 
         # Deep-Link B2: DealRow-Klick → open_marketplace_listing(listing_slug)
         await js("(function(){var l=[...document.querySelectorAll('.mlist')][1]; if(!l) return; var r=l.querySelector('.mrow'); if(r) r.click();})()")
