@@ -204,10 +204,22 @@ pub struct ItemRow {
     pub is_commodity: u8,
 }
 
-/// `/categories` row (used to enumerate items).
+/// `/categories` row (used to enumerate items AND to offer the user a
+/// category picker in the advertise form — UEX requires `id_category` for
+/// `type=item`, so the selector must present id + display name).
 #[derive(Debug, Deserialize)]
 pub struct CategoryRow {
     pub id: u64,
+    /// Category name, e.g. "Backpacks" (null-tolerant — live API may send
+    /// explicit nulls on optional text fields, same rule as everywhere).
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub name: String,
+    /// Parent section, e.g. "Armor" — useful as a dropdown group label.
+    #[serde(default)]
+    pub section: Option<String>,
+    /// "item" | "service" | … we only ever advertise items.
+    #[serde(default)]
+    pub r#type: Option<String>,
 }
 
 /// `/commodities_prices` row.

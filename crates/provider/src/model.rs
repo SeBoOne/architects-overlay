@@ -368,6 +368,19 @@ pub struct Trade {
     pub organization: Option<String>,
 }
 
+/// Marketplace category (source-agnostic projection of a `/categories` row).
+/// Used for the advertise-form dropdown — UEX REQUIRES `id_category` for
+/// `type=item`, so the user picks a display-name category whose `id` goes
+/// into `AdvertisePayload.id_category`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Category {
+    pub id: u64,
+    /// Display name, e.g. "Backpacks".
+    pub name: String,
+    /// Parent section as a human-readable group label, e.g. "Armor".
+    pub section: Option<String>,
+}
+
 /// Write-Payload für `POST /marketplace_advertise/` (M2b, source-agnostic
 /// Container über dem Doku-Schema [Research §1]). Alle Felder tragen die
 /// offiziellen Input-Feldnamen (snake_case auf dem Wire) inkl. der

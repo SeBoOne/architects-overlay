@@ -14,7 +14,7 @@ mod model;
 pub mod routes;
 
 pub use crate::model::{
-    AdvertisePayload, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
+    AdvertisePayload, Category, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
     MarketplaceFilter, Offer, OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup,
     Trade, deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
 };
@@ -180,6 +180,15 @@ pub trait DataProvider: Send + Sync {
     /// user credential on the source. Default reports unsupported.
     async fn user_trades(&self) -> Result<Vec<Trade>> {
         Err(ProviderError::Unsupported("user trades".to_string()))
+    }
+
+    /// Marketplace categories (for the advertise-form dropdown). UEX REQUIRES
+    /// `id_category` for `type=item`, so the form lets the user pick a
+    /// display-name category whose id goes into `AdvertisePayload.id_category`.
+    /// Small reference list — the provider fetches/caches it like other
+    /// reference data. Default reports unsupported.
+    async fn categories(&self) -> Result<Vec<Category>> {
+        Err(ProviderError::Unsupported("categories".to_string()))
     }
 
     /// Write-Layer (M2b): ein neues Marketplace-Listing anlegen via
