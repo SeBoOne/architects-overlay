@@ -16,8 +16,7 @@ pub mod routes;
 pub use crate::model::{
     AdvertisePayload, Entity, EntityKind, ListingType, LocationPrices, MarketOperation,
     MarketplaceFilter, Offer, OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup,
-    Trade,
-    deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
+    Trade, deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
 };
 
 /// Domain error produced by a provider implementation.

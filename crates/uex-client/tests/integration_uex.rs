@@ -1388,7 +1388,9 @@ async fn delete_offer_deletes_listing_with_secret_key() {
         .and(query_param("id", "847291"))
         .and(query_param("is_production", "1"))
         .and(header("secret-key", "my-super-secret-40"))
-        .respond_with(json_response(r#"{"status":"ok","http_code":200,"data":null}"#))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":null}"#,
+        ))
         .mount(&server)
         .await;
 
@@ -1402,10 +1404,7 @@ async fn delete_offer_deletes_listing_with_secret_key() {
     .unwrap()
     .with_secret_key(Some("my-super-secret-40".into()));
 
-    provider
-        .delete_offer(847_291)
-        .await
-        .expect("delete ok");
+    provider.delete_offer(847_291).await.expect("delete ok");
 }
 
 /// M2b (Write-Layer): Fehlerpfad — DELETE mit unserem Secret-Key-Header, aber

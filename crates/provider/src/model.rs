@@ -525,7 +525,13 @@ mod tests {
             assert!(json.contains(key), "payload lacks {key}: {json}");
         }
         // Optionale ohne Wert fehlen KOMPLETT (nicht "field":null).
-        for skipped in ["id_item", "id_category", "id_terminal", "id_organization", "is_hidden"] {
+        for skipped in [
+            "id_item",
+            "id_category",
+            "id_terminal",
+            "id_organization",
+            "is_hidden",
+        ] {
             assert!(
                 !json.contains(&format!("\"{skipped}\"")),
                 "Optional {skipped} must be omitted (skip_serializing_if), got {json}"

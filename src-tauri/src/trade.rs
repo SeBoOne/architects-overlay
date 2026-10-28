@@ -128,7 +128,9 @@ impl WriteGate {
         }
     }
 
-    /// Mit explizitem Fenster (Tests: winziges Fenster ohne echtes Warten).
+    /// Test-Konstruktor mit explizitem Fenster (winziges Fenster ohne echtes
+    /// Warten). Nur im Test-Build — die App nutzt immer `new()` (2/60).
+    #[cfg(test)]
     pub fn with_window(max_per_window: usize, window_secs: u64) -> Self {
         WriteGate {
             recent: Mutex::new(Vec::new()),
@@ -966,7 +968,11 @@ async fn advertise_offer_cmd(
 ) -> Result<provider::Offer, String> {
     let now = now_unix();
     state.write_gate.try_acquire(now)?;
-    let offer = state.provider.advertise_offer(payload).await.map_err(friendly)?;
+    let offer = state
+        .provider
+        .advertise_offer(payload)
+        .await
+        .map_err(friendly)?;
     // Nur erfolgreiche Writes registrieren (Fehler belegen das Fenster nicht).
     state.write_gate.record_write(now);
     Ok(offer)
@@ -985,10 +991,7 @@ pub async fn marketplace_advertise(
 /// M2b: ein Listing ABMELDEN (`DELETE /marketplace_listings/?id=…`). Kein
 /// Edit — nur löschen. Rate-Limit-Gate wie beim Anlegen; kein Retry-Spam.
 #[tauri::command]
-pub async fn marketplace_delete(
-    state: State<'_, TradeState>,
-    id: u64,
-) -> Result<(), String> {
+pub async fn marketplace_delete(state: State<'_, TradeState>, id: u64) -> Result<(), String> {
     let now = now_unix();
     state.write_gate.try_acquire(now)?;
     state.provider.delete_offer(id).await.map_err(friendly)?;
@@ -2413,7 +2416,10 @@ mod tests {
         gate.record_write(now + 1);
         // Dritter Write im selben Fenster → abgelehnt, mit Wartezeit-Meldung.
         let err = gate.try_acquire(now + 5).unwrap_err();
-        assert!(err.contains("Rate-Limit") && err.contains("warten"), "{err}");
+        assert!(
+            err.contains("Rate-Limit") && err.contains("warten"),
+            "{err}"
+        );
         assert!(err.contains("Schreibaktionen"), "{err}");
         // Nach Ablauf des Fensters (ältester Eintrag + window) wieder frei.
         assert!(gate.try_acquire(now + 61).is_ok());
@@ -2431,7 +2437,10 @@ mod tests {
         // (kein record_write → der Versuch ist weg)
         assert!(gate.try_acquire(now + 1).is_ok());
         gate.record_write(now + 1);
-        assert!(gate.try_acquire(now + 2).is_ok(), "nur 1 registriert → frei");
+        assert!(
+            gate.try_acquire(now + 2).is_ok(),
+            "nur 1 registriert → frei"
+        );
     }
 
     #[test]
@@ -2546,16 +2555,23 @@ mod tests {
             is_production: 1,
         };
         // 2 erfolgreiche Anlegen erlaubt.
-        assert!(marketplace_advertise(state.clone(), payload.clone())
-            .await
-            .is_ok());
-        assert!(marketplace_advertise(state.clone(), payload.clone())
-            .await
-            .is_ok());
+        assert!(
+            marketplace_advertise(state.clone(), payload.clone())
+                .await
+                .is_ok()
+        );
+        assert!(
+            marketplace_advertise(state.clone(), payload.clone())
+                .await
+                .is_ok()
+        );
         // 3. → WriteGate greift (das echte Gate hat now=now_unix() als ein- und
         // dieselbe Sekunde → beide Writes im selben 60s-Fenster).
         let third = marketplace_advertise(state.clone(), payload).await;
-        assert!(third.is_err(), "rate-limit-Gate muss den 3. Write blockieren");
+        assert!(
+            third.is_err(),
+            "rate-limit-Gate muss den 3. Write blockieren"
+        );
         let msg = third.unwrap_err();
         assert!(msg.contains("Rate-Limit"), "{msg}");
         let _ = app;

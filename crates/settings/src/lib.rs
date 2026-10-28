@@ -1206,7 +1206,10 @@ mod tests {
         );
         assert_eq!(MarketplaceConfirm::from_name("bogus"), None);
         // Default = ConfirmEveryAction (sicherstes Verhalten, M2b-2).
-        assert_eq!(MarketplaceConfirm::default(), MarketplaceConfirm::ConfirmEveryAction);
+        assert_eq!(
+            MarketplaceConfirm::default(),
+            MarketplaceConfirm::ConfirmEveryAction
+        );
 
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("config.toml");
@@ -1219,7 +1222,10 @@ mod tests {
         );
         // TOML-Bestand (für Handsichts/Lesbarkeit).
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(content.contains("marketplace_confirm = \"delete_only\""), "{content}");
+        assert!(
+            content.contains("marketplace_confirm = \"delete_only\""),
+            "{content}"
+        );
         // Fehlendes Feld (Legacy-Konfig) → Default every_action.
         std::fs::write(&path, "[ui]\n").unwrap();
         assert_eq!(
