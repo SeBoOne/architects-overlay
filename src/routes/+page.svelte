@@ -1200,6 +1200,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		shopLoading = !bg;
 		shopErr = null;
 		shopNote = null;
+		// M2b-Review-Fix: Erfolgs-Deep-Link nur für die letzte Create-Aktion —
+		// beim Neu-Laden des Shops verfallen (Listings stecken sowieso im
+		// UEX-Approval, ein fehlgeschlagener Write darf keinen alten Link zeigen).
+		if (!bg) shopCreatedUrl = null;
 		// Eigene Offers brauchen den username-Filter; ohne key kein Abschnitt.
 		// Beide Reads parallel — unabhängig voneinander, ein Fehler reißt den
 		// anderen nicht mit.
@@ -1256,9 +1260,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			shopErr = String(e);
 		}
 	}
-		async function openMyShopDeepLink() {
+	async function openMyShopDeepLink() {
 		try {
 			await invoke<string>('open_marketplace_trades');
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
+	// M2b-Review-Fix (t_6e26ec82 R2): öffnet den Permalink eines frisch
+	// angelegten Listings (Create-Antwort liefert eine volle URL). Falls leer,
+	// fällt der Button auf den Marketplace-Home zurück.
+	async function openCreatedListing(url: string) {
+		try {
+			if (url && url.startsWith('https://uexcorp.space/')) {
+				await invoke<string>('open_created_listing', { url });
+			} else {
+				await invoke<string>('open_marketplace_listing', { slug: '' });
+			}
 		} catch (e) {
 			shopErr = String(e);
 		}
@@ -1286,8 +1304,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		name: string;
 		section: string | null;
 	};
+	// M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort von
+	// marketplace_advertise ist KEIN Offer — UEX liefert `{ id, url }`: die
+	// neue Listing-Id + den Permalink (Deep-Link-Target). Daran hängt die
+	// Erfolgsmeldung, NICHT an einem Pull (Listings erscheinen erst nach
+	// UEX-Approval in /marketplace_listings).
+	type AdvertiseResult = {
+		id: number;
+		url: string;
+	};
 	let advertCategories = $state<MarketCategory[]>([]);
 	let advertCatOpen = $state(false);
+	// Permalink eines frisch angelegten Listings (für den Erfolgs-Deep-Link).
+	let shopCreatedUrl = $state<string | null>(null);
 	$effect(() => {
 		// Beim Öffnen der Form die Kategorien laden (einmalig pro Session;
 		// UEX /categories ist klein + öffentlich). Ein Fehler hier blockiert
@@ -1443,15 +1472,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			is_production: 1
 		};
 		try {
-			await invoke<Offer>('marketplace_advertise', { payload });
+			// M2b-Review-Fix (t_6e26ec82 R2): die Create-Antwort ist KEIN Offer —
+			// UEX liefert `{ id, url }` (der Deep-Link). Die Erfolgsmeldung hängt
+			// an id/url aus der Antwort, NICHT an einem Pull (Listings erscheinen
+			// erst nach UEX-Approval in /marketplace_listings).
+			const res = await invoke<AdvertiseResult>('marketplace_advertise', { payload });
 			editingOffer = null;
 			advertOpen = false;
 			advertForm = emptyAdvertise();
-			// Pull: lokale Liste neu laden (der POST-Response/GET bestätigt).
+			// M2b-4: Pull nach jedem Write (Bestätigung durch den Response/GET).
+			// Ein frisch angelegtes Listing fehlt bis zum UEX-Approval — Erfolg
+			// wird trotzdem sauber gemeldet (Button öffnet die Listung via id/url).
 			await loadShop(true);
-			shopNote = f.operation === 'sell'
+			shopCreatedUrl = res.url || null;
+			shopNote = (f.operation === 'sell'
 				? 'Listing „' + f.title.trim() + '“ wurde angelegt.'
-				: 'Kauf-Gesuch „' + f.title.trim() + '“ wurde angelegt.';
+				: 'Kauf-Gesuch „' + f.title.trim() + '“ wurde angelegt.') +
+				' Es erscheint nach UEX-Approval in deiner Offers-Liste.';
 		} catch (e) {
 			// KEIN Retry — Fehlermeldung + Deep-Link-Button (UI rendert shopErr).
 			shopErr = String(e);
@@ -3700,9 +3737,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{/if}
 						{#if shopNote}
-							<div class="row-empty" style="padding: 10px 16px">{shopNote}</div>
-						{/if}
-												<div class="mbar2" style="margin-top: 10px">
+												<div class="row-empty" style="padding: 10px 16px; display: flex; align-items: center; gap: 12px">
+													<span style="flex: 1">{shopNote}</span>
+													{#if shopCreatedUrl}
+														<!-- M2b-Review-Fix (t_6e26ec82 R2): Erfolgs-Deep-Link aus der
+														     Create-Antwort (Listings erscheinen erst nach UEX-Approval —
+														     der Pull kann sie nicht zeigen, der Direct-Link schon). -->
+														<button type="button" class="btn-ghost" onclick={() => void openCreatedListing(shopCreatedUrl!)}>ANGELEGTES LISTING ÖFFNEN ↗</button>
+													{/if}
+												</div>
+											{/if}
+											<div class="mbar2" style="margin-top: 10px">
 													<span class="m-lbl">Eigene Offers ({myOffers.length})</span>
 													<span class="m-spacer"></span>
 													<span class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
