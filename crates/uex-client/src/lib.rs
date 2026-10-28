@@ -44,8 +44,8 @@ use provider::{
 };
 
 use dto::{
-    CategoryRow, CommodityRouteRow, CommodityRow, ItemPriceRow, ItemRow, ListingRow, PriceRow,
-    StarSystemRow, TerminalRow, UserTradeRow, VehicleRow,
+    CategoryRow, CommodityRouteRow, CommodityRow, CreateResponse, ItemPriceRow, ItemRow,
+    ListingRow, PriceRow, StarSystemRow, TerminalRow, UserTradeRow, VehicleRow,
 };
 
 /// Search result page size served from the cache.
@@ -471,7 +471,10 @@ impl DataProvider for UexProvider {
 
     /// Write-Layer (M2b): `POST /marketplace_advertise/` — neues Listing
     /// anlegen (Delegation auf die Inherent-Implementierung).
-    async fn advertise_offer(&self, payload: provider::AdvertisePayload) -> Result<Offer> {
+    async fn advertise_offer(
+        &self,
+        payload: provider::AdvertisePayload,
+    ) -> Result<provider::AdvertiseResult> {
         self.advertise_offer_impl(payload).await
     }
 
@@ -1355,19 +1358,28 @@ impl UexProvider {
     /// Delegation `advertise_offer`). Payload exakt nach Doku-Schema
     /// (`AdvertisePayload`); kein Edit (Bearbeiten = Abmelden+Neu). Kein Retry
     /// bei 429/403 — der Fehler steigt durch, die UI entscheidet Deep-Link.
-    async fn advertise_offer_impl(&self, payload: provider::AdvertisePayload) -> Result<Offer> {
+    async fn advertise_offer_impl(
+        &self,
+        payload: provider::AdvertisePayload,
+    ) -> Result<provider::AdvertiseResult> {
         Self::validate_advertise(&payload)?;
         let body = serde_json::to_value(&payload)
             .map_err(|e| ProviderError::Json(format!("advertise payload: {e}")))?;
-        // POST-Antwort: UEX liefert das neue Listing als `data` (einzelnes
-        // Objekt). Wir parsen es als ListingRow und mappen es auf `Offer`.
-        // KEIN Retry bei 429/403 — der Fehler steigt durch (M2b-3: Meldung +
-        // Deep-Link entscheidet die UI).
-        let row: ListingRow = self
+        // POST-Antwort: UEX liefert das neue Listing NICHT als vollständige
+        // ListingRow (die erscheint erst nach Approval in
+        // /marketplace_listings) — nur `{id, url}` (der Deep-Link). Wir
+        // parsen das tolerante CreateResponse (Review t_6e26ec82 R2: der
+        // ListingRow-Parse warf „missing field id", obwohl der Server die
+        // Listung angelegt hatte) und reichen id/url an die UI für die
+        // Erfolgsmeldung weiter. KEIN Retry bei 429/403 (M2b-3).
+        let created: CreateResponse = self
             .http
             .post("/marketplace_advertise/", self.secret_key.as_deref(), &body)
             .await?;
-        self.map_listing_row_offer(row).await
+        Ok(provider::AdvertiseResult {
+            id: created.id,
+            url: created.url,
+        })
     }
 
     async fn delete_offer_impl(&self, id: u64) -> Result<()> {
@@ -1460,41 +1472,6 @@ impl UexProvider {
     #[cfg(test)]
     pub(crate) fn advertise_offer_test_probe(payload: &provider::AdvertisePayload) -> Result<()> {
         Self::validate_advertise(payload)
-    }
-
-    /// Ein einzelnes ListingRow → Offer (Shared mit `map_listing_rows`,
-    /// aber für genau EINE Zeile, ohne Username-Fallback namenszusätzlich).
-    async fn map_listing_row_offer(&self, r: ListingRow) -> Result<Offer> {
-        let regions = self.star_system_names().await?;
-        let region = if r.id_star_system != 0 {
-            regions.get(&r.id_star_system).cloned().unwrap_or_default()
-        } else {
-            String::new()
-        };
-        Ok(Offer {
-            id: r.id,
-            title: r.title,
-            description: r.description,
-            item_id: r.id_item,
-            category_id: r.id_category,
-            operation: r.operation.parse().unwrap_or(MarketOperation::Sell),
-            listing_type: r.r#type.parse().unwrap_or(ListingType::Item),
-            price: r.price.parse::<f64>().unwrap_or(0.0),
-            currency: if r.currency.is_empty() {
-                "UEC".into()
-            } else {
-                r.currency
-            },
-            unit: r.unit,
-            quantity: r.in_stock,
-            location: r.location,
-            region,
-            seller: r.user_name,
-            quality: r.quality.unwrap_or(0),
-            updated: r.date_added,
-            expires: r.date_expiration,
-            slug: r.slug,
-        })
     }
 
     /// Eigene Marketplace-Offers live holen + Snapshot additiv aktualisieren.

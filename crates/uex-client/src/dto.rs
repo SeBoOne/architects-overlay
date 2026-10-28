@@ -251,6 +251,22 @@ pub struct PriceRow {
     pub date_modified: u64,
 }
 
+/// `data`-Envelope einer erfolgreichen `POST /marketplace_advertise/`
+/// AntwORT (M2b). UEX liefert hier KEINE vollständige ListingRow (die
+/// erscheint erst nach Approval in `/marketplace_listings`, M2b-4) — nur
+/// `{id, url}` (der Deep-Link zur Listung). Beide Felder sind tolerant
+/// defaultet: selbst wenn die API eine abweichende/leere `data`-Struktur
+/// schickt, darf das Anlegen NICHT als Fehler brechen (Review t_6e26ec82
+/// Runde 2: der vorherige ListingRow-Parse warf „missing field id" obwohl
+/// der Server das Listing angelegt hatte).
+#[derive(Debug, Deserialize)]
+pub struct CreateResponse {
+    #[serde(default, deserialize_with = "de_u64_null_to_zero")]
+    pub id: u64,
+    #[serde(default, deserialize_with = "de_string_null_to_empty")]
+    pub url: String,
+}
+
 /// `/marketplace_listings` row.
 #[derive(Debug, Deserialize)]
 pub struct ListingRow {
