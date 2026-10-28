@@ -139,7 +139,8 @@ hl.window_rule({
   size  = { "monitor_w", "monitor_h" },
   move  = { 0, 0 },
   float = true,
-  pin   = true,
+  -- KEIN pin (v2, t_6d26985e): das Overlay bleibt im Workspace, in dem
+  -- es geöffnet wurde, und verschwindet mit ihm beim Wechsel.
 })
 ```
 
@@ -151,41 +152,71 @@ Ohne jede `size`-Regel entscheidet der GTK-Default-Size-Hint beim ersten Map,
 Danach die App — das ist der empfohlene Zustand: die Regel `float` reicht, die
 Geometrie kommt von der App.
 
-### Verhalten seit 0.5.x: Workspace-Bindung + Dialog-Suspend (t_d340f851)
+### Verhalten seit v0.5.x/v2: Workspace-Kohärenz PASSIV, keine aktiven Dispatches (t_6d26985e)
 
-Die App verwaltet `pin` und `stay_focused` seit 0.5.x **selbst, dynamisch**
-(live per Lua-Dispatcher nach dem Map gesetzt, Hyprland ≥ 0.55):
+**Geschichte (warum):** v0.5.x (PA, t_d340f851) hat das Overlay AKTIV an den
+SC-Workspace gebunden: jeder Show capturte den SC-Workspace, ein
+socket2-`workspace>>`-Listener versteckte das Overlay, sobald der Nutzer den
+Workspace verließ — und jeder Hide dispatchte den Fokus zurück ans Spiel. Der
+Nutzer wurde bei JEDEM Workspace-Wechsel-Versuch in den SC-Workspace
+zurückgeworfen (Discord/Browser im Spiel unmöglich, 2. Monitor
+unerreichbar). In v0.4.6 reverted; aktive Workspace/Focus-Dispatches aus dem
+Overlay-Prozess sind dauerhaft VERBOTEN (`workspace`, `focuswindow` als
+Workspace-Korrektur, `movetoworkspacesilent` — kein Polling, das den
+Workspace „korrigiert").
 
-- **Workspace-Bindung:** Bei jedem Einblenden bindet sich das Overlay an den
-  Workspace des Star-Citizen-Fensters (`class:starcitizen.exe`). Verlässt man
-  diesen Workspace, versteckt sich das Overlay (Fokus geht zurück ans Spiel);
-  bei Rückkehr erscheint es wieder. `pin`/`stay_focused` gelten nur dort — auf
-  anderen Workspaces/Monitoren ist die Eingabe frei, das Scratchpad liegt wie
-  gewohnt über allem.
+**v2 ist strikt passiv:**
+
+- **Kein `pin`** — weder statisch (hyprland.lua) noch zur Laufzeit. Das
+  Overlay ist ein normales float-Fenster: es mapped auf dem Workspace, auf
+  dem der Nutzer sich BEIM EINBLENDEM befindet, und verschwindet mit diesem
+  Workspace beim Wechsel (Standard-Hyprland). Das Overlay sichtbar machen
+  heißt NICHT: zum SC-Workspace wechseln — dorthin zu wechseln ist Sache des
+  Nutzers. Wer das Overlay sehen will, blendet es im aktuellen Workspace ein.
+- **Keine Workspace-Reaktion:** Die App lauscht NICHT auf
+  `workspace>>`/`focusedmon…`-Events und pollt den Workspace nicht. Es gibt
+  keinen Code-Pfad mehr, der Sichtbarkeit von Workspaces abhängig macht
+  (Regression-Test `effective_visible_ignores_workspaces` +
+  `no_pin_dispatches_exist` in `overlay.rs`).
+- **stay_focused-Brücke bleibt:** Solange das Overlay sichtbar ist, hält
+  `stay_focused` (gesetzt per Lua-Dispatcher nach dem Map auf die eigene
+  Fenster-Adresse) den Tastaturfokus gegen den Fokus-Raub des Spiels. Das
+  ist das Gegenteil des PA-Problems und war nie Ursache der globalen
+  Eingabe-Blockierung.
 - **Dialog-Suspend:** Öffnet die App einen eigenen Dialog (Bild-File-Chooser,
-  gleiche WM-Class + pid), suspendiert sie `stay_focused` + `pin` auf dem
-  Hauptfenster, solange der Dialog offen ist, und stellt beide danach wieder
-  her. Der Picker ist damit normal bedienbar (kein Fokus-Flackern mehr).
-- **Öffnen = Fokus-Modus:** Beim Einblenden schaltet das Overlay strikt in den
-  Fokus-Modus (auch wenn vorher Click-through aktiv war); der Status-Button
-  unten rechts zeigt konsistent `FOKUS`.
+  gleiche WM-Class + pid), suspendiert sie `stay_focused` auf dem
+  Hauptfenster, solange der Dialog offen ist, und stellt es danach wieder
+  her. Ohne `pin` ist der Picker ohne jeden keep-above-Krieg normal
+  bedienbar (P3).
+- **Öffnen = Fokus-Modus:** Beim Einblenden schaltet das Overlay strikt in
+  den Fokus-Modus (auch wenn vorher Click-through aktiv war); der
+  Status-Button unten rechts zeigt konsistent `FOKUS` (P4, aus PA
+  übernommen).
+- **Eingabe-Blockierung (P2):** Wayland/Hyprland bietet KEINE Möglichkeit,
+  Pointer-Eingabe-Blockierung eines Wayland-Fensters auf einen Monitor zu
+  begrenzen — die Eingabe-Form folgt dem Fenster (und das Overlay spannt
+  bereits genau EINEN Monitor, den unter dem Pointer). Beleg: Hyprland
+  windowrule-Vokabular kennt nur fenster-/klassen-globale Input-Regeln
+  (`noinput`), keine monitor-gestreuten; `hyprctl monitors`/`clients` expose
+  keine per-Monitor-Input-Zonen (Probe `pz-probe`, Check p2). Pragmatische
+  Lösung (Standard): das Fenster liegt nur auf EINEM Monitor, beim Öffnen
+  Fokus-Modus nur auf diesem Monitor; alle anderen Monitore bleiben frei.
+  Click-through ist weiterhin per `arch-overlay clickthrough` / Kürzel
+  schaltbar; ein Fokus-Wechsel passiert nur durch Öffnen (Nutzer-Intent) oder
+  expliziten Nutzerklick.
 
-Deshalb sind die statischen `pin`- und `stay_focused`-Regeln in der
-Compositor-Konfiguration **optional** (veraltet, aber nicht schädlich — die
-App überschreibt sie zur Laufzeit nach Bedarf). Empfohlen ist ab 0.5.x:
-
-### hyprland.conf (ini)
+Empfohlene Regeln (hyprland.conf, ini):
 
 ```ini
 windowrulev2 = float, class:^(architects-overlay)$
 windowrulev2 = nodecorate, class:^(architects-overlay)$
-# pin/stay_focused: NICHT mehr nötig — die App setzt beide zur Laufzeit
-# (Workspace-Bindung an SC, Suspend während eigener Dialoge).
-# Input-Transparenz erzwingen, solange die App nicht in den Fokus-Modus schaltet:
+# KEIN pin, KEIN stay_focused statisch nötig — die App setzt stay_focused
+# dynamisch nach dem Map (Dialog-Suspend inklusive).
+# Optional, wenn das Overlay pauschal klick-durchlässig sein soll:
 # windowrulev2 = noinput, class:^(architects-overlay)$
 ```
 
-### hyprland.lua (Omarchy, wie in `~/.config/hypr/hyprland.lua`)
+hyprland.lua (Omarchy, wie in `~/.config/hypr/hyprland.lua`):
 
 ```lua
 hl.window_rule({
@@ -194,17 +225,14 @@ hl.window_rule({
   decorate = false,
   rounding = 0,
   no_blur = true,
-  -- pin/stay_focused entfallen: dynamisch durch die App (siehe oben).
+  -- pin entfallen (v2): das Overlay bleibt im Workspace, in dem es geöffnet
+  -- wurde. stay_focused setzt die App dynamisch (Brücke + Dialog-Suspend).
 })
 ```
 
-Verifikation nach dem Setzen: `hyprctl clients -j` muss für das Spotlight-Fenster
-`floating=true` und Vollmonitor-Größe zeigen; `pinned` ist je nach Zustand
-(Sichtbarkeit im SC-Workspace, Dialog offen) true/false.
-
-Hinweis: `noinput` macht das Fenster pauschal klick-durchlässig. Wer den
-Fokus-Modus (Klicken im Overlay) nutzen will, lässt die Regel weg und steuert
-den Modus über `arch-overlay clickthrough`.
+Verifikation nach dem Setzen: `hyprctl clients -j` muss für das
+Spotlight-Fenster `floating=true` und Vollmonitor-Größe zeigen und — nach dem
+Map — `pinned=false` (v2: niemals gepinnt).
 
 ## Beenden-Verhalten
 
