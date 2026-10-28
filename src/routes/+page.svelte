@@ -39,6 +39,9 @@
 	import Rail from '../lib/Rail.svelte';
 	import Inventory from '../lib/Inventory.svelte';
 	import RoutesTypeahead from '../lib/RoutesTypeahead.svelte';
+	// MD (t_10be9255, D2): dunkles, mausbedienbares Dropdown mit Typeahead —
+	// ersetzt die nativen <select> im Anlegen-Formular.
+	import SelectCombo from '../lib/SelectCombo.svelte';
 	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
 	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
 	import { suggestShips, isSnubShip } from '../lib/hangar_ships';
@@ -3460,7 +3463,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								Setzen
 							</button>
 							{#if cfg?.uex_api_key_set}
-							<button type="button" class="btn-ghost" onclick={removeApiKey}>Entfernen</button>
+							<button type="button" class="btn-ghost btn-danger" onclick={removeApiKey}>Entfernen</button>
 							{/if}
 						</div>
 						{#if apiKeyNote}
@@ -3492,7 +3495,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								Setzen
 							</button>
 							{#if cfg?.uex_secret_key_set}
-							<button type="button" class="btn-ghost" onclick={removeSecretKey}>Entfernen</button>
+							<button type="button" class="btn-ghost btn-danger" onclick={removeSecretKey}>Entfernen</button>
 							{/if}
 						</div>
 						{#if secretKeyNote}
@@ -3548,7 +3551,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{errorMsg ?? status?.last_error ?? 'Keine Verbindung'}<br />
 						Cache-Stand: {cacheAge()}
 					</div>
-					<span class="btn" onclick={retrySync}>Erneut versuchen</span>
+					<span class="btn-ghost" onclick={retrySync}>Erneut versuchen</span>
 					<div class="sm" style="margin-top: 10px">
 						<b style="color: var(--fgdim)">O</b> Offline mit Cache fortsetzen
 					</div>
@@ -3596,7 +3599,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="md-desc empty">Keine Beschreibung.</div>
 						{/if}
 						<div class="md-actions">
-							<span class="btn" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+							<span class="btn-ghost" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
 							<span class="btn-ghost" onclick={() => (offerDetail = null)}>Zurück</span>
 						</div>
 						<div class="md-note">
@@ -3832,7 +3835,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							}}
 						/>
 						<span
-							class="btn"
+							class="btn-ghost"
 							onclick={() => {
 								persistShopUser(shopUser);
 								void loadShop();
@@ -3851,7 +3854,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
 								<div class="sm">Eigene Offers + Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
-								<span class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</span>
+								<span class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</span>
 							</div>
 						</div>
 					{:else if !cfg?.uex_secret_key_set}
@@ -3863,7 +3866,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Secret-Key fehlt oder ist falsch — siehe Einstellungen</div>
 								<div class="sm">User-scoped Reads (eigene Offers, Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
-								<button type="button" class="btn" onclick={openConfig}>In den Einstellungen hinterlegen</button>
+								<button type="button" class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</button>
 							</div>
 						</div>
 					{:else if shopLoading}
@@ -3877,7 +3880,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
 								<div class="sm">{shopErr}</div>
-								<span class="btn" onclick={() => void loadShop()}>Erneut versuchen</span>
+								<span class="btn-ghost" onclick={() => void loadShop()}>Erneut versuchen</span>
 								<span class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
 							</div>
 						</div>
@@ -3919,21 +3922,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<button type="button" class="chip" class:is-on={advertForm.operation === 'sell'} onclick={() => (advertForm.operation = 'sell')}>Verkauf (sell)</button>
 																<button type="button" class="chip" class:is-on={advertForm.operation === 'buy'} onclick={() => (advertForm.operation = 'buy')}>Kauf (buy)</button>
 																<span class="m-lbl">Listing Type</span>
-																<select
-																	class="rtext"
+																<SelectCombo
 																	bind:value={advertForm.listing_type}
-																	aria-label="Listing Type"
-																	onchange={() => {
+																	ariaLabel="Listing Type"
+																	options={[
+																		{ value: 'item', label: 'Item' },
+																		{ value: 'service', label: 'Service' },
+																		{ value: 'contract', label: 'Contract' }
+																	]}
+																	onselect={() => {
 																		// Unit-Referenzliste wechselt mit dem Type (Doku [7]);
 																		// fallback auf die erste Unit der neuen Liste.
 																		const u = unitsFor(advertForm.listing_type);
 																		if (!u.includes(advertForm.unit)) advertForm.unit = u[0];
 																	}}
-																>
-																	<option value="item">Item</option>
-																	<option value="service">Service</option>
-																	<option value="contract">Contract</option>
-																</select>
+																/>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Titel</span>
@@ -3943,9 +3946,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.price} />
 																{#if advertErrors.price}<span class="chip warn" style="margin-left: 4px">{advertErrors.price}</span>{/if}
 																<span class="m-lbl">Währung</span>
-																<select class="rtext" bind:value={advertForm.currency} aria-label="Currency">
-																	{#each CURRENCY_CHOICES as c}<option value={c}>{c}</option>{/each}
-																</select>
+																<SelectCombo bind:value={advertForm.currency} ariaLabel="Currency" placeholder="UEC" options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
 																{#if advertErrors.currency}<span class="chip warn" style="margin-left: 4px">{advertErrors.currency}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
@@ -3953,7 +3954,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.quantity} />
 																{#if advertErrors.quantity}<span class="chip warn" style="margin-left: 4px">{advertErrors.quantity}</span>{/if}
 																<span class="m-lbl">Einheit</span>
-																<select class="rtext" bind:value={advertForm.unit}>{#each unitsFor(advertForm.listing_type) as u}<option value={u}>{u}</option>{/each}</select>
+																<SelectCombo bind:value={advertForm.unit} ariaLabel="Einheit" options={unitsFor(advertForm.listing_type).map((u) => ({ value: u, label: u }))} />
 																{#if advertErrors.unit}<span class="chip warn" style="margin-left: 4px">{advertErrors.unit}</span>{/if}
 																<span class="m-lbl">Ort</span>
 																<div style="position: relative; display: inline-flex">
@@ -3975,12 +3976,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																     UEX sendet sonst 400 missing_id_category. Die Auswahl kommt aus
 																     /categories (get_categories-IPC), angezeigt mit Section-Präfix. -->
 																<span class="m-lbl">Kategorie</span>
-																<select class="rtext" bind:value={advertForm.category} aria-label="Kategorie">
-																	<option value="">— bitte wählen —</option>
-																	{#each advertCategories as c}
-																		<option value={c.id}>{c.section ? c.section + ' › ' : ''}{c.name}</option>
-																	{/each}
-																</select>
+																<SelectCombo
+																	bind:value={advertForm.category}
+																	ariaLabel="Kategorie"
+																	placeholder="— bitte wählen —"
+																	options={[
+																		{ value: '', label: '— bitte wählen —' },
+																		...advertCategories.map((c) => ({
+																			value: String(c.id),
+																			label: (c.section ? c.section + ' › ' : '') + c.name
+																		}))
+																	]}
+																/>
 																{#if advertErrors.category}<span class="chip warn" style="margin-left: 4px">{advertErrors.category}</span>{/if}
 																{#if advertForm.listing_type === 'item'}
 																	<span class="m-lbl">Item</span>
@@ -4004,21 +4011,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Laufzeit</span>
-																<select class="rtext" bind:value={advertForm.hours} aria-label="Laufzeit">{#each HOUR_CHOICES as h}<option value={h}>{hourLabel(h)}</option>{/each}</select>
+																<SelectCombo
+										bind:value={advertForm.hours}
+										ariaLabel="Laufzeit"
+										options={HOUR_CHOICES.map((h) => ({ value: h, label: hourLabel(h) }))}
+									/>
 																{#if advertErrors.hours}<span class="chip warn" style="margin-left: 4px">{advertErrors.hours}</span>{/if}
 																<span class="m-lbl">Item Source</span>
-																<select class="rtext" bind:value={advertForm.source} aria-label="Item Source">
-																	<option value="">— (optional) —</option>
-																	{#each SOURCE_CHOICES as s}<option value={s}>{s.replace(/_/g, ' ')}</option>{/each}
-																</select>
+																<SelectCombo
+																	bind:value={advertForm.source}
+																	ariaLabel="Item Source"
+																	placeholder="— (optional) —"
+																	options={[
+																		{ value: '', label: '— (optional) —' },
+																		...SOURCE_CHOICES.map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))
+																	]}
+																/>
 																<span class="m-lbl">Quality</span>
 																<input class="qnum" type="number" min="0" max="100" step="1" placeholder="0–100" bind:value={advertForm.quality} />
 																{#if advertErrors.quality}<span class="chip warn" style="margin-left: 4px">{advertErrors.quality}</span>{/if}
 																<span class="m-lbl">Availability</span>
-																<select class="rtext" bind:value={advertForm.availability} aria-label="Availability">
-																	<option value="">— (optional) —</option>
-																	{#each AVAILABILITY_CHOICES as a}<option value={a}>{a.replace(/_/g, ' ')}</option>{/each}
-																</select>
+																<SelectCombo
+																	bind:value={advertForm.availability}
+																	ariaLabel="Availability"
+																	placeholder="— (optional) —"
+																	options={[
+																		{ value: '', label: '— (optional) —' },
+																		...AVAILABILITY_CHOICES.map((a) => ({ value: a, label: a.replace(/_/g, ' ') }))
+																	]}
+																/>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Hide Listing</span>
@@ -4150,29 +4171,43 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													<div class="row-empty" style="padding: 14px 16px">Noch keine Trades im Verlauf.</div>
 												{/if}
 											{/if}
-											{#if confirmAction}
-						{@const ca = confirmAction}
-						<!-- 2-Schritt-Bestätigung (M2b): jede schreibende Aktion verlangt
-							 eine zweite Bestätigung. Keine Batch-Aktionen. -->
-						<div class="pane-error" style="margin: 10px 0; border-color: var(--alert)">
-							<div class="center">
-								<div class="big" style="color: var(--alert)">
-									{ca.kind === 'delete' ? 'Listing ABMELDEN?' : 'Listing ANLEGEN?'}
-								</div>
-								{#if ca.kind === 'delete'}
-									<div class="sm">{ca.offer.title} (@{fmtPrice(ca.offer.price)} · {fmtQty(ca.offer.quantity)} {ca.offer.unit || 'unit'}) wird auf uexcorp.space ABGEMELDET.</div>
-								{:else}
-									<div class="sm">{advertForm.operation === 'sell' ? 'Verkaufs-' : 'Kauf-'}Angebot „{advertForm.title}“ wird auf uexcorp.space ANGELEGT.</div>
-								{/if}
-								<div class="mbar2" style="margin-top: 10px; justify-content: center">
-									<button type="button" class="btn" disabled={writeBusy} onclick={() => ca.kind === 'delete' ? void doDelete(ca.offer) : void doAdvertise()}>
-										{ca.kind === 'delete' ? 'JA, ABMELDEN' : 'JA, ANLEGEN'}
-									</button>
-									<button type="button" class="btn-ghost" onclick={() => (confirmAction = null)}>Abbrechen</button>
-								</div>
-							</div>
-						</div>
-					{/if}
+											<!-- D3 (t_10be9255): 2-Schritt-Bestätigung als MODALES Popup über der
+													     Eingabemaske (dunkler Scrim). Vorher inline im Pane → auf dem
+													     Hauptbildschirm aus dem Fenster gelaufen (Buttons nicht erreich-
+													     bar). Jetzt: Karte mit Zusammenfassung + Bestätigen/Abbrechen,
+													     immer innerhalb der Overlay-Größe (interne Scroll-Region). Während
+													     der Bestätigungsphase sind die Eingaben gesperrt (Scrim + Lock). -->
+														{#if confirmAction}
+															<div class="confirm-scrim" role="presentation">
+																<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+																	<div class="center" style="padding: 0 0 10px">
+																		<div class="big" style="color: var(--alert)">
+																			{confirmAction.kind === 'delete' ? 'Listing ABMELDEN?' : 'Listing ANLEGEN?'}
+																		</div>
+																	</div>
+																	{#if confirmAction.kind === 'delete'}
+																		<div class="c-row"><b>Titel</b><span>{confirmAction.offer.title}</span></div>
+																		<div class="c-row"><b>Preis</b><span>{fmtPrice(confirmAction.offer.price)} {confirmAction.offer.currency}</span></div>
+																		<div class="c-row"><b>Menge</b><span>{fmtQty(confirmAction.offer.quantity)} {confirmAction.offer.unit || 'unit'}</span></div>
+																		<div class="c-row"><b>Ort</b><span>{confirmAction.offer.location || '—'}</span></div>
+																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Listing wird auf uexcorp.space ABGEMELDET.</div>
+																	{:else}
+																		<div class="c-row"><b>Titel</b><span>{advertForm.title}</span></div>
+																		<div class="c-row"><b>Art</b><span>{advertForm.operation === 'sell' ? 'Verkaufs-Angebot' : 'Kauf-Gesuch'} ({advertForm.listing_type})</span></div>
+																		<div class="c-row"><b>Preis</b><span>{advertForm.price} {advertForm.currency}</span></div>
+																		<div class="c-row"><b>Menge</b><span>{advertForm.quantity} {advertForm.unit}</span></div>
+																		<div class="c-row"><b>Ort</b><span>{advertForm.location || '—'}</span></div>
+																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt.</div>
+																	{/if}
+																	<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">
+																		<button type="button" class="btn" class:btn-danger={confirmAction.kind === 'delete'} disabled={writeBusy} onclick={() => confirmAction?.kind === 'delete' ? void doDelete(confirmAction.offer) : void doAdvertise()}>
+																			{confirmAction.kind === 'delete' ? 'JA, ABMELDEN' : 'JA, ANLEGEN'}
+																		</button>
+																		<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => (confirmAction = null)}>Abbrechen</button>
+																	</div>
+																</div>
+															</div>
+														{/if}
 				{:else if mLoading && !offers.length}
 					<div class="center">
 						<span class="spin"></span>
@@ -4183,7 +4218,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="center">
 							<div class="big" style="color: var(--alert)">Marketplace nicht erreichbar</div>
 							<div class="sm">{mNote}</div>
-							<span class="btn" onclick={() => loadMarket()}>Erneut versuchen</span>
+							<span class="btn-ghost" onclick={() => loadMarket()}>Erneut versuchen</span>
 						</div>
 					</div>
 				{:else}

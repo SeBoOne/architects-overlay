@@ -1870,6 +1870,32 @@ html[data-window="spotlight"] .shell {
 	border-color: var(--accent-h);
 }
 
+/* MD (t_10be9255, D1/D4): konsistente Button-Stile. Vorher hatte bare
+   .btn KEINEN globalen Stil → UA-Grau („hellgrau") je nach Kontext mit
+   orangefarbenen Bezügen. Jetzt: Primary = Akzentfläche + dunkler Text. */
+.btn {
+	display: inline-block;
+	padding: 7px 13px;
+	border: 1px solid var(--accent);
+	background: var(--accent);
+	color: var(--on-accent);
+	border-radius: 3px;
+	font: 700 11px/1 var(--font-mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	cursor: pointer;
+}
+
+.btn:hover {
+	background: var(--accent-h);
+	border-color: var(--accent-h);
+}
+
+.btn:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
 .btn-ghost {
 	display: inline-block;
 	padding: 7px 13px;
@@ -1884,6 +1910,66 @@ html[data-window="spotlight"] .shell {
 
 .btn-ghost:hover {
 	border-color: var(--fgdim);
+}
+
+/* D1: Destructive — rot getönt, lesbar (Entfernen-Buttons, ABMELDEN). */
+.btn.btn-danger,
+.btn-ghost.btn-danger {
+	border-color: #e5484d;
+	background: color-mix(in srgb, #e5484d 18%, var(--panel));
+	color: #ff9296;
+}
+
+.btn.btn-danger:hover,
+.btn-ghost.btn-danger:hover {
+	border-color: #ff6b6f;
+	background: color-mix(in srgb, #e5484d 32%, var(--panel));
+	color: #ffb3b6;
+}
+
+/* D3: modale 2-Schritt-Bestätigung über der Eingabemaske — dunkler Scrim,
+   Karte mit Zusammenfassung, passt in die feste Overlay-Größe (interne
+   Scroll-Region), Buttons immer erreichbar. */
+.confirm-scrim {
+	position: fixed;
+	inset: 0;
+	z-index: 200;
+	background: rgba(0, 0, 0, 0.6);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.confirm-modal {
+	width: min(560px, 94vw);
+	max-height: 82vh;
+	overflow-y: auto;
+	background: var(--panel2);
+	border: 1px solid var(--lineb);
+	border-radius: 4px;
+	padding: 16px 18px;
+	box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+	scrollbar-width: thin;
+}
+
+.confirm-modal .c-row {
+	display: flex;
+	gap: 10px;
+	padding: 4px 0;
+	font: 500 12px/1.5 var(--font-mono);
+}
+
+.confirm-modal .c-row b {
+	color: var(--fgfaint);
+	font-weight: 700;
+	min-width: 84px;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+}
+
+.confirm-modal .c-row span {
+	color: var(--fg);
+	word-break: break-word;
 }
 
 .md-note {
