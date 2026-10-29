@@ -3331,3 +3331,83 @@ html[data-window="spotlight"] .shell {
   flex: 1;
   min-width: 0;
 }
+
+/* R2 (t_2158474c): Hangar-Formular als modales Popup — shell-anchored
+   advert-scrim (Scrim+Zentrierung, wie Listing-/Trade-Formular), volle
+   nutzbare Höhe, Body scrollt intern, Button-Leiste fix unten. */
+.hform-modal {
+  width: min(90%, 820px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel2);
+  border: 1px solid var(--lineb);
+  border-radius: 4px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.hform-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 16px 18px;
+}
+.hform-foot {
+  border-top: 1px solid var(--lineb);
+  padding: 10px 14px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  background: var(--panel2);
+}
+/* Zwei-Spalten-Rhythmus (Typ/Herkunft, Versicherung/Preis, Datum/Custom). */
+.hform-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.hform-row .trk-field {
+  flex: 1 1 220px;
+}
+/* Typeahead/Selects auf volle Popup-Breite (Name-Feld: volle Breite, Punkt 4). */
+.hform-modal .rta,
+.hform-modal .scb {
+  display: flex;
+  width: 100%;
+}
+.hform-modal .rta-input,
+.hform-modal .scb-input {
+  width: 100%;
+  flex: 1;
+}
+/* R2 (Punkt 8): Modul-Zeilen in den Ship-Details — Entfernen pro Zeile,
+   Add-Zeile mit Typeahead + Button. */
+.hmod {
+  align-items: center;
+}
+.hmod-x {
+  margin-left: auto;
+  border: 1px solid var(--lineb);
+  background: transparent;
+  color: var(--fgdim);
+  font: 700 11px/1 var(--font-mono);
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.hmod-x:hover {
+  color: var(--alert, #ff5555);
+  border-color: var(--alert, #ff5555);
+}
+.hmod-add {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.hmod-add .rta {
+  flex: 1;
+}
+.hmod-add .rta-input {
+  width: 100%;
+}
