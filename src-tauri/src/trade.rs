@@ -973,7 +973,12 @@ pub struct MessagesResponse {
     pub key_set: bool,
 }
 
-#[tauri::command]
+/// RF2-Klasse (PW t_fbe40115): Tauri v2 mappt top-level Command-Args per
+/// Default camelCase (→ JS `idNegotiation`), die Svelte-Chat-Komponente
+/// sendet aber `id_negotiation` (snake_case, wie alle Filter-Payloads).
+/// Ohne rename_all ist das Arg NIE angebunden → invoke rejected →
+/// „invalid args `idNegotiation` for command `get_negotiation_messages`“.
+#[tauri::command(rename_all = "snake_case")]
 pub async fn get_negotiation_messages(
     state: State<'_, TradeState>,
     hash: String,
@@ -1001,12 +1006,15 @@ pub async fn get_negotiation_messages(
 /// is_production=1, gesetzt im Provider). KEIN Retry bei 429/403 (M2b-3):
 /// der Fehler steigt als deutsche Meldung durch, die UI zeigt ihn zusammen
 /// mit dem Deep-Link. Antwort: die neue Message-ID.
+///
+/// rename_all = "snake_case" — dieselbe RF2-Klasse wie der Read oben:
+/// Svelte sendet `id_negotiation`, Tauri v2 erwartet sonst camelCase.
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct MessageSendResponse {
     pub id_message: u64,
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn send_negotiation_message(
     state: State<'_, TradeState>,
     id_negotiation: u64,
@@ -2805,6 +2813,82 @@ mod tests {
             .unwrap_err();
         assert_eq!(err, "HTTP 429 · Rate-Limit erreicht");
         let _ = app;
+    }
+
+    /// PW (t_fbe40115, Punkt 3): REAL-IPC-Regressiontest für die Negotiations-
+    /// Commands — dieselbe Fehlerklasse wie RF2 (`commodity_id`). Der Live-App
+    /// schickt die Svelte-Chat-Komponente `{ hash, id_negotiation }` bzw.
+    /// `{ id_negotiation, hash, message }` (snake_case). Ohne
+    /// `rename_all = "snake_case"` mappt Tauri v2 top-level Args per Default
+    /// camelCase (`idNegotiation`) → invoke rejected → „invalid args
+    /// `idNegotiation` for command `get_negotiation_messages`“. Der Test
+    /// dispatcht beide Commands über die ECHTE IPC-Schicht (get_ipc_response)
+    /// mit exakt dem Frontend-Payload.
+    #[test]
+    fn negotiation_commands_ipc_accept_snake_case_args() {
+        use tauri::Manager;
+        use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
+
+        let app = mock_builder()
+            .invoke_handler(tauri::generate_handler![
+                super::get_negotiation_messages,
+                super::send_negotiation_message
+            ])
+            .manage(TradeState {
+                provider: Arc::new(ShopProvider {
+                    fail_offers: false,
+                    fail_trades: false,
+                    fail_negotiations: false,
+                }),
+                cache: Arc::new(Cache::open_in_memory().unwrap()),
+                tracker: Arc::new(SyncTracker::default()),
+                wiki_sync: None,
+                write_gate: Arc::new(WriteGate::new()),
+            })
+            .build(tauri::test::mock_context(noop_assets()))
+            .unwrap();
+
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+
+        let ipc = |cmd: &str, body: serde_json::Value| {
+            let req = tauri::webview::InvokeRequest {
+                cmd: cmd.to_string(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "tauri://localhost".parse().unwrap(),
+                body: body.into(),
+                headers: Default::default(),
+                invoke_key: INVOKE_KEY.to_string(),
+            };
+            get_ipc_response(&webview, req)
+        };
+
+        // Read: exakt das Objekt aus `selectDeal()` (+page.svelte).
+        let read = ipc(
+            "get_negotiation_messages",
+            serde_json::json!({ "hash": "h-55", "id_negotiation": 12847 }),
+        )
+        .expect("get_negotiation_messages({hash, id_negotiation}) muss über echte IPC ok sein");
+        let read_json: serde_json::Value = read.deserialize().unwrap();
+        assert_eq!(read_json["source"], "live");
+        assert_eq!(read_json["messages"].as_array().unwrap().len(), 1);
+
+        // Write: exakt das Objekt aus `sendChat()` (+page.svelte).
+        let sent = ipc(
+            "send_negotiation_message",
+            serde_json::json!({
+                "id_negotiation": 12847,
+                "hash": "h-55",
+                "message": "ok"
+            }),
+        )
+        .expect(
+            "send_negotiation_message({id_negotiation, hash, message}) muss über echte IPC ok sein",
+        );
+        let sent_json: serde_json::Value = sent.deserialize().unwrap();
+        assert_eq!(sent_json["id_message"], 9001);
     }
 
     #[test]
