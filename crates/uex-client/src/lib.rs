@@ -1787,14 +1787,50 @@ impl UexProvider {
     /// sonst LIVE-Fetch. Handelt es sich um eine leere Historie
     /// (`no_trades_found`), wird `Ok([])` geliefert — die UI zeigt dann den
     /// Leer-Zustand statt eines Fehlers.
+    ///
+    /// QW-6 (t_28bfd027): der Endpoint antwortet per DEFAULT mit nur 5 Rows
+    /// (live gegen api.uexcorp.uk belegt) — das Tracking-Tages-Aggregat rechnete
+    /// damit über unvollständige Daten. Jetzt limit=500 (Doku-Max) + Pagination:
+    /// geladen wird, bis eine Seite unvollständig ist oder die Rows älter als
+    /// das 30-Tage-Aggregat-Fenster sind (Safety-Cap 20 Seiten).
     async fn user_trades_impl(&self) -> Result<Vec<provider::Trade>> {
         if self.cache.own_trades_fresh().map_err(map_cache_err)? {
             return self.cache.own_trades_snapshot().map_err(map_cache_err);
         }
-        let rows: Vec<UserTradeRow> = self
-            .http
-            .get_user("/user_trades", &[], self.secret_key.as_deref())
-            .await?;
+        const PAGE: u32 = 500;
+        const MAX_PAGES: u32 = 20;
+        const WINDOW_SECS: u64 = 30 * 24 * 3600;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cutoff = now.saturating_sub(WINDOW_SECS);
+        let mut rows: Vec<UserTradeRow> = Vec::new();
+        for page in 1..=MAX_PAGES {
+            let part: Vec<UserTradeRow> = self
+                .http
+                .get_user(
+                    "/user_trades",
+                    &[
+                        ("limit".to_string(), PAGE.to_string()),
+                        ("page".to_string(), page.to_string()),
+                    ],
+                    self.secret_key.as_deref(),
+                )
+                .await?;
+            let fetched = part.len();
+            rows.extend(part);
+            // Seite unvollständig → Ende der Historie erreicht. Sonst: liegt
+            // der älteste Row der Seite vor dem Fenster-Cutoff, ist das
+            // 30-Tage-Fenster vollständig abgedeckt.
+            if fetched < PAGE as usize {
+                break;
+            }
+            let oldest = rows.iter().map(|r| r.date_added).min().unwrap_or(0);
+            if oldest > 0 && oldest < cutoff {
+                break;
+            }
+        }
         let trades = rows.into_iter().map(map_trade).collect::<Vec<_>>();
         self.cache
             .store_own_trades(&trades)
