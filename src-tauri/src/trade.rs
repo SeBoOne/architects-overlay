@@ -1115,9 +1115,14 @@ pub async fn send_negotiation_message(
         if let Some(n) = negotiations.iter().find(|n| {
             (id_negotiation != 0 && n.id == id_negotiation) || (!hash.is_empty() && n.hash == hash)
         }) {
-            if n.date_closed.is_some() {
+            // QY (t_07edb03d): read-only auch bei EINSEITIG beendeten Deals —
+            // Live-Befund: `end_negotiation_client/seller` liefert UEX nicht
+            // (immer null); das einseitige Ende signalisiert der Wire über
+            // `date_closed_client` ≠ 0 bei `date_closed` = 0. Beendet =
+            // EINE der beiden Seiten hat abgeschlossen.
+            if n.date_closed.is_some() || n.date_closed_client.is_some() {
                 return Err(
-                    "Trade abgeschlossen — Verhandlungen mit Abschluss-Status sind read-only (nur lesbarer Verlauf)."
+                    "Trade beendet (abgeschlossen bzw. einseitig beendet) — Verhandlungen mit Abschluss-Status sind read-only (nur lesbarer Verlauf)."
                         .to_string(),
                 );
             }
@@ -1151,6 +1156,17 @@ pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 pub fn open_uex_api_apps(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/api/apps";
+    let _ = &app;
+    tauri_plugin_opener::open_url(URL, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(URL.to_string())
+}
+
+/// QY (t_07edb03d): Haupt-Button des Trade-Log-Reiters — öffnet den UEX
+/// Trade-Log (https://uexcorp.space/trade/home), NICHT den Account.
+#[tauri::command]
+pub fn open_uex_trade_log(app: AppHandle) -> Result<String, String> {
+    const URL: &str = "https://uexcorp.space/trade/home";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
         .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
@@ -1478,6 +1494,71 @@ pub fn terminal_suggest(
     query: String,
 ) -> Result<Vec<provider::ItemSuggestion>, String> {
     entity_suggest(&state, EntityKind::Terminals, query)
+}
+
+/// QY (t_07edb03d): Cross-Autocomplete „Ort" — nur Orte, die die GEWÄHLTE
+/// Ware in der GEWÄHLTEN RICHTUNG handeln. Richtung aus Spielersicht
+/// (operation='buy' → Ort verkauft die Ware, Spieler kann dort kaufen →
+/// buy_price > 0; 'sell' → Ort kauft → sell_price > 0). Datenbasis:
+/// terminal_prices-Stammdaten. Ohne gecachte Zeilen für die Ware (Daten
+/// noch nie geholt) fällt der Command auf das ungefilterte
+/// terminal_suggest zurück — die Auswahl wird dann nicht leer.
+#[tauri::command(rename_all = "snake_case")]
+pub fn trade_location_suggest(
+    state: State<'_, TradeState>,
+    query: String,
+    id_commodity: u64,
+    operation: String,
+) -> Result<Vec<provider::ItemSuggestion>, String> {
+    if id_commodity == 0 {
+        return entity_suggest(&state, EntityKind::Terminals, query);
+    }
+    let rows = state
+        .cache
+        .trade_locations_for_commodity(id_commodity, &operation, &query)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    if rows.is_empty() {
+        return entity_suggest(&state, EntityKind::Terminals, query);
+    }
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| provider::ItemSuggestion {
+            id,
+            name,
+            subtitle: String::new(),
+        })
+        .collect())
+}
+
+/// QY (t_07edb03d): Cross-Autocomplete „Ware" — nur Waren, die am GEWÄHLTEN
+/// Ort in der GEWÄHLTEN RICHTUNG handelbar sind (dieselbe Spielersicht-
+/// Semantik wie `trade_location_suggest`). Ohne gecachte Zeilen für den
+/// Ort: Fallback auf das ungefilterte commodity_suggest.
+#[tauri::command(rename_all = "snake_case")]
+pub fn trade_commodity_suggest(
+    state: State<'_, TradeState>,
+    query: String,
+    id_terminal: u64,
+    operation: String,
+) -> Result<Vec<provider::ItemSuggestion>, String> {
+    if id_terminal == 0 {
+        return entity_suggest(&state, EntityKind::Commodities, query);
+    }
+    let rows = state
+        .cache
+        .trade_commodities_for_terminal(id_terminal, &operation, &query)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    if rows.is_empty() {
+        return entity_suggest(&state, EntityKind::Commodities, query);
+    }
+    Ok(rows
+        .into_iter()
+        .map(|(id, name)| provider::ItemSuggestion {
+            id,
+            name,
+            subtitle: String::new(),
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------------------
@@ -2824,6 +2905,7 @@ mod tests {
                     is_listing_advertiser: true,
                     date_added: 1730000100,
                     date_modified: 1730000200,
+                    date_closed_client: None,
                     date_closed: Some(1730000200),
                 }])
             }
@@ -3106,6 +3188,7 @@ mod tests {
                 is_listing_advertiser: false,
                 date_added: 1730000100,
                 date_modified: 1730000200,
+                date_closed_client: None,
                 date_closed: None,
             }])
             .unwrap();
@@ -3198,6 +3281,7 @@ mod tests {
                 is_listing_advertiser: true,
                 date_added: 1730000100,
                 date_modified: 1730000200,
+                date_closed_client: None,
                 date_closed: Some(1730000200),
             }])
             .unwrap();
@@ -3205,14 +3289,69 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.contains("Trade abgeschlossen"),
-            "Closed-Deal-Write muss mit „Trade abgeschlossen“ abgelehnt werden, kam: {err}"
+            err.contains("read-only"),
+            "Closed-Deal-Write muss als read-only abgelehnt werden, kam: {err}"
         );
         // Offene Verhandlung (nicht im Snapshot) fällt durch → Provider OK.
         let sent = send_negotiation_message(state.clone(), 12847, "a3f7c91d".into(), "ok".into())
             .await
             .unwrap();
         assert_eq!(sent.id_message, 9001);
+        let _ = app;
+    }
+
+    /// QY (t_07edb03d): Read-only auch bei EINSEITIG beendeten Deals —
+    /// `date_closed_client` gesetzt, `date_closed` = 0 (Live-Befund:
+    /// `end_negotiation_client/seller` liefert UEX NICHT). Der Send-Command
+    /// muss mit „Trade einseitig beendet …“ ablehnen.
+    #[tokio::test]
+    async fn send_message_rejects_onesided_ended_negotiation() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: false,
+                fail_trades: false,
+                fail_negotiations: false,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            composite: mock_composite(),
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        state
+            .cache
+            .store_own_negotiations(&[provider::Negotiation {
+                id: 77,
+                listing_id: 4143,
+                hash: "h-77".into(),
+                price: 9_900_000.0,
+                unit: "unit".into(),
+                currency: "UEC".into(),
+                deal_value: Some(9_900_000.0),
+                deal_value_currency: "UEC".into(),
+                listing_title: "Tulonga Port".into(),
+                listing_slug: "tulonga-port".into(),
+                advertiser_name: "a".into(),
+                advertiser_username: "ad".into(),
+                client_name: "c".into(),
+                client_username: "cu".into(),
+                is_listing_advertiser: false,
+                date_added: 1730000100,
+                date_modified: 1730000200,
+                // EINSEITIG beendet: Kunde hat abgeschlossen, Anbieter-Seite
+                // (date_closed) noch offen (0 → None).
+                date_closed: None,
+                date_closed_client: Some(1730000250),
+            }])
+            .unwrap();
+        let err = send_negotiation_message(state.clone(), 77, "h-77".into(), "spät".into())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("read-only") && err.contains("einseitig beendet"),
+            "einseitig beendeter Deal muss als read-only abgelehnt werden, kam: {err}"
+        );
         let _ = app;
     }
 

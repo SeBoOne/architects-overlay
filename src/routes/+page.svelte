@@ -159,6 +159,7 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		date_added: number;
 		date_modified: number;
 		date_closed: number | null;
+		date_closed_client: number | null;
 	};
 	type OwnOffersResponse = {
 		source: 'cache' | 'live' | 'offline';
@@ -1417,6 +1418,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let tradesErr = $state<string | null>(null);
 	let tradesNote = $state<string | null>(null);
 	let tradesDeal = $state<Negotiation | null>(null);
+	// QY (t_07edb03d): Deal beendet = EINE Seite hat abgeschlossen (beidseitig
+	// date_closed+date_closed_client, einseitig genau eins der beiden ≠ 0).
+	const tradesDealEnded = $derived(
+		!!tradesDeal && (!!tradesDeal.date_closed || !!tradesDeal.date_closed_client)
+	);
 	let chatMsgs = $state<NegotiationMessage[]>([]);
 	let chatLoading = $state(false);
 	let chatErr = $state<string | null>(null);
@@ -1530,15 +1536,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Suggest (commodity_suggest/terminal_suggest) → Optionen für den
 	// RoutesTypeahead. Fehler still wegdrücken (Typeahead ist optional).
 	$effect(() => {
+		// QY-3: Abhängigkeiten Richtung + gewählter Ort einbeziehen —
+		// Richtungswechsel oder Ort-Auswahl aktualisiert die Waren-Liste.
 		const q = trkForm.commodity.trim();
+		const op = trkForm.operation;
+		const tid = trkForm.terminal_id;
 		void (async () => {
-			await trkSuggest('com', q);
+			await trkSuggest('com', q, tid, op);
 		})();
 	});
 	$effect(() => {
 		const q = trkForm.terminal.trim();
+		const op = trkForm.operation;
+		const cid = trkForm.commodity_id;
 		void (async () => {
-			await trkSuggest('term', q);
+			await trkSuggest('term', q, cid, op);
 		})();
 	});
 
@@ -1547,7 +1559,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			trkLoading = false;
 			trkErr = null;
 			trkNote =
-				'Für das Tracking braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).';
+				'Für den Trade Log braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).';
 			myTrades = [];
 			trkLoaded = true;
 			return;
@@ -1598,10 +1610,32 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// Doku §5a/§5c: die API kennt KEIN Datumsfeld — der Trade bekommt das
 	// Aufnahme-Datum von UEX (date_added). Kein Fake-Datumsfeld im Formular.
-	async function trkSuggest(kind: 'com' | 'term', query: string) {
-		const cmd = kind === 'com' ? 'commodity_suggest' : 'terminal_suggest';
+	async function trkSuggest(
+		kind: 'com' | 'term',
+		query: string,
+		crossId: number | null,
+		op: 'buy' | 'sell'
+	) {
+		// QY-3 (t_07edb03d): Cross-Autocomplete — Richtungskorrekt über die
+		// terminal_prices-Stammdaten (can_buy/can_sell aus Spielersicht):
+		// Richtung=Kauf → Ort-Autocomplete bietet nur Orte, die die gewählte
+		// Ware VERKAUFEN (Spieler kann dort kaufen); Richtung=Verkauf → Orte,
+		// die sie KAUFEN. Umgekehrt: Ort gewählt → nur dort handelbare Waren
+		// für die Richtung. Ohne gecachte Stammdaten fällt das Backend auf
+		// das ungefilterte Suggest zurück (Auswahl bleibt bedienbar).
 		try {
-			const r = await invoke<TrkSug[]>(cmd, { query });
+			const r =
+				kind === 'com'
+					? await invoke<TrkSug[]>('trade_commodity_suggest', {
+							query,
+							id_terminal: crossId ?? 0,
+							operation: op
+						})
+					: await invoke<TrkSug[]>('trade_location_suggest', {
+							query,
+							id_commodity: crossId ?? 0,
+							operation: op
+						});
 			const opts = r.map((s) => ({ label: s.name, value: String(s.id) }));
 			if (kind === 'com') trkComOpts = opts;
 			else trkTermOpts = opts;
@@ -1682,8 +1716,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	async function openTrkUex() {
+		// QY-4 (t_07edb03d): Haupt-Button zeigt auf den UEX Trade-Log
+		// (/trade/home), nicht auf den Account.
 		try {
-			await invoke('open_uex_account');
+			await invoke('open_uex_trade_log');
 		} catch (e) {
 			trkMsg = String(e);
 		}
@@ -1715,9 +1751,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	async function sendChat() {
 		if (chatBusy || !tradesDeal) return;
-		// QW-4 (t_28bfd027): abgeschlossener Deal → kein Senden (UI-Gate;
-		// das Backend lehnt den Write zusätzlich ab).
-		if (tradesDeal.date_closed) {
+		// QW-4 (t_28bfd027) / QY (t_07edb03d): beendeter Deal (beidseitig
+		// ODER einseitig — date_closed XOR date_closed_client) → kein Senden
+		// (UI-Gate; das Backend lehnt den Write zusätzlich ab).
+		if (tradesDeal.date_closed || tradesDeal.date_closed_client) {
 			chatErr = 'Trade abgeschlossen — Verlauf nur lesbar.';
 			return;
 		}
@@ -4507,18 +4544,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 				{:else if mTab === 'routes'}
 					<!-- PT (t_7fdc1317): Sub-Reiter innerhalb der Handelsrouten —
-					     „Routen" (bestehende Matrix) und „Tracking" (eigene
+					     „Routen" (bestehende Matrix) und „Trade Log" (eigene
 					     Commodity-Trades + Tagesgewinn). -->
 					<div class="mbar2">
 						<button type="button" role="tab" aria-selected={rTab === 'matrix'} class="chip" class:is-on={rTab === 'matrix'} onclick={() => (rTab = 'matrix')}>Routen</button>
-						<button type="button" role="tab" aria-selected={rTab === 'tracking'} class="chip" class:is-on={rTab === 'tracking'} onclick={() => { rTab = 'tracking'; rDetail = null; if (!trkLoaded) void loadTrk(false); }}>Tracking</button>
+						<button type="button" role="tab" aria-selected={rTab === 'tracking'} class="chip" class:is-on={rTab === 'tracking'} onclick={() => { rTab = 'tracking'; rDetail = null; if (!trkLoaded) void loadTrk(false); }}>Trade Log</button>
 					</div>
 					{#if rTab === 'tracking'}
 						<div class="mbar">
-							<span class="m-lbl">Trade-Tracking</span>
+							<span class="m-lbl">Trade Log</span>
 							<span class="chip" onclick={() => void loadTrk(true)}>Aktualisieren</span>
 							<span class="chip" title="Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)" onclick={() => openTrkForm()}>+ Trade erfassen</span>
-							<span class="chip" title="Trades auf UEX verwalten (Login im Browser)" onclick={() => void openTrkUex()}>UEX-Konto öffnen ↗</span>
+							<span class="chip" title="Trade Log auf uexcorp.space öffnen (Login im Browser)" onclick={() => void openTrkUex()}>Trade Log auf UEX öffnen ↗</span>
 						</div>
 						{#if trkLoading && !myTrades.length}
 							<div class="center" style="padding: 28px 16px">
@@ -4593,38 +4630,55 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<div class="center" style="padding: 0 0 10px">
 										<div class="big">{trkEditId ? 'Trade BEARBEITEN' : 'Trade ERFASSEN'}</div>
 									</div>
-									<div class="ptab">
-										<span class="m-lbl">Richtung</span>
+																	<!-- QY-2 (t_07edb03d): Formular-Rhythmus wie das Listing-Popup —
+								     Felder in VOLLER Popup-Breite, größere Feld-Überschriften,
+								     vertikaler Abstand; Scrim zentriert, Body scrollt intern. -->
+								<div class="trk-field">
+									<span class="trk-lbl">Richtung</span>
+									<div class="trk-dir">
 										<button type="button" class="chip" class:is-on={trkForm.operation === 'buy'} onclick={() => (trkForm.operation = 'buy')}>Kauf</button>
 										<button type="button" class="chip" class:is-on={trkForm.operation === 'sell'} onclick={() => (trkForm.operation = 'sell')}>Verkauf</button>
 									</div>
-									<div class="ptab">
-										<span class="m-lbl">Ware</span>
-										<RoutesTypeahead
-											bind:value={trkForm.commodity}
-											options={trkComOpts}
-											placeholder="z. B. Gold"
-											ariaLabel="Ware Type-ahead — Tippen filtert, ↵ übernimmt"
-											onselect={(v: string) => (trkForm.commodity_id = Number(v) || null)}
-										/>
-									</div>
-									<div class="ptab">
-										<span class="m-lbl">Ort</span>
-										<RoutesTypeahead
-											bind:value={trkForm.terminal}
-											options={trkTermOpts}
-											placeholder="z. B. Everus Harbor"
-											ariaLabel="Ort/Terminal Type-ahead — Tippen filtert, ↵ übernimmt"
-											onselect={(v: string) => (trkForm.terminal_id = Number(v) || null)}
-										/>
-									</div>
-									<div class="ptab">
-										<span class="m-lbl">Menge (SCU)</span>
-										<input class="qnum" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
-										<span class="m-lbl">Preis/SCU</span>
-										<input class="qnum" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
-									</div>
-									<div class="sm" style="color: var(--fgdim); margin-top: 6px">
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Ware</span>
+									<RoutesTypeahead
+										bind:value={trkForm.commodity}
+										options={trkComOpts}
+										placeholder="z. B. Gold"
+										ariaLabel="Ware Type-ahead — Tippen filtert, ↵ übernimmt"
+										onselect={(v: string) => {
+											trkForm.commodity_id = Number(v) || null;
+											// QY-3: Ort-Auswahl invalidieren — der Ort muss die
+											// Ware in der gewählten Richtung handeln.
+											trkForm.terminal = '';
+											trkForm.terminal_id = null;
+											trkTermOpts = [];
+										}}
+									/>
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Ort</span>
+									<RoutesTypeahead
+										bind:value={trkForm.terminal}
+										options={trkTermOpts}
+										placeholder="z. B. Everus Harbor"
+										ariaLabel="Ort/Terminal Type-ahead — Tippen filtert, ↵ übernimmt"
+										onselect={(v: string) => {
+											trkForm.terminal_id = Number(v) || null;
+											trkComOpts = [];
+										}}
+									/>
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Menge (SCU)</span>
+									<input class="qnum" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Preis/SCU (aUEC)</span>
+									<input class="qnum" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
+								</div>
+<div class="sm" style="color: var(--fgdim); margin-top: 6px">
 										Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.
 									</div>
 									{#if trkMsg}
@@ -4898,7 +4952,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</span>
 							<span class="chip" title="Deal auf uexcorp.space öffnen (Listing-Seite)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Deal öffnen')}>Auf UEX öffnen ↗</span>
 							<!-- QW-4 (t_28bfd027): geschlossene Deals sind READ-ONLY. -->
-							{#if tradesDeal.date_closed}<span class="chip warn"><span class="dot"></span>Abgeschlossen</span>{/if}
+							{#if tradesDealEnded}<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? 'Abgeschlossen' : 'Beendet'}</span>{/if}
 						</div>
 						<div class="chat" bind:this={chatScroller}>
 							{#if chatLoading}
@@ -4932,7 +4986,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     einer oder beiden Seiten gesetzt) → KEIN Composer/Senden,
 					     nur lesbarer Verlauf. Backend-Gate (trade.rs) lehnt den
 					     Write defensiv ebenfalls ab. -->
-					{#if !tradesDeal.date_closed}
+					{#if !tradesDealEnded}
 					<div class="chat-input">
 							<input
 								class="rtext"
@@ -4947,9 +5001,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</button>
 							</div>
 							{:else}
-							<!-- Read-only-Fuß: Verlauf bleibt sichtbar, Senden entfällt. -->
+							<!-- Read-only-Fuß: Verlauf bleibt sichtbar, Senden entfällt.
+							     QY: auch einseitig beendet (nur eine Seite geschlossen). -->
 							<div class="mbar">
-								<span class="chip warn"><span class="dot"></span>Trade abgeschlossen — Verlauf nur lesbar</span>
+								<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? 'Trade abgeschlossen' : 'Trade beendet'} — Verlauf nur lesbar</span>
 								<span class="chip" title="Deal auf uexcorp.space öffnen (Bewertung/Abschluss-Detail)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Abgeschlossen')}>Auf UEX öffnen ↗</span>
 							</div>
 							{/if}

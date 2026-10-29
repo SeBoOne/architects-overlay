@@ -179,6 +179,24 @@ impl DataProvider for CompositeProvider {
         self.uex.delete_offer(id).await
     }
 
+    async fn add_trade(&self, payload: provider::TradePayload) -> Result<u64> {
+        // Trade-Log-Write-Layer (PT t_7fdc1317, QY t_07edb03d): Erfassen ist
+        // UEX-user-scoped (secret-key). Delegation MUSS explizit sein — der
+        // Trait-Default meldet „Nicht unterstützt: add trade" (Bug-Cluster
+        // t_1af18a08-Klasse).
+        self.uex.add_trade(payload).await
+    }
+
+    async fn edit_trade(&self, id: u64, payload: provider::TradePayload) -> Result<u64> {
+        // dito: Bearbeiten (/user_trades_edit/).
+        self.uex.edit_trade(id, payload).await
+    }
+
+    async fn remove_trade(&self, id: u64) -> Result<()> {
+        // dito: Löschen (/user_trades_remove/).
+        self.uex.remove_trade(id).await
+    }
+
     async fn trade_routes(&self, filters: &provider::routes::RouteFilters) -> Result<RouteList> {
         // Handelsrouten bleiben bewusst UEX-EXKLUSIV (Karte t_128b7547).
         //
@@ -257,6 +275,37 @@ mod tests {
         assert!(
             !matches!(err, ProviderError::Unsupported(_)),
             "Composite fällt in den Trait-Default durch: {err:?}"
+        );
+    }
+
+    /// QY (t_07edb03d): dieselbe Delegierungs-Regel für den Trade-Log-Write-
+    /// Layer (add/edit/remove via /user_trades_add|edit|remove). Ohne
+    /// explizite Delegation fällt der Composite in den Trait-Default und das
+    /// Formular meldet „Nicht unterstützt: add trade".
+    #[tokio::test]
+    async fn composite_delegates_trade_writes_to_uex() {
+        let (_, provider) = wired();
+        let payload = provider::TradePayload {
+            id_terminal: 1,
+            id_commodity: 1,
+            operation: "buy".to_string(),
+            scu: 1,
+            price: 1.0,
+        };
+        let err = provider.add_trade(payload.clone()).await.unwrap_err();
+        assert!(
+            !matches!(err, ProviderError::Unsupported(_)),
+            "Composite fällt in den Trait-Default durch: {err:?}"
+        );
+        let err2 = provider.edit_trade(1, payload).await.unwrap_err();
+        assert!(
+            !matches!(err2, ProviderError::Unsupported(_)),
+            "Composite fällt in den Trait-Default durch: {err2:?}"
+        );
+        let err3 = provider.remove_trade(1).await.unwrap_err();
+        assert!(
+            !matches!(err3, ProviderError::Unsupported(_)),
+            "Composite fällt in den Trait-Default durch: {err3:?}"
         );
     }
 

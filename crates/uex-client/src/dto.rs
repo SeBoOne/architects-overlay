@@ -1032,6 +1032,26 @@ mod tests {
         .unwrap();
         assert_eq!(closed.deal_value, Some(4900000.0));
         assert_eq!(closed.date_closed, Some(1730000300));
+
+        // QY (t_07edb03d): einseitig beendeter Deal — date_closed_client
+        // gesetzt, date_closed 0 (Live-Befund 2026-10-29, /marketplace_
+        // negotiations: `end_negotiation_client/seller` werden NICHT
+        // geliefert, immer null; das einseitige Ende läuft über
+        // date_closed_client ≠ 0).
+        let onesided: NegotiationRow = serde_json::from_str(
+            r#"{"id":757087,"id_listing":4142,"hash":"x9","price":13500000.0,
+                "unit":"unit","currency":"UEC","deal_value":"13500000",
+                "deal_value_currency":"UEC","listing_title":"Nettles",
+                "listing_slug":"nettles","advertiser_name":"a","advertiser_username":"u",
+                "advertiser_avatar":null,"client_name":"c","client_username":"cu",
+                "client_avatar":null,"is_listing_advertiser":1,
+                "date_added":1730000100,"date_modified":1730000300,
+                "date_closed":0,"date_closed_client":1792604273,
+                "end_negotiation_client":null,"end_negotiation_seller":null}"#,
+        )
+        .unwrap();
+        assert_eq!(onesided.date_closed, Some(0));
+        assert_eq!(onesided.date_closed_client, Some(1792604273));
     }
 
     #[test]

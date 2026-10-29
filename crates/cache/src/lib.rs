@@ -288,6 +288,7 @@ CREATE TABLE IF NOT EXISTS own_negotiations (
   date_added           INTEGER NOT NULL DEFAULT 0,
   date_modified        INTEGER NOT NULL DEFAULT 0,
   date_closed          INTEGER,
+  date_closed_client   INTEGER,
   fetched_at           INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (
@@ -568,7 +569,7 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   commodity-seitiger Cargo-Handel und bleibt nur fürs Route-Recording).
 ///   Rein additiv — `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten
 ///   betroffen.
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -680,6 +681,24 @@ fn migrate_source_columns(conn: &Connection) -> Result<()> {
             [],
         )
         .map_err(|e| CacheError::Open(format!("v10 terminal_prices purge (meta): {e}")))?;
+    }
+    // v11 (QY t_07edb03d): `own_negotiations.date_closed_client` — einseitig
+    // beendete Deals (Live-Befund: `end_negotiation_client/seller` liefert
+    // UEX nicht; das einseitige Ende läuft über date_closed_client ≠ 0)
+    // müssen read-only sein. Rein additiv, Bestandsdaten unberührt.
+    let on_has_client = conn
+        .prepare(
+            "SELECT 1 FROM pragma_table_info('own_negotiations') WHERE name = 'date_closed_client'",
+        )
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
+        .exists([])
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?;
+    if !on_has_client {
+        conn.execute(
+            "ALTER TABLE own_negotiations ADD COLUMN date_closed_client INTEGER",
+            [],
+        )
+        .map_err(|e| CacheError::Open(format!("v11 own_negotiations.date_closed_client: {e}")))?;
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;
@@ -1412,6 +1431,77 @@ impl Cache {
                 ),
             )?;
             tx.commit()
+        })
+    }
+
+    /// QY (t_07edb03d): Cross-Autocomplete „Ort" für das Trade-Log-Formular —
+    /// Orte/Terminals, die die gewählte Ware in der GEWÄHLTEN RICHTUNG handeln.
+    /// Richtung aus SPIELERSICHT (UEX price_buy = Spieler-Kaufpreis,
+    /// price_sell = Spieler-Verkaufspreis, Review t_15e598e7): operation='buy'
+    /// → der Spieler kauft dort → Terminal verkauft → `buy_price > 0`;
+    /// 'sell' → Spieler verkauft → `sell_price > 0`. Datenbasis:
+    /// terminal_prices-Stammdaten (kind='commodity'), gefüllt vom Route-Sweep
+    /// (global) + On-Demand-Terminal-Lookups. Namen kommen aus entities
+    /// (kind='terminal', id == id_terminal).
+    pub fn trade_locations_for_commodity(
+        &self,
+        id_commodity: u64,
+        operation: &str,
+        query: &str,
+    ) -> Result<Vec<(u64, String)>> {
+        let side = if operation == "sell" { "sell" } else { "buy" };
+        let like = format!("%{}%", query.to_lowercase());
+        self.with(|conn| {
+            // side ist aus {'buy','sell'} — kein Injection-Vektor.
+            let sql = format!(
+                "SELECT tp.id_terminal, COALESCE(NULLIF(e.name, ''), 'Terminal ' || tp.id_terminal)
+                 FROM terminal_prices tp
+                 LEFT JOIN entities e ON e.kind = 'terminal' AND e.id = tp.id_terminal
+                 WHERE tp.id_commodity = ?1 AND tp.kind = 'commodity'
+                   AND tp.{side}_price > 0
+                   AND lower(tp.commodity || ' ' || COALESCE(e.name, '')) LIKE ?2
+                 ORDER BY COALESCE(NULLIF(e.name, ''), 'Terminal ' || tp.id_terminal)
+                 LIMIT 12"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params![id_commodity as i64, like], |row| {
+                    Ok((row.get::<_, i64>(0)? as u64, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+    }
+
+    /// QY (t_07edb03d): Cross-Autocomplete „Ware" — handelbare Waren am
+    /// gewählten Terminal in der gewählten Richtung (dieselbe Spielersicht-
+    /// Semantik wie [`Cache::trade_locations_for_commodity`]).
+    pub fn trade_commodities_for_terminal(
+        &self,
+        id_terminal: u64,
+        operation: &str,
+        query: &str,
+    ) -> Result<Vec<(u64, String)>> {
+        let side = if operation == "sell" { "sell" } else { "buy" };
+        let like = format!("%{}%", query.to_lowercase());
+        self.with(|conn| {
+            // side ist aus {'buy','sell'} — kein Injection-Vektor.
+            let sql = format!(
+                "SELECT id_commodity, commodity
+                 FROM terminal_prices
+                 WHERE id_terminal = ?1 AND kind = 'commodity'
+                   AND {side}_price > 0
+                   AND lower(commodity) LIKE ?2
+                 ORDER BY commodity
+                 LIMIT 12"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt
+                .query_map(rusqlite::params![id_terminal as i64, like], |row| {
+                    Ok((row.get::<_, i64>(0)? as u64, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
         })
     }
 
@@ -2294,9 +2384,10 @@ impl Cache {
                     "INSERT INTO own_negotiations (id, listing_id, hash, price, unit, currency,
                         deal_value, deal_value_currency, listing_title, listing_slug,
                         advertiser_name, advertiser_username, client_name, client_username,
-                        is_listing_advertiser, date_added, date_modified, date_closed, fetched_at)
+                        is_listing_advertiser, date_added, date_modified, date_closed,
+                        date_closed_client, fetched_at)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                             ?15, ?16, ?17, ?18, ?19)",
+                             ?15, ?16, ?17, ?18, ?19, ?20)",
                 )?;
                 let now = now_unix() as i64;
                 for x in n {
@@ -2319,6 +2410,7 @@ impl Cache {
                         x.date_added as i64,
                         x.date_modified as i64,
                         x.date_closed.map(|v| v as i64),
+                        x.date_closed_client.map(|v| v as i64),
                         now,
                     ])?;
                 }
@@ -2340,7 +2432,8 @@ impl Cache {
                 "SELECT id, listing_id, hash, price, unit, currency, deal_value,
                         deal_value_currency, listing_title, listing_slug,
                         advertiser_name, advertiser_username, client_name, client_username,
-                        is_listing_advertiser, date_added, date_modified, date_closed
+                        is_listing_advertiser, date_added, date_modified, date_closed,
+                        date_closed_client
                  FROM own_negotiations ORDER BY date_modified DESC, id DESC",
             )?;
             let rows = stmt.query_map([], |row| {
@@ -2364,6 +2457,10 @@ impl Cache {
                     date_modified: row.get::<_, i64>(16)? as u64,
                     date_closed: row
                         .get::<_, Option<i64>>(17)?
+                        .map(|v| v as u64)
+                        .filter(|v| *v != 0),
+                    date_closed_client: row
+                        .get::<_, Option<i64>>(18)?
                         .map(|v| v as u64)
                         .filter(|v| *v != 0),
                 })
@@ -2796,6 +2893,62 @@ mod tests {
             })
             .unwrap();
         assert!(!cache.prices_fresh(1).unwrap());
+    }
+
+    /// QY (t_07edb03d): Cross-Autocomplete — Richtungskorrektur aus
+    /// Spielersicht: buy → Orte mit buy_price > 0 (Ort VERKAUFT die Ware),
+    /// sell → sell_price > 0. Die falsche Seite liefert die Ware nicht.
+    #[test]
+    fn trade_cross_suggest_respects_player_side() {
+        let cache = Cache::open_in_memory().unwrap();
+        let p = |c: u64, buy: f64, sell: f64| PricePoint {
+            commodity: format!("Commodity {c}"),
+            commodity_id: c,
+            terminal_id: 436,
+            location: String::new(),
+            sell_price: sell,
+            buy_price: buy,
+            sell_stock: 0.0,
+            buy_stock: 100.0,
+            sell_status: 0,
+            buy_status: 7,
+            quality: 0,
+            updated: 1_700_000_000,
+        };
+        // Terminal 436: verkauft Ware 3 (Spieler kann dort KAUFEN), kauft
+        // Ware 27 (Spieler kann dort VERKAUFEN).
+        cache
+            .store_terminal_prices(436, &[p(3, 1108.0, 0.0), p(27, 0.0, 990.0)], "commodity")
+            .unwrap();
+
+        // Richtung=Kauf, Ware 3 → Ort 436 geliefert; Ware 27 → leer.
+        let locs = cache.trade_locations_for_commodity(3, "buy", "").unwrap();
+        assert_eq!(locs, vec![(436, "Terminal 436".to_string())]);
+        assert!(
+            cache
+                .trade_locations_for_commodity(27, "buy", "")
+                .unwrap()
+                .is_empty()
+        );
+        // Richtung=Verkauf, Ware 27 → Ort 436; Ware 3 → leer.
+        let locs = cache.trade_locations_for_commodity(27, "sell", "").unwrap();
+        assert_eq!(locs, vec![(436, "Terminal 436".to_string())]);
+        assert!(
+            cache
+                .trade_locations_for_commodity(3, "sell", "")
+                .unwrap()
+                .is_empty()
+        );
+
+        // Ort gewählt → Waren je Richtung.
+        let coms = cache
+            .trade_commodities_for_terminal(436, "buy", "")
+            .unwrap();
+        assert_eq!(coms, vec![(3, "Commodity 3".to_string())]);
+        let coms = cache
+            .trade_commodities_for_terminal(436, "sell", "")
+            .unwrap();
+        assert_eq!(coms, vec![(27, "Commodity 27".to_string())]);
     }
 
     #[test]
@@ -3458,6 +3611,7 @@ mod tests {
             is_listing_advertiser: true,
             date_added: 1730000100 + id,
             date_modified: 1730000200 + id,
+            date_closed_client: None,
             date_closed: None,
         }
     }

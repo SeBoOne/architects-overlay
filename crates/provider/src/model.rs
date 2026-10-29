@@ -431,6 +431,14 @@ pub struct Negotiation {
     pub date_modified: u64,
     /// Deal-Abschluss (Timestamp); 0 → None (= noch offen).
     pub date_closed: Option<u64>,
+    /// QY (t_07edb03d): Abschluss durch die KUNDE-Seite (Live-Befund
+    /// /marketplace_negotiations: `end_negotiation_client/seller` werden
+    /// NICHT geliefert (immer null) — das einseitige Ende signalisiert UEX
+    /// über `date_closed_client` ≠ 0 bei `date_closed` = 0 bzw. umgekehrt).
+    /// 0 → None. Ein Deal gilt als beendet, sobald EINE Seite abgeschlossen
+    /// hat (read-only-Regel des Review-Gates).
+    #[serde(default)]
+    pub date_closed_client: Option<u64>,
 }
 
 /// Eine Chat-Nachricht in einer Marketplace-Verhandlung (M3b t_893761f1,

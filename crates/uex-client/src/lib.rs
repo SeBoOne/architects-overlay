@@ -2378,6 +2378,9 @@ fn map_negotiation(r: NegotiationRow) -> provider::Negotiation {
         date_added: r.date_added,
         date_modified: r.date_modified,
         date_closed: nonzero_opt_u64(r.date_closed),
+        // QY (t_07edb03d): Kundenseiten-Abschluss — einseitig beendete Deals
+        // (date_closed=0, date_closed_client≠0) müssen read-only sein.
+        date_closed_client: nonzero_opt_u64(r.date_closed_client),
     }
 }
 
@@ -3481,6 +3484,7 @@ mod tests {
                 is_listing_advertiser: true,
                 date_added: 1730000100,
                 date_modified: 1730000200,
+                date_closed_client: None,
                 date_closed: Some(1730000200),
             }])
             .unwrap();
