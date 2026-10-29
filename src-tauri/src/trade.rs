@@ -997,11 +997,18 @@ async fn get_own_offers_cmd(
 }
 
 /// Eigene Trades laden (M2a) — stale-first + offline-Fallback.
+///
+/// RA (t_1bd5328b): `force = true` („Aktualisieren"-Button) reich bis zum
+/// uex-client durch und umgeht dort die Snapshot-TTL — UEX-seitige Add/Delete
+/// werden sofort sichtbar statt erst nach Ablauf der TTL.
 #[tauri::command]
-pub async fn get_my_trades(state: State<'_, TradeState>) -> Result<TradesResponse, String> {
+pub async fn get_my_trades(
+    state: State<'_, TradeState>,
+    force: bool,
+) -> Result<TradesResponse, String> {
     let key_set = api_key_set();
-    let cache_fresh = state.cache.own_trades_fresh().unwrap_or(false);
-    match state.provider.user_trades().await {
+    let cache_fresh = !force && state.cache.own_trades_fresh().unwrap_or(false);
+    match state.provider.user_trades(force).await {
         Ok(trades) => Ok(TradesResponse {
             source: if cache_fresh {
                 "cache".into()
@@ -1521,10 +1528,22 @@ fn entity_suggest(
     if q.is_empty() {
         return Ok(Vec::new());
     }
-    let entities = state
-        .cache
-        .entities_of(kind)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    // RA (t_1bd5328b): Commodities auf die UEX-Quelle beschränken — dieselbe
+    // Semantik wie die Suchpalette (`search_sourced` filtert Commodities auf
+    // SOURCE_UEX, Wiki-Zeilen sind interne Auflösungsdaten mit Hash-IDs).
+    // Ohne Filter mischt entity_suggest Wiki-Duplikate mit u64-High-Bit-IDs
+    // in die Vorschläge und ein Klick erzeugt einen ungültigen UEX-Trade.
+    let entities = if kind == EntityKind::Commodities {
+        state
+            .cache
+            .entities_of_sourced(kind, Some(cache::SOURCE_UEX))
+            .map_err(|e| format!("Cache-Fehler: {e}"))?
+    } else {
+        state
+            .cache
+            .entities_of(kind)
+            .map_err(|e| format!("Cache-Fehler: {e}"))?
+    };
     let mut starts: Vec<provider::ItemSuggestion> = Vec::new();
     let mut contains: Vec<provider::ItemSuggestion> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -2981,7 +3000,7 @@ mod tests {
                 }])
             }
         }
-        async fn user_trades(&self) -> provider::Result<Vec<provider::Trade>> {
+        async fn user_trades(&self, _force: bool) -> provider::Result<Vec<provider::Trade>> {
             if self.fail_trades {
                 Err(provider::ProviderError::Http {
                     status: 403,
@@ -3224,7 +3243,7 @@ mod tests {
         });
         let state = app.state::<TradeState>();
         // Kein Snapshot → sauberer Fehler (nicht leere Liste / kein Crash).
-        let err = get_my_trades(state.clone()).await.unwrap_err();
+        let err = get_my_trades(state.clone(), false).await.unwrap_err();
         assert!(!err.is_empty(), "clean German error");
         // Snapshot gesetzt → offline-Fallback.
         state
@@ -3244,9 +3263,53 @@ mod tests {
                 organization: None,
             }])
             .unwrap();
-        let resp = get_my_trades(state).await.unwrap();
+        let resp = get_my_trades(state, false).await.unwrap();
         assert_eq!(resp.source, "offline");
         assert_eq!(resp.trades[0].commodity, "Waste");
+        let _ = app;
+    }
+
+    /// RA (t_1bd5328b): `force = true` läuft wie der Aktualisieren-Button —
+    /// auch mit frischem Snapshot-Serve bleibt source=„live" (der Cache wird
+    /// NICHT serviert) und der Mock wird neu gerufen.
+    #[tokio::test]
+    async fn my_trades_force_reports_live_and_hits_provider() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: false,
+                fail_trades: false,
+                fail_negotiations: false,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            composite: mock_composite(),
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        // Frischer Snapshot vorbereiten — ohne Force würde die IPC-Ebene
+        // „cache" melden; mit force MUSS live gelesen werden.
+        state
+            .cache
+            .store_own_trades(&[provider::Trade {
+                id: 9,
+                terminal_id: 2,
+                commodity_id: 79,
+                operation: MarketOperation::Buy,
+                scu: 100,
+                price: 500.0,
+                date_added: 1730000200,
+                commodity: "Waste".into(),
+                terminal: "Lorville".into(),
+                vehicle: None,
+                fleet_name: None,
+                organization: None,
+            }])
+            .unwrap();
+        assert!(state.cache.own_trades_fresh().unwrap());
+        let resp = get_my_trades(state, true).await.unwrap();
+        assert_eq!(resp.source, "live", "force bypasses the fresh snapshot");
+        assert!(!resp.trades.is_empty());
         let _ = app;
     }
 

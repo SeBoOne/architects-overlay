@@ -197,6 +197,10 @@ window.__TAURI_INTERNALS__ = {
 				// (/user_trades): seit t_350c4300 B2 NICHT mehr die Quelle des
 				// Mein-Shop-Trade-Abschnitts (get_my_negotiations), bleibt nur
 				// fürs spätere Route-Recording.
+				// RA (t_1bd5328b): Force-Param-Capture für die Probe — der
+				// Aktualisieren-Button MUSS force=true durchreichen.
+				window.__LAST_GET_TRADES_ARGS__ = { force: !!(a && a.force) };
+				window.__GET_TRADES_CALLS__ = (window.__GET_TRADES_CALLS__ || 0) + 1;
 				if (window.__SHOP_TRADES_FAIL__) throw new Error('HTTP 403 · UEX nicht erreichbar');
 				return {
 					source: window.__SHOP_TRADES_SOURCE__,

@@ -1286,7 +1286,7 @@ async fn user_trades_sends_secret_key_header_only_when_set() {
     )
     .unwrap();
     assert!(
-        no_key.user_trades().await.is_err(),
+        no_key.user_trades(false).await.is_err(),
         "user_trades ohne secret-key muss fehlschlagen (UEX verlangt beides)"
     );
 
@@ -1301,7 +1301,7 @@ async fn user_trades_sends_secret_key_header_only_when_set() {
     .unwrap()
     .with_secret_key(Some("my-super-secret-40".into()));
     assert!(
-        with_key.user_trades().await.is_ok(),
+        with_key.user_trades(false).await.is_ok(),
         "user_trades mit secret-key muss Ok sein (Header gesendet)"
     );
 }

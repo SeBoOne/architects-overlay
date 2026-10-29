@@ -625,8 +625,8 @@ impl DataProvider for UexProvider {
     ///
     /// `GET /user_trades/` — user-scoped, braucht User-credential. Stale-first
     /// wie der Rest; der letzte Snapshot (Tabelle `own_trades`) dient offline.
-    async fn user_trades(&self) -> Result<Vec<provider::Trade>> {
-        self.user_trades_impl().await
+    async fn user_trades(&self, force: bool) -> Result<Vec<provider::Trade>> {
+        self.user_trades_impl(force).await
     }
 
     /// Eigene Marktplatz-Deals (t_350c4300 B2 — korrekte Quelle für
@@ -1793,8 +1793,11 @@ impl UexProvider {
     /// damit über unvollständige Daten. Jetzt limit=500 (Doku-Max) + Pagination:
     /// geladen wird, bis eine Seite unvollständig ist oder die Rows älter als
     /// das 30-Tage-Aggregat-Fenster sind (Safety-Cap 20 Seiten).
-    async fn user_trades_impl(&self) -> Result<Vec<provider::Trade>> {
-        if self.cache.own_trades_fresh().map_err(map_cache_err)? {
+    async fn user_trades_impl(&self, force: bool) -> Result<Vec<provider::Trade>> {
+        // RA (t_1bd5328b): `force = true` umgeht die TTL — frischer Snapshot
+        // wird NICHT serviert, sondern live neu gelesen und gespeichert. Der
+        // „Aktualisieren"-Button im Trade Log reich so bis zu UEX durch.
+        if !force && self.cache.own_trades_fresh().map_err(map_cache_err)? {
             return self.cache.own_trades_snapshot().map_err(map_cache_err);
         }
         const PAGE: u32 = 500;
@@ -3237,9 +3240,46 @@ mod tests {
             std::time::Duration::ZERO,
         )
         .unwrap();
-        let trades = provider.user_trades().await.unwrap();
+        let trades = provider.user_trades(false).await.unwrap();
         assert_eq!(trades.len(), 1);
         assert_eq!(trades[0].commodity, "Waste");
+    }
+
+    /// RA (t_1bd5328b): force=true MUSS den frischen Snapshot umgehen —
+    /// die Live-Neulestung wird versucht (tote URL → Fehler belegt den
+    /// Bypass; ohne Force würde der Snapshot ohne Netz serviert).
+    #[tokio::test]
+    async fn user_trades_force_bypasses_fresh_snapshot() {
+        let cache = Arc::new(Cache::open_in_memory().unwrap());
+        cache
+            .store_own_trades(&[provider::Trade {
+                id: 7,
+                terminal_id: 2,
+                commodity_id: 79,
+                operation: MarketOperation::Buy,
+                scu: 100,
+                price: 500.0,
+                date_added: 1730000200,
+                commodity: "Waste".into(),
+                terminal: "Lorville".into(),
+                vehicle: None,
+                fleet_name: None,
+                organization: None,
+            }])
+            .unwrap();
+        let provider = UexProvider::with_base_url(
+            cache.clone(),
+            None,
+            "http://127.0.0.1:1",
+            std::time::Duration::ZERO,
+        )
+        .unwrap();
+        assert!(provider.user_trades(false).await.is_ok());
+        // force=true: kein Stale-Serve — Netz wird angerufen (tot → Err).
+        assert!(
+            provider.user_trades(true).await.is_err(),
+            "force must bypass the fresh snapshot and hit the network"
+        );
     }
 
     fn offers_offer(id: u64) -> provider::Offer {
@@ -3301,7 +3341,7 @@ mod tests {
             std::time::Duration::ZERO,
         )
         .unwrap();
-        let trades = provider.user_trades().await.unwrap();
+        let trades = provider.user_trades(false).await.unwrap();
         assert!(trades.is_empty(), "leere Historie → Ok([]), kein Fehler");
     }
 
