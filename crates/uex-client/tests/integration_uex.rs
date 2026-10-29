@@ -1647,3 +1647,113 @@ async fn delete_offer_surfaces_http_error_no_retry() {
         other => panic!("expected Http error, got {other:?}"),
     }
 }
+
+/// R1 (t_9caac387): `DELETE /user_trades_remove/?id=…&is_production=1` — der
+/// Trade-Log-Delete geht als echtes DELETE raus (KEIN POST), trägt `id` +
+/// `is_production=1` als Query-Params und authentifiziert NUR über den
+/// `secret-key`-Header. Erfolg = `{"status":"ok"}` ohne data → Ok(()).
+#[tokio::test]
+async fn remove_trade_deletes_via_user_trades_remove_with_secret_key() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/user_trades_remove/"))
+        .and(query_param("id", "4242"))
+        .and(query_param("is_production", "1"))
+        .and(header("secret-key", "my-super-secret-40"))
+        .respond_with(json_response(
+            r#"{"status":"ok","http_code":200,"data":null}"#,
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+
+    provider.remove_trade(4242).await.expect("remove ok");
+}
+
+/// R1 (t_9caac387): Fehlerpfad der Doku-Codes — UEX meldet 400
+/// `trade_not_found` (fremde/bereits gelöschte Trade-ID) → der Provider
+/// mappt das auf `Http { status, body }` (KEIN Retry), die IPC-Ebene
+/// übersetzt in die deutsche Meldung. Der Secret-Key-Header geht trotzdem
+/// mit (sonst wäre die Diagnose mehrdeutig).
+#[tokio::test]
+async fn remove_trade_surfaces_trade_not_found_no_retry() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/user_trades_remove/"))
+        .and(header("secret-key", "my-super-secret-40"))
+        .respond_with(ResponseTemplate::new(400).set_body_raw(
+            r#"{"status":"trade_not_found","http_code":400,"data":null}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap()
+    .with_secret_key(Some("my-super-secret-40".into()));
+
+    let err = provider.remove_trade(99_999).await.unwrap_err();
+    match err {
+        provider::ProviderError::Http { status, body } => {
+            assert_eq!(status, 400);
+            assert!(body.contains("trade_not_found"), "{body}");
+        }
+        other => panic!("expected Http error, got {other:?}"),
+    }
+}
+
+/// R1 (t_9caac387): ohne gesetzten Secret-Key geht der Request OHNE
+/// `secret-key`-Header raus → UEX meldet 400 `missing_secret_key`. Der Mock
+/// simuliert die Server-Seite (Doku-Code im Envelope); der Client muss den
+/// Code unverändert durchreichen statt ihn zu verschlucken.
+#[tokio::test]
+async fn remove_trade_without_secret_key_surfaces_missing_secret_key() {
+    use provider::DataProvider;
+
+    let server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/user_trades_remove/"))
+        .respond_with(ResponseTemplate::new(400).set_body_raw(
+            r#"{"status":"missing_secret_key","http_code":400,"data":null}"#,
+            "application/json",
+        ))
+        .mount(&server)
+        .await;
+
+    let cache = Arc::new(Cache::open_in_memory().unwrap());
+    let provider = UexProvider::with_base_url(
+        cache.clone(),
+        Some("app-token".into()),
+        &server.uri(),
+        Duration::ZERO,
+    )
+    .unwrap();
+
+    let err = provider.remove_trade(1).await.unwrap_err();
+    match err {
+        provider::ProviderError::Http { status, body } => {
+            assert_eq!(status, 400);
+            assert!(body.contains("missing_secret_key"), "{body}");
+        }
+        other => panic!("expected Http error, got {other:?}"),
+    }
+}
