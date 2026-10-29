@@ -3673,12 +3673,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				e.preventDefault();
 				return;
 			}
-			if (k === 'ArrowRight' && !offerDetail) {
+			// QW-2 (t_28bfd027): ←/→ open/close das Offer-Detail NUR im
+			// Angebote-Reiter — davor leckte die Open/Close-Logik über die
+			// anderen Market-Reiter (Mein Shop/Trades), wo die Auswahl eines
+			// Offers semantisch keinen Sinn ergibt. Enter/Escape decken den
+			// Detail-Zugang überall ab; in shop/trades haben ←/→ keinerlei
+			// Wirkung mehr.
+			if (mTab === 'offers' && k === 'ArrowRight' && !offerDetail) {
 				openOfferDetail();
 				e.preventDefault();
 				return;
 			}
-			if (k === 'ArrowLeft' && offerDetail) {
+			if (mTab === 'offers' && k === 'ArrowLeft' && offerDetail) {
 				offerDetail = null;
 				lightbox = null;
 				e.preventDefault();
