@@ -5376,7 +5376,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<!-- PW-6 (t_fbe40115): Sync-Hinweis nur in Sync-relevanten Views
 				     (Suche/Detail/Marktplatz) — nicht in Hangar/Inventar/Settings
 				     (vgl. PB-Logik für den F5-Hinweis). -->
-				<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
+				<!-- PS-R1-Fix (t_6ba53273): In Terminal/Location-Details ist der
+				     Stempel irreführend — F5/↻-Refresh greift nur bei Commodity/
+				     Item-Detail. Dort bleibt der Stempel, hier nicht. -->
+				{#if !(inDetail && (detailHit?.kind === 'terminal' || detailHit?.kind === 'location'))}
+					<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
+				{/if}
 			{/if}
 			<!-- Zahnrad entfernt (t_a39f6811 P2): Rail + F12 decken die Konfiguration ab. -->
 			{#if isSpotlight}
