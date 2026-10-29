@@ -2458,6 +2458,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function onSyncEvent(s: SyncStatus) {
 		status = s;
 		if (phase === 'typing') return; // laufende Aktion nicht stören
+		// PW (t_fbe40115, Punkt 7): F5 im Marktmodus (Angebote, Mein Shop,
+		// Routen-Sweep) triggert sync_now → SYNC-Event. Ohne Guard setzte
+		// dieser Handler phase = idle/typing und warf die Ansicht mitten
+		// im Routen-Tab zurück zur Suche. Der Marktmodus besitzt seine
+		// eigenen Sync-Quellen (onF5) — die Statuszeile trägt das Event.
+		if (phase === 'market') return;
 		if (!hasData(s)) {
 			phase = s.last_error ? 'error' : s.syncing ? 'loading' : phase;
 		} else {
