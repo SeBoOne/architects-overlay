@@ -222,7 +222,9 @@ impl UexHttpClient {
     }
 
     /// DELETE `path` (write-layer, M2b — `marketplace_listings/?id=…`).
-    /// Auth laut Research §1: NUR der `secret-key`-Header (kein Bearer nötig).
+    /// Auth: Bearer(api_key) + `secret-key` — t_a91c184f: UEX antwortet auf
+    /// `/user_trades_remove` mit 403 „Authentication error“, wenn der Bearer
+    /// fehlt (live belegt); Doku-„nur secret-key“ traf nicht zu.
     /// Query-Params tragen den `id`. Erfolg = `{"status":"ok"}` (kein data);
     /// der generische `unwrap_envelope` liefert für leeres data `Ok(None)`-via
     /// serde_null → diese Variante gibt `Result<()>` zurück.
@@ -235,6 +237,9 @@ impl UexHttpClient {
         self.pace().await;
         let url = format!("{}{}", self.base_url, path);
         let mut request = self.client.delete(&url).query(params);
+        if let Some(key) = &self.api_key {
+            request = request.bearer_auth(key);
+        }
         if let Some(secret) = secret_key {
             request = request.header("secret-key", secret);
         }
