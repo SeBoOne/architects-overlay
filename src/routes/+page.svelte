@@ -199,14 +199,6 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		key_set: boolean;
 	};
 	type MessageSendResponse = { id_message: number };
-	const SHOP_USER_KEY = 'architects-overlay.shop.username';
-	function loadShopUser(): string {
-		try {
-			return (localStorage.getItem(SHOP_USER_KEY) || '').trim();
-		} catch {
-			return '';
-		}
-	}
 
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
 	// Tray "Config öffnen" → Backend-Event (siehe overlay::TRAY_OPEN_CONFIG_EVENT).
@@ -291,7 +283,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// M2a-Fix (t_2f197d1c): zweites Credential + Username (F12-View).
 	let secretKeyInput = $state('');
 	let secretKeyNote = $state('');
-	let usernameInput = $state('');
+	// PW-1 (t_fbe40115): Username-Feld entfallen — Name wird automatisch aus
+	// dem Secret-Key ermittelt; usernameNote zeigt nur noch den Status.
 	let usernameNote = $state('');
 	// K6 (t_9b385831, P2): kurze Confirm-Zeile im Config-View nach Aktionen
 	// (Preisquelle umstellen) — analog K3 Notif-Timeout: verschwindet nach 3 s
@@ -871,7 +864,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			applySettings(cfg);
 			// M2a-Fix (t_2f197d1c): Settings-Username ist die kanonische Quelle
 			// für den „Mein Shop"-Pull — localStorage nur als SSR-Fallback.
-			if (cfg?.uex_username && !shopUser.trim()) shopUser = cfg.uex_username.trim();
+			// PW-1: Username-Feld entfallen — auto-ermittelt, gecacht. Ohne
+			// gecachten Namen einmalig nachziehen (best-effort, Hintergrund).
+			if (cfg?.uex_secret_key_set && !cfg?.uex_username?.trim()) void resolveUsername(true);
 		} catch {
 			// Ohne Tauri (SSR/vite-dev) → Palette bleibt am app.html-Default.
 		}
@@ -893,7 +888,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		apiKeyNote = '';
 		secretKeyInput = '';
 		secretKeyNote = '';
-		usernameInput = '';
 		usernameNote = '';
 		cancelShortcutCapture();
 		// PB (t_1c9bc240, B1): Config-Open startet immer sauber.
@@ -908,7 +902,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		apiKeyNote = '';
 		secretKeyInput = '';
 		secretKeyNote = '';
-		usernameInput = '';
 		usernameNote = '';
 		// Capture darf ein Schließen nicht überleben (kein Geister-Fenster-Modus).
 		cancelShortcutCapture();
@@ -1019,7 +1012,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key });
 			secretKeyInput = '';
 			secretKeyNote = 'Secret-Key gespeichert — wird NIE im Klartext angezeigt.';
-			if (!shopUser.trim() && cfg?.uex_username) shopUser = cfg.uex_username.trim();
+			// PW-1: Username wird jetzt automatisch aus dem Secret-Key ermittelt.
+			usernameNote = '';
+			void resolveUsername();
 		} catch (e) {
 			secretKeyNote = String(e);
 		}
@@ -1035,22 +1030,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
-	async function saveUsername() {
-		const name = usernameInput.trim();
-		if (!name) return;
+	// PW-1 (t_fbe40115): Username auto aus dem Secret-Key (GET /user, Backend
+	// cachet den Namen). Kein Frontend-Input mehr; bei 403/ungültigem Key
+	// kommt die deutsche Meldung aus `friendly()` durch.
+	// PW-1: UEX-Verwalten-Links (nur Deep-Link in den Systembrowser).
+	async function openUex(cmd: 'open_uex_api_apps' | 'open_uex_account') {
 		try {
-			cfg = await invoke<SettingsSnapshot>('settings_set_uex_username', { name });
-			usernameInput = '';
-			usernameNote = 'UEX-Username gespeichert — wird für den „Mein Shop“-Pull verwendet.';
-			// Kanonische Quelle (Settings) → Shop-Input synchron halten.
-			shopUser = name;
-			try {
-				localStorage.setItem(SHOP_USER_KEY, name);
-			} catch {
-				/* localStorage incomplete — In-Memory bleibt aktiv. */
+			await invoke(cmd);
+		} catch (e) {
+			secretKeyNote = String(e);
+		}
+	}
+
+	async function resolveUsername(bg = false) {
+		if (typeof invoke !== 'function') return;
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_resolve_uex_username');
+			if (!bg) {
+				usernameNote = cfg?.uex_username?.trim()
+					? `UEX-Username automatisch ermittelt: ${cfg.uex_username.trim()}`
+					: '';
 			}
 		} catch (e) {
-			usernameNote = String(e);
+			usernameNote = `Username konnte nicht ermittelt werden: ${String(e)}`;
 		}
 	}
 
@@ -1299,7 +1301,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	});
 
 	// ---- Mein Shop (M2a, Read-Phase): eigene Offers + Marktplatz-Deals -----
-	let shopUser = $state(loadShopUser());
+	// PW-1 (t_fbe40115): der Username lebt KANONISCH in den Settings (auto
+	// aus dem Secret-Key) — das Mein-Shop-Feld ist entfallen, shopUser ist
+	// nur noch eine Projektion des gecachten Namens.
+	let shopUser = $derived(cfg?.uex_username?.trim() ?? '');
 	let myOffers = $state<Offer[]>([]);
 	let myNegotiations = $state<Negotiation[]>([]);
 	let shopLoading = $state(false);
@@ -1307,21 +1312,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let shopNote = $state<string | null>(null);
 	let shopKeySet = $state(true);
 	let shopErr = $state<string | null>(null);
-	function persistShopUser(v: string) {
-		shopUser = v;
-		try {
-			if (v.trim()) localStorage.setItem(SHOP_USER_KEY, v.trim());
-			else localStorage.removeItem(SHOP_USER_KEY);
-		} catch {
-			/* localStorage incomplete — In-Memory bleibt aktiv. */
-		}
-		// M2a-Fix (t_2f197d1c): der Username lebt kanonisch in den Settings
-		// (F12) — der Shop-Input schreibt best-effort zurück, damit beide
-		// Sichten synchron bleiben. Kein await: UI darf hier nicht blockieren.
-		if (typeof invoke === 'function') {
-			invoke('settings_set_uex_username', { name: v.trim() || null }).catch(() => {});
-		}
-	}
 	async function loadShop(bg = false) {
 		// M2a-Fix (t_2f197d1c): ohne persönlichen Secret-Key KEINE Requests —
 		// UEX antwortet sonst nur 400 user_not_found/403 invalid_secret_key.
@@ -1334,6 +1324,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			myOffers = [];
 			myNegotiations = [];
 			return;
+		}
+		// PW-1: ohne ermittelten Username (Secret-Key frisch gesetzt, /user
+		// noch nicht gelaufen) kein Offers-Pull — einmalig auflösen.
+		if (cfg && !shopUser.trim()) {
+			shopLoading = true;
+			await resolveUsername(true);
+			shopLoading = false;
+			if (!shopUser.trim()) {
+				shopNote = 'Username noch nicht ermittelt — Secret-Key in den Einstellungen (F12) prüfen.';
+				myOffers = [];
+				return;
+			}
 		}
 		shopLoading = !bg;
 		shopErr = null;
@@ -3964,12 +3966,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						</div>
 					</section>
 					<section class="cfg-sect">
-						<div class="h">Account-Verknüpfung (bald)</div>
-						<div class="cfg-locked" aria-disabled="true">
-							Kommt später — UEX-Account-Verknüpfung ist noch nicht verfügbar.
-						</div>
-					</section>
-					<section class="cfg-sect">
 						<div class="h">UEX API-Key</div>
 						<div class="cfg-key-status">
 							Status:
@@ -3992,16 +3988,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="btn-ghost btn-danger" onclick={removeApiKey}>Entfernen</button>
 							{/if}
 						</div>
+						<button
+							type="button"
+							class="chip"
+							style="margin-top: 8px"
+							title="API-Keys auf uexcorp.space verwalten (Login im Browser)"
+							onclick={() => void openUex('open_uex_api_apps')}
+						>API-Keys auf UEX verwalten ↗</button>
 						{#if apiKeyNote}
 							<div class="cfg-note">{apiKeyNote}</div>
 						{/if}
 					</section>
 					<section class="cfg-sect">
-						<div class="h">UEX persönlicher Secret-Key · UEX-Username</div>
+						<div class="h">UEX persönlicher Secret-Key</div>
 						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
 							Für den eigenen Shop („Mein Shop“, user-scoped Reads) braucht UEX
 							zusätzlich deinen persönlichen Secret-Key (40 Zeichen, noch maskierter
-							als der App-Key) und den Usernamen, exakt wie auf uexcorp.space registriert.
+							als der App-Key). Den Key auf uexcorp.space generieren/kopieren —
+							den Benutzernamen ermittelt das Overlay automatisch daraus.
 						</div>
 						<div class="cfg-key-status">
 							Secret-Key:
@@ -4024,30 +4028,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="btn-ghost btn-danger" onclick={removeSecretKey}>Entfernen</button>
 							{/if}
 						</div>
+						<button
+							type="button"
+							class="chip"
+							style="margin-top: 8px"
+							title="Secret-Key auf uexcorp.space/account neu generieren/kopieren (Login im Browser)"
+							onclick={() => void openUex('open_uex_account')}
+						>Secret-Key auf UEX verwalten ↗</button>
 						{#if secretKeyNote}
 							<div class="cfg-note">{secretKeyNote}</div>
 						{/if}
+						<!-- PW-1 (t_fbe40115): Username-Feld ENTFALLEN — der Name wird
+						     automatisch aus dem Secret-Key ermittelt (GET /user) und
+						     gecacht; hier nur noch Status statt Eingabefeld. -->
 						<div class="cfg-key-status" style="margin-top: 10px">
-							UEX-Username:
+							UEX-Username (automatisch ermittelt):
 							<b class:ok={cfg?.uex_username?.trim()} class:off={!cfg?.uex_username?.trim()}>
-								{cfg?.uex_username?.trim() ? cfg.uex_username.trim() : 'nicht gesetzt'}
+								{cfg?.uex_username?.trim() ? cfg.uex_username.trim() : 'wird aus dem Secret-Key ermittelt …'}
 							</b>
-						</div>
-						<div class="cfg-key-row">
-							<input
-								type="text"
-								autocomplete="off"
-								placeholder="z. B. sebo_one"
-								bind:value={usernameInput}
-								onkeydown={(e) => e.stopPropagation()}
-							/>
-							<button type="button" class="btn" onclick={saveUsername} disabled={!usernameInput.trim()}>
-								Setzen
-							</button>
 						</div>
 						{#if usernameNote}
 							<div class="cfg-note">{usernameNote}</div>
 						{/if}
+						<button type="button" class="chip" style="margin-top: 6px" onclick={() => void resolveUsername()}>
+							Username neu ermitteln
+						</button>
 					
 												<div class="cfg-key-status" style="margin-top: 12px">
 							Schreibbestätigung (2-Schritt):
@@ -4525,26 +4530,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{/if}
 				{:else if mTab === 'shop'}
 					<div class="mbar">
-						<span class="m-lbl">UEX-Username</span>
-						<input
-							class="rtext"
-							placeholder="z. B. sebo_one"
-							aria-label="UEX-Benutzername — filtert deine eigenen Offers"
-							title="UEX-Benutzername aus den Settings/GitHub-Account"
-							bind:value={shopUser}
-							onkeydown={(e) => {
-								if (e.key === 'Enter') {
-									persistShopUser(shopUser);
-									void loadShop();
-								}
-							}}
-						/>
+						<!-- PW-1 (t_fbe40115): Username-Feld entfallen — der Name
+						     kommt automatisch aus dem Secret-Key (Settings-Cache). -->
+						<span class="m-lbl">Mein Shop</span>
+						<span class="chip">{shopUser.trim() || 'Username wird ermittelt …'}</span>
 						<span
 							class="btn-ghost"
-							onclick={() => {
-								persistShopUser(shopUser);
-								void loadShop();
-							}}
+							title="Eigene Offers + Deals neu laden"
+							onclick={() => void loadShop()}
 						>Laden</span>
 						<span class="m-spacer"></span>
 						{#if shopLoading}<span class="chip">↻ …</span>{/if}
@@ -4901,7 +4894,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{#if shopFilter !== 'all' && myOffers.length}
 									Keine Offers im Filter „{shopFilter === 'pending' ? 'Wartend' : 'Aktiv'}“.
 								{:else}
-									{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Benutzername oben eintragen und Laden drücken.'}
+									{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Kein Username ermittelt — Secret-Key in den Einstellungen (F12) prüfen.'}
 								{/if}
 							</div>
 						{/if}
