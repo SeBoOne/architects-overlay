@@ -2115,6 +2115,38 @@ html[data-window="spotlight"] .shell {
   padding: 16px 18px;
 }
 
+/* QY-2 (t_07edb03d): Trade-Log-Formular — Felder in VOLLER Popup-Breite,
+   größere Feld-Überschriften (11px statt 9.5px m-lbl), vertikaler Abstand
+   zwischen den Feldern (übersichtlicher Rhythmus). Zentriert innerhalb der
+   Overlay-Grenzen liefert der advert-scrim; interner Scroll bleibt in
+   .trk-body. */
+.trk-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+.trk-lbl {
+  font: 700 11px/1 var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fgdim);
+}
+.trk-dir {
+  display: flex;
+  gap: 8px;
+}
+/* Typeahead- und Zahlenfelder ziehen auf volle Popup-Breite. */
+.trk-modal .rta {
+  display: block;
+}
+.trk-modal .rta-input {
+  width: 100%;
+}
+.trk-field .qnum {
+  width: 100%;
+}
+
 /* M3a: Button-Zeile im Popup als Sticky-Fuß — klebt unten an der
    Scroll-Region, bleibt beim langen Formular immer erreichbar. */
 .advert-foot {
