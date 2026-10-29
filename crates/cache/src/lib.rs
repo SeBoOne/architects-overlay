@@ -56,7 +56,24 @@ pub const TTL_MARKETPLACE: Option<Duration> = Some(Duration::from_secs(300));
 /// offline/stale-first contract is identical to the general marketplace view.
 pub const TTL_OWN_SHOP: Option<Duration> = Some(Duration::from_secs(300));
 
-/// PS (t_c84e545d): aggregated freshness bookkeeping for the two price
+/// QZ (t_ab10109f): ein lokal persistentes, noch nicht freigegebenes Listing
+/// (Zeile aus `pending_offers`). Die UI leitet „Freigabe unbestätigt" aus
+/// `created_at` (> 24 h) ab.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct PendingOffer {
+    pub id: u64,
+    pub title: String,
+    pub operation: String,
+    pub price: f64,
+    pub currency: String,
+    pub unit: String,
+    pub quantity: u64,
+    pub location: String,
+    pub status: String,
+    pub created_at: u64,
+}
+
+/// Data-type-aware cache-age snapshot for the settings "Datenquellen"
 /// datatypes — shown separately in the settings "Datenquellen" section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -294,6 +311,26 @@ CREATE TABLE IF NOT EXISTS own_negotiations (
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+-- QZ (t_ab10109f): lokal persistente pending-Listings. UEX 2.0 listet
+-- wartende (noch nicht freigegebene) Ads in KEINEM API-Endpoint (M3a-
+-- Erkenntnis, live belegt) — das Overlay speichert daher beim Anlegen die
+-- stabilen Felder des Submit-Payloads selbst, damit Mein Shop sie bis zur
+-- Freigabe anzeigen kann. Additiv; 1:1-Abgleich (title+price+quantity+
+-- location+operation) gegen die API-Antwort entfernt Einträge, sobald das
+-- Listing live ist. Kein Auto-Delete nach Ablauf — nur Reconciliation oder
+-- explizites Nutzen-Entfernen.
+CREATE TABLE IF NOT EXISTS pending_offers (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  title      TEXT    NOT NULL,
+  operation  TEXT    NOT NULL DEFAULT 'sell',
+  price      REAL    NOT NULL DEFAULT 0,
+  currency   TEXT    NOT NULL DEFAULT 'UEC',
+  unit       TEXT    NOT NULL DEFAULT '',
+  quantity   INTEGER NOT NULL DEFAULT 0,
+  location   TEXT    NOT NULL DEFAULT '',
+  status     TEXT    NOT NULL DEFAULT 'pending',
+  created_at INTEGER NOT NULL
 );
 -- Lokal-privates Inventar (Karte t_1bab1fea, v0.3.0 K2). Eine Zeile = eine
 -- Position: Item-/Commodity-Referenz (entity_kind/entity_id, name aufgelöst)
@@ -569,6 +606,11 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   commodity-seitiger Cargo-Handel und bleibt nur fürs Route-Recording).
 ///   Rein additiv — `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten
 ///   betroffen.
+/// * v11 — QZ (t_ab10109f): neue additive Tabelle `pending_offers` — lokale
+///   Speicherung der Submit-Payloads frisch angelegter Listings (Status
+///   „wartet auf Freigabe"), da UEX 2.0 wartende Ads in keinem Endpoint
+///   listet. Abgleich gegen die API-Antwort (Reconciliation) entfernt die
+///   Zeile, sobald das Listing live ist. Rein additiv.
 pub const SCHEMA_VERSION: i64 = 11;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
@@ -2259,6 +2301,140 @@ impl Cache {
         })
     }
 
+    // ---- QZ (t_ab10109f): lokale pending-Listings --------------------------
+    //
+    // UEX 2.0 listet wartende Ads in keinem Endpoint — das Overlay persistiert
+    // die stabilen Felder des Submit-Payloads selbst und gleicht sie bei
+    // jedem Mein-Shop-Pull 1:1 gegen die API-Antwort ab (Match über Titel +
+    // Preis + Menge + Ort + Operation; genau die Felder, die die UI auch
+    // anzeigt und die UEX unverändert durchreicht). Kein TTL, kein Auto-
+    // Delete — Einträge verschwinden nur durch Reconciliation oder explizit
+    // per [`Cache::pending_offers_remove`].
+
+    /// Submit-Payload eines frisch angelegten Listings lokal speichern
+    /// (Status „wartet auf Freigabe" + Zeitstempel).
+    pub fn store_pending_offer(
+        &self,
+        title: &str,
+        operation: &str,
+        price: f64,
+        currency: &str,
+        unit: &str,
+        quantity: u64,
+        location: &str,
+    ) -> Result<()> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO pending_offers (title, operation, price, currency, unit,
+                    quantity, location, status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', ?8)",
+                rusqlite::params![
+                    title,
+                    operation,
+                    price,
+                    currency,
+                    unit,
+                    quantity as i64,
+                    location,
+                    now_unix() as i64
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Alle lokalen pending-Listings (Anzeige im Mein Shop; „Freigabe
+    /// unbestätigt" leitet die UI aus `created_at` > 24 h ab).
+    pub fn pending_offers_snapshot(&self) -> Result<Vec<PendingOffer>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, title, operation, price, currency, unit, quantity,
+                        location, status, created_at
+                 FROM pending_offers ORDER BY created_at DESC, id DESC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(PendingOffer {
+                    id: row.get::<_, i64>(0)? as u64,
+                    title: row.get(1)?,
+                    operation: row.get(2)?,
+                    price: row.get(3)?,
+                    currency: row.get(4)?,
+                    unit: row.get(5)?,
+                    quantity: row.get::<_, i64>(6)? as u64,
+                    location: row.get(7)?,
+                    status: row.get(8)?,
+                    created_at: row.get::<_, i64>(9)? as u64,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+    }
+
+    /// 1:1-Abgleich: lokale pending-Einträge, die in `live` (API-Antwort des
+    /// Listings-Pulls) auftauchen, sind freigegeben → Zeile entfernen.
+    /// Rückgabe: die verbleibenden pending-Einträge.
+    pub fn pending_offers_reconcile(&self, live: &[provider::Offer]) -> Result<Vec<PendingOffer>> {
+        if live.is_empty() {
+            return self.pending_offers_snapshot();
+        }
+        let norm = |s: &str| s.trim().to_lowercase();
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            let mut stmt = tx.prepare(
+                "SELECT id, title, operation, price, currency, unit, quantity,
+                        location, status, created_at
+                 FROM pending_offers ORDER BY created_at DESC, id DESC",
+            )?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok(PendingOffer {
+                        id: row.get::<_, i64>(0)? as u64,
+                        title: row.get(1)?,
+                        operation: row.get(2)?,
+                        price: row.get(3)?,
+                        currency: row.get(4)?,
+                        unit: row.get(5)?,
+                        quantity: row.get::<_, i64>(6)? as u64,
+                        location: row.get(7)?,
+                        status: row.get(8)?,
+                        created_at: row.get::<_, i64>(9)? as u64,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            drop(stmt);
+            let mut kept = Vec::new();
+            for p in rows {
+                let matched = live.iter().any(|o| {
+                    norm(&o.title) == norm(&p.title)
+                        && (o.price - p.price).abs() < f64::EPSILON
+                        && o.quantity == p.quantity
+                        && norm(&o.location) == norm(&p.location)
+                        && o.operation.as_str() == p.operation
+                });
+                if matched {
+                    tx.execute("DELETE FROM pending_offers WHERE id = ?1", [p.id as i64])?;
+                } else {
+                    kept.push(p);
+                }
+            }
+            tx.commit()?;
+            Ok(kept)
+        })
+    }
+
+    /// Explizites Entfernen eines lokalen pending-Eintrags (Nutzer-Aktion —
+    /// kein Auto-Delete; z. B. wenn das Listing auf UEX abgelehnt wurde).
+    pub fn pending_offers_remove(&self, id: u64) -> Result<()> {
+        self.with(|conn| {
+            conn.execute("DELETE FROM pending_offers WHERE id = ?1", [id as i64])?;
+            Ok(())
+        })
+    }
+
     /// Frische-Marker der eigenen Trades (analog marketplace TTL).
     pub fn own_trades_fresh(&self) -> Result<bool> {
         let Some(ttl) = TTL_OWN_SHOP else {
@@ -3614,6 +3790,55 @@ mod tests {
             date_closed_client: None,
             date_closed: None,
         }
+    }
+
+    // QZ (t_ab10109f): pending_offers — Store, 1:1-Reconciliation (Match über
+    // Titel+Preis+Menge+Ort+Operation; kein Match bei abweichendem Preis),
+    // Snapshot nach Reconciliation, explizites Entfernen.
+    #[test]
+    fn pending_offers_store_reconcile_remove() {
+        let cache = Cache::open_in_memory().unwrap();
+        assert!(cache.pending_offers_snapshot().unwrap().is_empty());
+        cache
+            .store_pending_offer(
+                "Drake Nettle S",
+                "sell",
+                4_500_000.0,
+                "UEC",
+                "unit",
+                1,
+                "Port Tressler",
+            )
+            .unwrap();
+        let pending = cache.pending_offers_snapshot().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].title, "Drake Nettle S");
+        assert_eq!(pending[0].status, "pending");
+        assert!(pending[0].created_at > 0);
+        // Freigabe: identisches Listing in der API-Antwort → Eintrag entfernt.
+        let kept = cache.pending_offers_reconcile(&[shop_offer(7)]).unwrap();
+        assert!(kept.is_empty());
+        assert!(cache.pending_offers_snapshot().unwrap().is_empty());
+        // Kein Match (Preis abweichend) → bleibt bestehen.
+        cache
+            .store_pending_offer(
+                "Drake Nettle S",
+                "sell",
+                9_999.0,
+                "UEC",
+                "unit",
+                1,
+                "Port Tressler",
+            )
+            .unwrap();
+        let kept = cache.pending_offers_reconcile(&[shop_offer(7)]).unwrap();
+        assert_eq!(kept.len(), 1);
+        // Kein Live-Match (leere API-Antwort) → Snapshot unverändert.
+        let kept = cache.pending_offers_reconcile(&[]).unwrap();
+        assert_eq!(kept.len(), 1);
+        // Explizites Nutzen-Entfernen (kein Auto-Delete).
+        cache.pending_offers_remove(kept[0].id).unwrap();
+        assert!(cache.pending_offers_snapshot().unwrap().is_empty());
     }
 
     #[test]
