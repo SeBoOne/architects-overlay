@@ -125,9 +125,12 @@ impl DataProvider for CompositeProvider {
         self.uex.my_offers(username).await
     }
 
-    async fn user_trades(&self) -> Result<Vec<provider::Trade>> {
-        // Rede-Verlauf ist UEX-user-scoped (secret-key).
-        self.uex.user_trades().await
+    async fn user_trades(&self, force: bool) -> Result<Vec<provider::Trade>> {
+        // Rede-Verlauf ist UEX-user-scoped (secret-key). `force` (RA
+        // t_1bd5328b) muss durchgereicht werden — sonst serviert der
+        // uex-client bei frischer TTL den Cache und der Aktualisieren-Button
+        // wirkt nicht.
+        self.uex.user_trades(force).await
     }
 
     async fn marketplace_negotiations(&self) -> Result<Vec<provider::Negotiation>> {

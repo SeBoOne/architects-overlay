@@ -1580,7 +1580,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		})();
 	});
 
-	async function loadTrk(bg = false) {
+	async function loadTrk(bg = false, force = false) {
 		if (cfg && !cfg.uex_secret_key_set) {
 			trkLoading = false;
 			trkErr = null;
@@ -1594,7 +1594,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		trkErr = null;
 		trkNote = null;
 		try {
-			const r = await invoke<TradesResponse>('get_my_trades');
+			// RA (t_1bd5328b): force reicht bis zum uex-client durch —
+			// „Aktualisieren" umgeht die Snapshot-TTL und liest live bei UEX.
+			const r = await invoke<TradesResponse>('get_my_trades', { force });
 			myTrades = r.trades as unknown as UTrade[];
 			if (r.note) trkNote = r.note;
 		} catch (e) {
@@ -1738,7 +1740,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			trkOpen = false;
 			trkEditId = null;
 			trkMsg = wasEdit ? 'Trade aktualisiert.' : 'Trade erfasst.';
-			await loadTrk(true);
+			await loadTrk(true, true);
 		} catch (e) {
 			// Kein Retry (M2b-Philosophie): Meldung + Deep-Link-Button.
 			trkMsg = String(e);
@@ -1756,7 +1758,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke('trade_remove', { id });
 			trkMsg = 'Trade gelöscht.';
-			await loadTrk(true);
+			await loadTrk(true, true);
 		} catch (e) {
 			trkMsg = String(e);
 		}
@@ -4760,7 +4762,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{#if rTab === 'tracking'}
 						<div class="mbar">
 							<span class="m-lbl">Trade Log</span>
-							<span class="chip" onclick={() => void loadTrk(true)}>Aktualisieren</span>
+							<span class="chip" onclick={() => void loadTrk(true, true)}>Aktualisieren</span>
 							<span class="chip" title="Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)" onclick={() => openTrkForm()}>+ Trade erfassen</span>
 							<span class="chip" title="Trade Log auf uexcorp.space öffnen (Login im Browser)" onclick={() => void openTrkUex()}>Trade Log auf UEX öffnen ↗</span>
 						</div>

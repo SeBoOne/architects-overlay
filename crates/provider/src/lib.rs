@@ -198,8 +198,11 @@ pub trait DataProvider: Send + Sync {
     }
 
     /// The user's own trade history (last trades), source-scoped. Requires a
-    /// user credential on the source. Default reports unsupported.
-    async fn user_trades(&self) -> Result<Vec<Trade>> {
+    /// user credential on the source. `force = true` BYPASSES the stale-first
+    /// snapshot TTL and re-reads live (RA t_1bd5328b: the „Aktualisieren"
+    /// button must actually reach UEX — deleted/added trades on the UEX side
+    /// have to appear immediately). Default reports unsupported.
+    async fn user_trades(&self, _force: bool) -> Result<Vec<Trade>> {
         Err(ProviderError::Unsupported("user trades".to_string()))
     }
 
