@@ -5361,6 +5361,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{/if}
 					<span>Suchfeld = Filter</span>
 					<span><kbd>Esc</kbd> zurück</span>
+				{:else if railMode || inConfig}
+					<!-- PW-6 (t_fbe40115): Hangar/Inventar/Settings — KEINE Alt-1..0-
+					     Ergebnis-Hinweise (keine Ergebnisliste) und kein F2-Marktplatz-
+					     Hinweis; nur die kontextuellen Tasten dieser Views. -->
+					<span><kbd>↑↓</kbd> Nav</span>
+					<span><kbd>↵</kbd> Detail</span>
+					<span><kbd>Esc</kbd> zurück</span>
 				{:else}
 					<span><kbd>↑↓</kbd> Nav</span>
 					<span><kbd>Alt+1..0</kbd> Treffer</span>
@@ -5372,7 +5379,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			{#if f5Msg}
 				<span class="f5-msg" role="status">{f5Msg}</span>
 			{/if}
-			<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
+			{#if !railMode && !inConfig}
+				<!-- PW-6 (t_fbe40115): Sync-Hinweis nur in Sync-relevanten Views
+				     (Suche/Detail/Marktplatz) — nicht in Hangar/Inventar/Settings
+				     (vgl. PB-Logik für den F5-Hinweis). -->
+				<span class="sync {syncLabel().cls}"><span class="dot"></span>{syncLabel().text}</span>
+			{/if}
 			<!-- Zahnrad entfernt (t_a39f6811 P2): Rail + F12 decken die Konfiguration ab. -->
 			{#if isSpotlight}
 				<div class="spot-status">
