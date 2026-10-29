@@ -1475,7 +1475,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		price: number;
 		date_added: number;
 	};
-	type TrkDay = { key: string; expense: number; income: number; net: number; count: number };
+	type TrkDay = { key: string; iso: string; expense: number; income: number; net: number; count: number };
 	type TrkSug = { id: number; name: string; subtitle: string | null };
 
 	let rTab = $state<'matrix' | 'tracking'>('matrix');
@@ -1672,11 +1672,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const map = new Map<string, TrkDay>();
 		for (const t of myTrades) {
 			const d = new Date((t.date_added || 0) * 1000);
+			const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+			const iso = `${y}-${m}-${dd}`; // YYYY-MM-DD (lokal) — chronologisch sortierbar, Deckung mit de-DE-Anzeige
 			const key = d.toLocaleDateString('de-DE');
-			let day = map.get(key);
+			let day = map.get(iso);
 			if (!day) {
-				day = { key, expense: 0, income: 0, net: 0, count: 0 };
-				map.set(key, day);
+				day = { key, iso, expense: 0, income: 0, net: 0, count: 0 };
+				map.set(iso, day);
 			}
 			const vol = (t.scu || 0) * (t.price || 0);
 			if (t.operation === 'sell') day.income += vol;
@@ -1684,7 +1686,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			day.net = day.income - day.expense;
 			day.count += 1;
 		}
-		return [...map.values()].sort((a, b) => (b.key > a.key ? 1 : -1));
+		return [...map.values()].sort((a, b) => (b.iso > a.iso ? 1 : -1));
 	});
 	const trkSorted = $derived([...myTrades].sort((a, b) => (b.date_added || 0) - (a.date_added || 0)));
 
