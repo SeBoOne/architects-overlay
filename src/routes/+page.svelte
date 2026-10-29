@@ -1375,6 +1375,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			shopSource = r.source;
 			shopKeySet = r.key_set;
 			if (r.note) shopNote = r.note;
+			// QW-3 (t_28bfd027): UEX 2.0 liefert NUR freigegebene Listings —
+			// Doku „List all active marketplace advertisements"; live belegt
+			// (2026-10-29): GET /marketplace_listings?username=AAWA_SeBoOne →
+			// 0 Rows, obwohl ein Listing auf Freigabe wartet; auch der globale
+			// Feed (1000 Rows) enthält es nicht. Wartende Listings sind via
+			// API 2.0 nicht abrufbar — statt eines stummen leeren Abschnitts
+			// erklärt der Hinweis das und bietet den Direkt-Link an (der
+			// shopCreatedUrl-Deep-Link aus der Create-Aktion zeigt es sofort).
+			if (!myOffers.length && !shopNote) {
+				shopNote =
+					'Keine eigenen aktiven Listings. Wartet ein Listing auf Freigabe, liefert die UEX-API es erst NACH der Freigabe (Endpoint listet nur aktive Ads) — es erscheint dann automatisch hier.';
+			}
 		} else {
 			myOffers = [];
 			shopErr = String(results[0].reason);
