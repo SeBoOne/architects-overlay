@@ -4804,6 +4804,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									</div>
 								{/each}
 							</div>
+							<!-- R1-Fix (t_a91c184f): trkMsg im Listen-Kontext rendern — Delete-Fehler
+							     (deutsche UEX-Codes via friendly()) sind so im Trade-Log sichtbar,
+							     nicht nur im geschlossenen Add/Edit-Formular. -->
+							{#if trkMsg}
+								<div class="sm" style="color: {trkMsg === 'Trade gelöscht.' ? 'var(--fg)' : 'var(--alert)'}; margin: 6px 16px" role="alert">{trkMsg}</div>
+							{/if}
 							<div class="mlist">
 								{#each trkSorted as t (t.id)}
 									<div class="mrow trow" style="cursor: default">
