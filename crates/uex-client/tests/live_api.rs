@@ -10,6 +10,69 @@ use cache::Cache;
 use provider::{DataProvider, EntityKind, SearchEntities};
 use uex_client::UexProvider;
 
+/// t_15e598e7 — Gegenprobe gegen den LIVE-Feed (Sebo-Beispiele Osoian Hides
+/// + Stileron): jeder gemappte Kaufort (Spieler zahlt) muss im UEX-Original-
+/// Feed für GENAU diese Commodity als kaufbar für den Spieler belegt sein
+/// (`price_sell` > 0 im Terminal-Feed) — und umgekehrt für Verkaufsorte.
+/// Die Werte sind pro Run fluktuierend, deshalb prüfen wir nur die Richtung,
+/// nicht konkrete Preise.
+#[tokio::test]
+#[ignore = "network test — run with -- --ignored"]
+async fn live_commodity_price_direction_matches_player_view() {
+    let p = live_provider().await;
+    for (slug, id) in [("osoian-hides", 53u64), ("stileron", 122u64)] {
+        let points = p.prices(slug).await.unwrap();
+        let raw = p.raw_price_rows_for_commodity(id).await.unwrap();
+        assert!(!points.is_empty(), "{slug}: keine Preiszeilen im Live-Feed");
+        assert!(
+            points.iter().all(|pt| pt.commodity_id == id),
+            "{slug}: alle Zeilen müssen id_commodity={id} tragen (id-basiert, nicht namens-basiert)"
+        );
+        // Feed-Semantik (Review t_15e598e7): UEX price_buy = Spieler-Kauf-
+        // preis → App buy_price; price_sell = Spieler-Verkaufspreis →
+        // App sell_price. Jede Feed-Zeile ist einseitig — die Mappung muss
+        // das exakt spiegeln.
+        for pt in &points {
+            let row = raw
+                .iter()
+                .find(|r| r.id_terminal == pt.terminal_id)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{slug}: Terminal {} ist in der Tabelle, fehlt aber im Raw-Feed id_commodity={id}",
+                        pt.terminal_id
+                    )
+                });
+            let expect_buy = row.price_buy > 0.0; // Spieler kauft dort (Origin)
+            let expect_sell = row.price_sell > 0.0; // Spieler verkauft dort
+            assert_eq!(
+                pt.buy_price > 0.0,
+                expect_buy,
+                "{slug}: Kaufort-Fehler an Terminal {} (Feed buy={}/sell={})",
+                pt.terminal_id,
+                row.price_buy,
+                row.price_sell
+            );
+            assert_eq!(
+                pt.sell_price > 0.0,
+                expect_sell,
+                "{slug}: Verkaufsort-Fehler an Terminal {} (Feed buy={}/sell={})",
+                pt.terminal_id,
+                row.price_buy,
+                row.price_sell
+            );
+        }
+        // Beide Richtungen müssen vorkommen (Ware ist kaufbar UND verkaufbar).
+        assert!(
+            points.iter().any(|pt| pt.buy_price > 0.0),
+            "{slug}: kein Kaufort gemappt"
+        );
+        assert!(
+            points.iter().any(|pt| pt.sell_price > 0.0),
+            "{slug}: kein Verkaufsort gemappt"
+        );
+    }
+}
+
 async fn live_provider() -> UexProvider {
     let cache = Arc::new(Cache::open_in_memory().unwrap());
     // 300ms pacing keeps us well under the ~120 req/min daily quota.

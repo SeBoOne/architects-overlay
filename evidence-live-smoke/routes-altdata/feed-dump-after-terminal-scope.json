@@ -1,0 +1,174 @@
+{
+ "stileron": [
+  {
+   "id_terminal": 504,
+   "terminal": "Jackson's Swap",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 130000
+  },
+  {
+   "id_terminal": 507,
+   "terminal": "Ashland",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 130000
+  },
+  {
+   "id_terminal": 18,
+   "terminal": "CBD - Central Business District - Lorville",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 12,
+   "terminal": "TDD - Trade and Development Division - Area 18",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 89,
+   "terminal": "TDD - Trade and Development Division - Commons - New Babbage",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 130000
+  },
+  {
+   "id_terminal": 72,
+   "terminal": "Rayari Kaltag Research Outpost",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 86,
+   "terminal": "Terra Mills Hydrofarm",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 42,
+   "terminal": "Hickes Research Outpost",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 10,
+   "terminal": "ArcCorp Mining Area 141",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 11,
+   "terminal": "ArcCorp Mining Area 157",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 23,
+   "terminal": "Deakins Research Outpost",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 150000
+  },
+  {
+   "id_terminal": 69,
+   "terminal": "Rayari Anvik Research Outpost",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 90,
+   "terminal": "TDD - Trade and Development Division - Cloudview Center - Orison",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 27,
+   "terminal": "Admin - GrimHEX",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 110000
+  },
+  {
+   "id_terminal": 591,
+   "terminal": "Canard View",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 130000
+  },
+  {
+   "id_terminal": 605,
+   "terminal": "Fallow Field",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 130000
+  },
+  {
+   "id_terminal": 665,
+   "terminal": "The Golden Riviera",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 130000
+  },
+  {
+   "id_terminal": 466,
+   "terminal": "Admin - Ruin Station",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 110000
+  },
+  {
+   "id_terminal": 688,
+   "terminal": "Sacren's Plot",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 130000
+  },
+  {
+   "id_terminal": 778,
+   "terminal": "Levski",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 140000
+  },
+  {
+   "id_terminal": 742,
+   "terminal": "Admin - Nyx Gateway (Pyro)",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 170000
+  },
+  {
+   "id_terminal": 551,
+   "terminal": "Bueno Ravine",
+   "type": "commodity",
+   "price_buy": 122850,
+   "price_sell": 0
+  }
+ ],
+ "osoian-hides": [
+  {
+   "id_terminal": 24,
+   "terminal": "Devlin Scrap and Salvage",
+   "type": "commodity",
+   "price_buy": 0,
+   "price_sell": 870000
+  },
+  {
+   "id_terminal": 665,
+   "terminal": "The Golden Riviera",
+   "type": "commodity",
+   "price_buy": 283500,
+   "price_sell": 0
+  }
+ ]
+}

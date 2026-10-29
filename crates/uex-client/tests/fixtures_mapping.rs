@@ -150,3 +150,67 @@ fn marketplace_fixture_maps_to_offers() {
         assert!(r.date_added > 1_700_000_000);
     }
 }
+
+/// t_15e598e7 — Kauf-Richtung (Sebo-Beispiele Osoian Hides + Stileron),
+/// Feed-Semantik laut Review (Runde 1) gegen UEX-eigene commodities_routes +
+/// Profit-Arithmetik belegt: **UEX `price_buy` IST der Spieler-Kaufpreis,
+/// `price_sell` der Spieler-Verkaufspreis.**
+///   * Osoian Hides (53): UEX-Route-ORIGIN (Spieler kauft) = The Golden
+///     Riviera `price_buy=283500, price_sell=0`; Route-DESTINATION (Spieler
+///     verkauft) = Devlin Scrap and Salvage `price_sell=870000, price_buy=0`.
+///   * Stileron (122): Route-Origin = Bueno Ravine `price_buy=122850`;
+///     Route-Destination = Jackson's Swap `price_sell=130000`.
+///   * Jede Feed-Zeile ist einseitig — eine Zeile mit beidseitig > 0 gibt es
+///     nicht (Sweep: die Ware ist kaufbar ODER verkaufbar, nie beides zugleich).
+/// Die Mappung muss daraus exakt die richtigen KAUForTE bauen:
+/// Kaufort ⇔ UEX `price_buy` > 0, Verkaufsort ⇔ UEX `price_sell` > 0.
+#[test]
+fn map_price_point_buy_direction_matches_uex_feed_semantics() {
+    use uex_client::private::PriceRow;
+    let row = |id_commodity: u64, id_terminal: u64, price_buy: f64, price_sell: f64| PriceRow {
+        id_commodity,
+        commodity_name: String::new(),
+        id_terminal,
+        terminal_name: String::new(),
+        price_buy,
+        price_sell,
+        scu_buy_avg: 0.0,
+        scu_sell_avg: 0.0,
+        status_buy: if price_buy > 0.0 { 1 } else { 0 },
+        status_sell: if price_sell > 0.0 { 1 } else { 0 },
+        quality: 0,
+        date_modified: 1_790_000_000,
+    };
+    // Live-Werte der Gegenprobe (gekürzt auf die Richtungsfelder).
+    let feed = vec![
+        // Osoian Hides: Route-Destination (Verkauf) + Route-Origin (Kauf).
+        row(53, 24, 0.0, 870_000.0), // Devlin Scrap and Salvage — Verkaufsort
+        row(53, 665, 283_500.0, 0.0), // The Golden Riviera — KAUForT
+        // Stileron: Route-Destination (Verkauf, Richtung analog live
+        // Jackson's Swap — Live-Preise fluktuieren, nur die Richtung zählt)
+        // + Route-Origin (Kauf, live Bueno Ravine).
+        row(122, 12, 0.0, 140_000.0), // TDD - Area 18 — Verkaufsort
+        row(122, 10, 140_000.0, 0.0), // ArcCorp Mining Area 141 — KAUForT
+    ];
+    let term_ids = [24u64, 665, 12, 10];
+    let mapped: Vec<_> = feed
+        .into_iter()
+        .map(|r| uex_client::map_price_point(r, ""))
+        .collect();
+    // Devlin/TDD: Verkaufsorte (Spieler verkauft) — NICHT als Kaufort.
+    for i in [0usize, 2] {
+        assert!(
+            mapped[i].sell_price > 0.0 && mapped[i].buy_price == 0.0,
+            "Terminal {} (price_sell>0) muss als Verkaufsort gemappt werden: {mapped:?}",
+            term_ids[i]
+        );
+    }
+    // Golden Riviera/Mining-Outpost: Kauforte (Spieler kauft, price_buy>0).
+    for i in [1usize, 3] {
+        assert!(
+            mapped[i].buy_price > 0.0 && mapped[i].sell_price == 0.0,
+            "Terminal {} (price_buy>0) muss als Kaufort gemappt werden: {mapped:?}",
+            term_ids[i]
+        );
+    }
+}

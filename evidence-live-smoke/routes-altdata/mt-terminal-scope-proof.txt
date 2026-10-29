@@ -1,0 +1,29 @@
+MT (t_5a6706f7) — Belege Terminal-Typ-Filterung
+
+1) LIVE-FEED (api.uexcorp.uk/2.0/commodities_prices?id_commodity=…, 29.10.2026 ~00:45 CET):
+   stileron (122): 22 Zeilen, ALLE terminal-type='commodity' — KEINE Refineries, KEIN Dumper's Depot.
+   osoian-hides (53): 2 Zeilen, ALLE type='commodity' (Devlin Scrap, Golden Riviera) — KEINE Ship-Weapons-Shops.
+   → Hypothese 1 (UEX liefert falsche Terminals) WIDERLEGT; feed-dump-after-terminal-scope.json.
+
+2) USER-CACHE (cache.sqlite3, Pre-v10-Schema, Snapshot 29.10. 00:25):
+   40 Ghost-Kaufzeilen für 53/122 an Terminals ohne Commodity-Shop (Ship Weapons/Refinery Shop/Dumper's Depot,
+   Items-ID-Kollisionen der Pre-v10-Ära, gemischt in terminal_prices ohne kind-Spalte).
+   → Wurzel A: Legacy-Geisterzeilen (Purge: v10-Migration aus MR, läuft beim ersten Open des Builds).
+   → Wurzel B (dieser Fix): route_commodity_locations filterte NICHT auf Terminal-Typ — flag-lose Terminals
+     liefen in die Alternativ-Tabelle (compute_routes_full skippt sie seit jeher). Fix: Whitelist-Filter
+     (terminal_flags-Mitgliedschaft) in der Dedupe-Quelle.
+
+3) REGRESSIONSTEST: route_commodity_locations_rejects_non_trade_terminal_types (provider) —
+   Osoian-Hides-Zeile an Ship-Weapons t289 + Stileron an Refinery t196/Dumper's t114 dürfen nicht als
+   Kaufort erscheinen; legitimer Commodity-Shop (t665/t787) bleibt. LIVE-Gegenprobe: live_api-
+   test live_commodity_price_direction_matches_player_view ... ok (nach 429-Rate-Limit einzeln gelaufen).
+
+4) GATE: fmt check 0, cargo check ok, cargo test alle Suiten 0 failed, svelte-check 0 errors, pnpm build ok.
+
+5) END-TO-END gegen KOPIE der echten User-Cache-DB (Temp-Test, danach gelöscht):
+   Phase 1: Cache::open → v10-Migration: terminal_prices 26.727 → 0 Zeilen (Purge belegt).
+   Phase 2: 4 Zeilen in die frische v10-Tabelle injiziert (Ship Weapons t289 buy 2530,
+   Refinery t196 + Dumper's t114 buy 6000 für Stileron; Positiv-Kontrolle Commodity-Shop
+   t665 buy 283500 für Osoian Hides).
+   Phase 3: route_locations: osoian-hides buys=1 sells=0 bad=[] (nur Golden Riviera),
+   stileron buys=0 sells=0 bad=[] — Ghosts ausgeschlossen, legitimer Shop sichtbar.

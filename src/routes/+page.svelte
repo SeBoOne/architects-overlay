@@ -2114,6 +2114,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		price: number;
 		stock: number;
 		status: number;
+		/** Preisstand (UEX date_modified, Unix-Sek). 0 = unbekannt. */
+		updated: number;
 		autoload: boolean;
 		cargo_deck: boolean;
 		ground: boolean;
@@ -2362,6 +2364,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Sortierung: Kauforte nach Preis aufsteigend, Verkaufsorte nach Preis
 	// absteigend — so ist der beste Handel oben. Gefiltert auf die gewählte
 	// Ware per `commodity_id` (genau wie der Detail-Kopf).
+	// t_15e598e7: Alters-Schwelle für den Preisstand-Chip — Zeilen, deren
+	// UEX-Preisstand (date_modified) älter als 7 Tage ist, gelten als
+	// veraltete Preisdaten (Warnfarbe) statt unauffällig frisch zu wirken.
+	const ROUTE_LOC_STALE_SECS = 7 * 86400;
+	function rLocStale(loc: RouteLocationRow): boolean {
+		return loc.updated > 0 && nowSec() - loc.updated > ROUTE_LOC_STALE_SECS;
+	}
 	let rBuySorted = $derived.by(() => {
 		const locs = rLocations;
 		if (!locs) return [] as RouteLocationRow[];
@@ -4220,13 +4229,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																			<span class="r-chip" title="Bestand am Terminal">≋ {fmt(Math.round(loc.stock))} SCU</span>
 																			{#if loc.status > 0}<span class="r-chip" title="Nachfrage (Lager-Level)">{loc.status}/7</span>{/if}
 																			{#if loc.autoload}<span class="r-chip">Autoload</span>{/if}
-																		</span>
-																	</span>
-																</button>
-															{/each}
-														{/if}
-													</div>
-													<div class="rd-pair-col">
+																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title="Preisstand (UEX date_modified): {new Date(loc.updated * 1000).toLocaleString('de-DE')}">⏱ {rel(loc.updated)}</span>{/if}
+																			</span>
+																			</span>
+																			</button>
+																			{/each}
+																			{/if}
+																			</div>
+																			<div class="rd-pair-col">
 														<div class="rd-pair-head">Verkaufsorte <span class="rd-pair-sub">Preis ↓</span></div>
 														{#if rSellSorted.length === 0}
 															<div class="rd-pair-empty">keine Verkaufsorte</div>
@@ -4246,13 +4256,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																			<span class="r-chip" title="Bestand am Terminal">≋ {fmt(Math.round(loc.stock))} SCU</span>
 																			{#if loc.status > 0}<span class="r-chip" title="Nachfrage (Lager-Level)">{loc.status}/7</span>{/if}
 																			{#if loc.autoload}<span class="r-chip">Autoload</span>{/if}
-																		</span>
-																	</span>
-																</button>
-															{/each}
-														{/if}
-													</div>
-												</div>
+																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title="Preisstand (UEX date_modified): {new Date(loc.updated * 1000).toLocaleString('de-DE')}">⏱ {rel(loc.updated)}</span>{/if}
+																			</span>
+																			</span>
+																			</button>
+																			{/each}
+																			{/if}
+																			</div>
+																			</div>
 											{:else if rDetail && !rLocsLoading}
 												<div class="rd-alt-none">keine Alternativorte für {rDetail.commodity}</div>
 											{/if}

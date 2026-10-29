@@ -323,6 +323,8 @@ impl WikiProvider {
                     format!("{location} ({chain})")
                 },
                 terminal_id: e.terminal_id,
+                // UEX price_buy = Spieler-Kaufpreis, price_sell = Spieler-
+                // Verkaufspreis (Review t_15e598e7) — direkte Mappung.
                 sell_price: e.price_sell,
                 buy_price: e.price_buy,
                 sell_stock: 0.0,
@@ -612,7 +614,10 @@ mod tests {
         let points = WikiProvider::map_price_entries("Agricium", 42, entries);
         assert_eq!(points.len(), 2, "duplicates and id-less rows are dropped");
         assert_eq!(points[0].terminal_id, 778);
+        // UEX price_buy = Spieler-Kaufpreis (Review t_15e598e7) → App
+        // buy_price direkt; sell_price = 0.
         assert_eq!(points[0].buy_price, 8_379.0);
+        assert_eq!(points[0].sell_price, 0.0);
         assert_eq!(points[0].commodity, "Agricium");
         assert_eq!(points[0].commodity_id, 42);
         assert_eq!(
@@ -624,6 +629,7 @@ mod tests {
             "ISO date must parse to unix secs"
         );
         assert_eq!(points[1].terminal_id, 802);
+        // UEX price_sell = Spieler-Verkaufspreis → App sell_price.
         assert_eq!(points[1].sell_price, 9_800.0);
         assert_eq!(points[1].location, "STANTG", "code fallback when no name");
     }
@@ -721,6 +727,8 @@ mod tests {
 
         let points = p.prices_for("Agricium").await.expect("prices");
         assert_eq!(points.len(), 2);
+        // UEX price_buy = Spieler-Kaufpreis (Review t_15e598e7) → App
+        // buy_price direkt.
         assert_eq!(points[0].buy_price, 8_379.0);
         assert_eq!(points[0].terminal_id, 778);
 

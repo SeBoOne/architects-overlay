@@ -1,0 +1,49 @@
+t_15e598e7 — Review-Runde 1 Fix: Richtungs-Swap revertiert
+Branch feature/routes-altdata-fix @ 6e00c54 (Push per ls-remote verifiziert:
+6e00c54e60b0daf27c4c4d921109a68bf6fda1ce).
+
+UEX-Feldsemantik (Reviewer-Gegenprobe übernommen, commodities_routes +
+Profit-Arithmetik): price_buy = SPIELER-Kaufpreis, price_sell = Spieler-
+Verkaufspreis. Mappung direkt, kein Tausch.
+
+Geändert (6 Dateien):
+1. crates/uex-client/src/lib.rs map_price_point: buy=r.price_buy /
+   sell=r.price_sell, buy_stock=scu_buy_avg, sell_stock=scu_sell_avg,
+   buy_status=status_buy, sell_status=status_sell (Rücktausch) + Doc-Kommentar
+   auf belegter Semantik umgeschrieben; raw_price_rows_for_commodity-Doku
+   korrigiert.
+2. crates/wiki-client/src/lib.rs map_price_entries: buy=e.price_buy /
+   sell=e.price_sell inkl. Status (Rücktausch).
+3. crates/uex-client/tests/fixtures_mapping.rs: Test-Prämisse korrigiert —
+   Kaufort ⇔ price_buy>0 (Golden Riviera 283500 / Mining Area141),
+   Verkaufsort ⇔ price_sell>0 (Devlin 870000 / TDD 140000).
+4. crates/uex-client/tests/live_api.rs live_commodity_price_direction_…:
+   expect_buy = raw.price_buy > 0, expect_sell = raw.price_sell > 0.
+5. crates/wiki-client/src/lib.rs Tests (2x): Assertions auf direkte Mappung.
+6. fixtures routes_prices_1/2.json: price_buy/price_sell getauscht (Mock war
+   auf die invertierte Prämisse gebaut — mit korrekter Semantik wäre die
+   P15a-Route ein Verlustgeschäft gewesen; jetzt wieder profit 150).
+
+GATE (Post-Fix, Exit-Belege im Log):
+- cargo fmt --all -- --check: OK (FMT_CHECK_OK)
+- cargo test --workspace: 22 Suiten "test result: ok", 0 FAILED
+- svelte-check: 0 errors (56 warnings)
+- pnpm build (vite): OK, "Wrote site to build"
+- Live-Gegenprobe: cargo test -p uex_client --test live_api
+  live_commodity_price_direction_matches_player_view -- --ignored → ok
+  (echter UEX-Feed, Osoian Hides 53 + Stileron 122, jede gemappte Zeile
+  einseitig gegen Raw-Feed verifiziert).
+
+Behalten aus Runde 0 (laut Review korrekt): kind-Isolation (Cache v10),
+Snapshot je Kind, Dedupe pro Terminal, Alters-Chip > 7 Tage.
+
+Rework t_52bf6ea5 (2026-10-29): feed-sample.json korrigiert — Labels und
+Listen auf direkte Mappung (Kaufort = price_buy>0, Verkaufsort =
+price_sell>0). Frische Live-Gegenprobe:
+  curl https://api.uexcorp.uk/2.0/commodities_prices?id_commodity=53
+  → t24 Devlin: buy 0 / sell 870000 (Verkaufsort)
+  → t665 Golden Riviera: buy 283500 / sell 0 (Kaufort)
+  id_commodity=122 → price_buy>0: nur t551 Bueno Ravine (122850);
+  price_sell>0: 21 Orte (Jackson's Swap, TDD Area18, Levski, GrimHEX, …).
+feed-sample.json dokumentiert jetzt dieselbe Semantik wie der Code
+(map_price_point/map_price_entries: buy=price_buy, sell=price_sell).

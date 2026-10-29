@@ -272,6 +272,10 @@ pub struct RouteLocation {
     pub stock: f64,
     /// Lager-Nachfrage 0..=7 (kauf: buy_status, verkauf: sell_status).
     pub status: u8,
+    /// Preisstand dieser Zeile (UEX `date_modified`, Unix-Sekunden). 0 =
+    /// unbekannt. Das Frontend zeigt einen Alters-Chip für alte Zeilen
+    /// (Bug t_15e598e7: verwaiste/veraltete Zeilen ohne Kennzeichnung).
+    pub updated: u64,
     pub autoload: bool,
     pub cargo_deck: bool,
     pub ground: bool,
@@ -292,7 +296,16 @@ pub struct RouteCommodityLocations {
 
 /// Baut aus den lokalen Routen-Rohzeilen die Kauf-/Verkaufsort-Tabelle einer
 /// Ware. Nur Preise > 0 gelten als Ort; ein Terminal kann in beiden Listen
-/// auftauchen (kauft UND verkauft die Ware). Nachfrage-/Bestandswerte kommen
+/// auftauchen (kauft UND verkauft die Ware).
+///
+/// Terminal-Typ-Whitelist (BUG t_5a6706f7): `terminal_flags` enthält nur
+/// Terminals mit Routen-Typ ([`crate::routes`-Doku], P15a — `commodity`/
+/// `commodity_raw`). Zeilen von Terminals OHNE Flags-Eintrag (Item-Shops,
+/// Raffinerie-Item-Teile, Legacy-/Geisterzeilen) sind KEINE Commodity-Handels-
+/// Orte und werden hier — anders als vor diesem Fix — verworfen. Die
+/// Routen-Matrix hat diesen Skip schon immer gehabt (siehe
+/// [`compute_routes_full`]); nur die Alternativ-Tabelle ließ die Zeilen durch.
+/// Nachfrage-/Bestandswerte kommen
 /// aus den Zeilen (`buy_status`/`sell_status`/`sell_stock`) — der lokale
 /// Enrichment-Stand, kein Netzwerkzugriff.
 pub fn route_commodity_locations(
@@ -319,6 +332,7 @@ pub fn route_commodity_locations(
         price: if buy { r.buy_price } else { r.sell_price },
         stock: r.sell_stock,
         status: if buy { r.buy_status } else { r.sell_status },
+        updated: r.updated,
         autoload: terminal_flags
             .get(&r.terminal_id)
             .unwrap_or(&empty)
@@ -339,17 +353,50 @@ pub fn route_commodity_locations(
         return None;
     }
 
-    let buys: Vec<RouteLocation> = rows
-        .iter()
-        .filter(|r| r.commodity_id == commodity_id && r.buy_price > 0.0)
+    // Dedupe pro Terminal (der Sweep kann mehrere Zeilen je Ware liefern):
+    // bester KAUF = niedrigster buy_price, bester VERKAUF = höchster
+    // sell_price je Terminal.
+    let best_per_terminal = |key: fn(&RoutePriceRow) -> f64,
+                             maximize: bool|
+     -> std::collections::HashMap<u64, &RoutePriceRow> {
+        let mut acc: std::collections::HashMap<u64, &RoutePriceRow> =
+            std::collections::HashMap::new();
+        for r in rows
+            .iter()
+            .filter(|r| r.commodity_id == commodity_id)
+            // Terminal-Typ-Whitelist (BUG t_5a6706f7): Zeilen von Terminals
+            // ohne Route-Flags (Item-Shops, Raffinerie-Item-Teile, Geister-
+            // zeilen aus der Legacy-Ära) sind keine Commodity-Handelsorte und
+            // dürfen nicht in die Tabelle. `terminal_flags` trägt nur
+            // `is_route_terminal_type`-Terminals — Flags-Mitgliedschaft IST
+            // der Typ-Filter. Die Routen-Matrix ([`compute_routes_full`])
+            // skipped flag-lose Terminals schon immer; nur die Alternativ-
+            // Tabelle ließ sie bisher durch.
+            .filter(|r| terminal_flags.contains_key(&r.terminal_id))
+        {
+            acc.entry(r.terminal_id)
+                .and_modify(|best| {
+                    let better = if maximize {
+                        key(r) > key(best)
+                    } else {
+                        key(r) < key(best)
+                    };
+                    if better {
+                        *best = r;
+                    }
+                })
+                .or_insert(r);
+        }
+        acc
+    };
+    let buys: Vec<RouteLocation> = best_per_terminal(|r| r.buy_price, false)
+        .into_values()
+        .filter(|r| r.buy_price > 0.0)
         .map(|r| row_at(r, true))
-        // aggregiere pro Terminal: der Eintrag mit dem niedrigsten Preis
-        // (ein Terminal kann mehrmals vorkommen, wenn der Sweep mehrere
-        // Zeilen je Ware lieferte — Rohzeile ist 1:1 Terminal×Ware).
         .collect();
-    let sells: Vec<RouteLocation> = rows
-        .iter()
-        .filter(|r| r.commodity_id == commodity_id && r.sell_price > 0.0)
+    let sells: Vec<RouteLocation> = best_per_terminal(|r| r.sell_price, true)
+        .into_values()
+        .filter(|r| r.sell_price > 0.0)
         .map(|r| row_at(r, false))
         .collect();
 
@@ -1308,6 +1355,58 @@ mod tests {
 
         // Unbekannte Ware → None (kein leeres Rauschen).
         assert!(route_commodity_locations(&rows, &t, &names_of(&t), 99).is_none());
+    }
+
+    #[test]
+    fn route_commodity_locations_rejects_non_trade_terminal_types() {
+        // Regression BUG t_5a6706f7 (Stileron/Osoian Hides): die Alternativ-
+        // Tabelle zeigte Ghost-Zeilen von Terminals ohne Commodity-Handel —
+        // "Ship Weapons - …" (Item-Shop, buy 2530) für Osoian Hides (53) und
+        // "Refinery Shop - …"/"Dumper's Depot - …" (buy 6000) für Stileron
+        // (122). Diese Terminals haben KEINEN Eintrag in `terminal_flags`
+        // (der Map trägt nur `is_route_terminal_type`-Terminals: commodity/
+        // commodity_raw) und dürfen weder als Kauf- noch als Verkaufsort
+        // auftauchen — exakt so wie compute_routes_full sie für die Matrix
+        // bereits skippt. Ein legitimer Commodity-Shop bleibt in beiden
+        // Richtungen sichtbar.
+        let rows = vec![
+            // Osoian Hides (53): Ship-Weapons-Ghost + legitimer Kaufort.
+            row(53, 289, "Osoian Hides", 2530.0, 0.0), // Ship Weapons — NO flags
+            row(53, 665, "Osoian Hides", 283_500.0, 0.0), // Commodity Shop — flags
+            // Stileron (122): Refinery-/Dumper's-Ghosts + legitimer Verkaufsort.
+            row(122, 196, "Stileron", 6000.0, 0.0), // Refinery Shop — NO flags
+            row(122, 114, "Stileron", 6000.0, 0.0), // Dumper's Depot — NO flags
+            row(122, 787, "Stileron", 0.0, 130_000.0), // Commodity terminal — flags
+        ];
+        let t = meta_map(&[
+            (
+                665,
+                flags(false, false, false, "Pyro > Bloom > The Golden Riviera"),
+            ),
+            (787, flags(false, false, false, "Nyx > Delamar > Levski")),
+        ]);
+        let osoian = route_commodity_locations(&rows, &t, &names_of(&t), 53).unwrap();
+        assert!(
+            osoian.buys.iter().all(|b| b.terminal_id != 289),
+            "Ship-Weapons-Terminal (kein Route-Typ) darf nicht als Kaufort stehen"
+        );
+        assert_eq!(osoian.buys.len(), 1, "nur der echte Commodity-Shop bleibt");
+        assert_eq!(osoian.buys[0].terminal_id, 665);
+
+        let stileron = route_commodity_locations(&rows, &t, &names_of(&t), 122).unwrap();
+        assert!(
+            stileron
+                .buys
+                .iter()
+                .all(|b| b.terminal_id != 196 && b.terminal_id != 114),
+            "Refinery/Dumper's Depot (kein Route-Typ) dürfen nicht als Kaufort stehen"
+        );
+        assert!(
+            stileron.buys.is_empty(),
+            "im Feed nur Verkauf — keine Kauforte"
+        );
+        assert_eq!(stileron.sells.len(), 1);
+        assert_eq!(stileron.sells[0].terminal_id, 787);
     }
 
     #[test]

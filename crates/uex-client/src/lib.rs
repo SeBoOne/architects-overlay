@@ -183,6 +183,20 @@ impl UexProvider {
         self
     }
 
+    /// t_15e598e7 (Gegenprobe): Raw-Feed-Zeilen einer Ware — die UNMAPPTEN
+    /// UEX-Zeilen (`price_buy` = Spieler-Kaufpreis, `price_sell` = Spieler-
+    /// Verkaufspreis, Review Runde 1). Kein Cache, keine Mappung — genau
+    /// dafür gedacht, die Mappung in [`map_price_point`] live gegen den
+    /// Original-Feed zu verifizieren. Nicht vom UI genutzt.
+    pub async fn raw_price_rows_for_commodity(&self, id_commodity: u64) -> Result<Vec<PriceRow>> {
+        self.http
+            .get::<Vec<PriceRow>>(
+                "/commodities_prices",
+                &[("id_commodity".to_string(), id_commodity.to_string())],
+            )
+            .await
+    }
+
     /// Ensure the reference dataset for `kind` is usable in the local cache.
     /// Stale-First: fresh → nop; STALE BUT PRESENT → serve as-is (the
     /// background sync keeps it warm — the UI must NEVER wait for a refetch
@@ -1917,10 +1931,8 @@ impl UexProvider {
                 &[("id_terminal".to_string(), terminal_id.to_string())],
             )
             .await?;
-        let mut points = rows
-            .into_iter()
-            .map(|r| map_price_point(r, ""))
-            .collect::<Vec<_>>();
+        let commodity_points: Vec<PricePoint> =
+            rows.into_iter().map(|r| map_price_point(r, "")).collect();
         // Merge item prices (weapons/armor/shop items) so non-commodity
         // terminals show their shop inventories alongside commodities. This
         // is a *best-effort* enrich: a single malformed /items_prices row (or
@@ -1929,17 +1941,30 @@ impl UexProvider {
         // ganze Terminal-Tabelle runter).
         let item_rows: Vec<ItemPriceRow> = self
             .http
-            .get_optional(
+            .get_optional::<Vec<ItemPriceRow>>(
                 "/items_prices",
                 &[("id_terminal".to_string(), terminal_id.to_string())],
             )
             .await
             .unwrap_or_default()
             .unwrap_or_default();
-        points.extend(item_rows.into_iter().map(|r| map_item_price_point(r, "")));
+        let item_points: Vec<PricePoint> = item_rows
+            .into_iter()
+            .map(|r| map_item_price_point(r, ""))
+            .collect();
+        // v10: je Kind ein VOLLSTÄNDIGER Snapshot — Commodity- und Item-
+        // ID-Räume sind getrennt (Bug t_15e598e7: Item-Preise mit id_item
+        // landeten als „Ware" in der Alternativ-Tabelle; entfernte Waren
+        // blieben als verwaiste Zeilen stehen). Fehler beim Item-Store
+        // dürfen den Commodity-Store nicht rückgängig machen.
         self.cache
-            .store_terminal_prices(terminal_id, &points)
+            .store_terminal_prices(terminal_id, &commodity_points, "commodity")
             .map_err(map_cache_err)?;
+        self.cache
+            .store_terminal_prices(terminal_id, &item_points, "item")
+            .map_err(map_cache_err)?;
+        let mut points = commodity_points;
+        points.extend(item_points);
         Ok(points)
     }
 
@@ -2142,8 +2167,15 @@ fn none_if_empty(s: Option<String>) -> Option<String> {
 /// Map a `/commodities_prices` row (commodity- OR terminal-scoped — same wire
 /// shape) onto the seam [`PricePoint`]. `fallback_commodity` is used when the
 /// row omits the name (ageing API rows); the terminal name falls back to a
-/// readable id form.
-fn map_price_point(r: PriceRow, fallback_commodity: &str) -> PricePoint {
+/// readable id form. UEX-Feldsemantik (Review t_15e598e7, gegen UEX-eigene
+/// commodities_routes + Profit-Arithmetik belegt): `price_buy` IST der
+/// SPIELER-Kaufpreis (Spieler kauft dort — UEX-Route-Origin), `price_sell`
+/// der Spieler-Verkaufspreis (Spieler verkauft dort — Route-Destination).
+/// Live-Beleg Osoian Hides: The Golden Riviera (Route-Origin/Kauf)
+/// `price_buy=283500, price_sell=0`; Devlin Scrap & Salvage (Route-
+/// Destination/Verkauf) `price_sell=870000, price_buy=0`. Mappung daher
+/// DIREKT: buy=price_buy / sell=price_sell (incl. Status/Stock).
+pub fn map_price_point(r: PriceRow, fallback_commodity: &str) -> PricePoint {
     PricePoint {
         commodity: if r.commodity_name.is_empty() {
             if fallback_commodity.is_empty() {
@@ -2161,6 +2193,8 @@ fn map_price_point(r: PriceRow, fallback_commodity: &str) -> PricePoint {
             r.terminal_name
         },
         terminal_id: r.id_terminal,
+        // UEX price_buy = Spieler-Kaufpreis, price_sell = Spieler-Verkaufs-
+        // preis (Review t_15e598e7) — direkte Mappung, kein Tausch.
         sell_price: r.price_sell,
         buy_price: r.price_buy,
         sell_stock: r.scu_sell_avg,
@@ -2212,6 +2246,7 @@ pub mod private {
         StarSystemRow, TerminalRow, UserTradeRow,
     };
     pub use crate::http::DEFAULT_BASE_URL;
+    pub use crate::map_price_point;
 }
 
 #[cfg(test)]
