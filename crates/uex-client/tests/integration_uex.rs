@@ -1650,8 +1650,9 @@ async fn delete_offer_surfaces_http_error_no_retry() {
 
 /// R1 (t_9caac387): `DELETE /user_trades_remove/?id=…&is_production=1` — der
 /// Trade-Log-Delete geht als echtes DELETE raus (KEIN POST), trägt `id` +
-/// `is_production=1` als Query-Params und authentifiziert NUR über den
-/// `secret-key`-Header. Erfolg = `{"status":"ok"}` ohne data → Ok(()).
+/// `is_production=1` als Query-Params und authentifiziert über Bearer(api_key)
+/// + `secret-key`-Header (t_a91c184f: UEX verlangt den Bearer — secret-only
+/// → 403 „Authentication error“, live belegt). Erfolg = `{"status":"ok"}`.
 #[tokio::test]
 async fn remove_trade_deletes_via_user_trades_remove_with_secret_key() {
     use provider::DataProvider;
@@ -1662,6 +1663,7 @@ async fn remove_trade_deletes_via_user_trades_remove_with_secret_key() {
         .and(query_param("id", "4242"))
         .and(query_param("is_production", "1"))
         .and(header("secret-key", "my-super-secret-40"))
+        .and(header("authorization", "Bearer app-token"))
         .respond_with(json_response(
             r#"{"status":"ok","http_code":200,"data":null}"#,
         ))
