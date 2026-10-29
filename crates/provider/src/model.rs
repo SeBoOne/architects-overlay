@@ -552,7 +552,7 @@ pub struct AdvertisePayload {
     /// (noch) nicht — die Website sendet es, der Output kennt es: wir senden
     /// es analog als eigenes Feld, nicht gemappt auf `durability`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub quality: Option<u8>,
+    pub quality: Option<u16>,
     /// Offer-Laufzeit in Std.: 1|2|3|5|12|24|48|72|120|168|336|720.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hours_expiration: Option<u64>,
