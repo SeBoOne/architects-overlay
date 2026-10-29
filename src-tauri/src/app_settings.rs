@@ -426,24 +426,40 @@ pub fn settings_set_uex_secret_key(
     )
 }
 
-/// M2a-Fix (t_2f197d1c): Set (Some) or remove (None) the UEX-Username
-/// (exakt wie auf UEX registriert) — für den `marketplace_listings?username=`
-/// -Pull des eigenen Shops. Persists immediately.
+/// PW-1 (t_fbe40115): Username-Feld ENTFALLEN — der UEX-Username wird
+/// automatisch aus dem persönlichen Secret-Key ermittelt (`GET /user` mit
+/// `secret-key`-Header, `uex_client::fetch_username`) und in den Settings
+/// GECACHT (`set_uex_username`, interner Slot — nie vom Frontend geschrieben).
+/// 403/ungültiger Key → deutsche Meldung via `friendly()`.
 #[tauri::command]
-pub fn settings_set_uex_username(
-    state: tauri::State<SettingsState>,
+pub async fn settings_resolve_uex_username(
+    state: tauri::State<'_, SettingsState>,
     app: tauri::AppHandle,
-    sync: tauri::State<SyncNote>,
-    name: Option<String>,
-) -> SettingsSnapshot {
+    sync: tauri::State<'_, SyncNote>,
+) -> Result<SettingsSnapshot, String> {
+    let (secret, api_key) = {
+        let s = state.inner.lock().expect("settings lock");
+        (
+            s.uex_secret_key().map(str::to_owned),
+            s.uex_api_key().map(str::to_owned),
+        )
+    };
+    let Some(secret) = secret else {
+        return Err(
+            "Kein persönlicher Secret-Key gesetzt — Username kann nicht ermittelt werden.".into(),
+        );
+    };
+    let name = uex_client::fetch_username(api_key, &secret)
+        .await
+        .map_err(crate::trade::friendly)?;
     let mut s = state.inner.lock().expect("settings lock");
-    s.set_uex_username(name.filter(|n| !n.trim().is_empty()));
+    s.set_uex_username(Some(name));
     state.persist(&s);
-    SettingsSnapshot::from_settings(
+    Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),
         &sync.take(),
-    )
+    ))
 }
 
 /// M2b Sicherheitsmodell: `.swap` marketplace_confirm-Modus für

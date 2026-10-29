@@ -1044,6 +1044,27 @@ pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
     Ok(url)
 }
 
+/// PW-1 (t_fbe40115): Settings-Verknüpfungen — UEX-Seiten im Systembrowser.
+/// Nur Lesen/Verwalten auf uexcorp.space, nichts Schreibendes aus dem Overlay.
+#[tauri::command]
+pub fn open_uex_api_apps(app: AppHandle) -> Result<String, String> {
+    const URL: &str = "https://uexcorp.space/api/apps";
+    let _ = &app;
+    tauri_plugin_opener::open_url(URL, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(URL.to_string())
+}
+
+/// PW-1: Secret-Key-Verwaltung auf UEX (dort neu generieren/kopieren).
+#[tauri::command]
+pub fn open_uex_account(app: AppHandle) -> Result<String, String> {
+    const URL: &str = "https://uexcorp.space/account";
+    let _ = &app;
+    tauri_plugin_opener::open_url(URL, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(URL.to_string())
+}
+
 /// M3a: ein Listing-Foto als Base64-Data-URI holen (für den Angebots-Detail).
 /// Der CDN liefert `application/octet-stream` — Chromiums ORB blockt direkte
 /// <img>-Ladungen in der Webview (live belegt), daher proxied das Backend.

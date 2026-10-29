@@ -1761,10 +1761,43 @@ impl UexProvider {
 /// M3a: CDN-Listing-Foto als Data-URI holen. Der Webview-Kontext kann die
 /// Bilder NICHT direkt laden — der CDN ausliefert sie als
 /// `application/octet-stream`, was Chromiums ORB (Opaque Response Blocking)
-/// auf fremden Seiten blockiert (live belegt: `net::ERR_BLOCKED_BY_ORB`).
-/// Das Backend fetched therefore proxied → Base64-Data-URI. Hardening: nur
-/// `https://cdn.uexcorp.space/…`, Max. 2 MB, JPG/PNG-Magic-Bytes-Sniff.
+/// PW-1 (t_fbe40115): Account-Identität aus dem persönlichen Secret-Key
+/// ermitteln — `GET /user` mit `secret-key`-Header liefert den UEX-Account.
+/// Der Frontend-Username-Input ist entfallen: der Name wird hier auto-
+/// ermittelt, in den Settings gecacht und überall verwendet, wo previously
+/// das Username-Feld stand (`marketplace_listings?username=`, Mein-Shop).
+/// Kein Cache — Probe-Call, vom Settings-Resolver gerufen.
+pub async fn fetch_username(api_key: Option<String>, secret_key: &str) -> Result<String> {
+    let http = UexHttpClient::new(DEFAULT_BASE_URL, api_key, None, DEFAULT_MIN_INTERVAL)?;
+    let user: serde_json::Value = http.get_user("/user", &[], Some(secret_key)).await?;
+    username_from_user_payload(&user)
+        .ok_or_else(|| ProviderError::Json("UEX /user lieferte keinen Username".into()))
+}
+
+/// PW-1: Username aus dem `/user`-Payload ziehen. UEX liefert die
+/// Account-Identität je nach Endpoint-Form als Objekt oder 1-elementiges
+/// Array — beides akzeptieren, Schlüssel `username` (Fallback `name`).
+pub fn username_from_user_payload(user: &serde_json::Value) -> Option<String> {
+    let record = match user {
+        serde_json::Value::Object(_) => user,
+        serde_json::Value::Array(rows) => rows.first()?,
+        _ => return None,
+    };
+    ["username", "name"]
+        .iter()
+        .find_map(|k| record.get(k).and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .map(str::to_owned)
+}
+
 pub async fn fetch_listing_photo(url: &str) -> Result<String> {
+    // M3a: CDN-Listing-Foto als Data-URI holen. Der Webview-Kontext kann die
+    // Bilder NICHT direkt laden — der CDN ausliefert sie als
+    // `application/octet-stream`, was Chromiums ORB (Opaque Response Blocking)
+    // auf fremden Seiten blockiert (live belegt: `net::ERR_BLOCKED_BY_ORB`).
+    // Das Backend fetched therefore proxied → Base64-Data-URI. Hardening: nur
+    // `https://cdn.uexcorp.space/…`, Max. 2 MB, JPG/PNG-Magic-Bytes-Sniff.
     use base64::Engine as _;
     const MAX_BYTES: usize = 2 * 1024 * 1024;
     let parsed = reqwest::Url::parse(url.trim())
@@ -3280,6 +3313,34 @@ mod tests {
         assert!(
             result.is_ok(),
             "type=item mit id_category muss validieren: {result:?}"
+        );
+    }
+
+    /// PW-1 (t_fbe40115): Username-Extraktion aus dem `/user`-Payload —
+    /// Objekt- UND Array-Form, Trim, Leer-String → None.
+    #[test]
+    fn username_from_user_payload_object_and_array() {
+        let obj = serde_json::json!({"id": 7, "username": "  sebo_one ", "email": "x"});
+        assert_eq!(
+            crate::username_from_user_payload(&obj).as_deref(),
+            Some("sebo_one")
+        );
+        let arr = serde_json::json!([{"username": "gold87989566"}]);
+        assert_eq!(
+            crate::username_from_user_payload(&arr).as_deref(),
+            Some("gold87989566")
+        );
+        assert_eq!(
+            crate::username_from_user_payload(&serde_json::json!({})),
+            None
+        );
+        assert_eq!(
+            crate::username_from_user_payload(&serde_json::json!({"username": "   "})),
+            None
+        );
+        assert_eq!(
+            crate::username_from_user_payload(&serde_json::json!(null)),
+            None
         );
     }
 
