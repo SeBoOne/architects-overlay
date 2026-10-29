@@ -3165,7 +3165,6 @@ mod tests {
                 }),
                 cache: Arc::new(Cache::open_in_memory().unwrap()),
                 tracker: Arc::new(SyncTracker::default()),
-                wiki_sync: None,
                 write_gate: Arc::new(WriteGate::new()),
             })
             .build(tauri::test::mock_context(noop_assets()))
