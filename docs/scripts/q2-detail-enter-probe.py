@@ -284,8 +284,21 @@ async def main():
         check("qe-advert-opens", opened is True and adv is True)
         h_open = await shell_h()
         mh_open = await shell_maxh()
-        check("qe-shell-taller-with-popup", px(mh_open) > px(mh_before) + 40,
+        # RB (t_94484d0c): computed max-height allein reicht NICHT (Q2-Defekt:
+        # cap 1117.5→1222.5, aber rect 429→429). Die echte Box muss wachsen.
+        check("qe-shell-taller-with-popup", px(mh_open) > px(mh_before) + 40 and px(h_open) > px(h_before) + 300,
               f"maxHeight before={mh_before} open={mh_open} (rect {h_before}->{h_open})")
+        # RB: Description-Textarea in voller Popup-Breite (.rtext 130px fix
+        # muss container-seitig übersteuert sein).
+        tw = await js("(function(){var t=document.querySelector('.advert-modal textarea'); var m=document.querySelector('.advert-modal'); if(!t||!m) return null; return Math.round(t.getBoundingClientRect().width)+'/'+Math.round(m.getBoundingClientRect().width);})()")
+        if tw and '/' in tw:
+            a, b = tw.split('/')
+            check("qe-desc-full-width", float(a) >= float(b) * 0.8, f"textarea/modal width {tw}")
+        else:
+            check("qe-desc-full-width", False, f"width probe: {tw}")
+        # RB: Formular einmal sichtbar — Modal-Unterkante innerhalb der Shell.
+        vis = await js("(function(){var m=document.querySelector('.advert-modal'); var f=document.querySelector('.advert-foot'); if(!m) return null; return {m: Math.round(m.getBoundingClientRect().bottom), s: Math.round(m.parentElement.getBoundingClientRect().bottom), foot: f? Math.round(f.getBoundingClientRect().bottom):null};})()") or {}
+        check("qe-modal-inside-shell", vis.get("m", 10**9) <= vis.get("s", 0) + 2, f"bottom modal={vis.get('m')} shell={vis.get('s')}")
         await shot("q2-qe-shell-tall-popup.png")
         # schließen (Esc) → Restore
         for d in (True, False):

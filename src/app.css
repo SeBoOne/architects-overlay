@@ -107,9 +107,32 @@ html[data-palette="bloom"] {
   color-scheme: dark;
 }
 
-/* Q2 (t_56d5264a): Listing-Formular offen → Shell temporär höher. */
+/* Q2 (t_56d5264a): Listing-Formular offen → Shell temporär höher.
+   RB (t_94484d0c, Root-Cause-Fix): das Erhöhen von --h-max allein hebt nur
+   das MAX-Height-CAP — die Shell-Höhe ist content-driven (Probe: computed
+   max-height 1117.5→1222.5px, aber Bounding-Rect 429px→429px, unverändert).
+   Das Popup (.advert-scrim, position:absolute inset:0) trägt nichts zur
+   Content-Höhe bei → die Shell wuchs nie. FIX: bei offenem Formular die
+   Shell-Box AUF DIE vollem nutzbare Höhe setzen (height statt Cap); beim
+   Schließen fällt die Klasse weg → alte Größe automatisch. Kein set_size,
+   kein Hyprland-Dispatch — das Overlay-Fenster spannt ohnehin den ganzen
+   Monitor (overlay.rs place_on_pointer_monitor), die sichtbare Höhe ist
+   die Shell-Box. Gilt konsistent für beide Formular-Popups (advert + trk). */
 .shell-advert {
   --h-max: calc(100vh - var(--pad-top) - 1.5vh);
+  height: calc(var(--h-max) / var(--ui-scale, 1));
+}
+html[data-window="spotlight"] .shell-advert {
+  height: calc((var(--h-max) - var(--pad-top) - 2vh) / var(--ui-scale, 1));
+}
+
+/* RB (t_94484d0c): Description-Textarea nutzt die Breite nicht — Root-Cause:
+   .rtext { width:130px } am Textarea-Element selbst; ein eigenes width
+   übersteuert align-items:stretch aus dem QZ-Flex-Layout. Fix über den
+   Container erzwingen (Spezifität 0,2,0 > .rtext 0,1,0), statt Einzel-
+   klassen zu bauen. */
+.advert-modal textarea {
+  width: 100%;
 }
 
 /* --------------------------- Basis --------------------------------------- */

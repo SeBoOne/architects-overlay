@@ -3969,7 +3969,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <svelte:window onkeydown={onKey} />
 
 <main class="pal-root" bind:clientWidth={palW}>
-	<div class="shell" class:in-detail={inDetail} class:shell-advert={advertOpen}>
+	<div class="shell" class:in-detail={inDetail} class:shell-advert={advertOpen || trkOpen}>
 
 												<!-- PT: Formular „Trade erfassen" als modales Popup.
 											     QW-5 (t_28bfd027): der frühere confirm-scrim war position:fixed
