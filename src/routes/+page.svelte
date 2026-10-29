@@ -56,7 +56,7 @@
 	import SelectCombo from '../lib/SelectCombo.svelte';
 	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
 	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
-	import { suggestShips, isSnubShip } from '../lib/hangar_ships';
+	import { suggestShips, isSnubShip, SHIP_CATALOG } from '../lib/hangar_ships';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -902,12 +902,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	const hangarModOpts = $derived(hangarModuleSuggest().map((n) => ({ value: n, label: n })));
 	function hangarPickName(v: string) {
-		const s = hangarSugs.find((x) => x.name === v);
+		// R2: Direkt-Lookup nach exaktem Namen — NICHT über hangarSugs (das
+		// Binding hat den Wert beim onselect bereits auf den Label gesetzt,
+		// die alte Suggest-Liste passt dann nicht mehr zum Filter).
+		const q = v.trim().toLowerCase();
+		const reg = hangarItems.find((i) => i.entity_type !== 'module' && i.name.toLowerCase() === q);
+		const cat = SHIP_CATALOG.find((s) => s.name.toLowerCase() === q);
 		hangarForm = {
 			...hangarForm,
 			name: v,
-			manufacturer: s?.manufacturer || hangarForm.manufacturer,
-			entity_type: s ? s.kind : hangarForm.entity_type
+			manufacturer: reg?.manufacturer || cat?.manufacturer || hangarForm.manufacturer,
+			entity_type: reg ? reg.entity_type : cat ? cat.kind : hangarForm.entity_type
 		};
 	}
 
