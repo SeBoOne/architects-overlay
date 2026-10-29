@@ -270,6 +270,9 @@ pub struct OwnOffersResponse {
     pub offers: Vec<provider::Offer>,
     pub note: Option<String>,
     pub key_set: bool,
+    /// QZ (t_ab10109f): lokal persistente, noch nicht freigegebene Listings
+    /// (nach 1:1-Abgleich gegen `offers` — freigegebene sind entfernt).
+    pub pending: Vec<cache::PendingOffer>,
 }
 
 /// „Mein Shop" — letzte Trades (M2a): letzte-5-Logik übernimmt die UI (der
@@ -945,17 +948,31 @@ async fn get_own_offers_cmd(
     // Datenweg überein.
     let cache_fresh = state.cache.own_offers_fresh_for(username).unwrap_or(false);
     match state.provider.my_offers(username.to_string()).await {
-        Ok(offers) => Ok(OwnOffersResponse {
-            source: if cache_fresh {
-                "cache".into()
-            } else {
-                "live".into()
-            },
-            fetched_at: now_unix(),
-            offers,
-            note: None,
-            key_set,
-        }),
+        Ok(offers) => {
+            // QZ (t_ab10109f): 1:1-Abgleich — ein lokaler pending-Eintrag, der
+            // in der API-Antwort auftaucht, ist freigegeben → lokal entfernen.
+            // Im Fehlerpfad (unten) NICHT reconcilen: ein Netz-/Auth-Fehler
+            // ist kein Freigabe-Beweis.
+            let pending = state
+                .cache
+                .pending_offers_reconcile(&offers)
+                .unwrap_or_else(|e| {
+                    eprintln!("pending_offers reconcile failed: {e}");
+                    Vec::new()
+                });
+            Ok(OwnOffersResponse {
+                source: if cache_fresh {
+                    "cache".into()
+                } else {
+                    "live".into()
+                },
+                fetched_at: now_unix(),
+                offers,
+                note: None,
+                key_set,
+                pending,
+            })
+        }
         Err(e) => {
             // Offline / Auth: letzter Snapshot NUR, wenn er zu genau diesem
             // Username gehört (username-bewusst wie der Fresh-Pfad). Ein nach
@@ -969,6 +986,9 @@ async fn get_own_offers_cmd(
                     offers: snapshot,
                     note: Some(friendly(e)),
                     key_set,
+                    // Ohne gültige API-Antwort nicht reconcilen — der lokale
+                    // pending-Stand bleibt unverändert sichtbar.
+                    pending: state.cache.pending_offers_snapshot().unwrap_or_default(),
                 }),
                 _ => Err(friendly(e)),
             }
@@ -1146,6 +1166,17 @@ pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
     Ok(url)
 }
 
+/// QZ (t_ab10109f): „Trades verwalten" im Trades-Reiter — der Manager-HOME-Tab
+/// (dort sitzen die Trade-Verwaltungsaktionen), NICHT der Listings-Tab.
+#[tauri::command]
+pub fn open_marketplace_trades_home(app: AppHandle) -> Result<String, String> {
+    const URL: &str = "https://uexcorp.space/marketplace/manage/tab/home/";
+    let _ = &app;
+    tauri_plugin_opener::open_url(URL, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(URL.to_string())
+}
+
 /// PW-1 (t_fbe40115): Settings-Verknüpfungen — UEX-Seiten im Systembrowser.
 /// Nur Lesen/Verwalten auf uexcorp.space, nichts Schreibendes aus dem Overlay.
 #[tauri::command]
@@ -1253,12 +1284,38 @@ async fn advertise_offer_cmd(
     state.write_gate.try_acquire(now)?;
     let res = state
         .provider
-        .advertise_offer(payload)
+        .advertise_offer(payload.clone())
         .await
         .map_err(friendly)?;
     // Nur erfolgreiche Writes registrieren (Fehler belegen das Fenster nicht).
     state.write_gate.record_write(now);
+    // QZ (t_ab10109f): Submit-Payload lokal als „wartet auf Freigabe"
+    // persistieren — UEX listet wartende Ads in keinem Endpoint, der Mein
+    // Shop zeigt den Eintrag bis zur Freigabe (Reconciliation beim Pull).
+    // Best-effort: ein Cache-Fehler darf das ANLEGEN nicht scheitern lassen
+    // (das Listing existiert auf UEX trotzdem).
+    if let Err(e) = state.cache.store_pending_offer(
+        &payload.title,
+        &payload.operation,
+        payload.price as f64,
+        &payload.currency,
+        &payload.unit,
+        payload.in_stock,
+        payload.location.as_deref().unwrap_or(""),
+    ) {
+        eprintln!("pending_offers store failed (Listing lebt auf UEX trotzdem): {e}");
+    }
     Ok(res)
+}
+
+/// QZ (t_ab10109f): lokalen pending-Eintrag ENTFERNEN (Nutzer-Aktion — kein
+/// Auto-Delete; z. B. nach abgelehnter Freigabe auf UEX).
+#[tauri::command]
+pub fn pending_offers_remove(state: State<'_, TradeState>, id: u64) -> Result<(), String> {
+    state
+        .cache
+        .pending_offers_remove(id)
+        .map_err(|e| format!("Cache-Fehler: {e}"))
 }
 
 /// Tauri-Command: Anlegen (M2b). Validierung der Pflichtfelder liegt im

@@ -166,6 +166,23 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		offers: Offer[];
 		note: string | null;
 		key_set: boolean;
+		// QZ (t_ab10109f): lokale pending-Listings nach dem 1:1-Abgleich.
+		pending: PendingOfferView[];
+	};
+	// QZ: lokale pending-Listings (cache-Tabelle pending_offers) — Mirror von
+	// cache::PendingOffer. „Freigabe unbestätigt" leitet die UI aus created_at
+	// (> 24 h) ab.
+	type PendingOfferView = {
+		id: number;
+		title: string;
+		operation: string;
+		price: number;
+		currency: string;
+		unit: string;
+		quantity: number;
+		location: string;
+		status: string;
+		created_at: number;
 	};
 	type NegotiationsResponse = {
 		source: 'cache' | 'live' | 'offline';
@@ -1320,6 +1337,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let shopUser = $derived(cfg?.uex_username?.trim() ?? '');
 	let myOffers = $state<Offer[]>([]);
 	let myNegotiations = $state<Negotiation[]>([]);
+	// QZ (t_ab10109f): lokale pending-Listings (cache pending_offers) — im
+	// Mein Shop zusätzlich zu den API-Listings sichtbar.
+	let shopPending = $state<PendingOfferView[]>([]);
 	let shopLoading = $state(false);
 	let shopSource = $state<'cache' | 'live' | 'offline'>('live');
 	let shopNote = $state<string | null>(null);
@@ -1336,6 +1356,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			shopNote = null;
 			myOffers = [];
 			myNegotiations = [];
+			shopPending = [];
 			return;
 		}
 		// PW-1: ohne ermittelten Username (Secret-Key frisch gesetzt, /user
@@ -1372,6 +1393,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (results[0].status === 'fulfilled') {
 			const r = results[0].value;
 			myOffers = r.offers;
+			// QZ (t_ab10109f): pending = lokale Einträge NACH dem 1:1-Abgleich
+			// (freigegebene sind im Backend bereits entfernt).
+			shopPending = r.pending ?? [];
 			shopSource = r.source;
 			shopKeySet = r.key_set;
 			if (r.note) shopNote = r.note;
@@ -1383,7 +1407,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// API 2.0 nicht abrufbar — statt eines stummen leeren Abschnitts
 			// erklärt der Hinweis das und bietet den Direkt-Link an (der
 			// shopCreatedUrl-Deep-Link aus der Create-Aktion zeigt es sofort).
-			if (!myOffers.length && !shopNote) {
+			// API 2.0 nicht abrufbar — QZ (t_ab10109f): das Overlay speichert
+			// frisch angelegte Listings lokal (pending_offers) und zeigt sie
+			// bis zur Freigabe als „wartet auf Freigabe"; der 1:1-Abgleich
+			// entfernt den Eintrag, sobald UEX das Listing listet.
+			if (!myOffers.length && !shopPending.length && !shopNote) {
 				shopNote =
 					'Keine eigenen aktiven Listings. Wartet ein Listing auf Freigabe, liefert die UEX-API es erst NACH der Freigabe (Endpoint listet nur aktive Ads) — es erscheint dann automatisch hier.';
 			}
@@ -1801,24 +1829,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (o.expires <= Math.floor(Date.now() / 1000)) return 'abgelaufen';
 		return 'läuft ab ' + new Date(o.expires * 1000).toLocaleDateString('de-DE');
 	}
-	// M3a: Mein-Shop-Filter (Alle/Aktiv/Wartend) — clientseitig, denn UEX
-	// /marketplace_listings bietet keinen Status-Query-Parameter (live geprüft:
-	// nur username=; Freigabe steckt im Feld date_approved, 0 = wartend).
-	let shopFilter = $state<'all' | 'active' | 'pending'>('all');
-	const shopOffersFiltered = $derived(
-		shopFilter === 'all'
-			? myOffers
-			: myOffers.filter((o) => (shopFilter === 'pending' ? !o.approved : o.approved))
-	);
-	// Letzte 5 Marktplatz-Trades (neueste zuerst, t_350c4300 B2) — Aktivität
-	// nach date_modified (letzte Interaktion, inkl. Abschluss), Fallback auf
-	// date_added. Die letzten-5-Logik liegt laut Entscheidung in der UI; der
-	// Cache liefert den vollen Verlauf.
-	const recentNegotiations = $derived(
-		[...myNegotiations]
-			.sort((a, b) => (b.date_modified || b.date_added) - (a.date_modified || a.date_added))
-			.slice(0, 5)
-	);
+	// QZ (t_ab10109f): Filter „Aktiv/Wartend" entfernt — UEX kann wartende
+	// Listings nicht per API liefern; Wartende kommen jetzt lokal (shopPending)
+	// und sind immer sichtbar, ein Filter darüber ist sinnlos.
+	// QZ (t_ab10109f): „Letzte 5 Trades“-Liste aus Mein Shop entfernt — der
+	// Trade-Log-Reiter (PT) ist die einzige Stelle dafür. dealStatus/dealRole
+	// bleiben dort (Deals-Liste) in Gebrauch.
 	// Status-Zeile eines Deals (Marktplatz-Bezug statt Commodity-Trace):
 	// abgeschlossen = deal_value + date_closed, sonst laufende Verhandlung.
 	function dealStatus(n: Negotiation): string {
@@ -1848,6 +1864,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// verwaltet der Nutzer seine Listings (und sieht die Deals dazu).
 			// Login macht er selbst im Browser.
 			await invoke<string>('open_marketplace_trades');
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
+	// QZ (t_ab10109f): Trades-Reiter → „Trades verwalten“ öffnet den Manager-
+	// HOME-Tab (dort sitzen die Trade-Verwaltungsaktionen) — NICHT listings.
+	async function openMyTradesDeepLink() {
+		try {
+			await invoke<string>('open_marketplace_trades_home');
+		} catch (e) {
+			shopErr = String(e);
+		}
+	}
+	// QZ (t_ab10109f): lokalen pending-Eintrag entfernen (Nutzer-Aktion).
+	async function removePendingOffer(id: number) {
+		try {
+			await invoke('pending_offers_remove', { id });
+			shopPending = shopPending.filter((p) => p.id !== id);
 		} catch (e) {
 			shopErr = String(e);
 		}
@@ -4957,7 +4991,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="mbar">
 							<span class="m-lbl">Deals</span>
 							<span class="chip" onclick={() => void loadDeals(true)}>Aktualisieren</span>
-							<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
+							<span class="chip" title="Eigene Trades im UEX-Manager öffnen (Login im Browser)" onclick={openMyTradesDeepLink}>Trades verwalten ↗</span>
 						</div>
 						<!-- MQ (t_d6ff5212): Deal-Einstieg sichtbar machen — Deals KANN das
 						     Overlay nicht starten (API hat kein POST /marketplace_negotiations).
@@ -5093,16 +5127,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												</div>
 											{/if}
 											<div class="mbar2" style="margin-top: 10px">
-													<span class="m-lbl">Eigene Offers ({myOffers.length})</span>
-													<!-- M3a: Filter Alle/Aktiv/Wartend (kleine Chips) — pending
-													     Listings (date_approved = 0) bleiben sichtbar statt
-													     unsichtbar zu sein, bis UEX sie freigibt. -->
-													<button type="button" class="chip" class:is-on={shopFilter === 'all'} onclick={() => (shopFilter = 'all')}>Alle</button>
-													<button type="button" class="chip" class:is-on={shopFilter === 'active'} onclick={() => (shopFilter = 'active')}>Aktiv</button>
-													<button type="button" class="chip" class:is-on={shopFilter === 'pending'} onclick={() => (shopFilter = 'pending')}>Wartend</button>
-													<span class="m-spacer"></span>
-													<span class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
-													<span class="chip" title="Marketplace auf uexcorp.space öffnen" onclick={() => void openListingDeepLink(null)}>Im Browser öffnen ↗</span>
+													<span class="m-lbl">Eigene Offers ({myOffers.length}{shopPending.length ? ` + ${shopPending.length} wartend` : ''})</span>
+															<!-- QZ (t_ab10109f): Filter Alle/Aktiv/Wartend ENTFERNT — UEX
+															     kann wartende Listings nicht per API liefern; Wartende
+															     kommen lokal (pending_offers) und sind immer sichtbar. -->
+															<span class="m-spacer"></span>
+															<span class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
+															<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
 												</div>
 												{#if advertOpen}
 												<!-- M3a: das „Neues Listing“-Formular als modales Popup
@@ -5268,23 +5299,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	title="Verborgenes Listing erscheint erst nach manuellem UEX-Approval"
 																>{advertForm.hidden ? 'Ja' : 'No'}</button>
 															</div>
-															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
+															<div class="mbar2 advert-desc-row" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl" style="align-self: flex-start; padding-top: 6px">Beschreibung</span>
-																<!-- MQ (t_d6ff5212): mehrzeiliges Textfeld (autogrow). API-Beleg
+																<!-- MQ (t_d6ff5212): mehrzeiliges Textfeld. API-Beleg
 																     [POST /marketplace_advertise Doku]: description string(65535),
 																     Newlines werden nicht eingeschränkt → \n wird 1:1 durchgereicht
-																     (Rust String, JSON-Encoder escaped sauber). -->
+																     (Rust String, JSON-Encoder escaped sauber).
+																     QZ (t_ab10109f): flex-growt in den freien Popup-Raum
+																     (Höhe aus dem Flex-Layout, kein Autogrow-oninput mehr). -->
 																<textarea
 																	class="rtext advert-desc"
 																	rows="3"
 																	placeholder="Freitext, mehrzeilig (Markdown ok, max. 65.535 Zeichen) — Enter = neue Zeile"
 																	maxlength="65535"
 																	bind:value={advertForm.description}
-																	oninput={(e) => {
-																		const el = e.currentTarget;
-																		el.style.height = 'auto';
-																		el.style.height = el.scrollHeight + 'px';
-																	}}
 																></textarea>
 																{#if advertErrors.description}<span class="chip warn" style="margin-left: 4px">{advertErrors.description}</span>{/if}
 															</div>
@@ -5343,9 +5371,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	</div>
 																</div>
 												{/if}
-												{#if shopOffersFiltered.length}
-							<div class="mlist">
-								{#each shopOffersFiltered as o, i (o.id)}
+												{#if myOffers.length || shopPending.length}
+												<div class="mlist">
+												<!-- QZ (t_ab10109f): lokale pending-Listings (Status
+												„wartet auf Freigabe", nach 24 h „Freigabe unbestätigt")
+												über den API-Listings — kein Auto-Delete, Entfernen nur
+												explizit durch den Nutzer. -->
+												{#each shopPending as p (p.id)}
+												<div
+												class="mrow"
+												role="option"
+												aria-selected={false}
+												title="Lokal gespeichert — UEX listet wartende Ads nicht per API; nach der Freigabe erscheint das Listing beim nächsten Pull als aktives Listing."
+												>
+												<div class="m-op {p.operation}">{p.operation === 'sell' ? 'WTS' : 'WTB'}</div>
+												<div class="m-main">
+													<div class="m-title">{p.title}</div>
+													<div class="m-sub">{p.location || '—'} · seit {new Date(p.created_at * 1000).toLocaleString('de-DE')}</div>
+													<span class="chip warn" title={p.created_at < Date.now() / 1000 - 24 * 3600 ? 'Das Listing taucht seit über 24 h nicht in der UEX-API auf — Freigabe unbestätigt (evtl. abgelehnt). Prüfe es im Listings-Manager.' : 'UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.'}>{p.created_at < Date.now() / 1000 - 24 * 3600 ? 'Freigabe unbestätigt' : 'wartet auf Freigabe'}</span>
+												</div>
+												<div class="m-right">
+													<div class="m-price {p.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(p.price)}</div>
+													<div class="m-meta">{fmtQty(p.quantity)} {p.unit || 'unit'}</div>
+												</div>
+												<div class="m-right" style="gap: 4px">
+													<button type="button" class="btn-ghost" title="Lokalen Eintrag entfernen (nötig, falls UEX das Listing abgelehnt hat)" onclick={() => void removePendingOffer(p.id)}>Entfernen</button>
+												</div>
+												</div>
+												{/each}
+												{#each myOffers as o, i (o.id)}
 									<div
 										class="mrow"
 										role="option"
@@ -5381,58 +5435,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{:else}
 							<div class="row-empty" style="padding: 14px 16px">
-								{#if shopFilter !== 'all' && myOffers.length}
-									Keine Offers im Filter „{shopFilter === 'pending' ? 'Wartend' : 'Aktiv'}“.
-								{:else}
 									{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Kein Username ermittelt — Secret-Key in den Einstellungen (F12) prüfen.'}
-								{/if}
-							</div>
+								</div>
 						{/if}
-						<div class="mbar2" style="margin-top: 14px">
-							<span class="m-lbl">Letzte 5 Marktplatz-Trades</span>
-							<span class="m-spacer"></span>
-							<!-- t_350c4300 B3: alle „Listings verwalten"-Buttons öffnen exakt
-							     den Manager-Listings-Tab (Backend open_marketplace_trades);
-							     Login macht der Nutzer selbst im Browser. -->
-							<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
-						</div>
-						{#if recentNegotiations.length}
-							<div class="mlist">
-								{#each recentNegotiations as n (n.id)}
-									<!-- PP t_e2cdb571 (1): eigene trow-Klasse — die Offer-Grid-Spalten
-									     (26px Badge + 44px Op) passten nicht zur 3-Kinder-Struktur,
-									     was Op-Chip in den Badge-Slot und Text in 44px quetschte. -->
-									<div
-										class="mrow trow"
-										role="option"
-										title="Marktplatz-Deal auf uexcorp.space öffnen (Listing-Seite)"
-										onclick={() => void openListingDeepLink(n.listing_slug)}
-									>
-										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? 'Verkauf' : 'Kauf'}</div>
-										<div class="m-main">
-											<div class="m-title">{n.listing_title}</div>
-											<div class="m-sub">
-												{n.is_listing_advertiser
-													? `Gegenüber ${n.client_username || n.client_name || '—'} (Käufer)`
-													: `Gegenüber ${n.advertiser_username || n.advertiser_name || '—'} (Anbieter)`}
-											</div>
-										</div>
-										<div class="m-right">
-											<div class="m-price {dealRole(n)}">{fmtPrice(n.deal_value ?? n.price)} <span class="m-meta">/{n.unit || 'unit'}</span></div>
-											<div class="m-meta">{dealStatus(n)}</div>
-										</div>
-									</div>
-								{/each}
-							</div>
-							<div class="m-foot">
-								<span>Zeige {recentNegotiations.length} von {myNegotiations.length} Marktplatz-Trades · Einzeldeal-Deep-Link bei UEX nicht dokumentiert → Listing-Seite im Browser.</span>
-								<span class="src">UEX Corp</span>
-							</div>
-												{:else}
-													<div class="row-empty" style="padding: 14px 16px">Noch keine Marktplatz-Trades (Verhandlungen/Abschlüsse) im Verlauf.</div>
-												{/if}
-											{/if}
-											<!-- D3 (t_10be9255): 2-Schritt-Bestätigung als MODALES Popup über der
+						<!-- QZ (t_ab10109f): „Letzte 5 Marktplatz-Trades" ENTFERNT — die
+						     Liste gehört in den Trade-Log-Reiter (PT), sie doppelt sich
+						     hier nicht mehr. Mein Shop zeigt nur Offers (+ lokale pending). -->
+						{/if}
+						<!-- D3 (t_10be9255): 2-Schritt-Bestätigung als MODALES Popup über der
 													     Eingabemaske (dunkler Scrim). Vorher inline im Pane → auf dem
 													     Hauptbildschirm aus dem Fenster gelaufen (Buttons nicht erreich-
 													     bar). Jetzt: Karte mit Zusammenfassung + Bestätigen/Abbrechen,

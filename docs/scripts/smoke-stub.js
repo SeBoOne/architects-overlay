@@ -173,8 +173,16 @@ window.__TAURI_INTERNALS__ = {
 					fetched_at: Math.floor(Date.now() / 1000),
 					offers: window.__SHOP_OFFERS__,
 					note: window.__SHOP_OFFERS_NOTE__,
-					key_set: stubState.uex_api_key_set
+					key_set: stubState.uex_api_key_set,
+					// QZ (t_ab10109f): lokale pending-Listings nach dem 1:1-Abgleich.
+					pending: window.__SHOP_PENDING__ || []
 				};
+			}
+			case 'pending_offers_remove': {
+				// QZ: lokalen pending-Eintrag entfernen.
+				const pid = Number((a && a.id) || 0);
+				window.__SHOP_PENDING__ = (window.__SHOP_PENDING__ || []).filter((p) => p.id !== pid);
+				return null;
 			}
 			case 'get_my_trades': {
 				// M2a Mein Shop — Trade-Verlauf (user-scoped). Commodity-seitig
@@ -352,6 +360,9 @@ window.__TAURI_INTERNALS__ = {
 				return 'https://uexcorp.space/marketplace/item/info/' + encodeURIComponent(a.slug || '');
 			case 'open_marketplace_trades':
 				return 'https://uexcorp.space/marketplace/';
+			case 'open_marketplace_trades_home':
+				// QZ (t_ab10109f): „Trades verwalten" → Manager-HOME-Tab.
+				return 'https://uexcorp.space/marketplace/manage/tab/home/';
 			case 'get_prices': {
 				const name = String(a.commodity || '');
 				const now = Math.floor(Date.now() / 1000);

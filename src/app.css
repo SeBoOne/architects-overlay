@@ -2073,10 +2073,9 @@ html[data-window="spotlight"] .shell {
 /* MQ (t_d6ff5212): mehrzeilige Beschreibung im Anlegen-Popup — autogrow
    per oninput (height=auto→scrollHeight), hier nur die Basis.
    UEX-API-Beleg: description string(65535), Newlines erlaubt. */
+/* QZ (t_ab10109f): Basis-Eigenschaften der Beschreibung — Wachstum/Höhe
+   kommt aus .advert-pane .advert-desc (Flex-Layout). */
 .advert-desc {
-  flex: 1;
-  min-height: 64px;
-  max-height: 220px;
   resize: vertical;
   overflow-y: auto;
   line-height: 1.45;
@@ -2084,12 +2083,48 @@ html[data-window="spotlight"] .shell {
 }
 
 /* Der Formular-Body (pane-error/mlist) trägt die interne Scroll-Region —
-   der mbar2-Fuß (Buttons) bleibt außerhalb fixiert über flex. */
+   der mbar2-Fuß (Buttons) bleibt außerhalb fixiert über flex.
+   QZ (t_ab10109f): der INHALT füllt die volle Popup-Höhe — die Pane ist
+   eine flex-Spalte, das mlist wächst mit (min-height 100 %), die
+   Beschreibung flex-growt und die Sektionen verteilen sich; erst bei
+   Überlauf scrollt die Pane intern. */
 .advert-pane {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   scrollbar-width: thin;
+}
+
+/* QZ: das Formular-mlist füllt die Pane (auch wenn der Inhalt kleiner ist) —
+   die mbar2-Sektionen stehen mit gap verteilt, der advert-foot sitzt unten. */
+.advert-pane > .mlist {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  /* QZ (t_ab10109f): globales .mlist-Cap (max-height: min(54vh, 400px))
+     aufheben — genau das hielt den Formular-Inhalt klein/oben trotz
+     vollem Popup. Die Pane ist die Scroll-Region, nicht das mlist. */
+  max-height: none;
+}
+
+/* QZ: Beschreibung flex-growt in den freien Raum (kein max-height-Cap mehr;
+   Autogrow-oninput entfernt — die Höhe kommt aus dem Flex-Layout). */
+.advert-pane .advert-desc-row {
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  min-height: 96px;
+}
+
+.advert-pane .advert-desc {
+  flex: 1 1 auto;
+  height: auto;
+  max-height: none;
+  min-height: 96px;
 }
 
 /* QW-5 (t_28bfd027): „Trade erfassen“-Popup — shell-anchored wie das

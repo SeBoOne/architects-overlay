@@ -71,6 +71,8 @@ pub fn run() {
             trade::marketplace_confirm_mode,
             trade::open_marketplace_listing,
             trade::open_marketplace_trades,
+            trade::open_marketplace_trades_home,
+            trade::pending_offers_remove,
             trade::open_uex_api_apps,
             trade::open_uex_account,
             trade::open_created_listing,
