@@ -1703,6 +1703,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	async function sendChat() {
 		if (chatBusy || !tradesDeal) return;
+		// QW-4 (t_28bfd027): abgeschlossener Deal → kein Senden (UI-Gate;
+		// das Backend lehnt den Write zusätzlich ab).
+		if (tradesDeal.date_closed) {
+			chatErr = 'Trade abgeschlossen — Verlauf nur lesbar.';
+			return;
+		}
 		const text = chatDraft.trim();
 		if (!text) return;
 		chatBusy = true;
@@ -4874,6 +4880,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{tradesDeal.listing_title}
 							</span>
 							<span class="chip" title="Deal auf uexcorp.space öffnen (Listing-Seite)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Deal öffnen')}>Auf UEX öffnen ↗</span>
+							<!-- QW-4 (t_28bfd027): geschlossene Deals sind READ-ONLY. -->
+							{#if tradesDeal.date_closed}<span class="chip warn"><span class="dot"></span>Abgeschlossen</span>{/if}
 						</div>
 						<div class="chat" bind:this={chatScroller}>
 							{#if chatLoading}
@@ -4903,7 +4911,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Fehler-Pfad')}>AUF UEXCORP.SPACE ÖFFNEN ↗</button>
 							</div>
 						{/if}
-						<div class="chat-input">
+						<!-- QW-4 (t_28bfd027): abgeschlossener Deal (date_closed von
+					     einer oder beiden Seiten gesetzt) → KEIN Composer/Senden,
+					     nur lesbarer Verlauf. Backend-Gate (trade.rs) lehnt den
+					     Write defensiv ebenfalls ab. -->
+					{#if !tradesDeal.date_closed}
+					<div class="chat-input">
 							<input
 								class="rtext"
 								placeholder="Nachricht an {tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || 'Käufer') : (tradesDeal.advertiser_username || 'Anbieter')} …"
@@ -4915,7 +4928,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="btn" disabled={chatBusy || !chatDraft.trim()} onclick={() => void sendChat()}>
 								{chatBusy ? 'Senden …' : 'Senden'}
 							</button>
-						</div>
+							</div>
+							{:else}
+							<!-- Read-only-Fuß: Verlauf bleibt sichtbar, Senden entfällt. -->
+							<div class="mbar">
+								<span class="chip warn"><span class="dot"></span>Trade abgeschlossen — Verlauf nur lesbar</span>
+								<span class="chip" title="Deal auf uexcorp.space öffnen (Bewertung/Abschluss-Detail)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Abgeschlossen')}>Auf UEX öffnen ↗</span>
+							</div>
+							{/if}
 					{:else}
 						<div class="mbar">
 							<span class="m-lbl">Deals</span>

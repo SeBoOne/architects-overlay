@@ -1104,6 +1104,25 @@ pub async fn send_negotiation_message(
     hash: String,
     message: String,
 ) -> Result<MessageSendResponse, String> {
+    // QW-4 (t_28bfd027): defensives Read-only-Gate für ABGESCHLOSSENE Deals.
+    // Die UI blendet den Composer aus; hier zusätzlich ablehnen, falls der
+    // Write trotzdem ankommt (Race: Deal wurde zwischenzeitlich von der
+    // Gegenseite geschlossen). Quelle ist der gecachte Negotiations-Snapshot
+    // (kein Netzwerk-Call — der Gate darf den Chat-Pfad nicht verlangsamen);
+    // fehlt die Verhandlung im Snapshot, fällt der Gate durch und die API
+    // entscheidet.
+    if let Ok(negotiations) = state.cache.own_negotiations_snapshot() {
+        if let Some(n) = negotiations.iter().find(|n| {
+            (id_negotiation != 0 && n.id == id_negotiation) || (!hash.is_empty() && n.hash == hash)
+        }) {
+            if n.date_closed.is_some() {
+                return Err(
+                    "Trade abgeschlossen — Verhandlungen mit Abschluss-Status sind read-only (nur lesbarer Verlauf)."
+                        .to_string(),
+                );
+            }
+        }
+    }
     let id = state
         .provider
         .send_negotiation_message(id_negotiation, &hash, &message)
@@ -3135,6 +3154,65 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err, "HTTP 429 · Rate-Limit erreicht");
+        let _ = app;
+    }
+
+    /// QW-4 (t_28bfd027): Read-only-Gate — ist die Verhandlung im gecachten
+    /// Snapshot ABGESCHLOSSEN (date_closed gesetzt), lehnt der Command den
+    /// Write ab („Trade abgeschlossen …"), BEVOR der Provider erreicht wird.
+    /// Offene Verhandlungen fallen durch (Provider-Antwort).
+    #[tokio::test]
+    async fn send_message_rejects_closed_negotiation() {
+        let app = mock_app();
+        app.manage(TradeState {
+            provider: Arc::new(ShopProvider {
+                fail_offers: false,
+                fail_trades: false,
+                fail_negotiations: false,
+            }),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+            tracker: Arc::new(SyncTracker::default()),
+            composite: mock_composite(),
+            write_gate: Arc::new(WriteGate::new()),
+        });
+        let state = app.state::<TradeState>();
+        // Geschlossene Verhandlung im Snapshot (id 55, hash h-55 —
+        // date_closed gesetzt, siehe ShopProvider-Negotiations-Fixture).
+        state
+            .cache
+            .store_own_negotiations(&[provider::Negotiation {
+                id: 55,
+                listing_id: 4141,
+                hash: "h-55".into(),
+                price: 4_500_000.0,
+                unit: "unit".into(),
+                currency: "UEC".into(),
+                deal_value: Some(4_400_000.0),
+                deal_value_currency: "UEC".into(),
+                listing_title: "Drake Nettle S".into(),
+                listing_slug: "drake-nettle-s".into(),
+                advertiser_name: "Semih Balci".into(),
+                advertiser_username: "sebo_one".into(),
+                client_name: "John Doe".into(),
+                client_username: "johndoe".into(),
+                is_listing_advertiser: true,
+                date_added: 1730000100,
+                date_modified: 1730000200,
+                date_closed: Some(1730000200),
+            }])
+            .unwrap();
+        let err = send_negotiation_message(state.clone(), 55, "h-55".into(), "spät".into())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("Trade abgeschlossen"),
+            "Closed-Deal-Write muss mit „Trade abgeschlossen“ abgelehnt werden, kam: {err}"
+        );
+        // Offene Verhandlung (nicht im Snapshot) fällt durch → Provider OK.
+        let sent = send_negotiation_message(state.clone(), 12847, "a3f7c91d".into(), "ok".into())
+            .await
+            .unwrap();
+        assert_eq!(sent.id_message, 9001);
         let _ = app;
     }
 
