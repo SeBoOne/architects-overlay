@@ -2092,6 +2092,29 @@ html[data-window="spotlight"] .shell {
   scrollbar-width: thin;
 }
 
+/* QW-5 (t_28bfd027): „Trade erfassen“-Popup — shell-anchored wie das
+   Listing-Popup (advert-scrim liefert Scrim+Zentrierung), volle nutzbare
+   Höhe, Body scrollt intern, Buttons im advert-foot fix unten. */
+.trk-modal {
+  width: min(90%, 720px);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel2);
+  border: 1px solid var(--lineb);
+  border-radius: 4px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.trk-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  padding: 16px 18px;
+}
+
 /* M3a: Button-Zeile im Popup als Sticky-Fuß — klebt unten an der
    Scroll-Region, bleibt beim langen Formular immer erreichbar. */
 .advert-foot {
