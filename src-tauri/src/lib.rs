@@ -49,6 +49,9 @@ pub fn run() {
             trade::get_prices,
             trade::sync_status,
             trade::sync_now,
+            trade::refresh_item_prices_now,
+            trade::refresh_commodity_prices_now,
+            trade::prices_sync_ages,
             trade::get_marketplace,
             trade::get_my_offers,
             trade::get_my_trades,
@@ -82,7 +85,6 @@ pub fn run() {
             app_settings::settings_set_uex_secret_key,
             app_settings::settings_resolve_uex_username,
             app_settings::settings_set_marketplace_confirm,
-            app_settings::settings_set_commodity_source,
             app_settings::settings_set_scale,
             app_settings::settings_set_shortcut_toggle,
             app_settings::settings_set_shortcut_click_through,
@@ -192,20 +194,6 @@ fn pin_wm_class() {
     unsafe { gdk_sys::gdk_set_program_class(c_class.as_ptr()) };
 }
 
-/// The source switch handed to the composite provider. This MUST be a CLONE
-/// of the settings state's live switch (a clone shares the inner `Arc`), not
-/// a freshly constructed switch from the boot value — a fresh switch would
-/// freeze the boot source and a runtime flip in
-/// `settings_set_commodity_source` would only apply after a restart
-/// (regression t_c3d46cff). Single point of wiring so the regression test
-/// below exercises the exact expression production uses.
-#[cfg(desktop)]
-pub(crate) fn composite_source_switch(
-    state: &app_settings::SettingsState,
-) -> crate::providers::SourceSwitch {
-    state.source_switch.clone()
-}
-
 /// Open the local SQLite cache, build the UEX provider and start the
 /// background reference-data sync. Shared state lands in `TradeState` for the
 /// IPC commands.
@@ -233,26 +221,12 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     let uex = uex_client::UexProvider::new(cache.clone(), api_key)
         .map_err(|e| std::io::Error::other(format!("UEX provider init: {e}")))?
         .with_secret_key(secret_key);
-    let wiki = wiki_client::WikiProvider::new(cache.clone())
-        .map_err(|e| std::io::Error::other(format!("wiki provider init: {e}")))?;
 
-    // The settings state owns the LIVE commodity-source switch (the config
-    // view flips it); the composite provider reads it on every price fetch.
-    // CLONE — do not construct a second switch here, or the runtime flip in
-    // `settings_set_commodity_source` would only apply after a restart.
-    let settings_state = app.state::<app_settings::SettingsState>();
-    let source = composite_source_switch(&settings_state);
-
-    let composite = Arc::new(providers::CompositeProvider::new(
-        uex,
-        wiki,
-        source,
-        cache.clone(),
-    ));
+    // PS (t_c84e545d): uex-only composite — no wiki provider, no source
+    // switch. Old persisted `commodity_source` values are ignored by the
+    // settings crate (unknown key).
+    let composite = Arc::new(providers::CompositeProvider::new(uex, cache.clone()));
     let provider: Arc<dyn provider::DataProvider> = composite.clone();
-    // The composite IS the wiki sync (its ensure helpers carry the
-    // patch-driven TTLs).
-    let wiki_sync: Arc<dyn providers::WikiSync> = composite.clone() as Arc<dyn providers::WikiSync>;
 
     let tracker = Arc::new(trade::SyncTracker::default());
     tauri::Manager::manage(
@@ -261,7 +235,7 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
             provider: provider.clone(),
             cache: cache.clone(),
             tracker: tracker.clone(),
-            wiki_sync: Some(wiki_sync.clone()),
+            composite: composite.clone(),
             write_gate: Arc::new(trade::WriteGate::new()),
         },
     );
@@ -271,9 +245,11 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     // a warm cache with a dead network still flips the UI to OFFLINE — that
     // flips `tracker.last_error`, which the frontend's `online` flag reads.
     // Runs on Tauri's async (Tokio) runtime, exactly the context the
-    // tokio-based provider futures need.
+    // tokio-based provider futures need. The hourly commodity-price sync and
+    // the settings-driven manual refreshes also run through this handle —
+    // NEITHER is coupled to overlay visibility (PS t_c84e545d).
     let handle = app.handle();
-    trade::start_background_refresh(handle, &provider, &cache, Some(&wiki_sync), &tracker);
+    trade::start_background_refresh(handle, &provider, &cache, &composite, &tracker);
 
     // Dev shell: a second, hidden window (label "main") showing the same
     // SvelteKit palette as the spotlight. Release builds must NOT create it —
@@ -295,148 +271,4 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(all(test, desktop))]
-mod wiring_tests {
-    //! Regression t_c3d46cff: the composite provider must be built on the
-    //! SAME live `SourceSwitch` the settings setter flips — a runtime flip
-    //! (`settings_set_commodity_source`) must change the provider's source
-    //! selection on the NEXT price fetch, without an app restart.
-    //!
-    //! The test drives the REAL wiring point (`composite_source_switch`, the
-    //! exact expression `setup_trade` uses) and asserts the provider's
-    //! QUOTENWAHL (which price table comes back), not just switch internals.
-    //! Both clients are wired against unreachable hosts: every dataset is
-    //! pre-seeded in the cache, so no HTTP happens and the offline failure
-    //! paths are deterministic.
-
-    use super::*;
-    use cache::{Cache, SOURCE_UEX, SOURCE_WIKI};
-    use provider::{DataProvider, Entity, EntityKind, PricePoint};
-    use settings::CommoditySource;
-    use std::sync::Arc;
-    use std::time::Duration;
-    use uex_client::UexProvider;
-    use wiki_client::{CommodityRow, WikiProvider};
-
-    fn point(commodity: &str, commodity_id: u64, terminal_id: u64, buy: f64) -> PricePoint {
-        PricePoint {
-            commodity: commodity.to_owned(),
-            commodity_id,
-            location: format!("terminal {terminal_id}"),
-            terminal_id,
-            sell_price: 0.0,
-            buy_price: buy,
-            sell_stock: 0.0,
-            buy_stock: 0.0,
-            sell_status: 0,
-            buy_status: 1,
-            quality: 0,
-            updated: 1,
-        }
-    }
-
-    #[tokio::test]
-    async fn runtime_flip_changes_provider_source_selection() {
-        let cache = Arc::new(Cache::open_in_memory().expect("cache"));
-
-        // UEX reference dataset + price table: Agricium → terminal 12.
-        cache
-            .store_entities(
-                EntityKind::Commodities,
-                &[Entity {
-                    id: 50,
-                    kind: EntityKind::Commodities,
-                    name: "Agricium".into(),
-                    code: Some("agricium".into()),
-                    subtitle: String::new(),
-                }],
-            )
-            .expect("seed uex commodities");
-        cache
-            .store_prices_sourced(&[point("Agricium", 50, 12, 8_000.0)], SOURCE_UEX)
-            .expect("seed uex prices");
-
-        // Wiki reference dataset + price table: Laranite (uuid u2) →
-        // terminal 778, DIFFERENT terminal id so the coming-back table
-        // unambiguously names its source.
-        let wiki = WikiProvider::with_base_url("http://127.0.0.1:2", Duration::ZERO, cache.clone())
-            .expect("wiki");
-        let wiki_entity = wiki.map_commodities(vec![CommodityRow {
-            uuid: "u2".into(),
-            name: "Laranite".into(),
-            slug: "laranite".into(),
-            ..Default::default()
-        }]);
-        cache
-            .store_entities_sourced(EntityKind::Commodities, SOURCE_WIKI, &wiki_entity)
-            .expect("seed wiki commodities");
-        let wiki_id = wiki_entity[0].id;
-        cache
-            .store_prices_sourced(&[point("Laranite", wiki_id, 778, 8_379.0)], SOURCE_WIKI)
-            .expect("seed wiki prices");
-
-        // REAL wiring: same expression setup_trade uses (lib.rs
-        // `composite_source_switch(&settings_state)`).
-        let state = app_settings::SettingsState::load();
-        let source = composite_source_switch(&state);
-        let uex =
-            UexProvider::with_base_url(cache.clone(), None, "http://127.0.0.1:1", Duration::ZERO)
-                .expect("uex");
-        let provider = crate::providers::CompositeProvider::new(uex, wiki, source, cache);
-
-        // NORMALIZE to wiki first so the test does not depend on the boot
-        // value of the developer's real config.
-        state.set_commodity_source_live(CommoditySource::Wiki);
-        assert_eq!(provider.name(), "wiki+uex (wiki)");
-
-        // Wiki mode: the WIKI table comes back (terminal 778), UEX only
-        // fills gaps — and UEX has no Laranite (offline), so nothing else.
-        let points = provider.prices("Laranite").await.expect("wiki-mode prices");
-        assert!(
-            points
-                .iter()
-                .any(|p| p.terminal_id == 778 && p.buy_price == 8_379.0),
-            "wiki mode must serve the wiki price table, got {points:?}"
-        );
-        assert!(
-            !points.iter().any(|p| p.terminal_id == 12),
-            "wiki mode must not leak the UEX-only table"
-        );
-
-        // FLIP via the setter path — the next fetch must use UEX WITHOUT a
-        // restart. On the pre-fix revision (fresh switch from the boot value)
-        // this stayed in wiki mode and the assertions below failed.
-        state.set_commodity_source_live(CommoditySource::Uex);
-        assert_eq!(provider.name(), "wiki+uex (uex)");
-
-        // UEX mode: pure-UEX path — Agricium resolves in the UEX reference
-        // data and serves the UEX table (terminal 12).
-        let points = provider.prices("Agricium").await.expect("uex-mode prices");
-        assert!(
-            points
-                .iter()
-                .any(|p| p.terminal_id == 12 && p.buy_price == 8_000.0),
-            "uex mode must serve the uex price table, got {points:?}"
-        );
-        // K6 (t_9b385831 P2): UEX mode + failing UEX fetch (offline here;
-        // Laranite is absent from the UEX dataset) must FALL BACK to the
-        // wiki table — the UI promises 'UEX primär (Wiki-Fallback)' (the
-        // pre-K6 pure-UEX behavior asserted is_err() at exactly this point).
-        let res = provider
-            .prices("Laranite")
-            .await
-            .expect("uex mode: failing UEX fetch must fall back to the wiki table");
-        assert!(
-            res.iter()
-                .any(|p| p.terminal_id == 778 && p.buy_price == 8_379.0),
-            "uex-mode fallback must serve the wiki table, got {res:?}"
-        );
-
-        // Flip back — the provider follows again (no restart, both ways).
-        state.set_commodity_source_live(CommoditySource::Wiki);
-        let points = provider.prices("Laranite").await.expect("back to wiki");
-        assert!(points.iter().any(|p| p.terminal_id == 778));
-    }
 }

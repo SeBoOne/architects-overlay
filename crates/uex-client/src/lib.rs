@@ -183,6 +183,25 @@ impl UexProvider {
         self
     }
 
+    /// Fetch the `/terminals` list once and record the type sidecar (shared
+    /// by the Terminals and the synthesized Locations import).
+    async fn terminal_rows(&self) -> Result<Vec<TerminalRow>> {
+        let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
+        // Ground truth vor dem Filter sichern (id → UEX type): auch
+        // Nicht-Trade-Terminals bleiben damit typ-überprüfbar.
+        let types: HashMap<String, String> = rows
+            .iter()
+            .map(|r| (r.id.to_string(), r.r#type.clone().unwrap_or_default()))
+            .collect();
+        if let Ok(mut guard) = self.last_terminal_types.lock() {
+            *guard = types;
+        }
+        Ok(rows
+            .into_iter()
+            .filter(|r| is_trade_terminal_type(r.r#type.as_deref()))
+            .collect())
+    }
+
     /// t_15e598e7 (Gegenprobe): Raw-Feed-Zeilen einer Ware — die UNMAPPTEN
     /// UEX-Zeilen (`price_buy` = Spieler-Kaufpreis, `price_sell` = Spieler-
     /// Verkaufspreis, Review Runde 1). Kein Cache, keine Mappung — genau
@@ -195,6 +214,58 @@ impl UexProvider {
                 &[("id_commodity".to_string(), id_commodity.to_string())],
             )
             .await
+    }
+
+    /// PS (t_c84e545d): force ONE live refresh of a single commodity's price
+    /// table (detail F5 / settings button). Same fetch as `prices`, but the
+    /// freshness marker is bypassed — exactly one API call.
+    pub async fn refresh_prices(&self, commodity: &str) -> Result<Vec<PricePoint>> {
+        self.prices_impl(commodity, true).await
+    }
+
+    /// PS (t_c84e545d): force ONE live refresh of one item's price table.
+    pub async fn refresh_item_prices(&self, item_id: u64) -> Result<Vec<PricePoint>> {
+        self.item_prices_impl(item_id, true).await
+    }
+
+    /// Shared price-table fetch: `force` skips the freshness cache (stale-first
+    /// stays the DEFAULT path — no behavioral change for regular reads).
+    async fn prices_impl(&self, commodity: &str, force: bool) -> Result<Vec<PricePoint>> {
+        let (id, name) = match self.resolve_commodity(commodity).await {
+            Ok(found) => found,
+            Err(ProviderError::NotFound(_)) => {
+                // Not a trade commodity — check whether the query is a known
+                // item (or terminal) instead. Such rows carry no commodity
+                // price table; an empty result is the honest answer and lets
+                // the UI render the "nicht kaufbar / keine Preisdaten" state
+                // instead of a hard error.
+                return Ok(self.empty_prices_for_other(commodity).await?);
+            }
+            Err(other) => return Err(other),
+        };
+
+        // Serve cached prices while fresh (≤ 1 h) unless a forced refresh
+        // was requested (detail F5).
+        if !force && self.cache.prices_fresh(id).map_err(map_cache_err)? {
+            let cached = self.cache.prices_for(id).map_err(map_cache_err)?;
+            if !cached.is_empty() {
+                return Ok(cached);
+            }
+        }
+
+        let rows: Vec<PriceRow> = self
+            .http
+            .get(
+                "/commodities_prices",
+                &[("id_commodity".to_string(), id.to_string())],
+            )
+            .await?;
+        let points = rows
+            .into_iter()
+            .map(|r| map_price_point(r, &name))
+            .collect::<Vec<_>>();
+        self.cache.store_prices(&points).map_err(map_cache_err)?;
+        Ok(points)
     }
 
     /// Ensure the reference dataset for `kind` is usable in the local cache.
@@ -306,6 +377,105 @@ impl UexProvider {
     }
 }
 
+/// PS (t_c84e545d): terminal rows → cache entities (Terminals). Extracted so
+/// the synthesized Locations dataset can reuse the exact same mapping.
+fn terminal_entities_from_rows(rows: Vec<TerminalRow>) -> Vec<Entity> {
+    rows.into_iter()
+        .map(|r| {
+            let chain = terminal_chain_parts(&r);
+            Entity {
+                id: r.id,
+                kind: EntityKind::Terminals,
+                name: r.fullname.or(r.name).or(r.displayname).unwrap_or_default(),
+                code: r.code,
+                subtitle: chain.join(" > "),
+            }
+        })
+        .filter(|e| !e.name.chars().all(|c| c.is_ascii_digit()) && !e.name.is_empty())
+        .collect()
+}
+
+/// The hierarchy segments of one terminal row (deduped, non-empty) — the same
+/// chain the Terminals subtitle carries.
+fn terminal_chain_parts(r: &TerminalRow) -> Vec<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for field in [
+        r.star_system_name.clone(),
+        r.planet_name.clone(),
+        r.moon_name.clone(),
+        r.orbit_name.clone(),
+        r.space_station_name.clone(),
+        r.city_name.clone(),
+        r.outpost_name.clone(),
+        r.poi_name.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !field.is_empty() && parts.last().map(String::as_str) != Some(field.as_str()) {
+            parts.push(field);
+        }
+    }
+    parts
+}
+
+/// Handels-/Monetär-Terminal-Heuristik (same keyword set as the palette's
+/// `trade::is_money_terminal`).
+fn is_money_terminal_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    [
+        "commodity",
+        "admin",
+        "trading",
+        "shop",
+        "console",
+        "store",
+        "terminal",
+    ]
+    .iter()
+    .any(|k| n.contains(k))
+}
+
+/// PS (t_c84e545d): synthesize the Locations search dataset from UEX
+/// terminal rows — one entity per unique (chain, location name), named after
+/// the last chain segment, id = the chain's best terminal (money terminal
+/// preferred, so a location click opens the priced aggregate directly).
+fn location_entities_from_rows(rows: Vec<TerminalRow>) -> Vec<Entity> {
+    use std::collections::HashMap;
+    let mut seen: HashMap<(String, String), (u64, bool)> = HashMap::new();
+    for r in &rows {
+        let parts = terminal_chain_parts(r);
+        if parts.is_empty() {
+            continue;
+        }
+        let name = parts[parts.len() - 1].clone();
+        let chain = parts.join(" > ");
+        let money = r
+            .fullname
+            .as_deref()
+            .or(r.name.as_deref())
+            .map(is_money_terminal_name)
+            .unwrap_or(false);
+        let key = (chain, name);
+        let entry = seen.entry(key).or_insert((r.id, money));
+        if money && !entry.1 {
+            *entry = (r.id, true);
+        }
+    }
+    let mut entities: Vec<Entity> = seen
+        .into_iter()
+        .map(|((chain, name), (id, _))| Entity {
+            id,
+            kind: EntityKind::Locations,
+            name,
+            code: None,
+            subtitle: chain,
+        })
+        .collect();
+    entities.sort_by(|a, b| a.name.cmp(&b.name));
+    entities
+}
+
 #[async_trait::async_trait]
 impl DataProvider for UexProvider {
     async fn search(&self, entities: SearchEntities, query: &str) -> Result<Vec<SearchHit>> {
@@ -326,40 +496,7 @@ impl DataProvider for UexProvider {
     }
 
     async fn prices(&self, commodity: &str) -> Result<Vec<PricePoint>> {
-        let (id, name) = match self.resolve_commodity(commodity).await {
-            Ok(found) => found,
-            Err(ProviderError::NotFound(_)) => {
-                // Not a trade commodity — check whether the query is a known
-                // item (or terminal) instead. Such rows carry no commodity
-                // price table; an empty result is the honest answer and lets
-                // the UI render the "nicht kaufbar / keine Preisdaten" state
-                // instead of a hard error.
-                return Ok(self.empty_prices_for_other(commodity).await?);
-            }
-            Err(other) => return Err(other),
-        };
-
-        // Serve cached prices while fresh (≤ 30 min).
-        if self.cache.prices_fresh(id).map_err(map_cache_err)? {
-            let cached = self.cache.prices_for(id).map_err(map_cache_err)?;
-            if !cached.is_empty() {
-                return Ok(cached);
-            }
-        }
-
-        let rows: Vec<PriceRow> = self
-            .http
-            .get(
-                "/commodities_prices",
-                &[("id_commodity".to_string(), id.to_string())],
-            )
-            .await?;
-        let points = rows
-            .into_iter()
-            .map(|r| map_price_point(r, &name))
-            .collect::<Vec<_>>();
-        self.cache.store_prices(&points).map_err(map_cache_err)?;
-        Ok(points)
+        self.prices_impl(commodity, false).await
     }
 
     async fn location_prices(&self, terminal_id: u64) -> Result<LocationPrices> {
@@ -371,7 +508,7 @@ impl DataProvider for UexProvider {
     }
 
     async fn item_prices(&self, item_id: u64) -> Result<Vec<PricePoint>> {
-        self.item_prices_impl(item_id).await
+        self.item_prices_impl(item_id, false).await
     }
 
     async fn marketplace_offers(&self, filters: MarketplaceFilter) -> Result<Vec<Offer>> {
@@ -562,61 +699,8 @@ impl DataProvider for UexProvider {
                     .collect())
             }
             EntityKind::Terminals => {
-                let rows: Vec<TerminalRow> = self.http.get("/terminals", &[]).await?;
-                // Ground truth vor dem Filter sichern (id → UEX type): auch
-                // Nicht-Trade-Terminals bleiben damit typ-überprüfbar.
-                let types: HashMap<String, String> = rows
-                    .iter()
-                    .map(|r| (r.id.to_string(), r.r#type.clone().unwrap_or_default()))
-                    .collect();
-                if let Ok(mut guard) = self.last_terminal_types.lock() {
-                    *guard = types;
-                }
-                Ok(rows
-                    .into_iter()
-                    // P2 (Feedback-Runde 4): only terminals whose UEX type
-                    // carries buy/sell data enter the cache. Service
-                    // terminals (fuel/landing, refinery, rentals, ship
-                    // shops) are dropped at import — the dataset itself is
-                    // clean, no UI-side filtering.
-                    .filter(|r| is_trade_terminal_type(r.r#type.as_deref()))
-                    .map(|r| {
-                        let mut parts = Vec::new();
-                        for field in [
-                            r.star_system_name,
-                            r.planet_name,
-                            r.moon_name,
-                            r.orbit_name,
-                            r.space_station_name,
-                            r.city_name,
-                            r.outpost_name,
-                            r.poi_name,
-                        ]
-                        .into_iter()
-                        .flatten()
-                        {
-                            if !field.is_empty()
-                                && parts.last().map(String::as_str) != Some(field.as_str())
-                            {
-                                parts.push(field);
-                            }
-                        }
-                        Entity {
-                            id: r.id,
-                            kind: EntityKind::Terminals,
-                            // Live feedback: search results must show the
-                            // complete terminal name so the user recognizes
-                            // the stand ("Commodity Shop - Admin - Checkmate")
-                            // without guessing IDs — fullname is the most
-                            // complete field, then name, then the bare
-                            // displayname. The hierarchy stays in `subtitle`.
-                            name: r.fullname.or(r.name).or(r.displayname).unwrap_or_default(),
-                            code: r.code,
-                            subtitle: parts.join(" > "),
-                        }
-                    })
-                    .filter(|e| !e.name.chars().all(|c| c.is_ascii_digit()) && !e.name.is_empty())
-                    .collect())
+                let rows: Vec<TerminalRow> = self.terminal_rows().await?;
+                Ok(terminal_entities_from_rows(rows))
             }
             EntityKind::Items => {
                 // /items has no bulk list — enumerate categories (research doc).
@@ -675,11 +759,17 @@ impl DataProvider for UexProvider {
                     })
                     .collect())
             }
-            // Locations are owned by the wiki source (rich hierarchy, stored
-            // under source=wiki). The UEX provider has no location dataset —
-            // its terminal rows carry the trade terminals. An empty result
-            // keeps the seam exhaustive without a fabricated fetch.
-            EntityKind::Locations => Ok(Vec::new()),
+            // Locations (PS t_c84e545d, uex-only): the wiki dataset is gone —
+            // the location search dataset is SYNTHESIZED from the UEX
+            // terminal rows (one location entity per unique chain, named
+            // after the last chain segment, id = the chain's money terminal
+            // so a location click opens the priced aggregate directly). No
+            // functional loss for Locations/Search: every priced place in
+            // the former wiki dataset was itself a UEX terminal.
+            EntityKind::Locations => {
+                let rows: Vec<TerminalRow> = self.terminal_rows().await?;
+                Ok(location_entities_from_rows(rows))
+            }
         }
     }
 
@@ -2004,11 +2094,12 @@ impl UexProvider {
     /// Cached price table of ONE item across all terminals that sell it
     /// (the item detail view). Fetched live via `/items_prices?id_item=…`
     /// when the cache is stale.
-    async fn item_prices_impl(&self, item_id: u64) -> Result<Vec<PricePoint>> {
-        if self
-            .cache
-            .item_prices_fresh(item_id)
-            .map_err(map_cache_err)?
+    async fn item_prices_impl(&self, item_id: u64, force: bool) -> Result<Vec<PricePoint>> {
+        if !force
+            && self
+                .cache
+                .item_prices_fresh(item_id)
+                .map_err(map_cache_err)?
         {
             return self.cache.item_prices_for(item_id).map_err(map_cache_err);
         }
@@ -2286,6 +2377,80 @@ pub mod private {
 mod tests {
     use super::*;
     use provider::{ListingType, MarketOperation, OfferSort};
+
+    /// PS (t_c84e545d): a forced refresh must BYPASS the freshness cache —
+    /// even with a fresh marker and a cached table, `refresh_prices` reaches
+    /// for the API (unreachable host → hard error, NOT the cached row).
+    #[tokio::test]
+    async fn refresh_prices_bypasses_freshness_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = std::sync::Arc::new(Cache::open(&dir.path().join("t.sqlite3")).unwrap());
+        cache
+            .store_entities(
+                EntityKind::Commodities,
+                &[Entity {
+                    id: 2,
+                    kind: EntityKind::Commodities,
+                    name: "Agricium".into(),
+                    code: Some("agricium".into()),
+                    subtitle: String::new(),
+                }],
+            )
+            .unwrap();
+        cache
+            .store_prices(&[PricePoint {
+                commodity: "Agricium".into(),
+                commodity_id: 2,
+                location: "cached".into(),
+                terminal_id: 12,
+                sell_price: 0.0,
+                buy_price: 1.0,
+                sell_stock: 0.0,
+                buy_stock: 0.0,
+                sell_status: 0,
+                buy_status: 1,
+                quality: 0,
+                updated: 1,
+            }])
+            .unwrap();
+        assert!(cache.prices_fresh(2).unwrap());
+        let p =
+            UexProvider::with_base_url(cache.clone(), None, "http://127.0.0.1:1", Duration::ZERO)
+                .unwrap();
+        let res = p.refresh_prices("agricium").await;
+        assert!(
+            res.is_err(),
+            "forced refresh must bypass the cache: {res:?}"
+        );
+    }
+
+    /// PS (t_c84e545d): synthesis — one chain → one location entity, named
+    /// after the last segment, money terminal as representative id.
+    #[test]
+    fn location_synthesis_dedupes_chain_and_prefers_money_terminal() {
+        let rows = vec![
+            TerminalRow {
+                id: 393,
+                fullname: Some("Landing Services - Levski".into()),
+                star_system_name: Some("Nyx".into()),
+                planet_name: Some("Delamar".into()),
+                ..Default::default()
+            },
+            TerminalRow {
+                id: 778,
+                fullname: Some("Commodity Shop - Levski".into()),
+                star_system_name: Some("Nyx".into()),
+                planet_name: Some("Delamar".into()),
+                ..Default::default()
+            },
+        ];
+        let locs = location_entities_from_rows(rows);
+        assert_eq!(locs.len(), 1, "one chain → one location entity");
+        assert_eq!(locs[0].name, "Delamar");
+        assert_eq!(locs[0].id, 778, "money terminal is the representative id");
+        assert_eq!(locs[0].subtitle, "Nyx > Delamar");
+        assert_eq!(locs[0].kind, EntityKind::Locations);
+    }
 
     /// One test offer with a compact default.
     fn offer(id: u64, title: &str, location: &str, seller: &str) -> Offer {

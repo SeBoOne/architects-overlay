@@ -253,7 +253,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache,
             tracker: Arc::new(crate::trade::SyncTracker::default()),
-            wiki_sync: None,
+            composite: crate::trade::mock_composite(),
             write_gate: Arc::new(crate::trade::WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -304,7 +304,7 @@ mod tests {
                 provider: Arc::new(StubProvider),
                 cache: Arc::new(Cache::open_in_memory().unwrap()),
                 tracker: Arc::new(crate::trade::SyncTracker::default()),
-                wiki_sync: None,
+                composite: crate::trade::mock_composite(),
                 write_gate: Arc::new(crate::trade::WriteGate::new()),
             })
             .build(tauri::test::mock_context(noop_assets()))

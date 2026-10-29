@@ -12,16 +12,12 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use settings::{CommoditySource, DetailVariant, Palette, Settings};
+use settings::{DetailVariant, Palette, Settings};
 
 /// Shared settings handle. Loaded once at setup; every setter mutates and
 /// immediately persists the same instance (single source of truth).
 pub struct SettingsState {
     inner: Mutex<Settings>,
-    /// Live commodity-source switch shared with the composite provider —
-    /// see `providers::SourceSwitch`. Kept in sync with the persisted value
-    /// by every setter.
-    pub source_switch: crate::providers::SourceSwitch,
 }
 
 impl SettingsState {
@@ -31,22 +27,8 @@ impl SettingsState {
     pub fn load() -> SettingsState {
         let settings = settings::Settings::load().unwrap_or_default();
         SettingsState {
-            source_switch: crate::providers::SourceSwitch::new(settings.commodity_source()),
             inner: Mutex::new(settings),
         }
-    }
-
-    /// The LIVE part of `settings_set_commodity_source`: mutate the settings
-    /// snapshot AND flip the live source switch the composite provider reads
-    /// on every price fetch. The tauri command adds only the disk persist on
-    /// top — one shared code path so the regression wiring test
-    /// (lib.rs `wiring_tests`) exercises exactly the setter's flip sequence.
-    pub(crate) fn set_commodity_source_live(&self, source: CommoditySource) {
-        self.inner
-            .lock()
-            .expect("settings lock")
-            .set_commodity_source(source);
-        self.source_switch.set(source);
     }
 
     /// C2a (t_6565fe8b): the canonical shortcut strings. overlay::init reads
@@ -102,9 +84,9 @@ impl SyncNote {
 ///
 /// Wire contract (t_9b385831, v0.3.3): field names serialize as written
 /// (snake_case). The frontend reads them snake_case (`cfg.uex_api_key_set`,
-/// `cfg.commodity_source`, `cfg.detail_variant`). A `rename_all = "camelCase"`
-/// here silently renamed those three fields to `uexApiKeySet`/
-/// `commoditySource`/`detailVariant` on the wire: the frontend saw
+/// `cfg.detail_variant`). A `rename_all = "camelCase"`
+/// here silently renamed those fields to `uexApiKeySet`/
+/// `detailVariant` on the wire: the frontend saw
 /// `undefined` for every underscore field — the API-key status was forever
 /// "nicht gesetzt" and the price-source chips never highlighted, even though
 /// the backend persisted both correctly. The serialization test below pins
@@ -121,9 +103,6 @@ pub struct SettingsSnapshot {
     /// M2a-Fix: UEX-Benutzername (kein Secret — Textfeld-Wert für den
     /// `marketplace_listings?username=`-Pull). Leer = nicht gesetzt.
     pub uex_username: String,
-    /// Primary commodity price source ("wiki" | "uex"); wiki first, UEX
-    /// fallback. Exposed so the Config-View can A/B the sources.
-    pub commodity_source: String,
     /// K2 (t_5fe8eb4c, P12): font/icon scale in % (50..200, default 100).
     pub scale: u16,
     /// C2a (t_6565fe8b): kanonische, persistierte Kürzel (Soll — das, was
@@ -163,7 +142,6 @@ impl SettingsSnapshot {
             uex_api_key_set: s.uex_api_key().is_some(),
             uex_secret_key_set: s.uex_secret_key().is_some(),
             uex_username: s.uex_username().unwrap_or_default().to_owned(),
-            commodity_source: s.commodity_source().as_str().to_owned(),
             scale: s.scale(),
             shortcut_toggle: s.shortcut_toggle().to_owned(),
             shortcut_click_through: s.shortcut_click_through().to_owned(),
@@ -543,28 +521,6 @@ pub fn settings_reset_mode_hotkeys(
     ))
 }
 
-/// Set the primary commodity price source (wiki | uex). Persists immediately
-/// AND flips the live source switch the composite provider reads on every
-/// price fetch — the next price request already uses the new source.
-#[tauri::command]
-pub fn settings_set_commodity_source(
-    state: tauri::State<SettingsState>,
-    app: tauri::AppHandle,
-    sync: tauri::State<SyncNote>,
-    name: String,
-) -> Result<SettingsSnapshot, String> {
-    let source = CommoditySource::from_name(&name)
-        .ok_or_else(|| format!("unknown commodity source: {name}"))?;
-    state.set_commodity_source_live(source);
-    let s = state.inner.lock().expect("settings lock");
-    state.persist(&s);
-    Ok(SettingsSnapshot::from_settings(
-        &s,
-        crate::overlay::global_shortcuts_active(&app),
-        &sync.take(),
-    ))
-}
-
 /// K2 (t_5fe8eb4c, P12): Set the overlay font/icon scale in % — the F12-View
 /// chips expose 80/90/100/110/125, the command accepts any whole percent
 /// `SCALE_MIN..SCALE_MAX`. Out-of-range is rejected (clean note for the UI);
@@ -734,7 +690,7 @@ mod tests {
 
     /// Regression (t_9b385831, v0.3.3 P1): the snapshot's JSON keys are the
     /// frontend contract. The frontend reads `cfg.uex_api_key_set`,
-    /// `cfg.commodity_source`, `cfg.detail_variant` (snake_case). A stray
+    /// `cfg.detail_variant` (snake_case). A stray
     /// `rename_all = "camelCase"` made every underscore field `undefined` in
     /// the UI — API-key status stuck at "nicht gesetzt", source chips never
     /// active — while single-word fields (palette, scale) kept working.
@@ -758,7 +714,6 @@ mod tests {
             // Snake-Case-Vertrag; camelCase wäre im UI unsichtbar.
             "uex_secret_key_set",
             "uex_username",
-            "commodity_source",
             "scale",
             // C2a (t_6565fe8b): dieselbe Snake-Case-Vertrag gilt für die
             // Shortcut-Felder — camelCase würde sie im UI unsichtbar machen.
@@ -797,21 +752,6 @@ mod tests {
         note.set("erste Meldung");
         note.set("zweite Meldung");
         assert_eq!(note.take(), "zweite Meldung");
-    }
-
-    /// Regression (t_c3d46cff): the switch handed to the composite provider
-    /// (lib.rs clones `state.source_switch`) MUST be the same instance the
-    /// setter flips — a clone shares the inner Arc, a fresh switch would
-    /// freeze the boot value until the next app restart.
-    #[test]
-    fn live_source_switch_flips_without_restart() {
-        let state = SettingsState::load();
-        let reader = state.source_switch.clone();
-        // what settings_set_commodity_source does on a live flip:
-        state.source_switch.set(CommoditySource::Uex);
-        assert_eq!(reader.get(), CommoditySource::Uex);
-        state.source_switch.set(CommoditySource::Wiki);
-        assert_eq!(reader.get(), CommoditySource::Wiki);
     }
 
     /// C2a (t_6565fe8b): cross-field rule of the shortcut setter — the two

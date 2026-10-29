@@ -138,6 +138,26 @@ pub trait DataProvider: Send + Sync {
     /// local copy is older than the price TTL.
     async fn prices(&self, commodity: &str) -> Result<Vec<PricePoint>>;
 
+    /// PS (t_c84e545d): force one LIVE refresh of a single commodity's price
+    /// table (detail-page F5 / settings "Jetzt aktualisieren"). Bypasses the
+    /// freshness cache — exactly ONE API call. The default reports
+    /// unsupported so sources without a force path stay honest.
+    async fn refresh_prices(&self, commodity: &str) -> Result<Vec<PricePoint>> {
+        let _ = commodity;
+        Err(ProviderError::Unsupported(
+            "refresh_prices: not supported by this source".into(),
+        ))
+    }
+
+    /// PS (t_c84e545d): force one LIVE refresh of one item's price table
+    /// (item-detail F5). Bypasses the (long) freshness cache — one API call.
+    async fn refresh_item_prices(&self, item_id: u64) -> Result<Vec<PricePoint>> {
+        let _ = item_id;
+        Err(ProviderError::Unsupported(
+            "refresh_item_prices: not supported by this source".into(),
+        ))
+    }
+
     /// Price aggregate of one location (= the trade terminal the user opened):
     /// every terminal sharing the location chain, each with its commodity
     /// prices (buy/sell per terminal, location header). Implementations fetch

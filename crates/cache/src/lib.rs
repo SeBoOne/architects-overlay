@@ -5,13 +5,14 @@
 //!
 //! * `entities` — reference datasets (commodities / items / terminals), keyed
 //!   `(kind, id)`, plus an FTS5 index for instant search;
-//! * `prices` — commodity price points per terminal, TTL **30 min**;
+//! * `prices` — commodity price points per terminal, TTL **1 h**
+//!   (PS t_c84e545d: stündlicher Sync-Zyklus);
 //! * `marketplace_offers` — last marketplace snapshot; never served as fresh
 //!   (TTL `None`), kept for offline display only;
 //! * `meta` — bookkeeping: `fetched_at` markers per key.
 //!
 //! TTLs follow the UEX research doc: commodities 1h, items 4h, terminals 12h,
-//! prices 30min, marketplace no caching. `Cache` is a plain symbol behind a
+//! prices 1h, item prices 7d (patch-driven), marketplace no caching. `Cache` is a plain symbol behind a
 //! `Mutex<Connection>` — SQLite ops are microsecond-scale here and never held
 //! across an await point, so no pool is needed for the overlay's load.
 //!
@@ -32,8 +33,14 @@ use rusqlite::Connection;
 pub const TTL_COMMODITIES: Duration = Duration::from_secs(3_600); // 1h
 pub const TTL_TERMINALS: Duration = Duration::from_secs(43_200); // 12h
 pub const TTL_ITEMS: Duration = Duration::from_secs(14_400); // 4h
-/// Prices are volatile (hourly updates upstream) — short TTL.
-pub const TTL_PRICES: Duration = Duration::from_secs(1_800); // 30min
+/// Commodity/terminal price rows are updated hourly upstream — the sync
+/// renews them hourly (PS t_c84e545d: stündlicher Background-Sync).
+pub const TTL_PRICES: Duration = Duration::from_secs(3_600); // 1h
+
+/// Item shop prices are PATCH-driven (they do not change between game
+/// patches) — one fetch then a long cache (weeks are fine, PS t_c84e545d).
+/// No periodic re-fetch; renewal only via the explicit manual refresh paths.
+pub const TTL_ITEM_PRICES: Duration = Duration::from_secs(7 * 86_400); // 7 days
 /// Wiki reference data changes on game-patch cadence, not hourly — the sync
 /// pulls it at most twice a day (research report: locations ~2k rows, static
 /// between patches; commodities likewise).
@@ -48,6 +55,22 @@ pub const TTL_MARKETPLACE: Option<Duration> = Some(Duration::from_secs(300));
 /// must never hammer the API. Additive cache behind the SAME TTL analog so the
 /// offline/stale-first contract is identical to the general marketplace view.
 pub const TTL_OWN_SHOP: Option<Duration> = Some(Duration::from_secs(300));
+
+/// PS (t_c84e545d): aggregated freshness bookkeeping for the two price
+/// datatypes — shown separately in the settings "Datenquellen" section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub struct PriceSyncAges {
+    /// Seconds since the most recent commodity-price-table refresh
+    /// (`None` = no commodity price table cached yet).
+    pub commodity_age_secs: Option<u64>,
+    /// Seconds since the most recent item-price-table refresh.
+    pub item_age_secs: Option<u64>,
+    /// Cached commodity price tables (meta markers).
+    pub commodity_count: u64,
+    /// Cached item price tables.
+    pub item_count: u64,
+}
 
 /// Data-source tags stored per entity/price row (`entities.source`,
 /// `prices.source`, …). Legacy rows (pre-scheme v2) are all `uex`.
@@ -1036,6 +1059,62 @@ impl Cache {
             .map(|ts| now_unix().saturating_sub(ts)))
     }
 
+    /// Scan the price freshness markers and derive per-datatype "zuletzt
+    /// gesynced" ages (max `fetched_at` = the most recent sync of the type).
+    pub fn price_sync_ages(&self) -> Result<PriceSyncAges> {
+        self.with(|conn| {
+            let mut commodity_max: Option<u64> = None;
+            let mut item_max: Option<u64> = None;
+            let mut commodity_count = 0u64;
+            let mut item_count = 0u64;
+            let mut stmt = conn.prepare(
+                "SELECT key, value FROM meta WHERE key LIKE 'fetched_at:prices:%' OR key LIKE 'fetched_at:item_prices:%'",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(r) = rows.next()? {
+                let key: String = r.get(0)?;
+                let ts: String = r.get(1)?;
+                let Ok(ts) = ts.parse::<u64>() else { continue };
+                // Sourced commodity markers (legacy wiki) do not count: only
+                // the live UEX markers (`fetched_at:prices:<id>`) do.
+                let is_item = key.starts_with("fetched_at:item_prices:");
+                if is_item {
+                    item_count += 1;
+                    item_max = Some(item_max.map_or(ts, |m: u64| m.max(ts)));
+                } else if !key.contains('@') {
+                    commodity_count += 1;
+                    commodity_max = Some(commodity_max.map_or(ts, |m: u64| m.max(ts)));
+                }
+            }
+            let age = |m: Option<u64>| m.map(|ts| now_unix().saturating_sub(ts));
+            Ok(PriceSyncAges {
+                commodity_age_secs: age(commodity_max),
+                item_age_secs: age(item_max),
+                commodity_count,
+                item_count,
+            })
+        })
+    }
+
+    /// PS (t_c84e545d): delete all entity rows of one kind from one source
+    /// (used to retire the legacy wiki location dataset when the UEX one
+    /// takes over — no stale ghost rows may survive in search).
+    pub fn delete_entities_sourced(&self, kind: EntityKind, source: &str) -> Result<()> {
+        self.with(|conn| {
+            let tx = conn.transaction()?;
+            tx.execute(
+                "DELETE FROM entities_fts WHERE kind = ?1 AND entity_id IN
+                    (SELECT id FROM entities WHERE kind = ?1 AND source = ?2)",
+                rusqlite::params![kind.as_str(), source],
+            )?;
+            tx.execute(
+                "DELETE FROM entities WHERE kind = ?1 AND source = ?2",
+                rusqlite::params![kind.as_str(), source],
+            )?;
+            tx.commit()
+        })
+    }
+
     /// Number of cached reference entities of one kind (sync progress UI).
     pub fn count_entities(&self, kind: EntityKind) -> Result<u64> {
         self.with(|conn| {
@@ -1371,11 +1450,12 @@ impl Cache {
 
     // ---------- item prices ----------
 
-    /// Whether cached price table of `item_id` is younger than `TTL_PRICES`.
+    /// Whether cached price table of `item_id` is younger than
+    /// [`TTL_ITEM_PRICES`] (patch-driven, long TTL — PS t_c84e545d).
     pub fn item_prices_fresh(&self, item_id: u64) -> Result<bool> {
         let fetched = self.meta_get(&item_prices_meta_key(item_id))?;
         Ok(match fetched {
-            Some(ts) => now_unix().saturating_sub(ts) < TTL_PRICES.as_secs(),
+            Some(ts) => now_unix().saturating_sub(ts) < TTL_ITEM_PRICES.as_secs(),
             None => false,
         })
     }
