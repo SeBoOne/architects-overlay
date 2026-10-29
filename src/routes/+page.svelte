@@ -26,7 +26,8 @@
 	// Market-Modus (F2 / Rail): DAS Haupt-Suchfeld durchsucht Offers
 	// (Name/Typ/Terminal/Verkäufer); Min/Max-Qualität-Stepper + Sortierung,
 	// Alt+Zahl-Badges auf den ersten 10 Offers, Esc/F2 zurück zur Suche.
-	//   - Detail-Tastatur: ↑↓ Zeile, ↵ Auswahl, Esc zurück.
+	//   - Detail-Tastatur: ↑↓ Zeile, ↵ nur im Commodity-Detail =
+//     Trade-Erfassen-Popup vorausgefüllt (Q2), Esc zurück.
 	//   - N2 Enter-Detail-Filter: das Suchfeld ist im Detail der In-Context-Filter
 	//     (Location → Waren-/Terminalnamen, Commodity/Item → Orts-/Terminalnamen).
 	//   - Marketplace: ≥15 Offers pro Seite + "Weitere laden" (Pagination).
@@ -268,9 +269,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Preis-Tabelle. Keyboard-Navigation über die `.pr`-Zeilen.
 	let inDetail = $state(false);
 	let detailHit = $state<SearchHit | null>(null);
-	// `dSel` = fokussierte Detail-Zeile, `dChosen` = per Enter ausgewählt.
+	// `dSel` = fokussierte Detail-Zeile (↑↓-Navigation). Q2 (t_56d5264a):
+	// keine Enter-Auswahl mehr — dChosen/dToast entfallen.
 	let dSel = $state(0);
-	let dChosen = $state<number | null>(null);
 
 	// ---- Config-View (t_163074f3) --------------------------------------------
 	// Eigenes View in der Palette (wie die Detail-"Seite"): Esc/Zurück-Pfeil,
@@ -943,8 +944,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		xpan = null;
 		xpanToken++;
 		dSel = 0;
-		dChosen = null;
-		dToast = '';
 		apiKeyInput = '';
 		apiKeyNote = '';
 		secretKeyInput = '';
@@ -1105,7 +1104,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Scroll-Position der Ergebnisliste für den Zurück-Blick.
 	let listScroll = $state(0);
 	// Status-Toast nach Auswahl einer Detail-Zeile.
-	let dToast = $state('');
 
 	// ---- In-Context-Filter (N2, ersetzt die alte Ortssperre) -----------------
 	// Ist eine Detail-Ansicht offen, wird das HAUPT-Suchfeld zum Live-Filter
@@ -1630,6 +1628,28 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				price: ''
 			};
 		}
+		trkComOpts = [];
+		trkTermOpts = [];
+		trkMsg = null;
+		trkOpen = true;
+	}
+
+	// Q2 (t_56d5264a): Enter auf einer Commodity-Preiszeile öffnet das
+	// Trade-Erfassen-Popup VORAUSGEFÜLLT — Richtung nach der Zeile (Kauf-Zeile
+	// = Ort verkauft = Spieler kauft dort → 'buy'; Verkauf-Zeile = Ort kauft →
+	// 'sell'), Ware/Preis/Ort(Terminal) aus der Zeile. Der Nutzer tippt nur
+	// noch die Menge (SCU); Enter bestätigt, Escape bricht ab.
+	function openTrkPrefill(op: 'buy' | 'sell', price: number, p: PricePoint, commodity: string) {
+		trkEditId = null;
+		trkForm = {
+			commodity,
+			commodity_id: p.commodity_id,
+			terminal: p.location,
+			terminal_id: p.terminal_id,
+			operation: op,
+			scu: '',
+			price: String(price)
+		};
 		trkComOpts = [];
 		trkTermOpts = [];
 		trkMsg = null;
@@ -2867,8 +2887,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// treibt das Feld wieder die Volltextsuche.
 		if (inDetail) {
 			dSel = 0;
-			dChosen = null;
-			dToast = '';
 			return;
 		}
 		if (debounce) clearTimeout(debounce);
@@ -2892,8 +2910,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inDetail = false;
 		detailHit = null;
 		dSel = 0;
-		dChosen = null;
-		dToast = '';
 
 		if (q.isCalc) {
 			// Inline-Rechner: Ergebnis-Chip anstelle der Ergebnisliste.
@@ -3019,8 +3035,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		detailHit = flat[idx];
 		inDetail = true;
 		dSel = 0;
-		dChosen = null;
-		dToast = '';
 		// N2: Suchfeld = In-Context-Filter der Detail-Ansicht → mit leerem Filter
 		// starten (alles zeigen); Fokus bleibt im Suchfeld zum sofortigen Filtern.
 		if (debounce) clearTimeout(debounce);
@@ -3034,8 +3048,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inDetail = false;
 		detailHit = null;
 		dSel = 0;
-		dChosen = null;
-		dToast = '';
 		// N2: Filter zurücksetzen — das Feld ist in der Hauptsuche wieder die
 		// Volltextsuche (leer, Ergebnisliste der letzten Suche bleibt stehen).
 		if (debounce) clearTimeout(debounce);
@@ -3081,8 +3093,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inDetail = false;
 		detailHit = null;
 		dSel = 0;
-		dChosen = null;
-		dToast = '';
 	}
 
 	// PS (t_c84e545d): Detail-Refresh (Button oder F5) — force = true lässt
@@ -3239,8 +3249,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		inDetail = false;
 		detailHit = null;
 		dSel = 0;
-		dChosen = null;
-		dToast = '';
 		// Wieder im Such-Modus: Ergebnisliste an den Suchtext des HAUPT-
 		// Suchfelds angleichen (im Market-Modus wurde dort der Offer-Query
 		// getippt — keine veralteten Treffer stehen lassen).
@@ -3470,17 +3478,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		dSel = Math.min(Math.max(dSel + dir, 0), dRows.length - 1);
 		document.querySelectorAll<HTMLElement>('.pane-detail .pr')[dSel]?.scrollIntoView({ block: 'nearest' });
 	}
-	function dSelect() {
-		if (!dRows.length) return;
-		dChosen = dSel;
-		const r = dRows[dSel];
-		dToast = `${r.kind === 'buy' ? 'Kauf' : 'Verkauf'} · ${fmt(r.kind === 'buy' ? r.p.buy_price : r.p.sell_price)} aUEC · ${r.name}`;
-	}
-	// Sync highlight-Klassen (is-sel/is-chosen) — deklarativ per class: im
-	// Template gebunden (siehe .pr in der Detail-Tabelle), NICHT per DOM-Query:
-	// manuell gesetzte Klassen überleben den Svelte-Flush nicht.
-	// → Die Zeilen binden class:is-sel={i === dSel} / class:is-chosen={i === dChosen}
-	//   über den flachen Index (Kauf-Zeilen zuerst, dann Verkauf).
+	// Q2 (t_56d5264a): dSelect/dChosen/dToast entfallen — die alte
+	// Enter-Auswahl war eine Sackgasse (Highlight ohne Funktion). Neu:
+	// Commodity-Detail Enter öffnet das Trade-Erfassen-Popup (siehe
+	// openTrkPrefill), überall sonst macht Enter NICHTS. ↑↓-Fokus (dSel/is-sel)
+	// bleibt für die Zeilen-Navigation. Die Klassen sind deklarativ per class:
+	// im Template gebunden (siehe .pr in der Detail-Tabelle), NICHT per
+	// DOM-Query — manuell gesetzte Klassen überleben den Svelte-Flush nicht.
 
 	// QA Runde 2 (N3): rohen serde-/Rust-Fehlertext nicht als deutsche UI zeigen.
 	// Bekannte Muster auf freundliche Meldungen mappen; Unbekanntes bleibt lesbar,
@@ -3591,6 +3595,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				if (confirmAction) confirmAction = null;
 				else if (advertDiscard) advertDiscard = false;
 				else requestCloseAdvert();
+			}
+			return;
+		}
+		// Q2 (t_56d5264a): Trade-Erfassen-Popup offen → es schluckt die
+		// Tastatur, egal aus welchem Modus es geöffnet wurde (auch aus dem
+		// Commodity-Detail). Escape: erst die 2-Schritt-Bestätigung schließen,
+		// dann das Formular (Abbruch). Enter bestätigt via <form>-Submit.
+		if (trkOpen) {
+			if (k === 'Escape') {
+				e.preventDefault();
+				if (trkConfirm) trkConfirm = null;
+				else {
+					trkOpen = false;
+					trkMsg = null;
+					trkEditId = null;
+				}
+			} else if (k === 'Enter') {
+				// Q2: Enter im Popup bestätigt — in den Zahl-Feldern (Menge/
+				// Preis) geht es in die 2-Schritt-Bestätigung, im Bestätigungs-
+				// Dialog führt es die Aktion aus. Typeahead-Felder sind aus-
+				// genommen (deren Enter übernimmt die Vorschlagsauswahl).
+				e.preventDefault();
+				const t = e.target;
+				const inNum = t instanceof HTMLInputElement && t.type === 'number';
+				if (trkConfirm) {
+					if (trkConfirm.kind !== 'remove') void doTrkWrite();
+				} else if (inNum) {
+					requestTrkWrite();
+				}
 			}
 			return;
 		}
@@ -3862,7 +3895,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				return;
 			}
 			if (k === 'Enter') {
-				dSelect();
+			// Q2 (t_56d5264a): Enter-Auswahl (Highlight/Sackgasse) entfällt.
+			// Nur im Commodity-Detail öffnet Enter das vorausgefüllte
+			// Trade-Erfassen-Popup (openTrkPrefill); Terminal/Location/Item-
+			// Detail: Enter macht NICHTS (dSelect ist weg). ↑↓-Fokus bleibt.
+				if (detailHit?.kind === 'commodity') {
+					const r = dRows[dSel];
+					if (r) {
+						openTrkPrefill(
+						r.kind,
+						r.kind === 'buy' ? r.p.buy_price : r.p.sell_price,
+						r.p,
+						xpan?.detail?.commodity ?? detailHit?.name ?? ''
+					);
+					}
+				}
 				e.preventDefault();
 				return;
 			}
@@ -3922,7 +3969,122 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <svelte:window onkeydown={onKey} />
 
 <main class="pal-root" bind:clientWidth={palW}>
-	<div class="shell" class:in-detail={inDetail}>
+	<div class="shell" class:in-detail={inDetail} class:shell-advert={advertOpen}>
+
+												<!-- PT: Formular „Trade erfassen" als modales Popup.
+											     QW-5 (t_28bfd027): der frühere confirm-scrim war position:fixed
+											     am VIEWPORT zentriert — im Overlay-Fenster saß das Popup dadurch
+											     unterhalb der Shell-Kante (Probe: Modal bis y=660 bei Shell-Ende
+											     y=372), Felder/Buttons unten unerreichbar. Jetzt wie das
+											     Listing-Popup (advert-scrim): absolute in die Shell, volle
+											     nutzbare Höhe, Body scrollt intern, Fuß (Buttons) fix. -->
+												{#if trkOpen}
+													<div class="advert-scrim" role="presentation">
+														<div class="trk-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
+														<!-- Q2 (t_56d5264a): echtes <form> — Enter in den Zahl-Feldern bestätigt
+														     (impliziter Submit) wie der „Trade prüfen”-Button. -->
+															<form class="trk-body" onsubmit={(e) => { e.preventDefault(); requestTrkWrite(); }}>
+									<div class="center" style="padding: 0 0 10px">
+										<div class="big">{trkEditId ? 'Trade BEARBEITEN' : 'Trade ERFASSEN'}</div>
+									</div>
+																	<!-- QY-2 (t_07edb03d): Formular-Rhythmus wie das Listing-Popup —
+								     Felder in VOLLER Popup-Breite, größere Feld-Überschriften,
+								     vertikaler Abstand; Scrim zentriert, Body scrollt intern. -->
+								<div class="trk-field">
+									<span class="trk-lbl">Richtung</span>
+									<div class="trk-dir">
+										<button type="button" class="chip" class:is-on={trkForm.operation === 'buy'} onclick={() => (trkForm.operation = 'buy')}>Kauf</button>
+										<button type="button" class="chip" class:is-on={trkForm.operation === 'sell'} onclick={() => (trkForm.operation = 'sell')}>Verkauf</button>
+									</div>
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Ware</span>
+									<RoutesTypeahead
+										fullWidth
+										bind:value={trkForm.commodity}
+										options={trkComOpts}
+										placeholder="z. B. Gold"
+										ariaLabel="Ware Type-ahead — Tippen filtert, ↵ übernimmt"
+										onselect={(v: string) => {
+											trkForm.commodity_id = Number(v) || null;
+											// QY-3: Ort-Auswahl invalidieren — der Ort muss die
+											// Ware in der gewählten Richtung handeln.
+											trkForm.terminal = '';
+											trkForm.terminal_id = null;
+											trkTermOpts = [];
+										}}
+									/>
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Ort</span>
+									<RoutesTypeahead
+										fullWidth
+										bind:value={trkForm.terminal}
+										options={trkTermOpts}
+										placeholder="z. B. Everus Harbor"
+										ariaLabel="Ort/Terminal Type-ahead — Tippen filtert, ↵ übernimmt"
+										onselect={(v: string) => {
+											trkForm.terminal_id = Number(v) || null;
+											trkComOpts = [];
+										}}
+									/>
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Menge (SCU)</span>
+									<input class="qnum" style="width:100%" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Preis/SCU (aUEC)</span>
+									<input class="qnum" style="width:100%" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
+								</div>
+<div class="sm" style="color: var(--fgdim); margin-top: 6px">
+										Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.
+									</div>
+									{#if trkMsg}
+																	<div class="sm" style="color: var(--alert); margin-top: 6px" role="alert">{trkMsg}</div>
+																{/if}
+																</form>
+									<div class="advert-foot">
+										<div class="md-actions">
+											<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
+												{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
+											</button>
+											<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
+										</div>
+									</div>
+									</div>
+									</div>
+									{/if}
+						<!-- PT: 2-Schritt-Bestätigung (add/edit/remove) — QW-5: jetzt
+						     ebenfalls shell-anchored (advert-scrim) statt fixed am Viewport. -->
+						{#if trkConfirm}
+							<div class="advert-scrim" role="presentation">
+								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+									<div class="center" style="padding: 0 0 10px">
+										<div class="big" style="color: var(--alert)">
+											{trkConfirm.kind === 'remove' ? 'Trade LÖSCHEN?' : trkConfirm.kind === 'edit' ? 'Trade ÄNDERN?' : 'Trade ANLEGEN?'}
+										</div>
+									</div>
+									{#if trkConfirm.kind === 'remove'}
+										<div class="sm" style="color: var(--fgdim)">Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden.</div>
+									{:else}
+										<div class="c-row"><b>Richtung</b><span>{trkForm.operation === 'sell' ? 'Verkauf' : 'Kauf'}</span></div>
+										<div class="c-row"><b>Ware</b><span>{trkForm.commodity || '—'}</span></div>
+										<div class="c-row"><b>Ort</b><span>{trkForm.terminal || '—'}</span></div>
+										<div class="c-row"><b>Menge</b><span>{Math.round(Number(trkForm.scu))} SCU</span></div>
+										<div class="c-row"><b>Preis</b><span>{fmtPrice(Number(trkForm.price))} aUEC/SCU</span></div>
+										<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Trade wird auf uexcorp.space {(trkConfirm.kind === 'edit' ? 'GEÄNDERT' : 'ANGELEGT')}.</div>
+									{/if}
+									<div class="md-actions">
+										<button type="button" class="btn" disabled={trkBusy} onclick={() => { if (trkConfirm) (trkConfirm.kind === 'remove' ? void doTrkRemove() : void doTrkWrite()); }}>
+											{trkBusy ? 'Senden …' : 'Bestätigen'}
+										</button>
+										<span class="btn-ghost" onclick={() => (trkConfirm = null)}>Abbrechen (Esc)</span>
+									</div>
+								</div>
+							</div>
+						{/if}
+
 		<i class="deco t1"></i><i class="deco t2"></i>
 
 		<!-- Rail: linke Modus-Leiste (Mode-Hotkeys) — gehört nur zum Overlay.
@@ -4669,118 +4831,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="src">UEX Corp</span>
 							</div>
 						{/if}
-						<!-- PT: Formular „Trade erfassen" als modales Popup.
-						     QW-5 (t_28bfd027): der frühere confirm-scrim war position:fixed
-						     am VIEWPORT zentriert — im Overlay-Fenster saß das Popup dadurch
-						     unterhalb der Shell-Kante (Probe: Modal bis y=660 bei Shell-Ende
-						     y=372), Felder/Buttons unten unerreichbar. Jetzt wie das
-						     Listing-Popup (advert-scrim): absolute in die Shell, volle
-						     nutzbare Höhe, Body scrollt intern, Fuß (Buttons) fix. -->
-						{#if trkOpen}
-							<div class="advert-scrim" role="presentation">
-								<div class="trk-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
-									<div class="trk-body">
-									<div class="center" style="padding: 0 0 10px">
-										<div class="big">{trkEditId ? 'Trade BEARBEITEN' : 'Trade ERFASSEN'}</div>
-									</div>
-																	<!-- QY-2 (t_07edb03d): Formular-Rhythmus wie das Listing-Popup —
-								     Felder in VOLLER Popup-Breite, größere Feld-Überschriften,
-								     vertikaler Abstand; Scrim zentriert, Body scrollt intern. -->
-								<div class="trk-field">
-									<span class="trk-lbl">Richtung</span>
-									<div class="trk-dir">
-										<button type="button" class="chip" class:is-on={trkForm.operation === 'buy'} onclick={() => (trkForm.operation = 'buy')}>Kauf</button>
-										<button type="button" class="chip" class:is-on={trkForm.operation === 'sell'} onclick={() => (trkForm.operation = 'sell')}>Verkauf</button>
-									</div>
-								</div>
-								<div class="trk-field">
-									<span class="trk-lbl">Ware</span>
-									<RoutesTypeahead
-										fullWidth
-										bind:value={trkForm.commodity}
-										options={trkComOpts}
-										placeholder="z. B. Gold"
-										ariaLabel="Ware Type-ahead — Tippen filtert, ↵ übernimmt"
-										onselect={(v: string) => {
-											trkForm.commodity_id = Number(v) || null;
-											// QY-3: Ort-Auswahl invalidieren — der Ort muss die
-											// Ware in der gewählten Richtung handeln.
-											trkForm.terminal = '';
-											trkForm.terminal_id = null;
-											trkTermOpts = [];
-										}}
-									/>
-								</div>
-								<div class="trk-field">
-									<span class="trk-lbl">Ort</span>
-									<RoutesTypeahead
-										fullWidth
-										bind:value={trkForm.terminal}
-										options={trkTermOpts}
-										placeholder="z. B. Everus Harbor"
-										ariaLabel="Ort/Terminal Type-ahead — Tippen filtert, ↵ übernimmt"
-										onselect={(v: string) => {
-											trkForm.terminal_id = Number(v) || null;
-											trkComOpts = [];
-										}}
-									/>
-								</div>
-								<div class="trk-field">
-									<span class="trk-lbl">Menge (SCU)</span>
-									<input class="qnum" style="width:100%" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
-								</div>
-								<div class="trk-field">
-									<span class="trk-lbl">Preis/SCU (aUEC)</span>
-									<input class="qnum" style="width:100%" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
-								</div>
-<div class="sm" style="color: var(--fgdim); margin-top: 6px">
-										Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.
-									</div>
-									{#if trkMsg}
-										<div class="sm" style="color: var(--alert); margin-top: 6px" role="alert">{trkMsg}</div>
-									{/if}
-									</div>
-									<div class="advert-foot">
-										<div class="md-actions">
-											<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
-												{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
-											</button>
-											<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
-										</div>
-									</div>
-									</div>
-									</div>
-									{/if}
-						<!-- PT: 2-Schritt-Bestätigung (add/edit/remove) — QW-5: jetzt
-						     ebenfalls shell-anchored (advert-scrim) statt fixed am Viewport. -->
-						{#if trkConfirm}
-							<div class="advert-scrim" role="presentation">
-								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
-									<div class="center" style="padding: 0 0 10px">
-										<div class="big" style="color: var(--alert)">
-											{trkConfirm.kind === 'remove' ? 'Trade LÖSCHEN?' : trkConfirm.kind === 'edit' ? 'Trade ÄNDERN?' : 'Trade ANLEGEN?'}
-										</div>
-									</div>
-									{#if trkConfirm.kind === 'remove'}
-										<div class="sm" style="color: var(--fgdim)">Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden.</div>
-									{:else}
-										<div class="c-row"><b>Richtung</b><span>{trkForm.operation === 'sell' ? 'Verkauf' : 'Kauf'}</span></div>
-										<div class="c-row"><b>Ware</b><span>{trkForm.commodity || '—'}</span></div>
-										<div class="c-row"><b>Ort</b><span>{trkForm.terminal || '—'}</span></div>
-										<div class="c-row"><b>Menge</b><span>{Math.round(Number(trkForm.scu))} SCU</span></div>
-										<div class="c-row"><b>Preis</b><span>{fmtPrice(Number(trkForm.price))} aUEC/SCU</span></div>
-										<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Trade wird auf uexcorp.space {(trkConfirm.kind === 'edit' ? 'GEÄNDERT' : 'ANGELEGT')}.</div>
-									{/if}
-									<div class="md-actions">
-										<button type="button" class="btn" disabled={trkBusy} onclick={() => { if (trkConfirm) (trkConfirm.kind === 'remove' ? void doTrkRemove() : void doTrkWrite()); }}>
-											{trkBusy ? 'Senden …' : 'Bestätigen'}
-										</button>
-										<span class="btn-ghost" onclick={() => (trkConfirm = null)}>Abbrechen (Esc)</span>
-									</div>
-								</div>
-							</div>
-						{/if}
-					{:else if rDetail}
+												{:else if rDetail}
 						<div class="rdetail" role="dialog" aria-modal="true" aria-label="Routen-Detail">
 							<div class="md-head">
 								<div class="md-t">
@@ -5752,9 +5803,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<div class="lock-hint"><span class="dot"></span>Filter aktiv: <b>{dFilter}</b> · {dRows.length} Zeilen · Feld leeren = alles zeigen</div>
 								{/if}
 
-								{#if dToast}
-									<div class="d-toast" role="status">{dToast} <b>↵ Auswahl</b></div>
-								{/if}
+								
 
 								<div class="d-body">
 									{#if d.location}
@@ -5768,7 +5817,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												{#if grp.buys.length}
 													<div class="psub buy">Kauf</div>
 													{#each grp.buys as r}
-														<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+														<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
 															<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
 														</div>
@@ -5777,7 +5826,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												{#if grp.sells.length}
 													<div class="psub sell">Verkauf</div>
 													{#each grp.sells as r}
-														<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+														<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
 															<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
 														</div>
@@ -5828,7 +5877,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											</div>
 											<div class="vC-listhead"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Kauf</span><span>Verkauf</span></div>
 											{#each dRows as r}
-												<div class="pr vC-r" class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+												<div class="pr vC-r" class:is-sel={r.fi === dSel}>
 													<span class="vC-t">{r.name}<small>{stockTxt(r.p, r.kind)}</small></span>
 													{#if r.kind === 'buy'}
 														<span class="vC-c buy">{fmt(r.p.buy_price)}</span>
@@ -5848,7 +5897,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
 													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 													{#each buys as r, bi}
-														<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+														<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
 															<span class="val buy">{fmt(r.p.buy_price)}</span><span class="unit">aUEC</span>
 														</div>
@@ -5862,7 +5911,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
 													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
 													{#each sells as r, si}
-														<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel} class:is-chosen={r.fi === dChosen}>
+														<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
 															<span class="val sell">{fmt(r.p.sell_price)}</span><span class="unit">aUEC</span>
 														</div>
@@ -5934,7 +5983,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				{:else if inDetail}
 					{#if dRows.length}
 						<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
-						<span><kbd>↵</kbd> Auswahl</span>
+						<span><kbd>↵</kbd> Trade erfassen (Waren)</span>
 					{/if}
 					<span>Suchfeld = Filter</span>
 					<span><kbd>Esc</kbd> zurück</span>

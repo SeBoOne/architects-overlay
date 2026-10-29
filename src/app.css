@@ -107,6 +107,11 @@ html[data-palette="bloom"] {
   color-scheme: dark;
 }
 
+/* Q2 (t_56d5264a): Listing-Formular offen → Shell temporär höher. */
+.shell-advert {
+  --h-max: calc(100vh - var(--pad-top) - 1.5vh);
+}
+
 /* --------------------------- Basis --------------------------------------- */
 *,
 *::before,
@@ -956,21 +961,6 @@ html[data-window="spotlight"] .shell {
 
 .d-head .d-price .sell {
   color: var(--sell);
-}
-
-/* Auswahl-Toast nach ↵ einer Detail-Zeile */
-.d-toast {
-  padding: 0.6vh var(--pad-x);
-  border-bottom: 1px solid var(--lineb);
-  background: var(--panel2);
-  font: 600 max(1.05vh, 10px)/1 var(--font-mono);
-  letter-spacing: 0.1em;
-  color: var(--accent);
-}
-
-.d-toast b {
-  color: var(--fgdim);
-  font-weight: 600;
 }
 
 /* K6 (t_9b385831, P2c): Quelle-Label der Preisdetail — zeigt live, aus

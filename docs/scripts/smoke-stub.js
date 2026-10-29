@@ -104,9 +104,17 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_set_uex_secret_key':
 				if (cmd === 'settings_set_uex_secret_key')
 					stubState.uex_secret_key_set = a.key != null && String(a.key).trim() !== '';
+			case 'settings_set_username':
 			case 'settings_set_uex_username':
 				if (cmd === 'settings_set_uex_username')
 					stubState.uex_username = typeof a.name === 'string' && a.name.trim() !== '' ? a.name.trim() : '';
+				return stubSettings();
+			// PW-1 (t_fbe40115): Username wird aus dem Secret-Key abgeleitet
+			// (settings_resolve_uex_username → GET /user). Stub: setzt den
+			// Namen direkt und spiegelt das Snapshot-Verhalten.
+			case 'settings_resolve_uex_username':
+				stubState.uex_username = 'sebo_one';
+				return stubSettings();
 			case 'settings_set_commodity_source':
 				if (cmd === 'settings_set_commodity_source') stubState.commodity_source = a.name || stubState.commodity_source;
 				return stubSettings();
