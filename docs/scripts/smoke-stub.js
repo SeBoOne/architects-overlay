@@ -356,10 +356,14 @@ window.__TAURI_INTERNALS__ = {
 				];
 				let list = pool;
 				if (tid) {
+					// Q1 (t_535a98fb): Ort-Filter priorisiert, aber der volle Pool
+					// bleibt IMMER Teil der Liste (gefilterte zuerst, dedupe) —
+					// Commodities werden nie ausgeschlossen.
 					const ids = rows
 						.filter((r) => r.terminal_id === tid && Number(op === 'buy' ? r.buy_price : r.sell_price) > 0)
 						.map((r) => r.commodity_id);
-					list = pool.filter((c) => ids.includes(c.id));
+					const filtered = pool.filter((c) => ids.includes(c.id));
+					list = filtered.concat(pool.filter((c) => !ids.includes(c.id)));
 				}
 				const starts = list.filter((c) => c.name.toLowerCase().startsWith(q));
 				const contains = list.filter((c) => c.name.toLowerCase().includes(q) && !starts.includes(c));
@@ -404,6 +408,10 @@ window.__TAURI_INTERNALS__ = {
 			case 'open_marketplace_listing':
 				// Nur Tracken — kein echtes Browserfenster im Headless-Smoke.
 				return 'https://uexcorp.space/marketplace/item/info/' + encodeURIComponent(a.slug || '');
+			case 'open_negotiation_deal':
+				// Q1 (t_535a98fb): Deal-Deep-Link — /marketplace/negotiate/hash/<hash>.
+				window.__LAST_OPEN_URL__ = 'https://uexcorp.space/marketplace/negotiate/hash/' + encodeURIComponent(a.hash || '');
+				return window.__LAST_OPEN_URL__;
 			case 'open_marketplace_trades':
 				return 'https://uexcorp.space/marketplace/';
 			case 'open_marketplace_trades_home':

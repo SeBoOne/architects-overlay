@@ -14,6 +14,7 @@
 		options = [] as { label: string; value: string }[],
 		placeholder = '',
 		ariaLabel = '',
+		fullWidth = false,
 		onselect = (_value: string, _label: string) => {},
 		onclose = () => {}
 	} = $props();
@@ -114,7 +115,7 @@
 	}
 </script>
 
-<div class="rta">
+<div class="rta" style={fullWidth ? 'display:block;width:100%' : ''}>
 	<input
 		class="rtext rta-input"
 		type="text"
@@ -124,6 +125,7 @@
 		autocomplete="off"
 		role="combobox"
 		aria-expanded={open}
+		style={fullWidth ? 'width:100%' : ''}
 		oninput={oninput}
 		onkeydown={onkey}
 		onfocus={onfocus}

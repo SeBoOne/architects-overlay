@@ -72,6 +72,7 @@ pub fn run() {
             trade::trade_commodity_suggest,
             trade::marketplace_confirm_mode,
             trade::open_marketplace_listing,
+            trade::open_negotiation_deal,
             trade::open_marketplace_trades,
             trade::open_marketplace_trades_home,
             trade::pending_offers_remove,

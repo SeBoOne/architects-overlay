@@ -369,11 +369,13 @@ async def main():
         check("q4a-buy-gold-locations", any("Everus Harbor" in o for o in locs) and not any("Port Olisario" in o for o in locs), str(locs))
         await shot("qy-q4a-buy-gold-locations.png")
         await pick_option("Everus Harbor")
-        # Umgekehrt: Ort Everus + Kauf → nur Waren, die Everus VERKAUFT (Gold).
+        # Umgekehrt: Ort Everus + Kauf → Q1 (t_535a98fb): der Ort-Filter
+        # priorisiert, schneidet aber NIE ab — Titanium ist jetzt WÄHLBAR
+        # (früher: abgeschnitten; Spielertrades = alles handelbar).
         await js(type_input_js(".trk-modal input.rtext", "Ti"))
         await asyncio.sleep(0.8)
         coms = await ta_options()
-        check("q4b-buy-everus-commodities", not any("Titanium" in c for c in coms), str(coms))
+        check("q4b-buy-everus-commodities-selectable", any("Titanium" in c for c in coms), str(coms))
         await js(type_input_js(".trk-modal input.rtext", "Go"))
         await asyncio.sleep(0.8)
         coms2 = await ta_options()
@@ -395,10 +397,14 @@ async def main():
         # Q4e: Ort gewählt + Verkauf: Olisario KAUFT nur Gold (Laranite verkauft
         # Olisario selbst, Titanium handelt Olisario gar nicht).
         await pick_option("Port Olisario")
+        # Q1 (t_535a98fb): Filter priorisiert, schneidet nie ab — Laranite
+        # (Olisario kauft Gold UND verkauft Laranite) und Titanium (nie am
+        # Ort gelistet) bleiben beide wählbar, Titanium als Beleg „nie
+        # ausgeschlossen".
         await js(type_input_js(".trk-modal input.rtext", "Ti"))
         await asyncio.sleep(0.8)
         coms = await ta_options()
-        check("q4e-sell-olisario-no-laranite", not any(("Laranite" in c or "Titanium" in c) for c in coms), str(coms))
+        check("q4e-sell-olisario-commodities-selectable", any("Titanium" in c for c in coms), str(coms))
         await shot("qy-q4e-sell-olisario-commodities.png")
         await js(type_input_js(".trk-modal input.rtext", "Go"))
         await asyncio.sleep(0.8)

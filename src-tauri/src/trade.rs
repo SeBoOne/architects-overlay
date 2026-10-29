@@ -1258,6 +1258,25 @@ fn listing_deep_link(slug: &str) -> String {
     }
 }
 
+/// Q1 (t_535a98fb): „Auf UEX öffnen" im Trades-Detail zielt auf den DEAL,
+/// nicht auf das Listing: `https://uexcorp.space/marketplace/negotiate/
+/// hash/<hash>` (hash ist Pflichtfeld jedes Negotiation-Datensatzes und
+/// bereits Teil des Output-DTO — der Chat nutzt es für
+/// /marketplace_negotiations_messages). Ohne Login sichtbar; rein externe
+/// Navigation, nichts wird geschrieben.
+#[tauri::command]
+pub fn open_negotiation_deal(app: AppHandle, hash: String) -> Result<String, String> {
+    let hash = hash.trim().to_string();
+    if hash.is_empty() {
+        return Err("Kein Deal-Hash vorhanden — Deal kann nicht geöffnet werden.".into());
+    }
+    let url = format!("https://uexcorp.space/marketplace/negotiate/hash/{hash}");
+    let _ = &app; // AppHandle kept for signature symmetry with sibling commands
+    tauri_plugin_opener::open_url(&url, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(url)
+}
+
 /// M2b-Review-Fix (t_6e26ec82 R2): öffnet den Permalink eines frisch
 /// ANGELEGTEN Listings (Create-Antwort liefert eine volle URL, kein Slug).
 /// Nur vertrauenswürdige uexcorp.space-URLs werden geöffnet — kein externes
@@ -1589,8 +1608,14 @@ pub fn trade_location_suggest(
 
 /// QY (t_07edb03d): Cross-Autocomplete „Ware" — nur Waren, die am GEWÄHLTEN
 /// Ort in der GEWÄHLTEN RICHTUNG handelbar sind (dieselbe Spielersicht-
-/// Semantik wie `trade_location_suggest`). Ohne gecachte Zeilen für den
-/// Ort: Fallback auf das ungefilterte commodity_suggest.
+/// Semantik wie `trade_location_suggest`).
+///
+/// Q1 (t_535a98fb): Bei Spielertrades kann ALLES gehandelt werden — der
+/// Ort-Filter priorisiert, schneidet Waren aber NIE ab. Deshalb werden die
+/// ort-gefilterten Treffer mit dem vollen Commodity-Suggest (gefiltert nach
+/// Query) VEREINIGT (gefilterte zuerst, Duplikate raus): Gold, Janalite,
+/// Pitambu & Co. bleiben in beiden Richtungen immer wählbar, auch wenn der
+/// gewählte Terminal sie in seinen terminal_prices-Zeilen nicht führt.
 #[tauri::command(rename_all = "snake_case")]
 pub fn trade_commodity_suggest(
     state: State<'_, TradeState>,
@@ -1605,22 +1630,41 @@ pub fn trade_commodity_suggest(
         .cache
         .trade_commodities_for_terminal(id_terminal, &operation, &query)
         .map_err(|e| format!("Cache-Fehler: {e}"))?;
-    if rows.is_empty() {
-        return entity_suggest(&state, EntityKind::Commodities, query);
-    }
-    Ok(rows
+    // Q1: Fallback + ZUSAMMENFÜHRUNG — der volle Commodity-Suggest bleibt
+    // immer Teil der Liste (priorisiert: ort-gefilterte Treffer zuerst).
+    let full = entity_suggest(&state, EntityKind::Commodities, query)?;
+    let filtered: Vec<provider::ItemSuggestion> = rows
         .into_iter()
         .map(|(id, name)| provider::ItemSuggestion {
             id,
             name,
             subtitle: String::new(),
         })
-        .collect())
+        .collect();
+    Ok(merge_suggestions(filtered, full))
 }
 
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
+
+/// Q1 (t_535a98fb): Vereinigung zweier Suggest-Listen (gefilterte zuerst,
+/// keine Duplikate, max 12) — der Ort-Filter priorisiert, schneidet Waren
+/// aber nie ab (Gold/Janalite/Pitambu bleiben immer wählbar).
+fn merge_suggestions(
+    filtered: Vec<provider::ItemSuggestion>,
+    full: Vec<provider::ItemSuggestion>,
+) -> Vec<provider::ItemSuggestion> {
+    let mut merged: Vec<provider::ItemSuggestion> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for sug in filtered.into_iter().chain(full.into_iter()) {
+        if seen.insert(sug.id) {
+            merged.push(sug);
+        }
+    }
+    merged.truncate(12);
+    merged
+}
 
 /// Start the background freshness/health loop, exactly once (guarded by
 /// `tracker.background`). Safe from any thread: it spawns onto Tauri's own
@@ -1980,6 +2024,29 @@ mod tests {
     use tauri::test::mock_app;
     // M2a-Tests (Mein Shop): eigene Offers/Trades nutzen die Seam-Typen.
     use provider::{ListingType, MarketOperation};
+
+    // Q1 (t_535a98fb): Suggest-Merge — ort-gefilterte Treffer zuerst, volle
+    // Commodity-Liste bleibt IMMER wählbar (Gold/Janalite/Pitambu), keine
+    // Duplikate, Limit 12.
+    #[test]
+    fn merge_suggestions_keeps_full_commodity_list() {
+        let sug = |id: u64, name: &str| provider::ItemSuggestion {
+            id,
+            name: name.into(),
+            subtitle: String::new(),
+        };
+        let filtered = vec![sug(1, "Quantum"), sug(2, "Titanium")];
+        let full = vec![sug(2, "Titanium"), sug(3, "Gold"), sug(4, "Janalite")];
+        let m = merge_suggestions(filtered, full);
+        let ids: Vec<u64> = m.iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec![1, 2, 3, 4]);
+        // Reihenfolge: gefilterte zuerst.
+        assert_eq!(m[0].name, "Quantum");
+        // Limit 12 greift.
+        let many: Vec<_> = (0..20).map(|i| sug(i as u64, "g")).collect();
+        let all: Vec<_> = (100..140).map(|i| sug(i as u64, "h")).collect();
+        assert_eq!(merge_suggestions(many, all).len(), 12);
+    }
 
     #[test]
     fn friendly_rate_limit_is_german_and_actionable() {

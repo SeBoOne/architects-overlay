@@ -1836,6 +1836,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	// Q1 (t_535a98fb): „Deal auf UEX öffnen" — exakte Deal-URL
+	// /marketplace/negotiate/hash/<hash> (hash aus dem Negotiation-Datensatz),
+	// NICHT mehr das Listing.
+	async function openTradesDeal(n: Negotiation) {
+		try {
+			await invoke<string>('open_negotiation_deal', { hash: n.hash });
+		} catch (e) {
+			tradesErr = String(e);
+		}
+	}
+
 	// Beim Betreten des Trades-Tabs laden + dezent pollen (max 1/min im
 	// Idle, Research §5). Beim Verlassen Interval abbauen.
 	$effect(() => {
@@ -4609,7 +4620,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{#if trkNote}
 								<div class="row-empty" style="padding: 10px 16px">{trkNote}</div>
 							{/if}
-							<!-- Tages-Aggregat: Ausgaben/Einnahmen/Nettogewinn (aUEC). -->
+							<!-- Tages-Aggregat: Ausgaben/Einnahmen/Nettogewinn (aUEC).
+							     Q1 (t_535a98fb): Buchhaltungs-Konvention — positive Beträge
+							     GRÜN (amt-pos), negative ROT (amt-neg). -->
 							<div class="mlist">
 								{#each trkDays as day (day.key)}
 									<div class="mrow trow" style="cursor: default">
@@ -4619,10 +4632,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										</div>
 										<div class="m-right">
 											<div class="m-meta">
-												<span title="Ausgaben (Käufe) an diesem Tag">−{fmtPrice(day.expense)}</span>
-												<span title="Einnahmen (Verkäufe) an diesem Tag">+{fmtPrice(day.income)}</span>
+												<span class="amt-neg" title="Ausgaben (Käufe) an diesem Tag">−{fmtPrice(day.expense)}</span>
+												<span class="amt-pos" title="Einnahmen (Verkäufe) an diesem Tag">+{fmtPrice(day.income)}</span>
 											</div>
-											<div class="m-price {day.net >= 0 ? 'sell' : 'buy'}" title="Nettogewinn des Tages (aUEC)">{day.net >= 0 ? '+' : '−'}{fmtPrice(Math.abs(day.net))}</div>
+											<div class="m-price {day.net >= 0 ? 'amt-pos' : 'amt-neg'}" title="Nettogewinn des Tages (aUEC)">{day.net >= 0 ? '+' : '−'}{fmtPrice(Math.abs(day.net))}</div>
 										</div>
 									</div>
 								{/each}
@@ -4636,6 +4649,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<div class="m-sub">{t.terminal} · {fmt(t.scu)} SCU @ {fmtPrice(t.price)} aUEC</div>
 										</div>
 										<div class="m-right">
+											<!-- Q1 (t_535a98fb): Gesamtwert = Menge × Preis — Verkauf
+											     = Einnahme (GRÜN, +), Kauf = Ausgabe (ROT, −). -->
+											<div
+												class="m-price {t.operation === 'sell' ? 'amt-pos' : 'amt-neg'}"
+												title="Gesamtwert: {fmt(t.scu)} SCU × {fmtPrice(t.price)} aUEC"
+											>{t.operation === 'sell' ? '+' : '−'}{fmtPrice((t.scu || 0) * (t.price || 0))}</div>
 											<div class="m-meta">{new Date((t.date_added || 0) * 1000).toLocaleString('de-DE')}</div>
 											<div class="m-meta">
 												<span class="btn-ghost" title="Trade bearbeiten" onclick={() => openTrkForm(t)}>Bearbeiten</span>
@@ -4677,6 +4696,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="trk-field">
 									<span class="trk-lbl">Ware</span>
 									<RoutesTypeahead
+										fullWidth
 										bind:value={trkForm.commodity}
 										options={trkComOpts}
 										placeholder="z. B. Gold"
@@ -4694,6 +4714,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="trk-field">
 									<span class="trk-lbl">Ort</span>
 									<RoutesTypeahead
+										fullWidth
 										bind:value={trkForm.terminal}
 										options={trkTermOpts}
 										placeholder="z. B. Everus Harbor"
@@ -4706,11 +4727,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								</div>
 								<div class="trk-field">
 									<span class="trk-lbl">Menge (SCU)</span>
-									<input class="qnum" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
+									<input class="qnum" style="width:100%" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
 								</div>
 								<div class="trk-field">
 									<span class="trk-lbl">Preis/SCU (aUEC)</span>
-									<input class="qnum" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
+									<input class="qnum" style="width:100%" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
 								</div>
 <div class="sm" style="color: var(--fgdim); margin-top: 6px">
 										Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.
@@ -4984,7 +5005,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<span class="m-lbl" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
 								{tradesDeal.listing_title}
 							</span>
-							<span class="chip" title="Deal auf uexcorp.space öffnen (Listing-Seite)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Deal öffnen')}>Auf UEX öffnen ↗</span>
+							<span class="chip" title="Deal auf uexcorp.space öffnen (negotiate/hash)" onclick={() => void openTradesDeal(tradesDeal!)}>Deal auf UEX öffnen ↗</span>
 							<!-- QW-4 (t_28bfd027): geschlossene Deals sind READ-ONLY. -->
 							{#if tradesDealEnded}<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? 'Abgeschlossen' : 'Beendet'}</span>{/if}
 						</div>
@@ -5013,7 +5034,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="row-empty" style="padding: 10px 16px; color: var(--alert); display: flex; align-items: center; gap: 12px" role="alert">
 								<span style="flex: 1">{chatErr}</span>
 								<!-- Send-Fehlerpfad (429/403): Meldung + Deep-Link statt Retry. -->
-								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Fehler-Pfad')}>AUF UEXCORP.SPACE ÖFFNEN ↗</button>
+								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openTradesDeal(tradesDeal!)}>DEAL AUF UEXCORP.SPACE ÖFFNEN ↗</button>
 							</div>
 						{/if}
 						<!-- QW-4 (t_28bfd027): abgeschlossener Deal (date_closed von
@@ -5039,7 +5060,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							     QY: auch einseitig beendet (nur eine Seite geschlossen). -->
 							<div class="mbar">
 								<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? 'Trade abgeschlossen' : 'Trade beendet'} — Verlauf nur lesbar</span>
-								<span class="chip" title="Deal auf uexcorp.space öffnen (Bewertung/Abschluss-Detail)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Abgeschlossen')}>Auf UEX öffnen ↗</span>
+								<!-- Q1 (t_535a98fb): unterer zweiter Button ENTFIELT — der obere
+								     „Deal auf UEX öffnen" bleibt immer sichtbar und zielt auf
+								     den Deal (negotiate/hash), nicht auf das Listing. -->
 							</div>
 							{/if}
 					{:else}

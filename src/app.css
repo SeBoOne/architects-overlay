@@ -1515,6 +1515,17 @@ html[data-window="spotlight"] .shell {
   color: var(--sell);
 }
 
+/* Q1 (t_535a98fb): Buchhaltungs-Konvention im Trade Log — positive Beträge
+   GRÜN (--ok), negative ROT (--alert). Gilt für Trade-Liste + Tages-Aggregat;
+   die Kauf/Verkauf-Richtungs-Chips (.m-op.buy/.sell) bleiben unangetastet. */
+.amt-pos {
+  color: var(--ok);
+}
+
+.amt-neg {
+  color: var(--alert);
+}
+
 .m-meta {
   font: 500 10px/1.4 var(--font-mono);
   color: var(--fgfaint);
