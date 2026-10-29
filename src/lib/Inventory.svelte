@@ -180,23 +180,33 @@
 		}));
 	});
 
-	// Cards-view-Groups: Grouping per Stand-ort independent of the sortmode;
-	// the cards react to the Sort-Chips (qty → Quantity, quality → Ø Quality,
-	// loc → Name).
+	// Cards-view-Groups: Grouping per MATERIAL (QX) independent of the
+	// sortmode; the cards react to the Sort-Chips (qty → Quantity,
+	// quality → Ø Quality, loc → Name). Subgroups inside each card = Stand-ort.
 	let cardGroups = $derived.by(() => {
 		const map = new Map<string, InvEntry[]>();
 		for (const r of sortedRows) {
-			if (!map.has(r.location_name)) map.set(r.location_name, []);
-			map.get(r.location_name)!.push(r);
+			if (!map.has(r.name)) map.set(r.name, []);
+			map.get(r.name)!.push(r);
 		}
-		const arr = [...map.entries()].map(([loc, entries]) => {
+		const arr = [...map.entries()].map(([mat, entries]) => {
 			const total = entries.reduce((s, e) => s + e.quantity, 0);
 			const avgQ = Math.round(entries.reduce((s, e) => s + e.quality * e.quantity, 0) / Math.max(total, 1e-9));
-			return { loc, entries, total, avgQ, mats: matGroups(entries) };
+			const locMap = new Map<string, InvEntry[]>();
+			for (const e of entries) {
+				if (!locMap.has(e.location_name)) locMap.set(e.location_name, []);
+				locMap.get(e.location_name)!.push(e);
+			}
+			const locs = [...locMap.entries()].map(([loc, list]) => ({
+				loc,
+				list,
+				total: list.reduce((s, e) => s + e.quantity, 0)
+			}));
+			return { mat, entries, total, avgQ, locs };
 		});
 		if (sortMode === 'qty') arr.sort((a, b) => b.total - a.total);
 		else if (sortMode === 'quality') arr.sort((a, b) => b.avgQ - a.avgQ);
-		else arr.sort((a, b) => (a.loc < b.loc ? -1 : 1));
+		else arr.sort((a, b) => (a.mat < b.mat ? -1 : 1));
 		return arr;
 	});
 
@@ -220,10 +230,10 @@
 		if (cardView) {
 			const out: NavRow[] = [];
 			for (const g of cardGroups) {
-				out.push({ entry: null, kind: 'header', label: g.loc });
-				for (const m of g.mats) {
-					out.push({ entry: null, kind: 'sub', label: m.name });
-					for (const e of m.list) out.push({ entry: e, kind: 'row' });
+				out.push({ entry: null, kind: 'header', label: g.mat });
+				for (const l of g.locs) {
+					out.push({ entry: null, kind: 'sub', label: l.loc });
+					for (const e of l.list) out.push({ entry: e, kind: 'row' });
 				}
 			}
 			return out;
@@ -838,37 +848,37 @@
 					{filter.trim() ? `Keine Positionen passen zu „${filter}“.` : 'Inventar leer — erfasse die erste Position mit <b>N</b>.'}
 				</div>
 			{:else if cardView}
-				<!-- P13 (K5): Cards-View — grid of Stand-ort-cards, Item-
+				<!-- QX: Cards-View — grid of Material-cards, Stand-ort-
 				     Subgroups inside the cards (card header: Ø Quality, P14-Colors). -->
 				<div class="inv-cards">
-					{#each cardGroups as g (g.loc)}
-						<div class="inv-card">
-							<div class="ic-head">
-								<button
-									type="button"
-									class="vgroup"
-									onclick={() => openLocation(g.loc)}
-									title="Open Stand-ort-Detail"
-									aria-label="Open Stand-ort {g.loc}"
-								>{g.loc} <span class="n">{g.entries.length} Pos · {fmtQty(g.total)} {g.entries[0]?.entity_kind === 'item' ? 'Stk' : 'SCU'}</span></button>
-								<span class="q q-{qTier(g.avgQ)}">Ø {g.avgQ}</span>
-							</div>
-							{#each g.mats as m}
-								<div class="isub">
+					{#each cardGroups as g (g.mat)}
+							<div class="inv-card">
+								<div class="ic-head">
 									<button
 										type="button"
-										class="isub-btn"
-										onclick={() => openItem(m.name)}
+										class="vgroup"
+										onclick={() => openItem(g.mat)}
 										title="Open Material-Detail"
-										aria-label="Open Material {m.name}"
-									>{m.name}</button>
-									<span class="n">{m.list.length} Pos · {fmtQty(m.total)}</span>
+										aria-label="Open Material {g.mat}"
+									>{g.mat} <span class="n">{g.entries.length} Pos · {fmtQty(g.total)} {g.entries[0]?.entity_kind === 'item' ? 'Stk' : 'SCU'}</span></button>
+									<span class="q q-{qTier(g.avgQ)}">Ø {g.avgQ}</span>
 								</div>
-								{#each m.list as r (r.id)}
+								{#each g.locs as l}
+									<div class="isub">
+										<button
+											type="button"
+											class="isub-btn"
+											onclick={() => openLocation(l.loc)}
+											title="Open Stand-ort-Detail"
+											aria-label="Open Stand-ort {l.loc}"
+										>{l.loc}</button>
+										<span class="n">{l.list.length} Pos · {fmtQty(l.total)}</span>
+									</div>
+									{#each l.list as r (r.id)}
 									<div class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
 										<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
-										<div class="main" onclick={() => openItem(r.name)}>
-											<div class="loc">{r.name}</div>
+										<div class="main" onclick={() => openLocation(r.location_name)}>
+											<div class="loc">{r.location_name}</div>
 											<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Purchase {fmtPrice(r.price)} aUEC{/if}</div>
 										</div>
 										<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? 'Stk' : 'SCU'}</small></div>
@@ -1001,7 +1011,7 @@
 		overflow-y: auto;
 		padding: 4px 8px 8px;
 	}
-	/* P13 (K5): Cards-View — Stand-ort-card-grid (Overlay-Style). */
+	/* QX: Cards-View — Material-card-grid (Overlay-Style). */
 	.inv-cards {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));

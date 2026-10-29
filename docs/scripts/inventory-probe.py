@@ -2,7 +2,7 @@
 """CDP-Probe für t_1bab1fea (Inventar-Modus: lokale Bestände, Qualitäten, Standorte).
 
 Belegt auf der echten Svelte-Oberfläche (echte Logik, Tauri-IPC gestubbt):
-  1. F3 öffnet den Inventar-Modus (kein Platzhalter mehr), Rail-Aktivzustand.
+  1. F4 öffnet den Inventar-Modus (kein Platzhalter mehr), Rail-Aktivzustand.
   2. Gesamtübersicht: nach Standort gruppiert (Heim-Hangar / Meine Carrack /
      Org-Depot), Gold Q900 vs Q364 sichtbar, Fußzeile zählt Positionen.
   3. Haupt-Suchfeld = In-Context-Filter (Standort/Material), Sortier-Chips
@@ -11,7 +11,7 @@ Belegt auf der echten Svelte-Oberfläche (echte Logik, Tauri-IPC gestubbt):
   5. CRUD: Erfassen (Entity-Pick via 'search'-Stub + Freitext-Fall),
      Bearbeiten (Enter), Löschen (Entf) — Stub-Datensatz verändert sich.
   6. Esc-Kette: Formular → Übersicht; Item-Detail → Übersicht;
-     Übersicht → zurück zur Suche (SMODE SUCHE). F4 bleibt Platzhalter.
+     Übersicht → zurück zur Suche (SMODE SUCHE). F3 bleibt Routen (kein Inventar-Reentry).
 """
 import asyncio, base64, json, os, pathlib
 import websockets, urllib.request
@@ -127,14 +127,15 @@ async def main():
         def smode():
             return js("document.querySelector('.smode') ? document.querySelector('.smode').innerText : 'NONE'")
 
-        # ---- 1. F3 → Inventar-Modus (echter View, kein Platzhalter) ----
+        # ---- 1. F4 → Inventar-Modus (echter View, kein Platzhalter) ----
+        # F4 seit Mode-Remap (konfigurierbare Shortcuts): F3 = Routen.
         await js("var i=document.querySelector('input.q'); if(i) i.focus();")
-        await key("F3")
-        check("f3-opens-inventory", (await smode()).strip() == "INVENTAR", await smode())
+        await key("F4")
+        check("f4-opens-inventory", (await smode()).strip() == "INVENTAR", await smode())
         inv = await js("!!document.querySelector('.pane-inventory')")
         check("inventory-view-present", bool(inv))
         active = await js("document.querySelector('.rentry.is-on .rkey') ? document.querySelector('.rentry.is-on .rkey').textContent.trim() : 'NONE'")
-        check("rail-f3-active", active == "F3", active)
+        check("rail-f4-active", active == "F4", active)
         ph = await js("!!document.querySelector('.pane-placeholder')")
         check("no-placeholder-anymore", not ph)
 
@@ -301,14 +302,14 @@ async def main():
         check("location-id-string-passthrough", added2.get("lid") == "9218937313948769813", str(added2))
         await key("Escape")
 
-        # ---- 6. Esc-Kette: Übersicht → Suche; F4 bleibt Platzhalter ----
+        # ---- 6. Esc-Kette: Übersicht → Suche; F3 bleibt Routen (kein Inventar-Reentry) ----
         await key("Escape")
         await asyncio.sleep(0.3)
         check("esc-overview-back-to-search", (await smode()).strip() == "SUCHE", await smode())
         focus = await js("document.activeElement === document.querySelector('input.q')")
         check("focus-back-in-search", bool(focus))
-        await key("F4")
-        check("f4-still-placeholder", (await js("document.querySelector('.pane-placeholder .big') ? document.querySelector('.pane-placeholder .big').innerText : 'NONE'")).strip() == "HANGAR")
+        await key("F3")
+        check("f3-still-not-inventory", (await smode()).strip() == "HANDELSROUTEN", await smode())
         await key("F1")
 
     server.terminate(); proc.terminate()
