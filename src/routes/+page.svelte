@@ -3024,7 +3024,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Pfeil-Navigation durch die Offers (sichtbare = qualitätsgefilterte Liste).
 	function mMove(dir: number) {
 		if (!visOffers.length) return;
-		mSel = Math.min(Math.max(mSel + dir, 0), visOffers.length - 1);
+		// PW-5 (t_fbe40115): Navigation nur über die SICHTBAREN Angebote (mVew)
+		// — der alte Clamp auf visOffers.length erlaubte Selektion unsichtbarer
+		// Zeilen (Bug „separate Listen"). Am letzten sichtbaren Element wird
+		// automatisch nachgeladen (Pfeiltaste über letztes Element).
+		const last = mVew.length - 1;
+		if (dir > 0 && mSel >= last && mMshown < visOffers.length) {
+			loadMore();
+			return;
+		}
+		mSel = Math.min(Math.max(mSel + dir, 0), last);
 		scrollOfferIntoView(mSel);
 	}
 
@@ -3036,6 +3045,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			mMshown = Math.min(mMshown + M_PAGE, visOffers.length);
 		}
 	}
+
+	// PW-5 (t_fbe40115): Auto-Pagination — Scroll-Ende in der Angebotsliste
+	// löst das Nachladen aus (kein Button mehr). Schwellwert nahe am Boden,
+	// damit das Nachladen einsetzt BEVOR der User am absoluten Rand steht.
+	function onMarketListScroll(e: Event) {
+		const el = e.currentTarget as HTMLElement | null;
+		if (!el || mLoadingMore || !mAllLoaded) return;
+		if (mMshown >= visOffers.length) return;
+		if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) loadMore();
+	}
+	let mListEl: HTMLElement | null = $state(null);
 
 	function openOfferDetail() {
 		if (!visOffers.length) return;
@@ -5003,7 +5023,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 
 					{#if visOffers.length}
-						<div class="mlist">
+						<div class="mlist" bind:this={mListEl} onscroll={onMarketListScroll}>
 							{#each mVew as o, i}
 								<div
 									class="mrow"
@@ -5033,12 +5053,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="m-foot">
 							<span>{mVew.length} / {visOffers.length} Angebote · Seite {Math.min(M_PAGE, mMshown) === 0 ? 0 : Math.ceil(mMshown / M_PAGE)}</span>
 							<div class="m-more">
-								{#if mLoadingMore}
-									<span class="spin"></span><span class="sm">lädt …</span>
-								{:else if mMshown < visOffers.length}
-									<button class="btn-more" onclick={loadMore}>Weitere laden</button>
-								{:else if !mAllLoaded}
-									<button class="btn-more" onclick={loadMore}>(noch mehr laden)</button>
+								{#if mLoadingMore || mMshown < visOffers.length || !mAllLoaded}
+									<span class="spin"></span><span class="sm">{mLoadingMore ? 'lädt …' : 'automatisch nachladen …'}</span>
 								{:else}
 									<span class="sm">Alle geladen</span>
 								{/if}
@@ -5333,7 +5349,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<span><kbd>↑↓</kbd> Angebote</span>
 						<span><kbd>Alt+1..0</kbd> Offer</span>
 						<span><kbd>↵</kbd> Detail</span>
-						<span><kbd>Tab</kbd> Weitere laden</span>
 						<span><kbd>F5</kbd> Market syncen</span>
 						<span><kbd>Esc</kbd> zurück zur Suche</span>
 					{/if}
