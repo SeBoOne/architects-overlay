@@ -27,8 +27,13 @@ Checks:
   9. Unverbundenes Modul: Detail zeigt 'Modul (unverbunden)' + Zuordnen
      (Basisschiff-Typeahead) → hangar_update setzt base_ship.
  10. Bearbeiten öffnet dasselbe Popup mit dd.mm.jjjj-Datum.
+ 11. (R2-D1 Review-Fix) Delete-Flow: 'Löschen' im Detail-View öffnet den
+     Confirm-Modal (EINTRAG LÖSCHEN), JA löscht den Eintrag.
+ 12. (R2-D2 Review-Fix) Zuordnung auf custom_name-Schiff: Typeahead findet
+     den Custom-Namen, base_ship wird als MODELLNAME gespeichert, Ship-
+     Details zeigen das Modul.
 
-Screenshots: docs/screenshots/hangar-rework/01…10-*.png
+Screenshots: docs/screenshots/hangar-rework/01…12-*.png
 """
 import asyncio, base64, json, os, pathlib
 import websockets, urllib.request
@@ -60,6 +65,10 @@ ITEMS = [
     mk(4, "Mule", "ingame", None, "vehicle", manufacturer="Drake"),
     mk(5, "600i Exploration Module", "pledge", "LTI", "module", base_ship="600i Explorer", price=180.0, date="2024-07-12"),
     mk(6, "Golem OX Modul", "pledge", None, "module"),
+    # Review-Fix-Abdeckung: Schiff MIT custom_name + zweites unverbundenes
+    # Modul für den Zuordnungs-Test (R2-D2: base_ship muss Modellname sein).
+    mk(7, "Constellation Andromeda", "ingame", None, "ship", manufacturer="RSI", custom_name="Bogenschütze"),
+    mk(8, "Test Modul", "ingame", None, "module"),
 ]
 N_ROWS = len(ITEMS)
 
@@ -227,6 +236,11 @@ async def main():
                      "const i=f.querySelector('input'); i.focus(); i.value='31.01.2025';"
                      "i.dispatchEvent(new Event('input',{bubbles:true})); return 'OK'; })()")
             await asyncio.sleep(0.2)
+            # Review-Fix (R2-D1): eindeutiger Name für den Lösch-Test (Step 11).
+            await js("(() => { const f=[...document.querySelectorAll('.hform-modal .trk-field')].find(x=>x.textContent.includes('Name'));"
+                     "const i=f.querySelector('input'); i.focus(); i.value='Probe Frachter';"
+                     "i.dispatchEvent(new Event('input',{bubbles:true})); return 'OK'; })()")
+            await asyncio.sleep(0.2)
             await js("document.querySelector('.hform-modal button[type=submit]').click()")
             await asyncio.sleep(0.5)
             conf = await js("(() => { const c=document.querySelector('.advert-scrim .confirm-modal'); return c ? c.innerText.slice(0, 200) : 'NOCONF'; })()")
@@ -287,7 +301,7 @@ async def main():
             # ---- 9: Unverbundenes Modul → Zuordnen ----
             unbound = await js("(() => { const r=[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('unverbunden')); return r ? r.innerText.trim() : 'MISSING'; })()")
             check("unbound-module-labeled", "unverbunden" in str(unbound), unbound)
-            await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('unverbunden')).click()")
+            await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('Golem')).click()")
             await asyncio.sleep(0.5)
             assign = await js("(() => { const d=document.querySelector('.hangar-detail'); return d ? d.innerText : 'NODETAIL'; })()")
             check("unbound-detail-shows-assign", "Modul (unverbunden)" in str(assign) and "Zuordnen" in str(assign), str(assign)[:200])
@@ -314,6 +328,44 @@ async def main():
             # Abbrechen (Delete-Confirm-Pfad wird über denselben Mechanismus bedient)
             await js("[...document.querySelectorAll('.hform-modal .hform-foot .hbtn')].find(b=>b.innerText.includes('Abbrechen')).click()")
             await asyncio.sleep(0.3)
+
+            # ---- 11: Review-Fix (R2-D1) Delete-Flow — Confirm auch im Detail-View ----
+            # Zurück zur Liste (Edit-Popup wurde gerade abgebrochen, Detail-View aktiv).
+            await key("Escape")
+            await asyncio.sleep(0.4)
+            await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('Probe Frachter')).click()")
+            await asyncio.sleep(0.5)
+            await js("[...document.querySelectorAll('.hangar-detail .hbtn')].find(b=>b.innerText.includes('Löschen')).click()")
+            await asyncio.sleep(0.4)
+            dconf = await js("(() => { const c=document.querySelector('.advert-scrim .confirm-modal'); return c ? c.innerText.slice(0, 200) : 'NOCONFIRM'; })()")
+            check("delete-confirm-modal-in-detail", "EINTRAG LÖSCHEN" in str(dconf) and "Probe Frachter" in str(dconf), dconf)
+            await shot("11-delete-confirm.png")
+            await js("[...document.querySelectorAll('.confirm-modal button')].find(b=>b.innerText.includes('JA, LÖSCHEN')).click()")
+            await asyncio.sleep(0.8)
+            gone = await js("(() => { const it = window.__HANGAR_DATA__.find(i=>i.name==='Probe Frachter'); return it ? 'STILL-THERE' : 'DELETED'; })()")
+            check("delete-removes-entry", gone == "DELETED", gone)
+
+            # ---- 12: Review-Fix (R2-D2) Zuordnung speichert MODELLNAME ----
+            await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('Test Modul')).click()")
+            await asyncio.sleep(0.5)
+            await js("(() => { const f=document.querySelector('.hd-mods .hmod-add .rta-input'); f.focus(); f.value='Bogenschütze'; f.dispatchEvent(new Event('input',{bubbles:true})); return 'OK'; })()")
+            await asyncio.sleep(0.4)
+            citems = await js("[...document.querySelectorAll('.hd-mods .hmod-add .rta-dd .rta-item')].map(b=>b.innerText.trim())")
+            check("assign-typeahead-finds-custom-name", bool(citems) and any("Bogenschütze" in s for s in (citems or [])), str(citems))
+            if isinstance(citems, list) and citems:
+                await js("[...document.querySelectorAll('.hd-mods .hmod-add .rta-dd .rta-item')][0].click()")
+                await asyncio.sleep(0.3)
+            await js("[...document.querySelectorAll('.hd-mods .hmod-add .hbtn')].find(b=>b.innerText.includes('Zuordnen')).click()")
+            await asyncio.sleep(0.8)
+            cbase = await js("(() => { const it = window.__HANGAR_DATA__.find(i=>i.id===8); return it ? (it.base_ship || 'EMPTY') : 'MISSING'; })()")
+            check("assign-stores-model-name", cbase == "Constellation Andromeda", cbase)
+            await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('Bogenschütze')).click()")
+            await asyncio.sleep(0.5)
+            cmods = await js("(() => { const s=document.querySelector('.hd-mods .h'); return s ? s.innerText : 'NOMODS'; })()")
+            check("custom-name-ship-shows-module", "Module (1)" in str(cmods), cmods)
+            await shot("12-module-assigned-customname.png")
+            await js("[...document.querySelectorAll('.hd-mods .hmod-x')][0].click()")
+            await asyncio.sleep(0.5)
     finally:
         for p_ in (server, proc):
             try:

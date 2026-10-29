@@ -679,7 +679,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	function hangarModulesOf(shipName: string) {
-		return hangarItems.filter((i) => i.entity_type === 'module' && i.base_ship === shipName);
+		// Review-Fix (R2-D2): Legacy-Zeilen, deren base_ship als Display-Name
+		// (custom_name) gespeichert wurde, weiterhin matchen — der Zuordnungs-
+		// Typeahead schreibt jetzt den Modellnamen.
+		const legacyDn = hangarShips
+			.filter((s) => s.name === shipName && s.custom_name)
+			.map((s) => s.custom_name as string);
+		return hangarItems.filter((i) => i.entity_type === 'module' && (i.base_ship === shipName || legacyDn.includes(i.base_ship ?? '')));
 	}
 
 	// R2 (t_2158474c, Punkt 6): Datumsformat dd.mm.jjjj — Anzeige UND Eingabe.
@@ -848,15 +854,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function hangarBaseSuggest() {
 		// Base-Ship-Autocomplete from the ALREADY REGISTERED Hangar entries
 		// (Card: "Autocomplete from those already entered in the Hangar").
+		// Review-Fix (R2-D2): Wert = MODELLNAME (s.name) — hangarModulesOf
+		// matcht base_ship gegen i.name; Display-Namen nur als Suchtext.
 		const q = hangarForm.base_ship.trim().toLowerCase();
 		const out: string[] = [];
 		const seen = new Set<string>();
 		for (const s of hangarShips) {
 			const dn = hangarDisplayName(s);
 			const hay = `${s.name} ${s.custom_name}`.toLowerCase();
-			if ((q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q)) && !seen.has(dn)) {
-				seen.add(dn);
-				out.push(dn);
+			if ((q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q)) && !seen.has(s.name)) {
+				seen.add(s.name);
+				out.push(s.name);
 				if (out.length >= 10) break;
 			}
 		}
@@ -899,6 +907,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 		}
 		return out;
+	}
+	// Review-Fix (R2-D2): Der Typeahead-Pick setzt das bind:value auf den
+	// LABEL (Display-Name) — die Zuordnung braucht den MODELLNAMEN
+	// (hangarModulesOf matcht base_ship gegen i.name).
+	function hangarPickAssign(_v: string, label: string) {
+		const s = hangarShips.find((x) => x.name === label || hangarDisplayName(x) === label);
+		if (s) hangarAssignBase = s.name;
 	}
 	const hangarModOpts = $derived(hangarModuleSuggest().map((n) => ({ value: n, label: n })));
 	function hangarPickName(v: string) {
@@ -2892,8 +2907,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				return q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q);
 			})
 			.slice(0, 10)
-			.map((s) => ({ value: hangarDisplayName(s), label: hangarDisplayName(s) }))
-	);
+			// Review-Fix (R2-D2): value = MODELLNAME (s.name), nicht Display-Name —
+			// hangarModulesOf matcht base_ship gegen i.name; custom_name-Schiffe
+			// (z. B. „Riftwalker“) würden das Modul sonst verlieren. Label bleibt
+			// der Display-Name.
+			.map((s) => ({ value: s.name, label: hangarDisplayName(s) }))
+			);
 
 	// P15b (Karte t_5fbd43b6): Type-ahead — Tippen in dem Schiff-Fild narower die
 	// <select> (Substring über Name/Custom-Name, case-insensitive). Genaw eine
@@ -4473,7 +4492,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="h">Modul (unverbunden)</div>
 								<div class="hmodempty">Dieses Modul ist keinem Schiff zugeordnet.</div>
 								<div class="hmod-add">
-									<RoutesTypeahead bind:value={hangarAssignBase} options={hangarAssignOpts} fullWidth ariaLabel="Basisschiff zuordnen" placeholder="Basisschiff suchen …" onselect={() => {}} />
+									<RoutesTypeahead bind:value={hangarAssignBase} options={hangarAssignOpts} fullWidth ariaLabel="Basisschiff zuordnen" placeholder="Basisschiff suchen …" onselect={hangarPickAssign} />
 									<button type="button" class="hbtn" disabled={hangarBusy || !hangarAssignBase.trim()} onclick={() => hangarModuleAssign(hangarDetail!)}>Zuordnen</button>
 								</div>
 							</div>
@@ -4551,41 +4570,44 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
 						</div>
 					</form>
-					{#if hangarConfirm}
-						<!-- R2 (Punkt 1): 2-Schritt-Bestätigung (confirm-modal im
-						     shell-anchored Scrim — NICHT fixed am Viewport, QW-5-Lektion). -->
-						<div class="advert-scrim" style="z-index: 210" role="presentation">
-							<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
-								<div class="center" style="padding: 0 0 10px">
-									<div class="big" style="color: var(--alert)">
-										{hangarConfirm.kind === 'delete' ? 'EINTRAG LÖSCHEN?' : hangarEdit ? 'ÄNDERUNGEN SPEICHERN?' : 'EINTRAG ANLEGEN?'}
-									</div>
-								</div>
-								{#if hangarConfirm.kind === 'delete'}
-									<div class="c-row"><b>Name</b><span>{hangarDisplayName(hangarDetail ?? hangarForm)}</span></div>
-									<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Eintrag wird aus dem Hangar GELÖSCHT.</div>
-								{:else}
-									<div class="c-row"><b>Name</b><span>{hangarForm.name}</span></div>
-									<div class="c-row"><b>Typ</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : 'Schiff'}</span></div>
-									<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledge' : 'Ingame'}</span></div>
-									<div class="c-row"><b>Versicherung</b><span>{hangarFormIns || 'Ohne'}</span></div>
-									<div class="c-row"><b>Datum</b><span>{hangarFormDate || '—'}</span></div>
-									<div class="c-row"><b>Preis</b><span>{hangarFormPrice ? `$${hangarFormPrice}` : '—'}</span></div>
-									<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Eingaben sind bis zur Entscheidung gesperrt.</div>
-								{/if}
-								<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">
-									{#if hangarConfirm.kind === 'delete'}
-										<button type="button" class="btn btn-danger" disabled={hangarBusy} onclick={() => hangarDetail && hangarDoDelete(hangarDetail)}>JA, LÖSCHEN</button>
-									{:else}
-										<button type="button" class="btn" disabled={hangarBusy} onclick={() => void hangarSaveForm()}>JA, SPEICHERN</button>
-									{/if}
-									<button type="button" class="btn-ghost" disabled={hangarBusy} onclick={() => (hangarConfirm = null)}>Abbrechen</button>
-								</div>
-							</div>
-						</div>
-					{/if}
+			</div>
+		{/if}
+		{#if hangarConfirm}
+		<!-- R2 (Punkt 1): 2-Schritt-Bestätigung (confirm-modal im
+		shell-anchored Scrim — NICHT fixed am Viewport, QW-5-Lektion).
+		Review-Fix (R2-D1): aus {#if hangarFormOpen} herausgezogen — der
+		Confirm muss auch im DETAIL-View erscheinen (Löschen ohne
+		geöffnetes Formular; vorher war der Lösch-Flow tot). -->
+		<div class="advert-scrim" style="z-index: 210" role="presentation">
+		<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+			<div class="center" style="padding: 0 0 10px">
+				<div class="big" style="color: var(--alert)">
+					{hangarConfirm.kind === 'delete' ? 'EINTRAG LÖSCHEN?' : hangarEdit ? 'ÄNDERUNGEN SPEICHERN?' : 'EINTRAG ANLEGEN?'}
 				</div>
+			</div>
+			{#if hangarConfirm.kind === 'delete'}
+				<div class="c-row"><b>Name</b><span>{hangarDisplayName(hangarDetail ?? hangarForm)}</span></div>
+				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Eintrag wird aus dem Hangar GELÖSCHT.</div>
+			{:else}
+				<div class="c-row"><b>Name</b><span>{hangarForm.name}</span></div>
+				<div class="c-row"><b>Typ</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : 'Schiff'}</span></div>
+				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledge' : 'Ingame'}</span></div>
+				<div class="c-row"><b>Versicherung</b><span>{hangarFormIns || 'Ohne'}</span></div>
+				<div class="c-row"><b>Datum</b><span>{hangarFormDate || '—'}</span></div>
+				<div class="c-row"><b>Preis</b><span>{hangarFormPrice ? `$${hangarFormPrice}` : '—'}</span></div>
+				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Eingaben sind bis zur Entscheidung gesperrt.</div>
 			{/if}
+			<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">
+				{#if hangarConfirm.kind === 'delete'}
+					<button type="button" class="btn btn-danger" disabled={hangarBusy} onclick={() => hangarDetail && hangarDoDelete(hangarDetail)}>JA, LÖSCHEN</button>
+				{:else}
+					<button type="button" class="btn" disabled={hangarBusy} onclick={() => void hangarSaveForm()}>JA, SPEICHERN</button>
+				{/if}
+				<button type="button" class="btn-ghost" disabled={hangarBusy} onclick={() => (hangarConfirm = null)}>Abbrechen</button>
+			</div>
+		</div>
+		</div>
+		{/if}
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").
 			     Esc/zurück-Pfeil → zurück zur Suche; kein neues Fenster. -->
