@@ -16,7 +16,7 @@ pub mod routes;
 pub use crate::model::{
     AdvertisePayload, AdvertiseResult, Category, Entity, EntityKind, ItemSuggestion, ListingType,
     LocationPrices, MarketOperation, MarketplaceFilter, Negotiation, NegotiationMessage, Offer,
-    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, Trade,
+    OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, Trade, TradePayload,
     deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
 };
 
@@ -254,6 +254,31 @@ pub trait DataProvider: Send + Sync {
     /// (Research §1). Kein Retry-Spam bei 429/403. Default unsupported.
     async fn delete_offer(&self, _id: u64) -> Result<()> {
         Err(ProviderError::Unsupported("delete offer".to_string()))
+    }
+
+    /// Write-Layer (PT t_7fdc1317): einen Commodity-Trade ERFASSEN via
+    /// `POST /user_trades_add/` (Doku §5a). Payload exakt nach Doku-Schema
+    /// ([`TradePayload`], `is_production` setzt der Client konstant auf 1);
+    /// KEIN Retry bei 429/403 — der Fehler steigt durch, die UI entscheidet
+    /// Deep-Link. Liefert die neue Trade-ID (UEX-Antwort `{id_user_trade}`).
+    /// Default reports unsupported.
+    async fn add_trade(&self, _payload: TradePayload) -> Result<u64> {
+        Err(ProviderError::Unsupported("add trade".to_string()))
+    }
+
+    /// Write-Layer (PT): einen Commodity-Trade BEARBEITEN via
+    /// `POST /user_trades_edit/` (Doku §5c). Alle Pflichtfelder werden neu
+    /// übergeben (die API kennt kein partielles Edit). Kein Retry bei
+    /// 429/403. Liefert die bearbeitete Trade-ID. Default unsupported.
+    async fn edit_trade(&self, _id: u64, _payload: TradePayload) -> Result<u64> {
+        Err(ProviderError::Unsupported("edit trade".to_string()))
+    }
+
+    /// Write-Layer (PT): einen Commodity-Trade LÖSCHEN via
+    /// `DELETE /user_trades_remove/?id=…` (Doku §5d). Nur der Secret-Key ist
+    /// nötig. Kein Retry-Spam bei 429/403. Default unsupported.
+    async fn remove_trade(&self, _id: u64) -> Result<()> {
+        Err(ProviderError::Unsupported("remove trade".to_string()))
     }
 
     /// Handelsrouten (Karte t_128b7547): bester Einkauf → bester Verkauf je

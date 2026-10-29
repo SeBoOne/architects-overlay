@@ -1151,6 +1151,85 @@ pub async fn marketplace_delete(state: State<'_, TradeState>, id: u64) -> Result
     Ok(())
 }
 
+// ---- Trade-Tracking (PT t_7fdc1317): Commodity-Trades erfassen -----------
+
+/// PT (t_7fdc1317): einen Commodity-Trade ERFASSEN via `POST /user_trades_add/`.
+/// Rate-Limit-Gate wie die Marketplace-Writes; nach dem Write wird der
+/// own_trades-Snapshot invalidiert, damit der nächste Tracking-Pull die
+/// Änderung live von UEX holt (sonst würde der TTL-Snapshot die neue
+/// Zeile erst nach dem Fenster zeigen). Validierung der Pflichtfelder
+/// liegt im Provider (deutsche Config-Meldung).
+#[tauri::command]
+pub async fn trade_add(
+    state: State<'_, TradeState>,
+    payload: provider::TradePayload,
+) -> Result<u64, String> {
+    let now = now_unix();
+    state.write_gate.try_acquire(now)?;
+    let id = state.provider.add_trade(payload).await.map_err(friendly)?;
+    state.write_gate.record_write(now);
+    state
+        .cache
+        .own_trades_invalidate()
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    Ok(id)
+}
+
+/// PT: einen Commodity-Trade BEARBEITEN via `POST /user_trades_edit/`
+/// (Doku §5c — alle Pflichtfelder werden neu übergeben, kein partielles
+/// Edit). Gleiches Write-Gate + Cache-Invalidierung wie `trade_add`.
+#[tauri::command]
+pub async fn trade_edit(
+    state: State<'_, TradeState>,
+    id: u64,
+    payload: provider::TradePayload,
+) -> Result<u64, String> {
+    let now = now_unix();
+    state.write_gate.try_acquire(now)?;
+    let id = state
+        .provider
+        .edit_trade(id, payload)
+        .await
+        .map_err(friendly)?;
+    state.write_gate.record_write(now);
+    state
+        .cache
+        .own_trades_invalidate()
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    Ok(id)
+}
+
+/// PT: einen Commodity-Trade LÖSCHEN via `DELETE /user_trades_remove/?id=…`
+/// (Doku §5d). Gleiches Write-Gate + Cache-Invalidierung wie `trade_add`.
+#[tauri::command]
+pub async fn trade_remove(state: State<'_, TradeState>, id: u64) -> Result<(), String> {
+    let now = now_unix();
+    state.write_gate.try_acquire(now)?;
+    state.provider.remove_trade(id).await.map_err(friendly)?;
+    state.write_gate.record_write(now);
+    state
+        .cache
+        .own_trades_invalidate()
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    Ok(())
+}
+
+// ---- Deep-Links (PT t_7fdc1317) -------------------------------------------
+
+/// PT (t_7fdc1317): Deep-Link für den Tracking-Reiter. Eine dedizierte
+/// UEX-Webseite für Commodity-Trades ist NICHT verifizierbar (/trading/,
+/// /trades/ antworten 404) — beschlossene Philosophie: kein Fake-Button,
+/// stattdessen die verifizierte Account-Seite (HTTP 200), auf der UEX die
+/// eigenen Trades verwaltet. Label in der UI sagt entsprechend „UEX-Konto“.
+#[tauri::command]
+pub fn open_uex_account(app: AppHandle) -> Result<String, String> {
+    let url = "https://uexcorp.space/account/";
+    let _ = &app;
+    tauri_plugin_opener::open_url(url, None::<&str>)
+        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+    Ok(url.to_string())
+}
+
 /// M2b-Review-Fix (t_6e26ec82): Marketplace-Kategorien für die Anlegen-Form.
 /// `POST /marketplace_advertise/` verlangt `id_category` für `type=item` —
 /// die Form braucht die Auswahl (id + Anzeigename), damit jeder Item-Create
@@ -1217,6 +1296,71 @@ pub fn item_suggest(
     starts.append(&mut contains);
     starts.truncate(12);
     Ok(starts)
+}
+
+/// PT (t_7fdc1317): Shared-Ranking-Helfer für die Tracking-Formular-Typeahead
+/// (Commodities + Terminals). Gleiche Semantik wie `item_suggest`:
+/// Ranking starts-with vor contains, Case-insensitiv, max 12 Treffer,
+/// leerer Query → leere Liste. `id` ist die UEX-ID, die im Formular mit
+/// der Auswahl mitgeschickt wird (die API verlangt `id_terminal`/`id_commodity`).
+fn entity_suggest(
+    state: &State<'_, TradeState>,
+    kind: EntityKind,
+    query: String,
+) -> Result<Vec<provider::ItemSuggestion>, String> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let entities = state
+        .cache
+        .entities_of(kind)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    let mut starts: Vec<provider::ItemSuggestion> = Vec::new();
+    let mut contains: Vec<provider::ItemSuggestion> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for e in entities {
+        let name = e.name.trim();
+        let key = name.to_lowercase();
+        if key.is_empty() || seen.contains(&key) {
+            continue;
+        }
+        seen.insert(key.clone());
+        let hit = provider::ItemSuggestion {
+            id: e.id,
+            name: name.to_string(),
+            subtitle: e.subtitle.clone(),
+        };
+        if key.starts_with(&q) {
+            starts.push(hit);
+        } else if key.contains(&q) {
+            contains.push(hit);
+        }
+    }
+    starts.append(&mut contains);
+    starts.truncate(12);
+    Ok(starts)
+}
+
+/// PT (t_7fdc1317): Commodity-Autocomplete für das Trade-Formular —
+/// Typeahead über EntityKind::Commodities, liefert id + Anzeigename.
+#[tauri::command]
+pub fn commodity_suggest(
+    state: State<'_, TradeState>,
+    query: String,
+) -> Result<Vec<provider::ItemSuggestion>, String> {
+    entity_suggest(&state, EntityKind::Commodities, query)
+}
+
+/// PT (t_7fdc1317): Terminal-Autocomplete für das Trade-Formular —
+/// Typeahead über EntityKind::Terminals (UEX-Terminals, die die API für
+/// `id_terminal` akzeptiert), liefert id + Anzeigename + Kette.
+#[tauri::command]
+pub fn terminal_suggest(
+    state: State<'_, TradeState>,
+    query: String,
+) -> Result<Vec<provider::ItemSuggestion>, String> {
+    entity_suggest(&state, EntityKind::Terminals, query)
 }
 
 // ---------------------------------------------------------------------------

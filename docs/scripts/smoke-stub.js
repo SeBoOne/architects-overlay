@@ -276,6 +276,64 @@ window.__TAURI_INTERNALS__ = {
 			}
 			case 'marketplace_confirm_mode':
 				return stubState.marketplace_confirm || 'every_action';
+			// PT (t_7fdc1317): Tracking-Reiter — Suggest + Write-Layer Stubs
+			// (Spiegel des Backend-Rankings: starts-first, max 12).
+			case 'commodity_suggest': {
+				const q = String((a && a.query) || '').trim().toLowerCase();
+				if (!q) return [];
+				const pool = globalThis.__trkComPool || [
+					{ id: 11, name: 'Gold' }, { id: 12, name: 'Laranite' }, { id: 13, name: 'Titanium' }
+				];
+				const starts = pool.filter((c) => c.name.toLowerCase().startsWith(q));
+				const contains = pool.filter((c) => c.name.toLowerCase().includes(q) && !starts.includes(c));
+				return starts.concat(contains).slice(0, 12);
+			}
+			case 'terminal_suggest': {
+				const q = String((a && a.query) || '').trim().toLowerCase();
+				if (!q) return [];
+				const pool = globalThis.__trkTermPool || [
+					{ id: 21, name: 'Everus Harbor' }, { id: 22, name: 'Port Olisario' }, { id: 23, name: 'Baijini Point' }
+				];
+				const starts = pool.filter((c) => c.name.toLowerCase().startsWith(q));
+				const contains = pool.filter((c) => c.name.toLowerCase().includes(q) && !starts.includes(c));
+				return starts.concat(contains).slice(0, 12);
+			}
+			case 'trade_add': {
+				if (window.__TRK_WRITE_FAIL__) throw new Error(window.__TRK_WRITE_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
+				const p = a.payload || {};
+				window.__LAST_TRADE_PAYLOAD__ = p;
+				const nid = 70000 + Math.floor(Math.random() * 9000);
+				window.__SHOP_TRADES__ = [{
+					id: nid, terminal_id: Number(p.id_terminal || 0),
+					terminal: (globalThis.__trkTermPool || []).find((t) => t.id === Number(p.id_terminal))?.name || String(p.id_terminal || '—'),
+					commodity_id: Number(p.id_commodity || 0),
+					commodity: (globalThis.__trkComPool || []).find((c) => c.id === Number(p.id_commodity))?.name || String(p.id_commodity || '—'),
+					operation: p.operation || 'buy', scu: Number(p.scu || 0), price: Number(p.price || 0),
+					date_added: Math.floor(Date.now() / 1000), vehicle: null, fleet_name: null, organization: null
+				}, ...(window.__SHOP_TRADES__ || [])];
+				window.__SHOP_TRADES_SOURCE__ = 'live';
+				return nid;
+			}
+			case 'trade_edit': {
+				if (window.__TRK_WRITE_FAIL__) throw new Error(window.__TRK_WRITE_ERR__ || 'HTTP 429 · Rate-Limit erreicht');
+				const p = a.payload || {};
+				window.__LAST_TRADE_PAYLOAD__ = p;
+				window.__LAST_TRADE_EDIT_ID__ = Number(a.id || 0);
+				window.__SHOP_TRADES__ = (window.__SHOP_TRADES__ || []).map((t) =>
+					t.id === Number(a.id) ? { ...t, scu: Number(p.scu || t.scu), price: Number(p.price || t.price), operation: p.operation || t.operation } : t);
+				window.__SHOP_TRADES_SOURCE__ = 'live';
+				return Number(a.id || 0);
+			}
+			case 'trade_remove': {
+				if (window.__TRK_WRITE_FAIL__) throw new Error(window.__TRK_WRITE_ERR__ || 'HTTP 403 · UEX nicht erreichbar');
+				window.__LAST_TRADE_REMOVE_ID__ = Number(a.id || 0);
+				window.__SHOP_TRADES__ = (window.__SHOP_TRADES__ || []).filter((t) => t.id !== Number(a.id));
+				window.__SHOP_TRADES_SOURCE__ = 'live';
+				return undefined;
+			}
+			case 'open_uex_account':
+				window.__LAST_OPEN_URL__ = 'https://uexcorp.space/account/';
+				return 'https://uexcorp.space/account/';
 			case 'settings_set_marketplace_confirm':
 				stubState.marketplace_confirm = a.mode || 'every_action';
 				return { marketplace_confirm: stubState.marketplace_confirm };

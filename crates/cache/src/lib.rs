@@ -2068,6 +2068,18 @@ impl Cache {
         })
     }
 
+    /// Frische-Marker der eigenen Trades löschen (PT t_7fdc1317): nach einem
+    /// Write (Trade erfassen/editieren/löschen) zählt der Snapshot als stale —
+    /// der nächste Pull geht live an UEX, damit die Änderung sofort sichtbar
+    /// ist (sonst würde user_trades_impl den alten Snapshot bis zum TTL
+    /// weiter servieren).
+    pub fn own_trades_invalidate(&self) -> Result<()> {
+        self.with(|conn| {
+            conn.execute("DELETE FROM meta WHERE key = ?1", [OWN_TRADES_META_KEY])?;
+            Ok(())
+        })
+    }
+
     /// Letzter Snapshot der eigenen Trades (stale-first; Frischeentscheidung
     /// obliegt dem CALLER via [`Cache::own_trades_fresh`]).
     pub fn own_trades_snapshot(&self) -> Result<Vec<provider::Trade>> {

@@ -374,6 +374,25 @@ pub struct Trade {
     pub organization: Option<String>,
 }
 
+/// Write-Layer (PT t_7fdc1317): Payload für einen Commodity-Trade —
+/// `POST /user_trades_add/` bzw. `POST /user_trades_edit/` (Doku §5a/§5c).
+/// Pflichtfelder: id_terminal, id_commodity, operation (`buy`|`sell`),
+/// scu (int), price (UEC pro SCU). `is_production` wird vom Client
+/// konstant auf 1 gesetzt (keine Test-Trades im Produktionssystem).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TradePayload {
+    /// Terminal-ID (Doku: int, Pflicht).
+    pub id_terminal: u64,
+    /// Commodities-ID (Doku: int, Pflicht).
+    pub id_commodity: u64,
+    /// `buy` oder `sell` (Doku: Pflicht).
+    pub operation: String,
+    /// Menge in SCU (Doku: int, Pflicht).
+    pub scu: u64,
+    /// Preis pro SCU in UEC (Doku: float, Pflicht).
+    pub price: f64,
+}
+
 /// One marketplace DEAL of the user's account (UEX `/marketplace_negotiations`,
 /// karte t_350c4300 B2) — source-agnostic projection. Das sind die ECHTEN
 /// Marktplatz-Transaktionen (Listing-Verhandlungen/-Abschlüsse als
