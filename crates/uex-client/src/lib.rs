@@ -1718,8 +1718,8 @@ impl UexProvider {
         if payload.in_stock == 0 {
             missing.push("in_stock (Menge)");
         }
-        if payload.quality.is_some_and(|q| q > 100) {
-            missing.push("quality (0–100)");
+        if payload.quality.is_some_and(|q| q > 1000) {
+            missing.push("quality (0–1000)");
         }
         if payload
             .image_data
