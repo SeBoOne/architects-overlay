@@ -4556,11 +4556,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="src">UEX Corp</span>
 							</div>
 						{/if}
-						<!-- PT: Formular „Trade erfassen“ als modales Popup (Muster
-						     D3 confirm-modal): dunkler Scrim, Karte im Overlay. -->
+						<!-- PT: Formular „Trade erfassen" als modales Popup.
+						     QW-5 (t_28bfd027): der frühere confirm-scrim war position:fixed
+						     am VIEWPORT zentriert — im Overlay-Fenster saß das Popup dadurch
+						     unterhalb der Shell-Kante (Probe: Modal bis y=660 bei Shell-Ende
+						     y=372), Felder/Buttons unten unerreichbar. Jetzt wie das
+						     Listing-Popup (advert-scrim): absolute in die Shell, volle
+						     nutzbare Höhe, Body scrollt intern, Fuß (Buttons) fix. -->
 						{#if trkOpen}
-							<div class="confirm-scrim" role="presentation">
-								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
+							<div class="advert-scrim" role="presentation">
+								<div class="trk-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
+									<div class="trk-body">
 									<div class="center" style="padding: 0 0 10px">
 										<div class="big">{trkEditId ? 'Trade BEARBEITEN' : 'Trade ERFASSEN'}</div>
 									</div>
@@ -4601,18 +4607,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									{#if trkMsg}
 										<div class="sm" style="color: var(--alert); margin-top: 6px" role="alert">{trkMsg}</div>
 									{/if}
-									<div class="md-actions">
-										<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
-											{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
-										</button>
-										<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
 									</div>
-								</div>
-							</div>
-						{/if}
-						<!-- PT: 2-Schritt-Bestätigung (add/edit/remove) — Muster D3. -->
+									<div class="advert-foot">
+										<div class="md-actions">
+											<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
+												{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
+											</button>
+											<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
+										</div>
+									</div>
+									</div>
+									</div>
+									{/if}
+						<!-- PT: 2-Schritt-Bestätigung (add/edit/remove) — QW-5: jetzt
+						     ebenfalls shell-anchored (advert-scrim) statt fixed am Viewport. -->
 						{#if trkConfirm}
-							<div class="confirm-scrim" role="presentation">
+							<div class="advert-scrim" role="presentation">
 								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
 									<div class="center" style="padding: 0 0 10px">
 										<div class="big" style="color: var(--alert)">
