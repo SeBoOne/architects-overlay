@@ -55,8 +55,8 @@ pub enum SearchEntities {
 
 impl SearchEntities {
     /// Reference datasets serving this search group. `Locations` searches BOTH
-    /// datasets: the wiki location hierarchy (rich, `source: wiki`) AND the
-    /// UEX terminal rows (trade terminals, `source: uex`) — wiki first so the
+    /// datasets: the location entities (synthesized, `source: uex`) AND the
+    /// UEX terminal rows (trade terminals, `source: uex`) — locations first so the
     /// richer structure ranks first; the price aggregate still opens through a
     /// UEX terminal of the matched chain.
     pub fn kinds(&self) -> &'static [EntityKind] {
@@ -84,7 +84,7 @@ pub struct Entity {
 /// One search match: an entity plus enough for the UI to show a row.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchHit {
-    /// Über IPC als STRING serialisiert: Wiki-Entity-IDs liegen über 2^53 und
+    /// Über IPC als STRING serialisiert: Entity-IDs können über 2^53 liegen und
     /// ein JS `number` rundet sie still (404707429735935130 → …35100) — damit
     /// brach der Location→Terminal-Resolve auf dem Rückweg in `get_prices`
     /// (t_925a577a). Deserialize akzeptiert weiterhin auch bare JSON-Numbers.
@@ -100,7 +100,7 @@ pub struct SearchHit {
     pub code: Option<String>,
 }
 
-/// t_925a577a: IDs überqueren die IPC-Grenze zu einer JS-WebView. Wiki-IDs
+/// t_925a577a: IDs überqueren die IPC-Grenze zu einer JS-WebView.
 /// (> 2^53) verlieren als JS-Number Präzision — deshalb als String
 /// serialisieren, beim Lesen beides (Number oder String) akzeptieren.
 pub fn serialize_id_as_string<S: serde::Serializer>(id: &u64, s: S) -> Result<S::Ok, S::Error> {
@@ -124,7 +124,7 @@ where
             u64::try_from(v).map_err(serde::de::Error::custom)
         }
         fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<u64, E> {
-            // Negative wiki ids exist in the entities table (i64 storage);
+            // Negative ids exist in the entities table (i64 storage);
             // they arrive here wrapped via the u64 two's-complement cast.
             // Accept the raw negative string as well and wrap it back, so a
             // negative id round-trips losslessly (t_1bab1fea blocker 2).
@@ -141,7 +141,7 @@ where
 }
 
 /// `Option<u64>`-Variante von [`deserialize_id_flexible`]: JSON null/missing →
-/// None, sonst Number oder numeric string → Some(id). Negative wiki-id-Strings
+/// None, sonst Number oder numeric string → Some(id). Negative id-Strings
 /// (two's-complement-wrapped u64) werden ebenfalls akzeptiert (t_1bab1fea).
 pub fn deserialize_opt_id_flexible<'de, D>(d: D) -> Result<Option<u64>, D::Error>
 where
@@ -169,7 +169,7 @@ where
             u64::try_from(v).map(Some).map_err(serde::de::Error::custom)
         }
         fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Option<u64>, E> {
-            // Negative wiki ids exist in the entities table (i64 storage);
+            // Negative ids exist in the entities table (i64 storage);
             // they arrive here wrapped via the u64 two's-complement cast.
             // Accept the raw negative string as well and wrap it back, so a
             // negative id round-trips losslessly (t_1bab1fea blocker 2).

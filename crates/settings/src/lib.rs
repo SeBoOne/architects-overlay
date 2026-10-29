@@ -15,10 +15,6 @@
 //! detail_variant = "c"     # c | a
 //! scale = 100              # K2 P12: 50..200 % (Schrötwerte 80/90/100/110/125)
 //!
-//! [data]
-//! commodity_source = "wiki" # wiki | uex  (commodity PRICE source; wiki
-//!                           # first, UEX as fallback for gaps)
-//!
 //! [shortcuts]
 //! toggle = "Ctrl+Shift+U"      # C2a: Overlay-Toggle (kollisionsgeprüft)
 //! click_through = "Ctrl+Shift+O" # Click-through-Umschalter
@@ -113,42 +109,6 @@ impl DetailVariant {
 }
 
 impl fmt::Display for DetailVariant {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// Primary commodity PRICE source. `Wiki` (default): the wiki commodity
-/// detail endpoint embeds the UEX terminal price table (`uex_prices.purchase`)
-/// and is fetched first; UEX remains the fallback when the wiki row carries
-/// no prices or the fetch fails. `Uex` reverts to the pure-UEX path (A/B
-/// comparison switch).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum CommoditySource {
-    #[default]
-    Wiki,
-    Uex,
-}
-
-impl CommoditySource {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CommoditySource::Wiki => "wiki",
-            CommoditySource::Uex => "uex",
-        }
-    }
-
-    pub fn from_name(name: &str) -> Option<CommoditySource> {
-        match name.trim().to_ascii_lowercase().as_str() {
-            "wiki" => Some(CommoditySource::Wiki),
-            "uex" => Some(CommoditySource::Uex),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for CommoditySource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
@@ -411,8 +371,6 @@ struct RawConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ui: Option<UiSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    data: Option<DataSection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     shortcuts: Option<ShortcutsSection>,
 }
 
@@ -429,12 +387,6 @@ struct UexSection {
     /// `marketplace_listings?username=`-Pull des eigenen Shops.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     username: Option<String>,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct DataSection {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    commodity_source: Option<CommoditySource>,
 }
 
 /// C2a: globale Kürzel. Als Strings gespeichert (kanonisch normalisiert),
@@ -602,7 +554,6 @@ pub struct Settings {
     uex_username: Option<String>,
     palette: Palette,
     detail_variant: DetailVariant,
-    commodity_source: CommoditySource,
     scale: u16,
     /// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes.
     marketplace_confirm: MarketplaceConfirm,
@@ -626,7 +577,6 @@ impl Default for Settings {
             uex_username: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
-            commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
             marketplace_confirm: MarketplaceConfirm::default(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
@@ -669,11 +619,6 @@ impl Settings {
                 .ui
                 .as_ref()
                 .and_then(|u| u.detail_variant)
-                .unwrap_or_default(),
-            commodity_source: raw
-                .data
-                .as_ref()
-                .and_then(|d| d.commodity_source)
                 .unwrap_or_default(),
             scale: raw
                 .ui
@@ -733,7 +678,6 @@ impl Settings {
             uex_username: None,
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
-            commodity_source: CommoditySource::default(),
             scale: SCALE_DEFAULT,
             marketplace_confirm: MarketplaceConfirm::default(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
@@ -792,17 +736,6 @@ impl Settings {
     /// Set the price-detail variant in memory (persist via [`Settings::save`]).
     pub fn set_detail_variant(&mut self, variant: DetailVariant) {
         self.detail_variant = variant;
-    }
-
-    /// Primary commodity price source (default: Wiki — UEX fallback keeps
-    /// gaps covered).
-    pub fn commodity_source(&self) -> CommoditySource {
-        self.commodity_source
-    }
-
-    /// Set the commodity price source in memory (persist via [`Settings::save`]).
-    pub fn set_commodity_source(&mut self, source: CommoditySource) {
-        self.commodity_source = source;
     }
 
     /// Overlay font/icon scale in % (K2 P12; default 100).
@@ -888,9 +821,6 @@ impl Settings {
                 detail_variant: Some(self.detail_variant),
                 scale: Some(self.scale),
                 marketplace_confirm: Some(self.marketplace_confirm),
-            }),
-            data: Some(DataSection {
-                commodity_source: Some(self.commodity_source),
             }),
             shortcuts: Some(ShortcutsSection {
                 toggle: Some(self.shortcut_toggle.clone()),
@@ -1052,36 +982,6 @@ mod tests {
         assert_eq!(loaded.uex_api_key(), Some("old-key"));
         assert_eq!(loaded.palette(), Palette::Amber);
         assert_eq!(loaded.detail_variant(), DetailVariant::C);
-        assert_eq!(loaded.commodity_source(), CommoditySource::Wiki);
-    }
-
-    #[test]
-    fn commodity_source_roundtrip_and_parsing() {
-        assert_eq!(
-            CommoditySource::from_name("wiki"),
-            Some(CommoditySource::Wiki)
-        );
-        assert_eq!(
-            CommoditySource::from_name("UEX"),
-            Some(CommoditySource::Uex)
-        );
-        assert_eq!(CommoditySource::from_name("both"), None);
-
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("config.toml");
-        let mut s = Settings::with_path(path.clone());
-        s.set_commodity_source(CommoditySource::Uex);
-        s.save().unwrap();
-        let loaded = Settings::load_from(&path).unwrap();
-        assert_eq!(loaded.commodity_source(), CommoditySource::Uex);
-        // Default stays wiki.
-        let mut s2 = Settings::with_path(path.clone());
-        s2.set_commodity_source(CommoditySource::Wiki);
-        s2.save().unwrap();
-        assert_eq!(
-            Settings::load_from(&path).unwrap().commodity_source(),
-            CommoditySource::Wiki
-        );
     }
 
     #[test]

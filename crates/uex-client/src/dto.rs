@@ -224,7 +224,7 @@ pub struct CommodityRow {
 }
 
 /// `/terminals` row — carries the full location hierarchy as plain fields.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct TerminalRow {
     pub id: u64,
     #[serde(default)]

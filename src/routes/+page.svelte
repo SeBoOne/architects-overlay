@@ -265,7 +265,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// + UEX-Benutzername für den marketplace_listings?username=-Pull.
 		uex_secret_key_set: boolean;
 		uex_username: string;
-		commodity_source: string;
 		// K2 (t_5fe8eb4c, P12): font/icon scale in % (Chips 80–125, backend 50–200).
 		scale: number;
 		// C2a (t_6565fe8b): kanonische Kürzel (Soll — persistiert) + Ist
@@ -298,6 +297,42 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// von selbst, damit die Wirkung sichtbar ist, ohne das View zuzumüllen.
 	let cfgToast = $state('');
 	let cfgToastTimer: ReturnType<typeof setTimeout> | undefined;
+	// PS (t_c84e545d): "Datenquellen"-Sektion — Alter der beiden
+	// Preis-Datentypen (getrennt!) + manuelle Sofort-Aktualisierung.
+	let priceSyncAge = $state<{ commodity_age_secs: number | null; item_age_secs: number | null; commodity_count: number; item_count: number } | null>(null);
+	let priceSyncing = $state(false);
+
+	async function refreshPriceAges() {
+		try {
+			status = await invoke<SyncStatus>('sync_status');
+			priceSyncAge = await invoke<{ commodity_age_secs: number | null; item_age_secs: number | null; commodity_count: number; item_count: number }>('prices_sync_ages');
+		} catch {
+			/* Status-Refresh ist best-effort */
+		}
+	}
+
+	async function refreshCommodityPrices() {
+		priceSyncing = true;
+		try {
+			priceSyncAge = await invoke<NonNullable<typeof priceSyncAge>>('refresh_commodity_prices_now');
+			cfgConfirm('Commodity-Preise aktualisiert.');
+		} catch (e) {
+			cfgConfirm(`Commodity-Preise: ${String(e)}`);
+		}
+		priceSyncing = false;
+	}
+
+	async function refreshItemPrices() {
+		priceSyncing = true;
+		try {
+			priceSyncAge = await invoke<NonNullable<typeof priceSyncAge>>('refresh_item_prices_now');
+			cfgConfirm('Item-Preise aktualisiert.');
+		} catch (e) {
+			cfgConfirm(`Item-Preise: ${String(e)}`);
+		}
+		priceSyncing = false;
+	}
+
 	function cfgConfirm(msg: string) {
 		cfgToast = msg;
 		if (cfgToastTimer) clearTimeout(cfgToastTimer);
@@ -928,36 +963,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_palette', { name });
 			applySettings(cfg);
-		} catch (e) {
-			apiKeyNote = String(e);
-		}
-	}
-
-	// Commodity-Quelle (A/B): 'wiki' = Wiki-Detail-Preise primär, 'uex' =
-	// UEX-Preistabelle primär. Wirkt SOFORT (SourceSwitch wird live geflippt),
-	// ohne App-Neustart.
-	async function chooseSource(name: string) {
-		try {
-			cfg = await invoke<SettingsSnapshot>('settings_set_commodity_source', { name });
-			// K6 P2-Feedback: Confirm-Zeile (3 s) + aktive Quelle-Zeile im View;
-			// der Flip ist live (SourceSwitch) — die nächste Preisabfrage nutzt
-			// sofort die neue Quelle, sichtbar am Quelle-Label der Preisdetail.
-			cfgConfirm(
-				cfg?.commodity_source === 'uex'
-					? 'Preisquelle umgestellt: UEX primär (Wiki-Fallback) — gilt ab sofort.'
-					: 'Preisquelle umgestellt: Wiki primär (UEX-Fallback) — gilt ab sofort.'
-			);
-			// K6 P2d (t_9b385831): Statusbar-Chip ('syncLabel' liest status.provider)
-			// sofort konsistent machen. Ohne diesen Refresh aktualisiert der Chip
-			// erst beim nächsten Preis-Sync (im Live-Smoke Run433 als 'minimal
-			// verzögert' beobachtet). sync_status wertet den live geflippten
-			// SourceSwitch aus (providers.rs name()) — kein Restart/Reload nötig.
-			try {
-				status = await invoke<SyncStatus>('sync_status');
-			} catch {
-				// Chip-Refresh ist best-effort: Der Flip selbst ist bereits
-				// persistiert und wirkt auf die nächste Preisabfrage ohnehin.
-			}
 		} catch (e) {
 			apiKeyNote = String(e);
 		}
@@ -2732,6 +2737,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		dToast = '';
 	}
 
+	// PS (t_c84e545d): Detail-Refresh (Button oder F5) — force = true lässt
+	// das Backend die Frische-Prüfung für GENAU diesen Datensatz umgehen.
+	async function refreshDetailLive() {
+		const h = detailHit;
+		if (!h || xpan?.busy) return;
+		const kindArg =
+			h.kind === 'terminal' ? 'terminal' : h.kind === 'location' ? 'location' : h.kind === 'item' ? 'item' : null;
+		xpan = { busy: true, detail: xpan?.detail ?? null, error: null };
+		const myToken = ++xpanToken;
+		try {
+			const d = await invoke<PriceDetail>('get_prices', {
+				commodity: h.name,
+				...(kindArg && h.id ? { id: h.id } : {}),
+				...(kindArg ? { kind: kindArg } : {}),
+				force: true
+			});
+			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
+			flashStatus(`Detail aktualisiert · Stand ${rel(d.fetched_at)}`);
+		} catch (e) {
+			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
+		}
+	}
+
 	async function loadDetail(h: SearchHit) {
 		const myToken = ++xpanToken;
 		// get_prices nach `h.kind` routen (Backend-Kontrakt trade.rs):
@@ -3294,6 +3322,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// KEIN Feedback (der Handler ist hier nur noch erreichbar, weil die
 		// F5-Behandlung NACH den railMode/inConfig-Rückgaben liegt).
 		if (k === 'F5') {
+			// PS (t_c84e545d): F5 auf einer offenen Detail-Seite (Commodity
+			// ODER Item) aktualisiert GENAU DIESEN Datensatz live — einzelner
+			// API-Call (rate-limit-bewusst), Frische-Datum in der Anzeige.
+			if (inDetail && detailHit) {
+				e.preventDefault();
+				void refreshDetailLive();
+				return;
+			}
 			if (phase === 'market' && !offerDetail) {
 				if (mTab === 'shop' && cfg && !cfg.uex_secret_key_set) {
 					e.preventDefault();
@@ -3764,46 +3800,37 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						</div>
 					</section>
 					<section class="cfg-sect">
-						<div class="h">Preis-Quelle (A/B)</div>
-						<div class="cfg-chips">
-							<button
-								type="button"
-								class="chip"
-								class:is-on={cfg?.commodity_source === 'wiki'}
-								onclick={() => chooseSource('wiki')}
-							>Wiki</button>
-							<button
-								type="button"
-								class="chip"
-								class:is-on={cfg?.commodity_source === 'uex'}
-								onclick={() => chooseSource('uex')}
-							>UEX</button>
-						</div>
-						<!-- K6 P2 (a): aktive Quelle deutlich — identischer Label wie
-						     die Statusbar ("WIKI+UEX (UEX)"), plus Klartext, was der
-						     Schalter bedeutet (die Chips wählen die PRIMÄRquelle, die
-						     andere Quelle bleibt Fallback für Fehlstellen). -->
-						<div class="cfg-src-active">
-							Aktive Quelle:
-							<b>{cfg?.commodity_source === 'uex' ? 'WIKI+UEX (UEX)' : 'WIKI+UEX (WIKI)'}</b>
-							— {cfg?.commodity_source === 'uex'
-								? 'Commodity-Preise primär aus UEX, Wiki ergänzt Fehlstellen.'
-								: 'Commodity-Preise primär aus dem Wiki, UEX ergänzt Fehlstellen.'}
-						</div>
-						<!-- K6 P1-Akzeptanz: Quelle auf UEX ohne Key → klarer Hinweis. -->
-						{#if cfg?.commodity_source === 'uex' && !cfg?.uex_api_key_set}
-							<div class="cfg-src-warn" role="alert">
-								UEX API-Key nicht gesetzt — UEX-Lesezugriff funktioniert derzeit
-								ohne Key; falls UEX ablehnt (HTTP 403), greift automatisch der
-								Wiki-Fallback. Key unten setzen.
+						<div class="h">Datenquellen</div>
+						<!-- PS (t_c84e545d): Item-Preise (patch-getrieben, kein
+						     Auto-Sync) und Commodity-Preise (stündlich) zeigen
+						     ihre Frische GETRENNT und lassen sich per Button
+						     sofort erneuern. -->
+						{#if priceSyncAge}
+							<div class="cfg-note">
+								Commodity-Preise: {rel(priceSyncAge.commodity_age_secs ?? 0)} sync ·
+								{priceSyncAge.commodity_count} Waren · stündlich automatisch
 							</div>
-						{/if}
-						<!-- K6 P2 (b): Confirm nach Umschalten (Timeout 3 s). -->
-						{#if cfgToast}
-							<div class="cfg-note" role="status">{cfgToast}</div>
+							<button
+								type="button"
+								class="chip"
+								disabled={priceSyncing}
+								onclick={refreshCommodityPrices}
+							>{priceSyncing ? 'Sync läuft …' : 'Commodity-Preise jetzt aktualisieren'}</button>
+							<div class="cfg-note">
+								Item-Preise: {rel(priceSyncAge.item_age_secs ?? 0)} sync ·
+								{priceSyncAge.item_count} Items · pro Patch konstant (kein Auto-Sync)
+							</div>
+							<button
+								type="button"
+								class="chip"
+								disabled={priceSyncing}
+								onclick={refreshItemPrices}
+							>{priceSyncing ? 'Sync läuft …' : 'Item-Preise jetzt aktualisieren'}</button>
+						{:else}
+							<div class="cfg-note">Datenquellen: noch keine Preisdaten im Cache.</div>
 						{/if}
 					</section>
-					<section class="cfg-sect">
+<section class="cfg-sect">
 						<div class="h">Schriftscale</div>
 						<div class="cfg-chips">
 							{#each [80, 90, 100, 110, 125] as pct}
@@ -5141,9 +5168,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								     K6 P1: ohne Key und UEX primär → Hinweis (Preise kommen
 								     nur aus dem Wiki-Fallback). -->
 								<div class="d-src" role="note">
-									Quelle: {d.source.toUpperCase()}
+									Quelle: {d.source.toUpperCase()} · Stand: {rel(d.fetched_at)}
+									<button
+										type="button"
+										class="chip"
+										aria-label="Diesen Datensatz aktualisieren"
+										onclick={() => void refreshDetailLive()}
+									>↻ Aktualisieren</button>
 									{#if d.source.includes('uex') && cfg && !cfg.uex_api_key_set}
-										· <span class="warn">kein UEX-API-Key — UEX anonym geladen; bei Ablehnung Wiki-Fallback</span>
+										· <span class="warn">kein UEX-API-Key — UEX anonym geladen</span>
 									{/if}
 								</div>
 

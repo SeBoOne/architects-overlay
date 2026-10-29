@@ -42,11 +42,9 @@ pub const SYNC_EVENT: &str = "trade-sync";
 
 /// Group order and labels per the design contract: Commodities → Items →
 /// Locations, each with a counter. Each group maps onto ONE OR MORE cache
-/// datasets: the location group searches BOTH the wiki location hierarchy
-/// (EntityKind::Locations, source=wiki, rich parent-child data) and the UEX
-/// terminal dataset (trade terminals). Commodities stay on the UEX id space
-/// — the wiki commodity rows in the cache are internal resolution data for
-/// the wiki price path, not search results.
+/// datasets: the location group covers the synthesized UEX location dataset
+/// (EntityKind::Locations, PS t_c84e545d) and the UEX terminal dataset.
+/// Commodities stay on the UEX id space.
 const GROUPS: &[(&str, &str, &[EntityKind])] = &[
     ("commodity", "Commodities", &[EntityKind::Commodities]),
     ("item", "Items", &[EntityKind::Items]),
@@ -66,6 +64,22 @@ const PER_GROUP_LIMIT: u32 = 12;
 
 /// Bookkeeping for the sync sweeps, shared between the spawned sweep task and
 /// the status command.
+/// Test-only: a REAL composite over an unreachable UEX host (tests install
+/// their own mock provider into `provider`; the composite field only needs a
+/// valid handle for the price-sync helpers).
+#[cfg(test)]
+pub fn mock_composite() -> Arc<crate::providers::CompositeProvider> {
+    let cache = Arc::new(cache::Cache::open_in_memory().expect("test cache"));
+    let uex = uex_client::UexProvider::with_base_url(
+        cache.clone(),
+        None,
+        "http://127.0.0.1:1",
+        std::time::Duration::ZERO,
+    )
+    .expect("test uex");
+    Arc::new(crate::providers::CompositeProvider::new(uex, cache))
+}
+
 pub struct SyncTracker {
     pub syncing: AtomicBool,
     pub last_error: Mutex<Option<String>>,
@@ -89,9 +103,10 @@ pub struct TradeState {
     pub provider: Arc<dyn DataProvider>,
     pub cache: Arc<Cache>,
     pub tracker: Arc<SyncTracker>,
-    /// Extra wiki-dataset sync (commodities + locations, own TTLs). `None`
-    /// in tests with stub providers.
-    pub wiki_sync: Option<Arc<dyn crate::providers::WikiSync>>,
+    /// The concrete composite (uex-only since PS t_c84e545d): gives the
+    /// background price-sync sweep and the settings refresh commands access
+    /// to the wrapped UexProvider without going through `dyn DataProvider`.
+    pub composite: Arc<crate::providers::CompositeProvider>,
     /// M2b-Write-Gate (Rate-Limit-Sicherheit, Anforderung 5): verhindert, dass
     /// die UI mehr als ~2 Schreibaktionen pro Minute an UEX feuert, auch wenn
     /// sie theoretisch mehr erlaubt. Jede schreibende Aktion (Anlegen/Abmelden)
@@ -383,13 +398,13 @@ fn with_location_rows(
     // Station-Shops als eigene Terminal-Zeilen — auch wenn das Terminal
     // selbst nicht per FTS matcht. Membership generisch: die Ortsname ist
     // ein Segment der Terminal-Kette ("Pharmacy - Levski" ↔ "Nyx > Levski").
-    let wiki_locations: Vec<provider::SearchHit> = hits
+    let location_hits: Vec<provider::SearchHit> = hits
         .iter()
         .filter(|h| h.kind == "location")
         .cloned()
         .collect();
     let mut shops: Vec<provider::SearchHit> = Vec::new();
-    if !wiki_locations.is_empty() {
+    if !location_hits.is_empty() {
         let terminals: Vec<provider::SearchHit> = cache
             .entities_of(EntityKind::Terminals)?
             .into_iter()
@@ -402,7 +417,7 @@ fn with_location_rows(
             })
             .collect();
         let present: std::collections::HashSet<u64> = hits.iter().map(|h| h.id).collect();
-        for loc in &wiki_locations {
+        for loc in &location_hits {
             for t in &terminals {
                 if present.contains(&t.id) || shops.iter().any(|s| s.id == t.id) {
                     continue;
@@ -414,10 +429,10 @@ fn with_location_rows(
         }
     }
     // Kette (subtitle) → Terminals der Kette, in Treffer-Reihenfolge zuerst.
-    // Wiki-Location-Zeilen (kind='location', source=wiki) sind bereits
-    // Standort-Zeilen und werden nicht noch einmal synthetisiert — sie
-    // bleiben unangetastet in der Trefferliste.
-    let wiki_names: Vec<String> = wiki_locations
+    // Location-Zeilen (kind='location' — jetzt die SYNTHESIERTEN
+    // UEX-Orte, PS t_c84e545d) sind bereits Standort-Zeilen und werden
+    // nicht noch einmal synthetisiert.
+    let location_names: Vec<String> = location_hits
         .iter()
         .map(|h| h.name.to_lowercase())
         .collect();
@@ -439,12 +454,12 @@ fn with_location_rows(
     // "Checkmate Station") — nicht der Terminal-Name —, damit er klar von den
     // Terminal-Zeilen (Kriterium 1) unterschieden wird.
     //
-    // P1: matcht die Wiki-Location bereits per Name, wird die synthetische
+    // P1: matcht die Location bereits per Name, wird die synthetische
     // Zeile nicht DUPLIZIERT (gleicher Ortsname → Wiki-Treffer reicht).
     let mut locations: Vec<provider::SearchHit> = Vec::new();
     for (chain, members) in &by_chain {
         let display = location_name(chain);
-        if wiki_names.iter().any(|n| *n == display.to_lowercase()) {
+        if location_names.iter().any(|n| *n == display.to_lowercase()) {
             continue;
         }
         let (chain_lookup, first) = chain_lookup(cache, chain)?;
@@ -465,14 +480,14 @@ fn with_location_rows(
             code: None,
         });
     }
-    // Reihenfolge: Wiki-Location-Treffer mit ihren Station-Shops zuerst
+    // Reihenfolge: Location-Treffer mit ihren Station-Shops zuerst
     // (das Aggregat ist der präferierte Einstieg, die Shops folgen direkt),
     // dann die synthetischen Ketten-Standorte, dann die restlichen
     // Terminal-Treffer (die als Shop-Zeile ergänzten wurden nicht doppelt
     // geführt).
     let shop_ids: std::collections::HashSet<u64> = shops.iter().map(|s| s.id).collect();
     let mut out: Vec<provider::SearchHit> = Vec::new();
-    for loc in &wiki_locations {
+    for loc in &location_hits {
         out.push(loc.clone());
         out.extend(
             shops
@@ -627,7 +642,11 @@ pub async fn get_prices(
     commodity: String,
     id: Option<IdArg>,
     kind: Option<String>,
+    force: Option<bool>,
 ) -> Result<PriceDetail, String> {
+    // PS (t_c84e545d): `force = true` (detail F5) bypasses the freshness
+    // marker for the record behind THIS detail — one paced API call.
+    let force = force.unwrap_or(false);
     let fetched_at = now_unix();
     let id: Option<u64> = id.and_then(IdArg::into_u64);
     match kind.as_deref() {
@@ -674,15 +693,23 @@ pub async fn get_prices(
         Some("item") => {
             // Items that are NOT commodities carry their shop prices in the
             // UEX `/items_prices` table (weapons, armor, MedPens, etc.).
-            // Fetch those live (cached 30 min) instead of returning an empty
-            // table — Point 3: "falsches 'nicht kaufbar'".
+            // Cached with the LONG patch-driven TTL (TTL_ITEM_PRICES — PS
+            // t_c84e545d); `force` renews exactly this item live.
             let item_id = id.ok_or_else(|| "Item öffnen: fehlende Item-ID".to_string())?;
             let item_name = item_name(&state, Some(item_id), &commodity).await?;
-            let prices = state
-                .provider
-                .item_prices(item_id)
-                .await
-                .map_err(friendly)?;
+            let prices = if force {
+                state
+                    .provider
+                    .refresh_item_prices(item_id)
+                    .await
+                    .map_err(friendly)?
+            } else {
+                state
+                    .provider
+                    .item_prices(item_id)
+                    .await
+                    .map_err(friendly)?
+            };
             Ok(PriceDetail {
                 commodity: item_name,
                 source: state.provider.name(),
@@ -692,7 +719,15 @@ pub async fn get_prices(
             })
         }
         _ => {
-            let prices = state.provider.prices(&commodity).await.map_err(friendly)?;
+            let prices = if force {
+                state
+                    .provider
+                    .refresh_prices(&commodity)
+                    .await
+                    .map_err(friendly)?
+            } else {
+                state.provider.prices(&commodity).await.map_err(friendly)?
+            };
             Ok(PriceDetail {
                 commodity: prices
                     .first()
@@ -774,13 +809,7 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
 
     // Only one sweep at a time; a concurrent call just re-reads the status.
     if !tracker.syncing.swap(true, Ordering::SeqCst) {
-        let outcome = sweep(
-            provider.as_ref(),
-            cache.as_ref(),
-            state.wiki_sync.as_deref(),
-            false,
-        )
-        .await;
+        let outcome = sweep(provider.as_ref(), cache.as_ref(), false).await;
         {
             let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
             *guard = outcome.err();
@@ -789,6 +818,60 @@ pub async fn sync_now(app: AppHandle, state: State<'_, TradeState>) -> Result<Sy
         let _ = handle.emit(SYNC_EVENT, build_status(&provider, &cache, &tracker));
     }
     Ok(build_status(&state.provider, &state.cache, &state.tracker))
+}
+
+/// PS (t_c84e545d): Settings "Item-Preise jetzt aktualisieren" — force ONE
+/// live refresh of every cached item price table (patch-driven data: the
+/// button is the ONLY periodic-renewal path besides the item detail F5).
+/// Sequentially paced (the UEX client paces itself); NotFound items (removed
+/// upstream) are skipped. Returns the new item-price age.
+#[tauri::command]
+pub async fn refresh_item_prices_now(
+    state: State<'_, TradeState>,
+) -> Result<cache::PriceSyncAges, String> {
+    let entities = state
+        .cache
+        .entities_of(EntityKind::Items)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    for e in entities {
+        match state.provider.refresh_item_prices(e.id).await {
+            Ok(_) => continue,
+            Err(provider::ProviderError::NotFound(_)) => continue,
+            Err(provider::ProviderError::RateLimit { .. }) => {
+                return Err("Rate-Limit erreicht — bitte in Kürze erneut versuchen".into());
+            }
+            Err(err) => return Err(friendly(err)),
+        }
+    }
+    state
+        .cache
+        .price_sync_ages()
+        .map_err(|e| format!("Cache-Fehler: {e}"))
+}
+
+/// PS (t_c84e545d): Settings "Commodity-Preise jetzt aktualisieren" — same
+/// sweep the hourly background sync runs, triggered on demand.
+#[tauri::command]
+pub async fn refresh_commodity_prices_now(
+    state: State<'_, TradeState>,
+) -> Result<cache::PriceSyncAges, String> {
+    refresh_commodity_price_tables(&state.composite, &state.cache)
+        .await
+        .map_err(|e| e)?;
+    state
+        .cache
+        .price_sync_ages()
+        .map_err(|e| format!("Cache-Fehler: {e}"))
+}
+
+/// PS (t_c84e545d): age overview for the two price datatypes (Settings
+/// "Datenquellen" section).
+#[tauri::command]
+pub fn prices_sync_ages(state: State<'_, TradeState>) -> Result<cache::PriceSyncAges, String> {
+    state
+        .cache
+        .price_sync_ages()
+        .map_err(|e| format!("Cache-Fehler: {e}"))
 }
 
 /// Marketplace offers, filtered client-side (q/location/region/sort) by the
@@ -1241,7 +1324,7 @@ pub fn start_background_refresh(
     app: &AppHandle,
     provider: &Arc<dyn DataProvider>,
     cache: &Arc<Cache>,
-    wiki_sync: Option<&Arc<dyn crate::providers::WikiSync>>,
+    composite: &Arc<crate::providers::CompositeProvider>,
     tracker: &Arc<SyncTracker>,
 ) {
     if tracker.background.swap(true, Ordering::SeqCst) {
@@ -1251,6 +1334,11 @@ pub fn start_background_refresh(
     let cache = cache.clone();
     let tracker = tracker.clone();
     let handle = app.clone();
+    // PS price-sync task copies (taken BEFORE the first `async move` — that
+    // task owns its own set via the `m*` prefix).
+    let pcache = cache.clone();
+    let psync_tracker = tracker.clone();
+    let phandle = handle.clone();
     // Marketplace-Sync (Phase 2): kurze TTL (5 min) → eigener, schneller Zyklus,
     // damit der Boards-Snapshot nahezu frisch bleibt. Rate-Limit-schonend: ein
     // /marketplace_listings-Request pro TTL-Fenster (≈12/h), plus der einmalige
@@ -1258,18 +1346,44 @@ pub fn start_background_refresh(
     // versucht es erneut und die UI fällt auf den letzten Snapshot zurück.
     let mprovider = provider.clone();
     let mcache = cache.clone();
-    let mwiki_sync = wiki_sync.cloned();
     _ = tauri::async_runtime::spawn(async move {
         // Erste Probe kurz nach Boot: Netz-Erreichbarkeit prüfen, unabhängig
         // von der TTL — ein frischer Cache mit totem Netz muss trotzdem als
         // offline erkannt werden.
         tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-        background_tick(&tracker, &provider, &cache, mwiki_sync.clone(), &handle).await;
+        background_tick(&tracker, &provider, &cache, &handle).await;
         loop {
             tokio::time::sleep(cache::sync::DEFAULT_INTERVAL).await;
-            background_tick(&tracker, &provider, &cache, mwiki_sync.clone(), &handle).await;
+            background_tick(&tracker, &provider, &cache, &handle).await;
         }
     });
+
+    // PS (t_c84e545d): hourly COMMODITY-PRICE background sync. Runs in the
+    // process INDEPENDENT of overlay visibility (the task loop lives here,
+    // not behind a show/hide gate): every cycle each cached commodity price
+    // table whose TTL marker expired is renewed with one paced API call
+    // (stale-first — fresh tables are skipped). Item prices deliberately
+    // have NO periodic cycle: they are patch-driven and carry the long
+    // TTL_ITEM_PRICES (7 days), renewed only via the explicit manual
+    // refresh paths.
+    {
+        let composite = composite.clone();
+        _ = tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(PRICE_SYNC_INTERVAL).await;
+                let refreshed = refresh_commodity_price_tables(&composite, &pcache).await;
+                if let Ok(n) = refreshed {
+                    if n > 0 {
+                        log::info!("price sync: renewed {n} commodity tables (hourly cycle)");
+                        let _ = phandle.emit(
+                            SYNC_EVENT,
+                            build_status(&provider_load(&composite), &pcache, &psync_tracker),
+                        );
+                    }
+                }
+            }
+        });
+    }
 
     _ = tauri::async_runtime::spawn(async move {
         loop {
@@ -1288,6 +1402,10 @@ pub fn start_background_refresh(
     });
 }
 
+/// PS (t_c84e545d): cadence of the hourly commodity-price background sync
+/// (= TTL_PRICES, so each table is renewed exactly once per fresh window).
+const PRICE_SYNC_INTERVAL: std::time::Duration = cache::TTL_PRICES;
+
 /// Cadence of the background marketplace refresh (= the marketplace TTL, so we
 /// never hammer the API: exactly one listing fetch per fresh window + failures
 /// are retried on the next tick).
@@ -1296,22 +1414,53 @@ const MARKET_REFRESH_INTERVAL: std::time::Duration = match cache::TTL_MARKETPLAC
     None => std::time::Duration::from_secs(300),
 };
 
+/// `provider` as an owned Arc (the price-sync tick only holds the composite).
+/// The composite is itself the DataProvider — build the trait object locally.
+fn provider_load(
+    composite: &Arc<crate::providers::CompositeProvider>,
+) -> std::sync::Arc<dyn DataProvider> {
+    composite.clone() as std::sync::Arc<dyn DataProvider>
+}
+
+/// PS (t_c84e545d): renew every STALE cached commodity price table with one
+/// paced API call each (the UEX client paces itself via min_interval). Fresh
+/// tables are skipped (stale-first; no quota is wasted on fresh data).
+/// Returns the number of renewed tables.
+async fn refresh_commodity_price_tables(
+    composite: &Arc<crate::providers::CompositeProvider>,
+    cache: &Arc<Cache>,
+) -> Result<usize, String> {
+    let entities = cache
+        .entities_of(EntityKind::Commodities)
+        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+    let uex = composite.uex();
+    let mut renewed = 0;
+    for e in entities {
+        let fresh = cache
+            .prices_fresh(e.id)
+            .map_err(|err| format!("Cache-Fehler: {err}"))?;
+        if fresh {
+            continue;
+        }
+        // NotFound (commodity removed upstream) is not an error — skip it.
+        match uex.refresh_prices(&e.name).await {
+            Ok(_) => renewed += 1,
+            Err(provider::ProviderError::NotFound(_)) => continue,
+            Err(err) => log::warn!("price sync: {} failed: {err}", e.name),
+        }
+    }
+    Ok(renewed)
+}
+
 /// One background iteration: refresh stale datasets (computed via
 /// [`sweep`] with `probe_if_fresh`), record the outcome and broadcast it.
 async fn background_tick(
     tracker: &Arc<SyncTracker>,
     provider: &Arc<dyn DataProvider>,
     cache: &Arc<Cache>,
-    wiki_sync: Option<Arc<dyn crate::providers::WikiSync>>,
     handle: &AppHandle,
 ) {
-    let outcome = sweep(
-        provider.as_ref(),
-        cache.as_ref(),
-        wiki_sync.as_deref(),
-        true,
-    )
-    .await;
+    let outcome = sweep(provider.as_ref(), cache.as_ref(), true).await;
     {
         let mut guard = tracker.last_error.lock().expect("tracker mutex poisoned");
         *guard = outcome.err();
@@ -1331,7 +1480,6 @@ async fn background_tick(
 async fn sweep(
     provider: &dyn DataProvider,
     cache: &Cache,
-    wiki_sync: Option<&dyn crate::providers::WikiSync>,
     probe_if_fresh: bool,
 ) -> Result<(), String> {
     let mut fetched = false;
@@ -1349,25 +1497,19 @@ async fn sweep(
                 .fetch_entities(*entity_kind)
                 .await
                 .map_err(friendly)?;
-            // Wiki datasets (Locations) store under their own source so they
-            // coexist with the UEX terminal rows in one table.
-            let source = match entity_kind {
-                EntityKind::Locations => cache::SOURCE_WIKI,
-                _ => cache::SOURCE_UEX,
-            };
+            // PS (t_c84e545d): all datasets are UEX-sourced. For Locations the
+            // legacy wiki-sourced rows are retired first — stale ghost rows
+            // must not survive in the location search.
+            if *entity_kind == EntityKind::Locations {
+                cache
+                    .delete_entities_sourced(EntityKind::Locations, cache::SOURCE_WIKI)
+                    .map_err(|e| format!("Cache-Fehler: {e}"))?;
+            }
             cache
-                .store_entities_sourced(*entity_kind, source, &entities)
+                .store_entities_sourced(*entity_kind, cache::SOURCE_UEX, &entities)
                 .map_err(|e| format!("Cache-Fehler: {e}"))?;
             log::info!("sync: {label} stored ({} entries)", entities.len());
         }
-    }
-    // Wiki reference datasets beyond the GROUPS kinds (wiki commodities for
-    // the price path + an extra locations pass with its own TTL marker).
-    if let Some(wiki_sync) = wiki_sync {
-        wiki_sync
-            .sync_wiki_datasets(cache)
-            .await
-            .map_err(friendly)?;
     }
     if probe_if_fresh && !fetched {
         // Warm cache → only a forced round-trip detects an outage. Stored, so
@@ -1410,6 +1552,32 @@ fn build_status(
             fresh,
             age_secs,
             count,
+        });
+    }
+    // PS (t_c84e545d): the two price datatypes report "zuletzt gesynced"
+    // SEPARATELY — item prices are patch-driven (no hourly cycle), commodity
+    // prices renew hourly. The commodity dataset is fresh when the newest
+    // commodity price table is younger than TTL_PRICES (the hourly cycle just
+    // renewed it); items count as fresh when the newest item table is younger
+    // than TTL_ITEM_PRICES.
+    if let Ok(ages) = cache.price_sync_ages() {
+        datasets.push(DatasetStatus {
+            kind: "item_prices".to_string(),
+            label: "Item-Preise".to_string(),
+            fresh: ages
+                .item_age_secs
+                .is_some_and(|a| a < cache::TTL_ITEM_PRICES.as_secs()),
+            age_secs: ages.item_age_secs,
+            count: ages.item_count,
+        });
+        datasets.push(DatasetStatus {
+            kind: "commodity_prices".to_string(),
+            label: "Commodity-Preise".to_string(),
+            fresh: ages
+                .commodity_age_secs
+                .is_some_and(|a| a < cache::TTL_PRICES.as_secs()),
+            age_secs: ages.commodity_age_secs,
+            count: ages.commodity_count,
         });
     }
     // Live snapshot of the worker's last error. The GUI thread (commands run on
@@ -1572,7 +1740,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -1594,7 +1762,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -1636,7 +1804,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -1712,7 +1880,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache,
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -1946,7 +2114,7 @@ mod tests {
             provider: Arc::new(LocProvider),
             cache: cache.clone(),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -1957,6 +2125,7 @@ mod tests {
             "Landing Services - Checkmate".into(),
             Some(IdArg::Num(429)),
             Some("terminal".into()),
+            None,
         )
         .await
         .unwrap();
@@ -1976,6 +2145,7 @@ mod tests {
             "Guns - Checkmate".into(),
             Some(IdArg::Num(437)),
             Some("terminal".into()),
+            None,
         )
         .await
         .unwrap();
@@ -1988,6 +2158,7 @@ mod tests {
             "Checkmate".into(),
             Some(IdArg::Num(436)),
             Some("location".into()),
+            None,
         )
         .await
         .unwrap();
@@ -2002,6 +2173,7 @@ mod tests {
             "CSP-68H Backpack".into(),
             Some(IdArg::Num(465)),
             Some("item".into()),
+            None,
         )
         .await
         .unwrap();
@@ -2011,7 +2183,7 @@ mod tests {
         assert!(d.location.is_none());
 
         // default route → commodity provider path
-        let d = get_prices(state.clone(), "agricium".into(), None, None)
+        let d = get_prices(state.clone(), "agricium".into(), None, None, None)
             .await
             .unwrap();
         assert_eq!(d.prices.len(), 1);
@@ -2062,7 +2234,7 @@ mod tests {
             provider: Arc::new(FailingProvider),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2222,7 +2394,7 @@ mod tests {
     /// selbst im FTS-Treffer waren. Die synthetische Ketten-Location wird
     /// NICHT doppelt erzeugt, wenn die Wiki-Location den Namen schon trägt.
     #[test]
-    fn wiki_location_hit_lists_station_shops_and_dedupes_synthesis() {
+    fn location_hit_lists_station_shops_and_dedupes_synthesis() {
         let cache = Arc::new(Cache::open_in_memory().unwrap());
         let chain = "Stanton > Nyx > Levski";
         cache
@@ -2312,7 +2484,7 @@ mod tests {
         assert_eq!(
             out.iter().filter(|h| h.kind == "location").count(),
             1,
-            "synthesis must not duplicate the wiki location"
+            "synthesis must not duplicate the location"
         );
     }
 
@@ -2520,7 +2692,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2577,7 +2749,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2637,7 +2809,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2663,7 +2835,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2708,7 +2880,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2728,7 +2900,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state2 = app2.state::<TradeState>();
@@ -2780,7 +2952,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2926,7 +3098,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -2987,7 +3159,7 @@ mod tests {
             }),
             cache: Arc::new(Cache::open_in_memory().unwrap()),
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
@@ -3047,7 +3219,7 @@ mod tests {
             provider: Arc::new(StubProvider),
             cache,
             tracker: Arc::new(SyncTracker::default()),
-            wiki_sync: None,
+            composite: mock_composite(),
             write_gate: Arc::new(WriteGate::new()),
         });
         let state = app.state::<TradeState>();
