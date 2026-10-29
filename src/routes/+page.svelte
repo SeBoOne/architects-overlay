@@ -4777,6 +4777,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="btn-ghost" onclick={() => void loadTrk(false)}>Erneut versuchen</span>
 							</div>
 						{:else if myTrades.length === 0}
+							{#if trkMsg}
+								<div class="sm" style="color: {trkMsg === 'Trade gelöscht.' ? 'var(--fg)' : 'var(--alert)'}; margin: 6px 16px" role="alert">{trkMsg}</div>
+							{/if}
 							<div class="row-empty" style="padding: 28px 16px">
 								{trkNote ?? 'Noch keine Commodity-Trades erfasst — lege deinen ersten Trade an („+ Trade erfassen“) oder führe ihn direkt auf UEX.'}
 							</div>
