@@ -3543,6 +3543,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (railMode) {
 			// Inventar (t_1bab1fea) und Hangar (t_317f19c5) besitzen eigene
 			// Key-Handler-Ketten: Esc geht an die jeweilige Komponente.
+			// BUG t_3a345e4f: Das alte else-if hat Escape für ALLE anderen
+			// railModes (inkl. 'inventory') selbst consumed → Esc aus dem
+			// Inventar-Detail warf direkt nach SUCHE, statt eine Ebene
+			// zurück. Inventory.svelte behandelt Esc selbst (back()-Kette
+			// bis onexit), also hier NICHT anfassen.
 			if (railMode === 'hangar') {
 				if (k === 'Escape') {
 					hangarBack();
@@ -3567,7 +3572,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						return;
 					}
 				}
-			} else if (k === 'Escape') {
+			} else if (railMode !== 'inventory' && k === 'Escape') {
 				railMode = null;
 				focusSearch(true);
 				e.preventDefault();
