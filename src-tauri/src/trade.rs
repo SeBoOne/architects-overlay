@@ -1994,6 +1994,26 @@ pub(crate) fn friendly(e: ProviderError) -> String {
             "Secret-Key fehlt oder ist falsch — siehe Einstellungen („UEX persönlicher Secret-Key“)."
                 .to_string()
         }
+        // R1 (t_9caac387): Delete-spezifische Doku-Codes von
+        // DELETE /user_trades_remove — deutsch, Code bleibt sichtbar.
+        // `"missing_id"` in Anführungszeichen, damit `missing_id_category`
+        // (Trades-Add) NICHT in diesen Arm läuft.
+        ProviderError::Http { status, body }
+            if (status == 400 || status == 403) && body.contains("\"trade_not_found\"") =>
+        {
+            "Der Trade existiert nicht (trade_not_found) — vermutlich bereits gelöscht oder fremde ID."
+                .to_string()
+        }
+        ProviderError::Http { status, body }
+            if (status == 400 || status == 403) && body.contains("\"missing_secret_key\"") =>
+        {
+            "Secret-Key fehlt — siehe Einstellungen („UEX persönlicher Secret-Key“).".to_string()
+        }
+        ProviderError::Http { status, body }
+            if (status == 400 || status == 403) && body.contains("\"missing_id\"") =>
+        {
+            "Trade-ID fehlt (missing_id).".to_string()
+        }
         ProviderError::Http { status, .. } => {
             format!("HTTP {status} · UEX nicht erreichbar")
         }
@@ -2043,6 +2063,42 @@ mod tests {
     use tauri::test::mock_app;
     // M2a-Tests (Mein Shop): eigene Offers/Trades nutzen die Seam-Typen.
     use provider::{ListingType, MarketOperation};
+
+    // R1 (t_9caac387): Delete-Doku-Codes werden deutsch gemappt, Doku-Code
+    // bleibt sichtbar; `missing_id_category` darf NICHT als `missing_id`
+    // durchgehen.
+    #[test]
+    fn friendly_maps_delete_doku_codes_to_german() {
+        let err = |body: &str| ProviderError::Http {
+            status: 400,
+            body: body.to_string(),
+        };
+        assert_eq!(
+            friendly(err(
+                r#"{"status":"trade_not_found","http_code":400,"data":null}"#
+            )),
+            "Der Trade existiert nicht (trade_not_found) — vermutlich bereits gelöscht oder fremde ID."
+        );
+        assert_eq!(
+            friendly(err(
+                r#"{"status":"missing_secret_key","http_code":400,"data":null}"#
+            )),
+            "Secret-Key fehlt — siehe Einstellungen („UEX persönlicher Secret-Key“)."
+        );
+        assert_eq!(
+            friendly(err(
+                r#"{"status":"missing_id","http_code":400,"data":null}"#
+            )),
+            "Trade-ID fehlt (missing_id)."
+        );
+        // Kein Fehl-Mapping: missing_id_category (Trades-Add) bleibt generisch.
+        assert_eq!(
+            friendly(err(
+                r#"{"status":"missing_id_category","http_code":400,"data":[]}"#
+            )),
+            "HTTP 400 · UEX nicht erreichbar"
+        );
+    }
 
     // Q1 (t_535a98fb): Suggest-Merge — ort-gefilterte Treffer zuerst, volle
     // Commodity-Liste bleibt IMMER wählbar (Gold/Janalite/Pitambu), keine
