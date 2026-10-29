@@ -370,6 +370,19 @@ pub struct CreateResponse {
     pub url: String,
 }
 
+/// `data`-Envelope einer erfolgreichen `POST /user_trades_add/` (PT
+/// t_7fdc1317, Doku §5a). UEX dokumentiert `{id_user_trade: int}`; wie
+/// `CreateResponse` tolerant: fehlende/null-Struktur → 0 (das Anlegen
+/// selbst brecht NICHT als Fehler). `id` wird als Fallback mitgelesen,
+/// falls die API stattdessen ein generisches `{id: …}` liefert.
+#[derive(Debug, Deserialize)]
+pub struct TradeCreateResponse {
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
+    pub id_user_trade: u64,
+    #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]
+    pub id: u64,
+}
+
 /// `/marketplace_listings` row.
 #[derive(Debug, Deserialize)]
 pub struct ListingRow {

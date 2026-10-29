@@ -174,6 +174,14 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 		note: string | null;
 		key_set: boolean;
 	};
+	// PT (t_7fdc1317): Tracking-Reiter — Mirror von trade::TradesResponse.
+	type TradesResponse = {
+		source: 'cache' | 'live' | 'offline';
+		fetched_at: number;
+		trades: UTrade[];
+		note: string | null;
+		key_set: boolean;
+	};
 	// M3b (t_893761f1): Deal-Chat — Mirrors provider::NegotiationMessage +
 	// IPC-Responses. `event`/`message` sind null-bar (System-Event vs. Text).
 	type NegotiationMessage = {
@@ -1460,6 +1468,238 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			if (chatScroller) chatScroller.scrollTop = chatScroller.scrollHeight;
 		});
 	}
+
+	// PT (t_7fdc1317): Tracking-Reiter in den Handelsrouten — eigene
+	// Commodity-Trades (/user_trades) + Tages-Aggregat (Ausgaben/Einnahmen/
+	// Nettogewinn in aUEC) + Erfassen/Bearbeiten/Löschen via user_trades_add/
+	// edit/remove (2-Schritt-Bestätigung wie die Marketplace-Writes).
+	// WICHTIG: das ist der MARKTPLATZ-agnostische Cargo-Verlauf — bewusst
+	// NICHT die Negotiations-Quelle des Trades-Reiters (M3b).
+	type UTrade = {
+		id: number;
+		commodity: string;
+		commodity_id: number;
+		terminal: string;
+		terminal_id: number;
+		operation: string;
+		scu: number;
+		price: number;
+		date_added: number;
+	};
+	type TrkDay = { key: string; iso: string; expense: number; income: number; net: number; count: number };
+	type TrkSug = { id: number; name: string; subtitle: string | null };
+
+	let rTab = $state<'matrix' | 'tracking'>('matrix');
+	let myTrades = $state<UTrade[]>([]);
+	let trkLoading = $state(false);
+	let trkErr = $state<string | null>(null);
+	let trkNote = $state<string | null>(null);
+	let trkLoaded = $state(false);
+	let trkOpen = $state(false); // Formular „Trade erfassen“
+	let trkEditId = $state<number | null>(null); // null = neu
+	let trkBusy = $state(false);
+	let trkMsg = $state<string | null>(null);
+	// 2-Schritt-Bestätigung (Muster confirmAction, aber lokal im Reiter — der
+	// bestehende Dialog hängt im Angebots-Markup und rendert hier nicht).
+	let trkConfirm = $state<null | { kind: 'add' | 'edit' | 'remove'; id: number | null }>(null);
+	let trkForm = $state({
+		commodity: '',
+		commodity_id: null as number | null,
+		terminal: '',
+		terminal_id: null as number | null,
+		operation: 'buy' as 'buy' | 'sell',
+		scu: '',
+		price: ''
+	});
+	let trkComOpts = $state<{ label: string; value: string }[]>([]);
+	let trkTermOpts = $state<{ label: string; value: string }[]>([]);
+
+	// Typeahead-Wiring (Muster rFromSug): Tippen im Formularfeld → Backend-
+	// Suggest (commodity_suggest/terminal_suggest) → Optionen für den
+	// RoutesTypeahead. Fehler still wegdrücken (Typeahead ist optional).
+	$effect(() => {
+		const q = trkForm.commodity.trim();
+		void (async () => {
+			await trkSuggest('com', q);
+		})();
+	});
+	$effect(() => {
+		const q = trkForm.terminal.trim();
+		void (async () => {
+			await trkSuggest('term', q);
+		})();
+	});
+
+	async function loadTrk(bg = false) {
+		if (cfg && !cfg.uex_secret_key_set) {
+			trkLoading = false;
+			trkErr = null;
+			trkNote =
+				'Für das Tracking braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).';
+			myTrades = [];
+			trkLoaded = true;
+			return;
+		}
+		trkLoading = !bg;
+		trkErr = null;
+		trkNote = null;
+		try {
+			const r = await invoke<TradesResponse>('get_my_trades');
+			myTrades = r.trades as unknown as UTrade[];
+			if (r.note) trkNote = r.note;
+		} catch (e) {
+			trkErr = String(e);
+		}
+		trkLoading = false;
+		trkLoaded = true;
+	}
+
+	function openTrkForm(t?: UTrade) {
+		if (t) {
+			trkEditId = t.id;
+			trkForm = {
+				commodity: t.commodity,
+				commodity_id: t.commodity_id,
+				terminal: t.terminal,
+				terminal_id: t.terminal_id,
+				operation: t.operation === 'sell' ? 'sell' : 'buy',
+				scu: String(t.scu),
+				price: String(t.price)
+			};
+		} else {
+			trkEditId = null;
+			trkForm = {
+				commodity: '',
+				commodity_id: null,
+				terminal: '',
+				terminal_id: null,
+				operation: 'buy',
+				scu: '',
+				price: ''
+			};
+		}
+		trkComOpts = [];
+		trkTermOpts = [];
+		trkMsg = null;
+		trkOpen = true;
+	}
+
+	// Doku §5a/§5c: die API kennt KEIN Datumsfeld — der Trade bekommt das
+	// Aufnahme-Datum von UEX (date_added). Kein Fake-Datumsfeld im Formular.
+	async function trkSuggest(kind: 'com' | 'term', query: string) {
+		const cmd = kind === 'com' ? 'commodity_suggest' : 'terminal_suggest';
+		try {
+			const r = await invoke<TrkSug[]>(cmd, { query });
+			const opts = r.map((s) => ({ label: s.name, value: String(s.id) }));
+			if (kind === 'com') trkComOpts = opts;
+			else trkTermOpts = opts;
+		} catch {
+			// Typeahead ist optional — leere Liste statt Fehler-Wall.
+			if (kind === 'com') trkComOpts = [];
+			else trkTermOpts = [];
+		}
+	}
+
+	function trkValidate(): string | null {
+		if (!trkForm.commodity_id) return 'Ware wählen (Tippen für Vorschläge).';
+		if (!trkForm.terminal_id) return 'Ort/Terminal wählen (Tippen für Vorschläge).';
+		const scu = Math.round(Number(trkForm.scu));
+		if (!Number.isFinite(scu) || scu <= 0) return 'Menge (SCU) muss eine positive Ganzzahl sein.';
+		const price = Number(trkForm.price);
+		if (!Number.isFinite(price) || price <= 0) return 'Preis muss positiv sein.';
+		return null;
+	}
+
+	function requestTrkWrite() {
+		if (trkBusy) return;
+		const err = trkValidate();
+		if (err) {
+			trkMsg = err;
+			return;
+		}
+		trkMsg = null;
+		trkConfirm = { kind: trkEditId ? 'edit' : 'add', id: trkEditId };
+	}
+
+	function requestTrkRemove(t: UTrade) {
+		trkConfirm = { kind: 'remove', id: t.id };
+	}
+
+	async function doTrkWrite() {
+		if (trkBusy || !trkConfirm) return;
+		trkConfirm = null;
+		trkBusy = true;
+		trkMsg = null;
+		const wasEdit = !!trkEditId;
+		const payload = {
+			id_terminal: trkForm.terminal_id!,
+			id_commodity: trkForm.commodity_id!,
+			operation: trkForm.operation,
+			scu: Math.round(Number(trkForm.scu)),
+			price: Number(trkForm.price)
+		};
+		try {
+			if (trkEditId) await invoke('trade_edit', { id: trkEditId, payload });
+			else await invoke('trade_add', { payload });
+			trkOpen = false;
+			trkEditId = null;
+			trkMsg = wasEdit ? 'Trade aktualisiert.' : 'Trade erfasst.';
+			await loadTrk(true);
+		} catch (e) {
+			// Kein Retry (M2b-Philosophie): Meldung + Deep-Link-Button.
+			trkMsg = String(e);
+		}
+		trkBusy = false;
+	}
+
+	async function doTrkRemove() {
+		if (trkBusy || !trkConfirm) return;
+		const id = trkConfirm.id;
+		trkConfirm = null;
+		if (!id) return;
+		trkBusy = true;
+		trkMsg = null;
+		try {
+			await invoke('trade_remove', { id });
+			trkMsg = 'Trade gelöscht.';
+			await loadTrk(true);
+		} catch (e) {
+			trkMsg = String(e);
+		}
+		trkBusy = false;
+	}
+
+	async function openTrkUex() {
+		try {
+			await invoke('open_uex_account');
+		} catch (e) {
+			trkMsg = String(e);
+		}
+	}
+
+	// Tages-Aggregat: Kauf = Ausgabe (scu × price), Verkauf = Einnahme,
+	// Nettogewinn = Einnahme − Ausgabe. Clientseitig gruppiert nach Tag.
+	const trkDays = $derived.by(() => {
+		const map = new Map<string, TrkDay>();
+		for (const t of myTrades) {
+			const d = new Date((t.date_added || 0) * 1000);
+			const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), dd = String(d.getDate()).padStart(2, '0');
+			const iso = `${y}-${m}-${dd}`; // YYYY-MM-DD (lokal) — chronologisch sortierbar, Deckung mit de-DE-Anzeige
+			const key = d.toLocaleDateString('de-DE');
+			let day = map.get(iso);
+			if (!day) {
+				day = { key, iso, expense: 0, income: 0, net: 0, count: 0 };
+				map.set(iso, day);
+			}
+			const vol = (t.scu || 0) * (t.price || 0);
+			if (t.operation === 'sell') day.income += vol;
+			else day.expense += vol;
+			day.net = day.income - day.expense;
+			day.count += 1;
+		}
+		return [...map.values()].sort((a, b) => (b.iso > a.iso ? 1 : -1));
+	});
+	const trkSorted = $derived([...myTrades].sort((a, b) => (b.date_added || 0) - (a.date_added || 0)));
 
 	async function sendChat() {
 		if (chatBusy || !tradesDeal) return;
@@ -3375,6 +3615,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const inStepper = t instanceof HTMLInputElement && t.type === 'number';
 			const onChip = t instanceof HTMLButtonElement;
 			if (mTab === 'routes') {
+				// PT (t_7fdc1317): Tracking-Sub-Reiter — Esc schließt Formular/
+				// Bestätigung zuerst, Pfeile/Enter navigieren NICHT die Matrix.
+				if (rTab === 'tracking') {
+					if (k === 'Escape') {
+						if (trkConfirm) trkConfirm = null;
+						else if (trkOpen) {
+							trkOpen = false;
+							trkMsg = null;
+							trkEditId = null;
+						} else toggleMarket();
+						e.preventDefault();
+						return;
+					}
+					return; // Tracking: keine Listen-Navigation
+				}
 				if (k === 'Escape') {
 					if (rDetail) rDetail = null;
 					else toggleMarket();
@@ -4222,7 +4477,162 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{/if}
 					</div>
 				{:else if mTab === 'routes'}
-					{#if rDetail}
+					<!-- PT (t_7fdc1317): Sub-Reiter innerhalb der Handelsrouten —
+					     „Routen" (bestehende Matrix) und „Tracking" (eigene
+					     Commodity-Trades + Tagesgewinn). -->
+					<div class="mbar2">
+						<button type="button" role="tab" aria-selected={rTab === 'matrix'} class="chip" class:is-on={rTab === 'matrix'} onclick={() => (rTab = 'matrix')}>Routen</button>
+						<button type="button" role="tab" aria-selected={rTab === 'tracking'} class="chip" class:is-on={rTab === 'tracking'} onclick={() => { rTab = 'tracking'; rDetail = null; if (!trkLoaded) void loadTrk(false); }}>Tracking</button>
+					</div>
+					{#if rTab === 'tracking'}
+						<div class="mbar">
+							<span class="m-lbl">Trade-Tracking</span>
+							<span class="chip" onclick={() => void loadTrk(true)}>Aktualisieren</span>
+							<span class="chip" title="Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)" onclick={() => openTrkForm()}>+ Trade erfassen</span>
+							<span class="chip" title="Trades auf UEX verwalten (Login im Browser)" onclick={() => void openTrkUex()}>UEX-Konto öffnen ↗</span>
+						</div>
+						{#if trkLoading && !myTrades.length}
+							<div class="center" style="padding: 28px 16px">
+								<span class="spin"></span>
+								<div class="big" style="margin-top: 12px">Lade Trades …</div>
+							</div>
+						{:else if trkErr && !myTrades.length}
+							<div class="row-empty" style="padding: 28px 16px; color: var(--alert)">
+								{trkErr}
+								<span class="btn-ghost" onclick={() => void loadTrk(false)}>Erneut versuchen</span>
+							</div>
+						{:else if myTrades.length === 0}
+							<div class="row-empty" style="padding: 28px 16px">
+								{trkNote ?? 'Noch keine Commodity-Trades erfasst — lege deinen ersten Trade an („+ Trade erfassen“) oder führe ihn direkt auf UEX.'}
+							</div>
+						{:else}
+							{#if trkNote}
+								<div class="row-empty" style="padding: 10px 16px">{trkNote}</div>
+							{/if}
+							<!-- Tages-Aggregat: Ausgaben/Einnahmen/Nettogewinn (aUEC). -->
+							<div class="mlist">
+								{#each trkDays as day (day.key)}
+									<div class="mrow trow" style="cursor: default">
+										<div class="m-main">
+											<div class="m-title">{day.key}</div>
+											<div class="m-sub">{day.count} Trade{day.count === 1 ? '' : 's'}</div>
+										</div>
+										<div class="m-right">
+											<div class="m-meta">
+												<span title="Ausgaben (Käufe) an diesem Tag">−{fmtPrice(day.expense)}</span>
+												<span title="Einnahmen (Verkäufe) an diesem Tag">+{fmtPrice(day.income)}</span>
+											</div>
+											<div class="m-price {day.net >= 0 ? 'sell' : 'buy'}" title="Nettogewinn des Tages (aUEC)">{day.net >= 0 ? '+' : '−'}{fmtPrice(Math.abs(day.net))}</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+							<div class="mlist">
+								{#each trkSorted as t (t.id)}
+									<div class="mrow trow" style="cursor: default">
+										<div class="m-op {t.operation === 'sell' ? 'sell' : 'buy'}">{t.operation === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-main">
+											<div class="m-title">{t.commodity}</div>
+											<div class="m-sub">{t.terminal} · {fmt(t.scu)} SCU @ {fmtPrice(t.price)} aUEC</div>
+										</div>
+										<div class="m-right">
+											<div class="m-meta">{new Date((t.date_added || 0) * 1000).toLocaleString('de-DE')}</div>
+											<div class="m-meta">
+												<span class="btn-ghost" title="Trade bearbeiten" onclick={() => openTrkForm(t)}>Bearbeiten</span>
+												<span class="btn-ghost" style="color: var(--alert)" title="Trade löschen" onclick={() => requestTrkRemove(t)}>Löschen</span>
+											</div>
+										</div>
+									</div>
+								{/each}
+							</div>
+							<div class="m-foot">
+								<span>{myTrades.length} Trades · Tages-Aggregat clientseitig (Kauf = Ausgabe, Verkauf = Einnahme) · Quelle UEX /user_trades</span>
+								<span class="src">UEX Corp</span>
+							</div>
+						{/if}
+						<!-- PT: Formular „Trade erfassen“ als modales Popup (Muster
+						     D3 confirm-modal): dunkler Scrim, Karte im Overlay. -->
+						{#if trkOpen}
+							<div class="confirm-scrim" role="presentation">
+								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
+									<div class="center" style="padding: 0 0 10px">
+										<div class="big">{trkEditId ? 'Trade BEARBEITEN' : 'Trade ERFASSEN'}</div>
+									</div>
+									<div class="ptab">
+										<span class="m-lbl">Richtung</span>
+										<button type="button" class="chip" class:is-on={trkForm.operation === 'buy'} onclick={() => (trkForm.operation = 'buy')}>Kauf</button>
+										<button type="button" class="chip" class:is-on={trkForm.operation === 'sell'} onclick={() => (trkForm.operation = 'sell')}>Verkauf</button>
+									</div>
+									<div class="ptab">
+										<span class="m-lbl">Ware</span>
+										<RoutesTypeahead
+											bind:value={trkForm.commodity}
+											options={trkComOpts}
+											placeholder="z. B. Gold"
+											ariaLabel="Ware Type-ahead — Tippen filtert, ↵ übernimmt"
+											onselect={(v: string) => (trkForm.commodity_id = Number(v) || null)}
+										/>
+									</div>
+									<div class="ptab">
+										<span class="m-lbl">Ort</span>
+										<RoutesTypeahead
+											bind:value={trkForm.terminal}
+											options={trkTermOpts}
+											placeholder="z. B. Everus Harbor"
+											ariaLabel="Ort/Terminal Type-ahead — Tippen filtert, ↵ übernimmt"
+											onselect={(v: string) => (trkForm.terminal_id = Number(v) || null)}
+										/>
+									</div>
+									<div class="ptab">
+										<span class="m-lbl">Menge (SCU)</span>
+										<input class="qnum" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
+										<span class="m-lbl">Preis/SCU</span>
+										<input class="qnum" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
+									</div>
+									<div class="sm" style="color: var(--fgdim); margin-top: 6px">
+										Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.
+									</div>
+									{#if trkMsg}
+										<div class="sm" style="color: var(--alert); margin-top: 6px" role="alert">{trkMsg}</div>
+									{/if}
+									<div class="md-actions">
+										<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
+											{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
+										</button>
+										<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
+									</div>
+								</div>
+							</div>
+						{/if}
+						<!-- PT: 2-Schritt-Bestätigung (add/edit/remove) — Muster D3. -->
+						{#if trkConfirm}
+							<div class="confirm-scrim" role="presentation">
+								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+									<div class="center" style="padding: 0 0 10px">
+										<div class="big" style="color: var(--alert)">
+											{trkConfirm.kind === 'remove' ? 'Trade LÖSCHEN?' : trkConfirm.kind === 'edit' ? 'Trade ÄNDERN?' : 'Trade ANLEGEN?'}
+										</div>
+									</div>
+									{#if trkConfirm.kind === 'remove'}
+										<div class="sm" style="color: var(--fgdim)">Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden.</div>
+									{:else}
+										<div class="c-row"><b>Richtung</b><span>{trkForm.operation === 'sell' ? 'Verkauf' : 'Kauf'}</span></div>
+										<div class="c-row"><b>Ware</b><span>{trkForm.commodity || '—'}</span></div>
+										<div class="c-row"><b>Ort</b><span>{trkForm.terminal || '—'}</span></div>
+										<div class="c-row"><b>Menge</b><span>{Math.round(Number(trkForm.scu))} SCU</span></div>
+										<div class="c-row"><b>Preis</b><span>{fmtPrice(Number(trkForm.price))} aUEC/SCU</span></div>
+										<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Trade wird auf uexcorp.space {(trkConfirm.kind === 'edit' ? 'GEÄNDERT' : 'ANGELEGT')}.</div>
+									{/if}
+									<div class="md-actions">
+										<button type="button" class="btn" disabled={trkBusy} onclick={() => { if (trkConfirm) (trkConfirm.kind === 'remove' ? void doTrkRemove() : void doTrkWrite()); }}>
+											{trkBusy ? 'Senden …' : 'Bestätigen'}
+										</button>
+										<span class="btn-ghost" onclick={() => (trkConfirm = null)}>Abbrechen (Esc)</span>
+									</div>
+								</div>
+							</div>
+						{/if}
+					{:else if rDetail}
 						<div class="rdetail" role="dialog" aria-modal="true" aria-label="Routen-Detail">
 							<div class="md-head">
 								<div class="md-t">

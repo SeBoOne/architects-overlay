@@ -46,7 +46,7 @@ use provider::{
 use dto::{
     CategoryRow, CommodityRouteRow, CommodityRow, CreateResponse, ItemPriceRow, ItemRow,
     ListingRow, MessageCreatedRow, NegotiationMessageRow, NegotiationRow, PriceRow, StarSystemRow,
-    TerminalRow, UserTradeRow, VehicleRow, split_photos,
+    TerminalRow, TradeCreateResponse, UserTradeRow, VehicleRow, split_photos,
 };
 
 /// Search result page size served from the cache.
@@ -681,6 +681,18 @@ impl DataProvider for UexProvider {
     /// abmelden (Delegation).
     async fn delete_offer(&self, id: u64) -> Result<()> {
         self.delete_offer_impl(id).await
+    }
+
+    async fn add_trade(&self, payload: provider::TradePayload) -> Result<u64> {
+        self.add_trade_impl(payload).await
+    }
+
+    async fn edit_trade(&self, id: u64, payload: provider::TradePayload) -> Result<u64> {
+        self.edit_trade_impl(id, payload).await
+    }
+
+    async fn remove_trade(&self, id: u64) -> Result<()> {
+        self.remove_trade_impl(id).await
     }
 
     async fn fetch_entities(&self, kind: EntityKind) -> Result<Vec<Entity>> {
@@ -1537,6 +1549,108 @@ impl UexProvider {
             )
             .await?;
         Ok(())
+    }
+
+    /// Write-Layer (PT t_7fdc1317): Commodity-Trade ERFASSEN via
+    /// `POST /user_trades_add/` (Doku §5a). Payload exakt nach Doku-Schema
+    /// ([`TradePayload`]); `is_production` konstant 1 (keine Test-Trades im
+    /// Produktionssystem). KEIN Retry bei 429/403 — der Fehler steigt durch,
+    /// die UI entscheidet Deep-Link (M2b-Philosophie). Die Antwort ist
+    /// `{id_user_trade: int}`; ein fehlendes/null-ID darf das ANLEGEN selbst
+    /// nicht als Fehler brechen (Toleranz-Muster `CreateResponse`), wir
+    /// liefern dann 0 zurück.
+    async fn add_trade_impl(&self, payload: provider::TradePayload) -> Result<u64> {
+        Self::validate_trade(&payload)?;
+        let body = serde_json::json!({
+            "id_terminal": payload.id_terminal,
+            "id_commodity": payload.id_commodity,
+            "operation": payload.operation,
+            "scu": payload.scu,
+            "price": payload.price,
+            "is_production": 1,
+        });
+        let created: TradeCreateResponse = self
+            .http
+            .post("/user_trades_add/", self.secret_key.as_deref(), &body)
+            .await?;
+        Ok(created.id_user_trade.max(created.id))
+    }
+
+    /// Write-Layer (PT): Commodity-Trade BEARBEITEN via `POST
+    /// /user_trades_edit/` (Doku §5c). Alle Pflichtfelder neu übergeben
+    /// (`id` + `is_production` ergänzt); die Doku-Antwort ist leer („-"),
+    /// wir liefern die bearbeitete Trade-ID zurück. KEIN Retry bei 429/403.
+    async fn edit_trade_impl(&self, id: u64, payload: provider::TradePayload) -> Result<u64> {
+        Self::validate_trade(&payload)?;
+        if id == 0 {
+            return Err(ProviderError::Config(
+                "Bearbeiten abgebrochen — keine Trade-ID (id fehlt).".into(),
+            ));
+        }
+        let body = serde_json::json!({
+            "id": id,
+            "id_terminal": payload.id_terminal,
+            "id_commodity": payload.id_commodity,
+            "operation": payload.operation,
+            "scu": payload.scu,
+            "price": payload.price,
+            "is_production": 1,
+        });
+        // Die Doku-Antwort fürs Edit ist leer; der Envelope-Parser toleriert
+        // das (data null → Value::Null). Wir prüfen nur, dass der Status ok
+        // war (das macht `post` bereits).
+        let _: serde_json::Value = self
+            .http
+            .post("/user_trades_edit/", self.secret_key.as_deref(), &body)
+            .await?;
+        Ok(id)
+    }
+
+    /// Write-Layer (PT): Commodity-Trade LÖSCHEN via
+    /// `DELETE /user_trades_remove/?id=…&is_production=1` (Doku §5d).
+    /// Nur der Secret-Key ist nötig; kein Retry-Spam bei 429/403.
+    async fn remove_trade_impl(&self, id: u64) -> Result<()> {
+        self.http
+            .delete(
+                "/user_trades_remove/",
+                &[
+                    ("id".to_string(), id.to_string()),
+                    ("is_production".to_string(), "1".to_string()),
+                ],
+                self.secret_key.as_deref(),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Pflichtfeld-Validierung des Trade-Payloads (Doku §5a/§5c): id_terminal,
+    /// id_commodity, operation (`buy`|`sell`), scu (>0), price (>0) — sonst
+    /// deutsche Config-Meldung statt roher API-Antwort.
+    fn validate_trade(payload: &provider::TradePayload) -> Result<()> {
+        let mut missing: Vec<&str> = Vec::new();
+        if payload.id_terminal == 0 {
+            missing.push("id_terminal (Terminal wählen)");
+        }
+        if payload.id_commodity == 0 {
+            missing.push("id_commodity (Ware wählen)");
+        }
+        if payload.operation.trim().is_empty() {
+            missing.push("operation (buy/sell)");
+        }
+        if payload.scu == 0 {
+            missing.push("scu (Menge)");
+        }
+        if payload.price == 0.0 {
+            missing.push("price (Preis)");
+        }
+        if missing.is_empty() {
+            Ok(())
+        } else {
+            Err(ProviderError::Config(format!(
+                "Trade abgebrochen — Pflichtangaben fehlen: {}",
+                missing.join(", ")
+            )))
+        }
     }
 
     /// Kategorien für die Anlegen-Form: `GET /categories` (öffentlich).
