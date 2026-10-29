@@ -1328,20 +1328,6 @@ pub async fn trade_remove(state: State<'_, TradeState>, id: u64) -> Result<(), S
 
 // ---- Deep-Links (PT t_7fdc1317) -------------------------------------------
 
-/// PT (t_7fdc1317): Deep-Link für den Tracking-Reiter. Eine dedizierte
-/// UEX-Webseite für Commodity-Trades ist NICHT verifizierbar (/trading/,
-/// /trades/ antworten 404) — beschlossene Philosophie: kein Fake-Button,
-/// stattdessen die verifizierte Account-Seite (HTTP 200), auf der UEX die
-/// eigenen Trades verwaltet. Label in der UI sagt entsprechend „UEX-Konto“.
-#[tauri::command]
-pub fn open_uex_account(app: AppHandle) -> Result<String, String> {
-    let url = "https://uexcorp.space/account/";
-    let _ = &app;
-    tauri_plugin_opener::open_url(url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
-    Ok(url.to_string())
-}
-
 /// M2b-Review-Fix (t_6e26ec82): Marketplace-Kategorien für die Anlegen-Form.
 /// `POST /marketplace_advertise/` verlangt `id_category` für `type=item` —
 /// die Form braucht die Auswahl (id + Anzeigename), damit jeder Item-Create
