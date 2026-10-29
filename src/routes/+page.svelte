@@ -3549,7 +3549,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				: railMode === 'hangar'
 					? 'Hangar search — Name, Custom-Name, Manufacturer or Base-Ship …'
 					: phase === 'market'
-					? 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
+					? mTab === 'routes'
+						? 'Handelsrouten filtern — Ware, Start- oder Zielort …'
+						: 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
 					: inDetail
 					? detailHit?.kind === 'location' || detailHit?.kind === 'terminal'
 						? `Filter: Waren in ${detailHit?.name} …`
