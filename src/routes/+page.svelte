@@ -1375,6 +1375,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			shopSource = r.source;
 			shopKeySet = r.key_set;
 			if (r.note) shopNote = r.note;
+			// QW-3 (t_28bfd027): UEX 2.0 liefert NUR freigegebene Listings —
+			// Doku „List all active marketplace advertisements"; live belegt
+			// (2026-10-29): GET /marketplace_listings?username=AAWA_SeBoOne →
+			// 0 Rows, obwohl ein Listing auf Freigabe wartet; auch der globale
+			// Feed (1000 Rows) enthält es nicht. Wartende Listings sind via
+			// API 2.0 nicht abrufbar — statt eines stummen leeren Abschnitts
+			// erklärt der Hinweis das und bietet den Direkt-Link an (der
+			// shopCreatedUrl-Deep-Link aus der Create-Aktion zeigt es sofort).
+			if (!myOffers.length && !shopNote) {
+				shopNote =
+					'Keine eigenen aktiven Listings. Wartet ein Listing auf Freigabe, liefert die UEX-API es erst NACH der Freigabe (Endpoint listet nur aktive Ads) — es erscheint dann automatisch hier.';
+			}
 		} else {
 			myOffers = [];
 			shopErr = String(results[0].reason);
@@ -1703,6 +1715,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	async function sendChat() {
 		if (chatBusy || !tradesDeal) return;
+		// QW-4 (t_28bfd027): abgeschlossener Deal → kein Senden (UI-Gate;
+		// das Backend lehnt den Write zusätzlich ab).
+		if (tradesDeal.date_closed) {
+			chatErr = 'Trade abgeschlossen — Verlauf nur lesbar.';
+			return;
+		}
 		const text = chatDraft.trim();
 		if (!text) return;
 		chatBusy = true;
@@ -3678,12 +3696,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				e.preventDefault();
 				return;
 			}
-			if (k === 'ArrowRight' && !offerDetail) {
+			// QW-2 (t_28bfd027): ←/→ open/close das Offer-Detail NUR im
+			// Angebote-Reiter — davor leckte die Open/Close-Logik über die
+			// anderen Market-Reiter (Mein Shop/Trades), wo die Auswahl eines
+			// Offers semantisch keinen Sinn ergibt. Enter/Escape decken den
+			// Detail-Zugang überall ab; in shop/trades haben ←/→ keinerlei
+			// Wirkung mehr.
+			if (mTab === 'offers' && k === 'ArrowRight' && !offerDetail) {
 				openOfferDetail();
 				e.preventDefault();
 				return;
 			}
-			if (k === 'ArrowLeft' && offerDetail) {
+			if (mTab === 'offers' && k === 'ArrowLeft' && offerDetail) {
 				offerDetail = null;
 				lightbox = null;
 				e.preventDefault();
@@ -4555,11 +4579,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="src">UEX Corp</span>
 							</div>
 						{/if}
-						<!-- PT: Formular „Trade erfassen“ als modales Popup (Muster
-						     D3 confirm-modal): dunkler Scrim, Karte im Overlay. -->
+						<!-- PT: Formular „Trade erfassen" als modales Popup.
+						     QW-5 (t_28bfd027): der frühere confirm-scrim war position:fixed
+						     am VIEWPORT zentriert — im Overlay-Fenster saß das Popup dadurch
+						     unterhalb der Shell-Kante (Probe: Modal bis y=660 bei Shell-Ende
+						     y=372), Felder/Buttons unten unerreichbar. Jetzt wie das
+						     Listing-Popup (advert-scrim): absolute in die Shell, volle
+						     nutzbare Höhe, Body scrollt intern, Fuß (Buttons) fix. -->
 						{#if trkOpen}
-							<div class="confirm-scrim" role="presentation">
-								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
+							<div class="advert-scrim" role="presentation">
+								<div class="trk-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
+									<div class="trk-body">
 									<div class="center" style="padding: 0 0 10px">
 										<div class="big">{trkEditId ? 'Trade BEARBEITEN' : 'Trade ERFASSEN'}</div>
 									</div>
@@ -4600,18 +4630,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									{#if trkMsg}
 										<div class="sm" style="color: var(--alert); margin-top: 6px" role="alert">{trkMsg}</div>
 									{/if}
-									<div class="md-actions">
-										<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
-											{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
-										</button>
-										<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
 									</div>
-								</div>
-							</div>
-						{/if}
-						<!-- PT: 2-Schritt-Bestätigung (add/edit/remove) — Muster D3. -->
+									<div class="advert-foot">
+										<div class="md-actions">
+											<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
+												{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
+											</button>
+											<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
+										</div>
+									</div>
+									</div>
+									</div>
+									{/if}
+						<!-- PT: 2-Schritt-Bestätigung (add/edit/remove) — QW-5: jetzt
+						     ebenfalls shell-anchored (advert-scrim) statt fixed am Viewport. -->
 						{#if trkConfirm}
-							<div class="confirm-scrim" role="presentation">
+							<div class="advert-scrim" role="presentation">
 								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
 									<div class="center" style="padding: 0 0 10px">
 										<div class="big" style="color: var(--alert)">
@@ -4863,6 +4897,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{tradesDeal.listing_title}
 							</span>
 							<span class="chip" title="Deal auf uexcorp.space öffnen (Listing-Seite)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Deal öffnen')}>Auf UEX öffnen ↗</span>
+							<!-- QW-4 (t_28bfd027): geschlossene Deals sind READ-ONLY. -->
+							{#if tradesDeal.date_closed}<span class="chip warn"><span class="dot"></span>Abgeschlossen</span>{/if}
 						</div>
 						<div class="chat" bind:this={chatScroller}>
 							{#if chatLoading}
@@ -4892,7 +4928,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Fehler-Pfad')}>AUF UEXCORP.SPACE ÖFFNEN ↗</button>
 							</div>
 						{/if}
-						<div class="chat-input">
+						<!-- QW-4 (t_28bfd027): abgeschlossener Deal (date_closed von
+					     einer oder beiden Seiten gesetzt) → KEIN Composer/Senden,
+					     nur lesbarer Verlauf. Backend-Gate (trade.rs) lehnt den
+					     Write defensiv ebenfalls ab. -->
+					{#if !tradesDeal.date_closed}
+					<div class="chat-input">
 							<input
 								class="rtext"
 								placeholder="Nachricht an {tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || 'Käufer') : (tradesDeal.advertiser_username || 'Anbieter')} …"
@@ -4904,7 +4945,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="btn" disabled={chatBusy || !chatDraft.trim()} onclick={() => void sendChat()}>
 								{chatBusy ? 'Senden …' : 'Senden'}
 							</button>
-						</div>
+							</div>
+							{:else}
+							<!-- Read-only-Fuß: Verlauf bleibt sichtbar, Senden entfällt. -->
+							<div class="mbar">
+								<span class="chip warn"><span class="dot"></span>Trade abgeschlossen — Verlauf nur lesbar</span>
+								<span class="chip" title="Deal auf uexcorp.space öffnen (Bewertung/Abschluss-Detail)" onclick={() => void openTradesDeepLink(tradesDeal!, 'Abgeschlossen')}>Auf UEX öffnen ↗</span>
+							</div>
+							{/if}
 					{:else}
 						<div class="mbar">
 							<span class="m-lbl">Deals</span>
