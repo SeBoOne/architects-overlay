@@ -2140,7 +2140,10 @@ html[data-window="spotlight"] .shell {
 .trk-modal .rta {
   display: block;
 }
-.trk-modal .rta-input {
+/* Spezifität 0,3,0 — schlägt das Svelte-komponenten-scoped
+   .rta-input.svelte-xyz { width: 130px } (gleiche Spezifität, später im
+   Dokument → sonst bleibt das Ware/Ort-Feld schmal). */
+.trk-modal .trk-field .rta-input {
   width: 100%;
 }
 .trk-field .qnum {

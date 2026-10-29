@@ -334,6 +334,52 @@ window.__TAURI_INTERNALS__ = {
 			case 'open_uex_account':
 				window.__LAST_OPEN_URL__ = 'https://uexcorp.space/account/';
 				return 'https://uexcorp.space/account/';
+			// QY (t_07edb03d): Cross-Autocomplete + Trade-Log-Deep-Link Stubs
+			// (Spiegel des Backend-Vertrags: Spielersicht — buy → Ort VERKAUFT die
+			// Ware (buy_price>0), sell → Ort KAUFT sie (sell_price>0)).
+			case 'trade_commodity_suggest': {
+				const q = String((a && a.query) || '').trim().toLowerCase();
+				if (!q) return [];
+				const op = (a && a.operation) === 'sell' ? 'sell' : 'buy';
+				const tid = Number((a && a.id_terminal) || 0);
+				const rows = globalThis.__QY_TRADE_PRICES__ || [];
+				const pool = globalThis.__trkComPool || [
+					{ id: 11, name: 'Gold' }, { id: 12, name: 'Laranite' }, { id: 13, name: 'Titanium' }
+				];
+				let list = pool;
+				if (tid) {
+					const ids = rows
+						.filter((r) => r.terminal_id === tid && Number(op === 'buy' ? r.buy_price : r.sell_price) > 0)
+						.map((r) => r.commodity_id);
+					list = pool.filter((c) => ids.includes(c.id));
+				}
+				const starts = list.filter((c) => c.name.toLowerCase().startsWith(q));
+				const contains = list.filter((c) => c.name.toLowerCase().includes(q) && !starts.includes(c));
+				return starts.concat(contains).slice(0, 12);
+			}
+			case 'trade_location_suggest': {
+				const q = String((a && a.query) || '').trim().toLowerCase();
+				if (!q) return [];
+				const op = (a && a.operation) === 'sell' ? 'sell' : 'buy';
+				const cid = Number((a && a.id_commodity) || 0);
+				const rows = globalThis.__QY_TRADE_PRICES__ || [];
+				const pool = globalThis.__trkTermPool || [
+					{ id: 21, name: 'Everus Harbor' }, { id: 22, name: 'Port Olisario' }, { id: 23, name: 'Baijini Point' }
+				];
+				let list = pool;
+				if (cid) {
+					const ids = rows
+						.filter((r) => r.commodity_id === cid && Number(op === 'buy' ? r.buy_price : r.sell_price) > 0)
+						.map((r) => r.terminal_id);
+					list = pool.filter((t) => ids.includes(t.id));
+				}
+				const starts = list.filter((t) => t.name.toLowerCase().startsWith(q));
+				const contains = list.filter((t) => t.name.toLowerCase().includes(q) && !starts.includes(t));
+				return starts.concat(contains).slice(0, 12);
+			}
+			case 'open_uex_trade_log':
+				window.__LAST_OPEN_URL__ = 'https://uexcorp.space/trade/home';
+				return 'https://uexcorp.space/trade/home';
 			case 'settings_set_marketplace_confirm':
 				stubState.marketplace_confirm = a.mode || 'every_action';
 				return { marketplace_confirm: stubState.marketplace_confirm };
