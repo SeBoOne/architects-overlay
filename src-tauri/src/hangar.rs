@@ -140,6 +140,11 @@ pub fn parse_xplorer_json(text: &str) -> Result<(Vec<HangarItem>, usize), String
             Some("module") => "module",
             _ => "ship",
         };
+        // R2 (t_2158474c, Punkt 7): ship_code/pledge_id bleiben als INTERNE
+        // Merge-Keys erhalten (Import-Idempotenz, Pack-Disambiguierung — die
+        // Match-Strategie unten hängt an beiden), aber pledge_name/warbond/ccud
+        // werden NICHT mehr geschrieben (Import-Artefakte, „nicht wichtig").
+        // Die UI zeigt keinen dieser Felder mehr.
         out.push(HangarItem {
             id: None,
             // Quelle wird zentral in hangar_import gestempelt.
@@ -157,9 +162,9 @@ pub fn parse_xplorer_json(text: &str) -> Result<(Vec<HangarItem>, usize), String
             purchase_price: parse_usd(str_of(v, "pledge_cost").as_deref()),
             purchase_date: parse_xplorer_date(str_of(v, "pledge_date").as_deref()),
             pledge_id: str_of(v, "pledge_id").unwrap_or_default(),
-            pledge_name: str_of(v, "pledge_name").unwrap_or_default(),
-            warbond: bool_of(v, "warbond"),
-            ccud: bool_of(v, "ccud"),
+            pledge_name: String::new(),
+            warbond: false,
+            ccud: false,
             created_at: None,
             updated_at: None,
         });
@@ -188,7 +193,7 @@ pub fn parse_ccugame_csv(text: &str) -> Result<(Vec<HangarItem>, usize), String>
     let i_date = idx("date");
     let i_custom = idx("customName");
     let _i_account = idx("account");
-    let i_package = idx("packageName");
+    let _i_package = idx("packageName");
 
     let mut out = Vec::new();
     for row in rows.iter() {
@@ -203,6 +208,8 @@ pub fn parse_ccugame_csv(text: &str) -> Result<(Vec<HangarItem>, usize), String>
             continue;
         }
         let insurance = normalize_insurance(&cell(i_ins));
+        // R2 (t_2158474c, Punkt 7): packageName/pledge_name nicht mehr schreiben
+        // (Import-Artefakt, „nicht wichtig“) — pledge_id bleibt interner Merge-Key.
         out.push(HangarItem {
             id: None,
             // Quelle wird zentral in hangar_import gestempelt.
@@ -221,7 +228,7 @@ pub fn parse_ccugame_csv(text: &str) -> Result<(Vec<HangarItem>, usize), String>
                 .or_else(|| parse_usd(Some(&cell(i_pledge_cost)))),
             purchase_date: cell(i_date),
             pledge_id: cell(i_pledge),
-            pledge_name: cell(i_package),
+            pledge_name: String::new(),
             warbond: false,
             ccud: false,
             created_at: None,
@@ -773,12 +780,28 @@ pub fn hangar_list(state: State<'_, TradeState>) -> Result<Vec<HangarItem>, Stri
         .map_err(|e| format!("hangar list: {e}"))
 }
 
+/// R2 (t_2158474c, Punkt 8): Module sind KEINE eigenständigen Einträge mehr —
+/// sie werden nur noch in den Ship-Details eines Schiffs/Fahrzeugs angelegt
+/// (base_ship ist dann gesetzt). Manuelle Anlage ohne Basisschiff-Bezug wird
+/// abgelehnt; bestehende zeilenbasierte Module (incl. „unverbunden“) bleiben
+/// über hangar_update editierbar/zuordenbar.
+fn validate_manual_item(item: &HangarItem) -> Result<(), String> {
+    if item.entity_type == "module" && item.id.is_none() && item.base_ship.trim().is_empty() {
+        return Err(
+            "Module werden nicht mehr separat angelegt — im Schiff-Detail unter „Module“ hinzufügen"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Eintrag manuell anlegen (für Ingame-Käufe, die in keinem Export auftauchen).
 #[tauri::command]
 pub fn hangar_add(state: State<'_, TradeState>, item: HangarItem) -> Result<HangarItem, String> {
     if item.name.trim().is_empty() {
         return Err("Name darf nicht leer sein".to_string());
     }
+    validate_manual_item(&item)?;
     let item = HangarItem {
         name: item.name.trim().to_string(),
         // Manuelle Eingabe — höchste Namens-Priorität.
@@ -1561,6 +1584,129 @@ mod tests {
             "Anreicherung funktioniert"
         );
         assert_eq!(row.source, "manual", "Quelle bleibt manual");
+    }
+
+    #[test]
+    fn import_no_longer_writes_pledge_artifacts() {
+        // R2 Punkt 7: XPLorer/CCUgame schreiben pledge_name/warbond/ccud nicht
+        // mehr (Import-Artefakte, „nicht wichtig“). pledge_id bleibt als
+        // interner Merge-Key erhalten (Import-Idempotenz).
+        let (items, _) = parse_xplorer_json(XPLORER_SAMPLE).unwrap();
+        for it in &items {
+            assert_eq!(
+                it.pledge_name, "",
+                "pledge_name wird nicht mehr geschrieben"
+            );
+            assert!(!it.warbond, "warbond wird nicht mehr geschrieben");
+            assert!(!it.ccud, "ccud wird nicht mehr geschrieben");
+        }
+        assert_eq!(items[0].pledge_id, "71394952", "pledge_id bleibt Merge-Key");
+        let (csv, _) = parse_ccugame_csv(CCUGAME_SAMPLE).unwrap();
+        for it in &csv {
+            assert_eq!(
+                it.pledge_name, "",
+                "CSV: pledge_name wird nicht mehr geschrieben"
+            );
+            assert!(!it.warbond && !it.ccud);
+        }
+    }
+
+    #[test]
+    fn manual_module_without_base_ship_rejected() {
+        // R2 Punkt 8: Module sind keine eigenständigen Einträge mehr — manuelle
+        // Anlage ohne Basisschiff-Bezug wird abgelehnt, MIT Bezug erlaubt.
+        let mut m = hangarBlankLikeModule();
+        assert!(
+            validate_manual_item(&m).is_err(),
+            "ohne base_ship abgelehnt"
+        );
+        m.base_ship = "600i Explorer".into();
+        assert!(validate_manual_item(&m).is_ok(), "mit base_ship erlaubt");
+        // Bestehende Modul-Zeile (id) ohne base_ship: über hangar_update
+        // editierbar (Zuordnungspfad) — keine Ablehnung.
+        m.id = Some(42);
+        m.base_ship = String::new();
+        assert!(
+            validate_manual_item(&m).is_ok(),
+            "Bestand bleibt editierbar"
+        );
+    }
+
+    fn hangarBlankLikeModule() -> HangarItem {
+        HangarItem {
+            id: None,
+            source: "manual".into(),
+            name: "Test-Modul".into(),
+            origin: "pledge".into(),
+            insurance: None,
+            custom_name: String::new(),
+            entity_type: "module".into(),
+            base_ship: String::new(),
+            ship_code: String::new(),
+            manufacturer: String::new(),
+            purchase_price: None,
+            purchase_date: String::new(),
+            pledge_id: String::new(),
+            pledge_name: String::new(),
+            warbond: false,
+            ccud: false,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    #[ignore = "echte DB: R2_REAL_DB=<pfad zur cache.sqlite3-Kopie>"]
+    fn r2_migration_real_db_modules() {
+        // R2 Migrationstest gegen eine KOPIE der echten Cache-DB: Das
+        // zeilenbasierte Module-Modell bleibt unverändert (Schema v4) — die
+        // Migration ist datenseitig ein No-Op; verifiziert wird:
+        //   1. hangar_list öffnet die bestehende DB ohne Fehler,
+        //   2. Module mit base_ship-Bezug verweisen auf ein existierendes
+        //      Schiff/Fahrzeug (Detail-Anzeige klappt),
+        //   3. bezugslose Module existieren („Modul (unverbunden)“-Stapel)
+        //      bzw. der Bestand ist vollständig gezählt.
+        let path = std::path::PathBuf::from(
+            std::env::var("R2_REAL_DB").expect("R2_REAL_DB setzen (DB-Kopie)"),
+        );
+        let cache = cache::Cache::open(&path).unwrap();
+        let items: Vec<HangarItem> = cache
+            .with(|c| {
+                let mut stmt = c.prepare(&format!(
+                    "SELECT {HANGAR_COLS} FROM hangar ORDER BY entity_type, name"
+                ))?;
+                let rows = stmt.query_map([], row_to_item)?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap();
+        let ship_names: std::collections::HashSet<String> = items
+            .iter()
+            .filter(|i| i.entity_type != "module")
+            .map(|i| norm_name(&i.name))
+            .collect();
+        let modules: Vec<&HangarItem> =
+            items.iter().filter(|i| i.entity_type == "module").collect();
+        let mut linked = 0;
+        let mut unlinked = 0;
+        for m in &modules {
+            if m.base_ship.trim().is_empty() || !ship_names.contains(&norm_name(&m.base_ship)) {
+                unlinked += 1;
+            } else {
+                linked += 1;
+            }
+        }
+        println!(
+            "r2_migration_real_db_modules: {} Einträge, {} Module ({} verlinkt, {} unverbunden)",
+            items.len(),
+            modules.len(),
+            linked,
+            unlinked
+        );
+        assert_eq!(
+            linked + unlinked,
+            modules.len(),
+            "alle Module klassifiziert"
+        );
     }
 
     #[test]

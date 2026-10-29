@@ -56,7 +56,7 @@
 	import SelectCombo from '../lib/SelectCombo.svelte';
 	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
 	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
-	import { suggestShips, isSnubShip } from '../lib/hangar_ships';
+	import { suggestShips, isSnubShip, SHIP_CATALOG } from '../lib/hangar_ships';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -643,7 +643,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (hangarFilter === 'pledge') items = items.filter((i) => i.origin === 'pledge');
 		else if (hangarFilter === 'ingame') items = items.filter((i) => i.origin === 'ingame');
 		else if (hangarFilter === 'lti') items = items.filter((i) => i.insurance === 'LTI');
-		else if (hangarFilter === 'module') items = items.filter((i) => i.entity_type === 'module');
+			// R2 (Punkt 8): Module-Filter zeigt die Schiffe/Fahrzeuge, an denen
+			// Module registriert sind — nicht mehr die Modul-Zeilen selbst.
+			else if (hangarFilter === 'module') items = items.filter((i) => i.entity_type !== 'module' && hangarModulesOf(i.name).length > 0);
 		const q = input.trim().toLowerCase();
 		if (q) {
 			// Typ-Queries: both the raw word AND the mapped word match entity_type.
@@ -677,8 +679,47 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	function hangarModulesOf(shipName: string) {
-		return hangarItems.filter((i) => i.entity_type === 'module' && i.base_ship === shipName);
+		// Review-Fix (R2-D2): Legacy-Zeilen, deren base_ship als Display-Name
+		// (custom_name) gespeichert wurde, weiterhin matchen — der Zuordnungs-
+		// Typeahead schreibt jetzt den Modellnamen.
+		const legacyDn = hangarShips
+			.filter((s) => s.name === shipName && s.custom_name)
+			.map((s) => s.custom_name as string);
+		return hangarItems.filter((i) => i.entity_type === 'module' && (i.base_ship === shipName || legacyDn.includes(i.base_ship ?? '')));
 	}
+
+	// R2 (t_2158474c, Punkt 6): Datumsformat dd.mm.jjjj — Anzeige UND Eingabe.
+	// Gespeichert bleibt ISO (YYYY-MM-DD, Schema/API-seitig); die Konvertierung
+	// passiert ausschließlich in der UI-Schicht (Detail-Anzeige + Formular).
+	function isoToDe(v: string): string {
+		const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((v || '').trim());
+		return m ? `${m[3]}.${m[2]}.${m[1]}` : v || '';
+	}
+	function deToIso(v: string): string {
+		const s = (v || '').trim();
+		const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s);
+		if (m) {
+			const d = Number(m[1]);
+			const mo = Number(m[2]);
+			const y = Number(m[3]);
+			if (mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+				return `${String(y).padStart(4, '0')}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+			}
+		}
+		// Bereits ISO oder Freitext → unverändert speichern (Rückwärtskompatiblität).
+		return s;
+	}
+
+	// R2 (Punkt 5): Versicherung als Select/Autocomplete statt Freitext.
+	const INSURANCE_CHOICES = [
+		{ value: '', label: 'Ohne' },
+		{ value: '3 Monate', label: '3 Monate' },
+		{ value: '6 Monate', label: '6 Monate' },
+		{ value: '12 Monate', label: '12 Monate' },
+		{ value: '24 Monate', label: '24 Monate' },
+		{ value: '120 Monate', label: '120 Monate' },
+		{ value: 'LTI', label: 'LTI' }
+	];
 
 	async function hangarImportFile(format: 'xplorer' | 'ccugame', file: File) {
 		hangarBusy = true;
@@ -724,19 +765,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
-	async function hangarDelete(item: HangarItem) {
-		if (item.id == null) return;
-		hangarBusy = true;
-		try {
-			await invoke('hangar_delete', { id: item.id });
-			await loadHangar(true);
-			hangarNoteSet(`Gelöscht: ${hangarDisplayName(item)}`);
-		} catch (e) {
-			hangarNoteSet(String(e));
-		} finally {
-			hangarBusy = false;
-		}
+	// R2 (Punkt 1): Löschen läuft über die 2-Schritt-Bestätigung (hangarConfirm).
+	function hangarDelete(item: HangarItem) {
+		hangarDetail = item;
+		hangarConfirm = { kind: 'delete' };
 	}
+	// Legacy-Direktlöschung entfernt — Write-Pfad jetzt in hangarDoDelete.
 
 	function hangarBlank(): HangarItem {
 		return {
@@ -763,6 +797,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let hangarEdit = $state(false);
 	let hangarForm = $state<HangarItem>(hangarBlank());
 	let hangarFormPrice = $state('');
+	// R2 (Punkt 6): Datum im Formular als dd.mm.jjjj (Anzeige/Eingabe) —
+	// gespeichert wird ISO (Konvertierung in hangarSaveForm).
+	let hangarFormDate = $state('');
+	// R2 (Punkt 5): Versicherung als Select-String ('' = Ohne → null).
+	let hangarFormIns = $state('');
+	// R2 (Punkt 1): 2-Schritt-Bestätigung wie elsewhere (save/delete) —
+	// modales Popup über dem Formular (confirm-modal im advert-scrim).
+	let hangarConfirm = $state<null | { kind: 'save' | 'delete' }>(null);
+	// R2 (Punkt 8): Modul-Verwaltung in den Ship-Details — Autocomplete aus
+	// den registrierten Modul-Einträgen (Import liefert z. B. „600i
+	// Exploration Module“), Freitext bleibt erlaubt.
+	let hangarModPick = $state('');
+	// R2: Zuordnung eines „unverbundenen“ Moduls (Basisschiff-Autocomplete).
+	let hangarAssignBase = $state('');
 	// P10: current suggestions for the add-form (reactive to Field-Content).
 	let hangarSugs = $derived(hangarNameSuggest());
 
@@ -806,15 +854,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function hangarBaseSuggest() {
 		// Base-Ship-Autocomplete from the ALREADY REGISTERED Hangar entries
 		// (Card: "Autocomplete from those already entered in the Hangar").
+		// Review-Fix (R2-D2): Wert = MODELLNAME (s.name) — hangarModulesOf
+		// matcht base_ship gegen i.name; Display-Namen nur als Suchtext.
 		const q = hangarForm.base_ship.trim().toLowerCase();
 		const out: string[] = [];
 		const seen = new Set<string>();
 		for (const s of hangarShips) {
 			const dn = hangarDisplayName(s);
 			const hay = `${s.name} ${s.custom_name}`.toLowerCase();
-			if ((q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q)) && !seen.has(dn)) {
-				seen.add(dn);
-				out.push(dn);
+			if ((q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q)) && !seen.has(s.name)) {
+				seen.add(s.name);
+				out.push(s.name);
 				if (out.length >= 10) break;
 			}
 		}
@@ -826,9 +876,66 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		hangarForm = { ...hangarForm, base_ship: name };
 	}
 
+	// R2 (Punkt 2/9): Einheitlicher Typeahead-Mechanismus (RoutesTypeahead,
+	// Maus + Tastatur + Overlay-Design) für Name UND Basisschiff — gleiche
+	// Kandidatenquelle wie vorher (registrierte Einträge zuerst, dann das
+	// statische Ship-Paket mit ALLEN Schiffen UND Fahrzeugen).
+	const hangarNameOpts = $derived(
+		hangarNameSuggest().map((s) => ({
+			value: s.name,
+			label: s.manufacturer ? `${s.name} · ${s.manufacturer}` : s.name
+		}))
+	);
+	const hangarBaseOpts = $derived(
+		hangarBaseOpen
+			? hangarBaseSuggest().map((n) => ({ value: n, label: n }))
+			: ([] as { value: string; label: string }[])
+	);
+	// R2 (Punkt 8): Modul-Autocomplete aus den registrierten Modul-Einträgen
+	// (Import liefert z. B. „600i Exploration Module“), Freitext bleibt erlaubt.
+	function hangarModuleSuggest() {
+		const q = hangarModPick.trim().toLowerCase();
+		const out: string[] = [];
+		const seen = new Set<string>();
+		for (const it of hangarItems) {
+			if (it.entity_type !== 'module') continue;
+			const dn = hangarDisplayName(it);
+			if ((q === '' || dn.toLowerCase().includes(q) || it.name.toLowerCase().includes(q)) && !seen.has(dn)) {
+				seen.add(dn);
+				out.push(dn);
+				if (out.length >= 10) break;
+			}
+		}
+		return out;
+	}
+	// Review-Fix (R2-D2): Der Typeahead-Pick setzt das bind:value auf den
+	// LABEL (Display-Name) — die Zuordnung braucht den MODELLNAMEN
+	// (hangarModulesOf matcht base_ship gegen i.name).
+	function hangarPickAssign(_v: string, label: string) {
+		const s = hangarShips.find((x) => x.name === label || hangarDisplayName(x) === label);
+		if (s) hangarAssignBase = s.name;
+	}
+	const hangarModOpts = $derived(hangarModuleSuggest().map((n) => ({ value: n, label: n })));
+	function hangarPickName(v: string) {
+		// R2: Direkt-Lookup nach exaktem Namen — NICHT über hangarSugs (das
+		// Binding hat den Wert beim onselect bereits auf den Label gesetzt,
+		// die alte Suggest-Liste passt dann nicht mehr zum Filter).
+		const q = v.trim().toLowerCase();
+		const reg = hangarItems.find((i) => i.entity_type !== 'module' && i.name.toLowerCase() === q);
+		const cat = SHIP_CATALOG.find((s) => s.name.toLowerCase() === q);
+		hangarForm = {
+			...hangarForm,
+			name: v,
+			manufacturer: reg?.manufacturer || cat?.manufacturer || hangarForm.manufacturer,
+			entity_type: reg ? reg.entity_type : cat ? cat.kind : hangarForm.entity_type
+		};
+	}
+
 	function hangarOpenAdd() {
 		hangarForm = hangarBlank();
 		hangarFormPrice = '';
+		hangarFormDate = '';
+		hangarFormIns = '';
 		hangarFormOpen = true;
 		hangarEdit = false;
 		hangarView = 'list';
@@ -838,13 +945,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function hangarStartEdit(it: HangarItem) {
 		hangarForm = { ...it };
 		hangarFormPrice = it.purchase_price != null ? String(it.purchase_price) : '';
+		hangarFormDate = isoToDe(it.purchase_date);
+		hangarFormIns = it.insurance ?? '';
 		hangarEdit = true;
-		hangarFormOpen = false;
+		// R2 (Punkt 1): Bearbeiten öffnet dasselbe modale Popup (über dem Detail).
+		hangarFormOpen = true;
 	}
 
 	function hangarCancelEdit() {
 		hangarFormOpen = false;
 		hangarEdit = false;
+		hangarConfirm = null;
+	}
+
+	// R2 (Punkt 1): Speichern über die 2-Schritt-Bestätigung (wie
+	// Listing-/Trade-Formulare) — erst Zusammenfassung, dann Write.
+	function requestHangarSave() {
+		if (!hangarForm.name.trim()) {
+			hangarNoteSet('Name fehlt');
+			return;
+		}
+		hangarConfirm = { kind: 'save' };
 	}
 
 	async function hangarSaveForm() {
@@ -857,6 +978,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const item: HangarItem = {
 				...hangarForm,
 				name,
+				insurance: hangarFormIns === '' ? null : hangarFormIns,
+				purchase_date: deToIso(hangarFormDate),
 				purchase_price: price === '' ? null : Number(price.replace(',', '.'))
 			};
 			let msg;
@@ -869,6 +992,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			hangarFormOpen = false;
 			hangarEdit = false;
+			hangarConfirm = null;
 			await loadHangar(true);
 			// Review-Finding: nach dem Speichern zeigte die Detailansicht die
 			// alten Werte — hangarDetail aus der frischen Liste nachziehen.
@@ -884,12 +1008,105 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	async function hangarDoDelete(item: HangarItem) {
+		hangarBusy = true;
+		hangarNoteSet('');
+		try {
+			await invoke('hangar_delete', { id: item.id });
+			hangarConfirm = null;
+			await loadHangar(true);
+			hangarNoteSet(`Gelöscht: ${hangarDisplayName(item)}`);
+			if (hangarView === 'detail') {
+				hangarView = 'list';
+				hangarDetail = null;
+			}
+		} catch (e) {
+			hangarNoteSet(String(e));
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	// R2 (Punkt 8): Modul in den Ship-Details hinzufügen (entity_type=module,
+	// base_ship=Schiff) — der einzige Weg, Module anzulegen.
+	async function hangarModuleAdd() {
+		const ship = hangarDetail;
+		const modName = hangarModPick.trim();
+		if (!ship || !modName) return;
+		hangarBusy = true;
+		hangarNoteSet('');
+		try {
+			await invoke<HangarItem>('hangar_add', {
+				item: {
+					...hangarBlank(),
+					name: modName,
+					entity_type: 'module',
+					base_ship: ship.name,
+					origin: ship.origin
+				}
+			});
+			hangarModPick = '';
+			await loadHangar(true);
+			const fresh = hangarItems.find((i) => i.id === ship.id);
+			if (fresh) hangarDetail = fresh;
+			hangarNoteSet(`Modul hinzugefügt: ${modName}`);
+		} catch (e) {
+			hangarNoteSet(String(e));
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	async function hangarModuleRemove(m: HangarItem) {
+		if (m.id == null) return;
+		hangarBusy = true;
+		hangarNoteSet('');
+		try {
+			await invoke('hangar_delete', { id: m.id });
+			await loadHangar(true);
+			if (hangarDetail?.id != null) {
+				const fresh = hangarItems.find((i) => i.id === hangarDetail!.id);
+				if (fresh) hangarDetail = fresh;
+			}
+			hangarNoteSet(`Modul entfernt: ${hangarDisplayName(m)}`);
+		} catch (e) {
+			hangarNoteSet(String(e));
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
+	// R2: „Modul (unverbunden)“ einem Schiff manuell zuordnen (Basisschiff setzen).
+	async function hangarModuleAssign(m: HangarItem) {
+		const base = hangarAssignBase.trim();
+		if (m.id == null || !base) return;
+		hangarBusy = true;
+		hangarNoteSet('');
+		try {
+			await invoke<HangarItem>('hangar_update', { item: { ...m, base_ship: base } });
+			hangarAssignBase = '';
+			await loadHangar(true);
+			hangarView = 'list';
+			hangarDetail = null;
+			hangarNoteSet(`Zugeordnet: ${hangarDisplayName(m)} → ${base}`);
+		} catch (e) {
+			hangarNoteSet(String(e));
+		} finally {
+			hangarBusy = false;
+		}
+	}
+
 	function hangarOpenDetail(item: HangarItem) {
 		hangarDetail = item;
 		hangarView = 'detail';
 	}
 
 	function hangarBack() {
+		if (hangarConfirm) {
+			// Esc in der Bestätigung schließt nur den Bestätigungs-Dialog.
+			hangarConfirm = null;
+			return;
+		}
 		if (hangarFormOpen || hangarEdit) {
 			// Formular zuerst schließen, dann View-Ebene.
 			hangarFormOpen = false;
@@ -2680,6 +2897,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	/** Hangar-Schiffe (keine Module) für die Schiff-Auswahl. */
 	let hangarShips = $derived(hangarItems.filter((i) => i.entity_type !== 'module'));
+	// R2 (t_2158474c): Basisschiff-Optionen für die Zuordnung eines
+	// unverbundenen Moduls (Detail-„Zuordnen“-Typeahead).
+	const hangarAssignOpts = $derived(
+		hangarShips
+			.filter((s) => {
+				const q = hangarAssignBase.trim().toLowerCase();
+				const hay = `${s.name} ${s.custom_name}`.toLowerCase();
+				return q === '' || hay.includes(q) || s.manufacturer.toLowerCase().includes(q);
+			})
+			.slice(0, 10)
+			// Review-Fix (R2-D2): value = MODELLNAME (s.name), nicht Display-Name —
+			// hangarModulesOf matcht base_ship gegen i.name; custom_name-Schiffe
+			// (z. B. „Riftwalker“) würden das Modul sonst verlieren. Label bleibt
+			// der Display-Name.
+			.map((s) => ({ value: s.name, label: hangarDisplayName(s) }))
+			);
 
 	// P15b (Karte t_5fbd43b6): Type-ahead — Tippen in dem Schiff-Fild narower die
 	// <select> (Substring über Name/Custom-Name, case-insensitive). Genaw eine
@@ -3689,6 +3922,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					e.preventDefault();
 					return;
 				}
+				// R2 (Punkt 1): Formular-/Bestätigungs-Popup offen → es schluckt
+				// die Tastatur (keine Listen-Navigation darunter). Enter im
+				// Formular bestätigt über den <form>-Submit-Pfad.
+				if (hangarFormOpen) {
+					if (k === 'Enter' && hangarConfirm?.kind === 'save') {
+						e.preventDefault();
+						void hangarSaveForm();
+					}
+					return;
+				}
 				if (hangarView === 'list') {
 					if (k === 'ArrowDown') {
 						hangarSel = Math.min(hangarSel + 1, Math.max(hangarFiltered.length - 1, 0));
@@ -4177,55 +4420,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 				</header>
 				{#if hangarNote}<div class="hangar-note">{hangarNote}</div>{/if}
-				{#if hangarFormOpen && hangarView === 'list'}
-					<form class="hangar-form" onsubmit={(e) => { e.preventDefault(); hangarSaveForm(); }}>
-						<div class="hf-title">EINTRAG ANLEGEN</div>
-						<div class="hf-grid">
-							<label>Name<input bind:value={hangarForm.name} placeholder="z. B. Cutlass Black" required /></label>
-							<label>Typ
-								<select bind:value={hangarForm.entity_type}>
-									<option value="ship">Schiff</option>
-									<option value="vehicle">Fahrzeug</option>
-									<option value="module">Modul</option>
-								</select>
-							</label>
-							<label>Herkunft
-								<select bind:value={hangarForm.origin}>
-									<option value="ingame">Ingame</option>
-									<option value="pledge">Pledge</option>
-								</select>
-							</label>
-							<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
-							<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
-							{#if hangarBaseOpen}<label>Basisschiff<input bind:value={hangarForm.base_ship} placeholder="Pick from Hangar …" /></label>{/if}
-							<label>Hersteller<input bind:value={hangarForm.manufacturer} /></label>
-							<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" placeholder="z. B. 180" /></label>
-							<label>Datum<input bind:value={hangarForm.purchase_date} placeholder="2025-01-31" /></label>
-						</div>
-						<!-- P10: Autocomplete-Chips for Name + Base-Ship (the latter
-						     only for module/Snub, see hangarBaseOpen). Click fills
-						     Manufacturer + Typ automatically. -->
-						{#if hangarSugs.length}
-						<div class="hf-suggest">
-							{#each hangarSugs as s (s.name)}
-							<button type="button" class="hsug" title="Select — Manufacturer/Typ gets filled" onclick={() => hangarPickSuggestion(s)}>{s.name}{#if s.manufacturer} · {s.manufacturer}{/if}</button>
-							{/each}
-						</div>
-						{/if}
-						{#if hangarBaseOpen}
-						<div class="hf-basesug">
-							<span class="hsug-h">Basisschiff:</span>
-							{#each hangarBaseSugs as n (n)}
-							<button type="button" class="hsug" title="Set Basisschiff" onclick={() => hangarSetBase(n)}>{n}</button>
-							{/each}
-						</div>
-						{/if}
-						<div class="hf-actions">
-							<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
-							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
-						</div>
-					</form>
-				{/if}
 				{#if hangarView === 'list' && !hangarFormOpen}
 					<div class="hangar-list" role="listbox" aria-label="Hangar-Einträge">
 						{#each hangarFiltered as it, i (it.id ?? `${it.name}#${i}`)}
@@ -4238,6 +4432,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="hname">
 									{hangarDisplayName(it)}
 									{#if it.custom_name && it.custom_name !== it.name}<span class="hmodel">· {it.name}</span>{/if}
+									{#if it.entity_type === 'module' && !it.base_ship}<span class="hmodel">· Modul (unverbunden)</span>{/if}
 								</span>
 								<span class="hchip o-{it.origin}">{it.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
 								<span class="hchip ins">{it.insurance ?? '—'}</span>
@@ -4258,51 +4453,161 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{/if}
 							<button class="hbtn danger" disabled={hangarBusy} onclick={() => hangarDelete(hangarDetail!)}>Löschen</button>
 						</div>
-						{#if hangarEdit}
-							<form class="hangar-form" onsubmit={(e) => { e.preventDefault(); hangarSaveForm(); }}>
-								<div class="hf-grid">
-									<label>Name<input bind:value={hangarForm.name} required /></label>
-									<label>Versicherung<input bind:value={hangarForm.insurance} placeholder="LTI / 120 Monate / leer" /></label>
-									<label>Custom-Name<input bind:value={hangarForm.custom_name} /></label>
-									{#if hangarBaseOpen}<label>Basisschiff<input bind:value={hangarForm.base_ship} placeholder="Pick from Hangar …" /></label>{/if}
-									<label>Preis (USD)<input bind:value={hangarFormPrice} inputmode="decimal" /></label>
-									<label>Datum<input bind:value={hangarForm.purchase_date} /></label>
-								</div>
-								<div class="hf-actions">
-									<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
-									<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
-								</div>
-							</form>
-						{:else}
+						{#if !hangarEdit}
+						<!-- R2 (Punkt 7): Ship-Code/Pledge/Pledge-ID/Warbond/CCUD ENTFERNT —
+						     Import-Artefakte („nicht wichtig“), keine Anzeige mehr. -->
 						<dl class="hd-grid">
 							<div><dt>Modell</dt><dd>{hangarDetail.name}</dd></div>
 							<div><dt>Hersteller</dt><dd>{hangarDetail.manufacturer || '—'}</dd></div>
-							<div><dt>Ship-Code</dt><dd>{hangarDetail.ship_code || '—'}</dd></div>
 							<div><dt>Typ</dt><dd>{hangarDetail.entity_type}</dd></div>
-							<div><dt>Pledge</dt><dd>{hangarDetail.pledge_name || '—'}</dd></div>
-							<div><dt>Pledge-ID</dt><dd>{hangarDetail.pledge_id || '—'}</dd></div>
-							<div><dt>Datum</dt><dd>{hangarDetail.purchase_date || '—'}</dd></div>
+							<div><dt>Custom-Name</dt><dd>{hangarDetail.custom_name || '—'}</dd></div>
+							<div><dt>Datum</dt><dd>{isoToDe(hangarDetail.purchase_date) || '—'}</dd></div>
 							<div><dt>Preis</dt><dd>{hangarDetail.purchase_price != null ? `$${hangarDetail.purchase_price.toFixed(2)}` : '—'}</dd></div>
-							<div><dt>Warbond</dt><dd>{hangarDetail.warbond ? 'Ja' : 'Nein'}</dd></div>
-							<div><dt>CCUD</dt><dd>{hangarDetail.ccud ? 'Ja' : 'Nein'}</dd></div>
 						</dl>
 						{#if hangarDetail.entity_type !== 'module'}
+							<!-- R2 (Punkt 8): Module-Verwaltung in den Ship-Details —
+							     Hinzufügen per Autocomplete (registrierte Modul-Einträge),
+							     Entfernen pro Zeile. Module sind keine eigenständigen
+							     Anlege-Objekte mehr. -->
 							<div class="hd-mods">
 								<div class="h">Module ({hangarModulesOf(hangarDetail.name).length})</div>
 								{#each hangarModulesOf(hangarDetail.name) as m (m.id ?? m.name)}
 									<div class="hmod">
 										<span>{hangarDisplayName(m)}</span>
 										<span class="hchip ins">{m.insurance ?? '—'}</span>
+										<button type="button" class="hmod-x" title="Modul entfernen" aria-label={`Modul ${hangarDisplayName(m)} entfernen`} disabled={hangarBusy} onclick={() => hangarModuleRemove(m)}>✕</button>
 									</div>
 								{:else}
 									<div class="hmodempty">Keine Module zugeordnet.</div>
 								{/each}
+								<div class="hmod-add">
+									<RoutesTypeahead bind:value={hangarModPick} options={hangarModOpts} fullWidth ariaLabel="Modul suchen" placeholder="Modul suchen … (z. B. Exploration Module)" onselect={() => {}} />
+									<button type="button" class="hbtn" disabled={hangarBusy || !hangarModPick.trim()} onclick={hangarModuleAdd}>Hinzufügen</button>
+								</div>
+							</div>
+						{:else if !hangarDetail.base_ship}
+							<!-- R2: unverbundenes Modul (Migration/Bestand ohne base_ship) —
+							     bleibt erhalten, bis es hier manuell zugeordnet wird. -->
+							<div class="hd-mods">
+								<div class="h">Modul (unverbunden)</div>
+								<div class="hmodempty">Dieses Modul ist keinem Schiff zugeordnet.</div>
+								<div class="hmod-add">
+									<RoutesTypeahead bind:value={hangarAssignBase} options={hangarAssignOpts} fullWidth ariaLabel="Basisschiff zuordnen" placeholder="Basisschiff suchen …" onselect={hangarPickAssign} />
+									<button type="button" class="hbtn" disabled={hangarBusy || !hangarAssignBase.trim()} onclick={() => hangarModuleAssign(hangarDetail!)}>Zuordnen</button>
+								</div>
 							</div>
 						{/if}
 						{/if}
 					</div>
 				{/if}
 			</div>
+			{#if hangarFormOpen}
+				<!-- R2 (Punkt 1): Hangar-Formular als modales Popup — shell-anchored
+				     advert-scrim (wie Listing-/Trade-Formular), volle nutzbare Höhe,
+				     Body scrollt intern, Buttons fix unten. Bearbeiten öffnet DASSELBE
+				     Popup über dem Detail. Bestätigung (2-Schritt) wie elsewhere. -->
+				<div class="advert-scrim" role="presentation">
+					<form class="hform-modal" role="dialog" aria-modal="true" aria-label={hangarEdit ? 'Eintrag bearbeiten' : 'Eintrag anlegen'} onsubmit={(e) => { e.preventDefault(); requestHangarSave(); }}>
+						<div class="hform-body">
+							<div class="mbar2" style="margin-bottom: 14px"><span class="m-lbl">{hangarEdit ? 'EINTRAG BEARBEITEN' : 'EINTRAG ANLEGEN'}</span></div>
+							<!-- R2 (Punkt 4): Name in voller Popup-Breite (Schiffsnamen sind lang). -->
+							<div class="trk-field">
+								<span class="trk-lbl">Name</span>
+								<!-- R2 (Punkt 2/9): einheitlicher Typeahead (Maus + Tastatur),
+								     ALLE Schiffe UND Fahrzeuge (registrierte zuerst, dann Katalog). -->
+								<RoutesTypeahead bind:value={hangarForm.name} options={hangarNameOpts} fullWidth ariaLabel="Schiff/Fahrzeug-Name" placeholder="z. B. Cutlass Black" onselect={hangarPickName} />
+							</div>
+							<div class="hform-row">
+								<!-- R2 (Punkt 3): Overlay-Dropdowns (QY-2-Stil) statt nativer
+								     Selects. Typ=Modul ENTFERNT (Punkt 8: Module nur noch in
+								     den Ship-Details). -->
+								<div class="trk-field">
+									<span class="trk-lbl">Typ</span>
+									<SelectCombo bind:value={hangarForm.entity_type} ariaLabel="Typ" options={[{ value: 'ship', label: 'Schiff' }, { value: 'vehicle', label: 'Fahrzeug' }]} />
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Herkunft</span>
+									<SelectCombo bind:value={hangarForm.origin} ariaLabel="Herkunft" options={[{ value: 'ingame', label: 'Ingame' }, { value: 'pledge', label: 'Pledge' }]} />
+								</div>
+							</div>
+							<div class="hform-row">
+								<!-- R2 (Punkt 5): Versicherung als Select. -->
+								<div class="trk-field">
+									<span class="trk-lbl">Versicherung</span>
+									<SelectCombo bind:value={hangarFormIns} ariaLabel="Versicherung" options={INSURANCE_CHOICES} placeholder="Ohne" />
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Preis (USD)</span>
+									<input class="rtext" style="width: 100%" inputmode="decimal" placeholder="z. B. 180" bind:value={hangarFormPrice} />
+								</div>
+							</div>
+							<!-- R2 (Punkt 6): Datumseingabe dd.mm.jjjj (gespeichert ISO). -->
+							<div class="hform-row">
+								<div class="trk-field">
+									<span class="trk-lbl">Datum</span>
+									<input class="rtext" style="width: 100%" placeholder="31.01.2025" aria-label="Datum (dd.mm.jjjj)" bind:value={hangarFormDate} />
+								</div>
+								<div class="trk-field">
+									<span class="trk-lbl">Custom-Name</span>
+									<input class="rtext" style="width: 100%" bind:value={hangarForm.custom_name} />
+								</div>
+							</div>
+							<div class="trk-field">
+								<span class="trk-lbl">Hersteller</span>
+								<input class="rtext" style="width: 100%" bind:value={hangarForm.manufacturer} />
+							</div>
+							{#if hangarBaseOpen}
+							<!-- Snub-Ships brauchen ein Basisschiff (Bestand: Modul-Zeilen
+							     im Edit-Pfad); einheitlicher Typeahead. -->
+							<div class="trk-field">
+								<span class="trk-lbl">Basisschiff</span>
+								<RoutesTypeahead bind:value={hangarForm.base_ship} options={hangarBaseOpts} fullWidth ariaLabel="Basisschiff" placeholder="Pick from Hangar …" onselect={() => {}} />
+							</div>
+							{/if}
+						</div>
+						<div class="hform-foot">
+							<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
+							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
+						</div>
+					</form>
+			</div>
+		{/if}
+		{#if hangarConfirm}
+		<!-- R2 (Punkt 1): 2-Schritt-Bestätigung (confirm-modal im
+		shell-anchored Scrim — NICHT fixed am Viewport, QW-5-Lektion).
+		Review-Fix (R2-D1): aus {#if hangarFormOpen} herausgezogen — der
+		Confirm muss auch im DETAIL-View erscheinen (Löschen ohne
+		geöffnetes Formular; vorher war der Lösch-Flow tot). -->
+		<div class="advert-scrim" style="z-index: 210" role="presentation">
+		<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+			<div class="center" style="padding: 0 0 10px">
+				<div class="big" style="color: var(--alert)">
+					{hangarConfirm.kind === 'delete' ? 'EINTRAG LÖSCHEN?' : hangarEdit ? 'ÄNDERUNGEN SPEICHERN?' : 'EINTRAG ANLEGEN?'}
+				</div>
+			</div>
+			{#if hangarConfirm.kind === 'delete'}
+				<div class="c-row"><b>Name</b><span>{hangarDisplayName(hangarDetail ?? hangarForm)}</span></div>
+				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Eintrag wird aus dem Hangar GELÖSCHT.</div>
+			{:else}
+				<div class="c-row"><b>Name</b><span>{hangarForm.name}</span></div>
+				<div class="c-row"><b>Typ</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : 'Schiff'}</span></div>
+				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledge' : 'Ingame'}</span></div>
+				<div class="c-row"><b>Versicherung</b><span>{hangarFormIns || 'Ohne'}</span></div>
+				<div class="c-row"><b>Datum</b><span>{hangarFormDate || '—'}</span></div>
+				<div class="c-row"><b>Preis</b><span>{hangarFormPrice ? `$${hangarFormPrice}` : '—'}</span></div>
+				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Eingaben sind bis zur Entscheidung gesperrt.</div>
+			{/if}
+			<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">
+				{#if hangarConfirm.kind === 'delete'}
+					<button type="button" class="btn btn-danger" disabled={hangarBusy} onclick={() => hangarDetail && hangarDoDelete(hangarDetail)}>JA, LÖSCHEN</button>
+				{:else}
+					<button type="button" class="btn" disabled={hangarBusy} onclick={() => void hangarSaveForm()}>JA, SPEICHERN</button>
+				{/if}
+				<button type="button" class="btn-ghost" disabled={hangarBusy} onclick={() => (hangarConfirm = null)}>Abbrechen</button>
+			</div>
+		</div>
+		</div>
+		{/if}
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").
 			     Esc/zurück-Pfeil → zurück zur Suche; kein neues Fenster. -->
