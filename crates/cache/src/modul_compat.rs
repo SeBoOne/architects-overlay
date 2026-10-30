@@ -57,12 +57,29 @@ fn now_unix() -> u64 {
 /// Case-insensitive Schiffsnamen-Normalisierung für den Match gegen Hangar-
 /// Einträge (Umlaute/Whitespace tolerant — exakte Datei-Namen sind die
 /// Referenz, der Match ist nur Case/Whitespace-tolerant).
-fn norm(name: &str) -> String {
-    name.trim()
+/// Hersteller-Präfixe, die beim Namensvergleich ignoriert werden (SA,
+/// t_d0076295): Die Zuweisungs-Datei darf den Anzeigenamen ODER den kurzen
+/// Namen verwenden — „RSI Galaxy“ matcht „Galaxy“, „Kruger L-22 Alpha
+/// Wolf“ matcht „L-22 Alpha Wolf“ (case-insensitive, whitespace-
+/// normalisiert, Präfix nur am Wortanfang gestrippt).
+const MANUFACTURER_PREFIXES: [&str; 6] = ["rsi", "aegis", "kruger", "misc", "tumbril", "anvil"];
+
+pub fn norm(name: &str) -> String {
+    let ws = name
+        .trim()
         .to_lowercase()
         .split_whitespace()
         .collect::<Vec<_>>()
-        .join(" ")
+        .join(" ");
+    for p in &MANUFACTURER_PREFIXES {
+        if let Some(rest) = ws.strip_prefix(p) {
+            let rest = rest.trim_start();
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
+    }
+    ws
 }
 
 /// serde_json-Fehler innerhalb der `with`-Closure (die Result<rslite::Error>
@@ -277,6 +294,32 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(aur.len(), 2);
+        // SA-Regression (t_d0076295): Hangar-Namen OHNE Hersteller-Präfix
+        // matchen geprefixte Datei-Einträge (Live-Dump: „Aurora Mk II“,
+        // „Galaxy“) — und umgekehrt.
+        assert_eq!(
+            cache
+                .modul_modules_for_ship("Aurora Mk II")
+                .unwrap()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            cache
+                .modul_modules_for_ship("Galaxy")
+                .unwrap()
+                .unwrap()
+                .len(),
+            1
+        );
+        // Kein Kollision durch Präfix-Strip: anderes Modell bleibt treu.
+        assert!(
+            cache
+                .modul_modules_for_ship("Aurora Mk I CL")
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(
             cache
                 .modul_modules_for_ship("RSI Galaxy")

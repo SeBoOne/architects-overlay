@@ -4562,11 +4562,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div><dt>Datum</dt><dd>{isoToDe(hangarDetail.purchase_date) || '—'}</dd></div>
 							<div><dt>Preis</dt><dd>{hangarDetail.purchase_price != null ? `$${hangarDetail.purchase_price.toFixed(2)}` : '—'}</dd></div>
 						</dl>
-						{#if hangarDetail.entity_type !== 'module'}
-							<!-- R2 (Punkt 8): Module-Verwaltung in den Ship-Details —
-							     Hinzufügen per Autocomplete (registrierte Modul-Einträge),
-							     Entfernen pro Zeile. Module sind keine eigenständigen
-							     Anlege-Objekte mehr. -->
+						{#if hangarDetail.entity_type !== 'module' && hangarWikiMods?.known}
+							<!-- SA (t_d0076295): Nur-Datei-Regel — der GESAMTE Module-
+							     Bereich erscheint NUR bei Schiffen mit Eintrag in
+							     module-overrides.json; Schiffe ohne Eintrag zeigen
+							     GAR NICHTS über Module (kein Hinweistext mehr). -->
 							<div class="hd-mods">
 								<div class="h">Module ({hangarModulesOf(hangarDetail.name).length})</div>
 								{#each hangarModulesOf(hangarDetail.name) as m (m.id ?? m.name)}
@@ -4586,11 +4586,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<RoutesTypeahead bind:value={hangarModPick} options={hangarModOpts} fullWidth ariaLabel="Modul suchen" placeholder="Modul suchen … (z. B. Exploration Module)" onselect={() => {}} />
 									<button type="button" class="hbtn" disabled={hangarBusy || !hangarModPick.trim()} onclick={hangarModuleAdd}>Hinzufügen</button>
 								</div>
-								{:else}
-								<div class="hmodempty">Keine Modul-Zuweisung für dieses Schiff (module-overrides.json).</div>
 								{/if}
 							</div>
-						{:else if !hangarDetail.base_ship}
+						{:else if hangarDetail.entity_type === 'module' && !hangarDetail.base_ship}
 							<!-- R2: unverbundenes Modul (Migration/Bestand ohne base_ship) —
 							     bleibt erhalten, bis es hier manuell zugeordnet wird. -->
 							<div class="hd-mods">

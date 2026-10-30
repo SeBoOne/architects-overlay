@@ -359,14 +359,11 @@ pub fn modul_for_ship(state: State<'_, TradeState>, ship: String) -> Result<Modu
     Ok(modul_for_ship_decision(&ship, &overrides))
 }
 
-/// Gleiche Normalisierung wie `cache::modul_compat::norm` (Case +
-/// Whitespace), hier lokal gehalten um die Crate-API schmal zu halten.
+/// Geteilte Normalisierung aus `cache::modul_compat::norm` (Case +
+/// Whitespace + Hersteller-Präfix-Strip: „RSI Galaxy“ ≡ „Galaxy“,
+/// „RSI Aurora MK II“ ≡ „Aurora Mk II“ — SA-Fix t_d0076295).
 fn norm_name(name: &str) -> String {
-    name.trim()
-        .to_lowercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    cache::modul_compat::norm(name)
 }
 
 #[cfg(test)]
@@ -399,8 +396,9 @@ mod tests {
         for (ship, modules) in [
             ("Aegis Eclipse", 2), // 3 Datei-Einträge, S10 doppelt → 2 unique
             ("Aegis Retaliator", 11),
-            ("RSI Galaxy", 3),
-            ("RSI Aurora MK II", 2),
+            ("Galaxy", 3),          // SA: Live-Hangar-Name (ohne RSI-Präfix)
+            ("Aurora Mk II", 2),    // SA: Live-Hangar-Name („Mk“, kein Präfix)
+            ("L-22 Alpha Wolf", 1), // SA: Live-Hangar-Name
             ("Anvil Gladiator", 2),
             ("Aegis Idris M", 2),
             ("Kruger L-21 Wolf", 1),
@@ -477,7 +475,19 @@ mod tests {
             );
         }
 
-        // Match ist Case/Whitespace-tolerant (Hangar-Name „RSI Aurora MK II“).
+        // SA-Regression (t_d0076295): Hangar-Namen OHNE Hersteller-Präfix
+        // matchen die Datei-Einträge (Prefix-Strip + Case/Whitespace).
+        // Live-Dump 2026-10-30: Hangar führt „Galaxy“ und „Aurora Mk II“.
+        for (hangar_name, expected) in [("Galaxy", 3), ("Aurora Mk II", 2)] {
+            let d = modul_for_ship_decision(hangar_name, &overrides);
+            assert!(d.known && d.has_ports, "{hangar_name}: {d:?}");
+            assert_eq!(d.modules.len(), expected, "{hangar_name}: {d:?}");
+        }
+        // Auch die geprefixte Form matcht weiter (Anzeige- ODER Kurzname).
+        let gal = modul_for_ship_decision("RSI Galaxy", &overrides);
+        assert!(gal.known && gal.modules.len() == 3, "{gal:?}");
+
+        // Match ist Case/Whitespace-tolerant (Hangar-Name „Aurora Mk II“).
         let aur = modul_for_ship_decision("  rsi aurora   mk ii ", &overrides);
         assert!(aur.known && aur.modules.len() == 2, "{aur:?}");
 
@@ -551,15 +561,18 @@ mod tests {
             "API-Altbestand nicht verfallen: {}",
             state.rows.len()
         );
-        // Alles kommt aus der Datei: Eclipse + Galaxy drin, Aurora Mk II
-        // (alte API-Schreibweise) nicht mehr als Zeilen-Schiff.
+        // Alles kommt aus der Datei (SA: Datei-Namen = Live-Hangar-Namen).
         let ships: std::collections::BTreeSet<String> = state
             .rows
             .iter()
             .flat_map(|r| r.ships.iter().cloned())
             .collect();
-        assert!(ships.contains("Aegis Eclipse") && ships.contains("RSI Galaxy"));
-        assert!(!ships.contains("Aurora Mk II"), "API-Rest: {ships:?}");
+        assert!(
+            ships.contains("Aegis Eclipse")
+                && ships.contains("Galaxy")
+                && ships.contains("Aurora Mk II"),
+            "Datei-Schiffe fehlen: {ships:?}"
+        );
     }
 
     /// Live-Beleg für S4 (t_66980b3c): Der Sync läuft gegen die echte

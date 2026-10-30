@@ -1,7 +1,7 @@
 {
   "_meta": {
     "description": "Modul-Zuweisungen (Schiff -> Module) — seit S4 (t_66980b3c) die EINZIGE Quelle der Hangar-Modul-Kompatibilität (keine SC-Wiki-API mehr). Schiffe ohne Eintrag bekommen gar kein Modul-Feld.",
-    "ship_name_rule": "Schiffsname EXAKT wie im Hangar gepflegt (Match ist nur Case-/Whitespace-tolerant), z. B. 'RSI Aurora MK II'.",
+    "ship_name_rule": "Schiffsname bevorzugt wie im Hangar gepflegt (Live-Dump 2026-10-30: 'Galaxy', 'Aurora Mk II', 'L-22 Alpha Wolf', ...). Match ist Case-/Whitespace-tolerant UND strippet Hersteller-Präfixe (RSI/Aegis/Kruger/MISC/Tumbril/Anvil) — Anzeige- ODER Kurzname, beides matcht (SA-Fix t_d0076295).",
     "sync": "Bei jedem Sync/Refresh lädt die App diese Datei von der Gitea-Raw-URL (branch main) und cachet sie; Fallback: Remote-Cache -> Repo-Baseline (diese Datei). Doppelte Modul-Namen pro Schiff werden vereinigt."
   },
   "ships": [
@@ -23,7 +23,7 @@
     { "ship": "Aegis Idris M", "modules": ["Idris-T Kit", "Idris-K Kit"] },
     { "ship": "Aegis Idris P", "modules": ["Idris-T Kit", "Idris-K Kit"] },
     { "ship": "Kruger L-21 Wolf", "modules": ["Kruger Laser Weapons Kit"] },
-    { "ship": "Kruger L-22 Alpha Wolf", "modules": ["Kruger Ballistic Weapons Kit"] },
+    { "ship": "L-22 Alpha Wolf", "modules": ["Kruger Ballistic Weapons Kit"] },
     { "ship": "Kruger P-52 Merlin", "modules": ["Kruger Snub Laser Weapons Kit"] },
     { "ship": "Kruger S-65 Stingray", "modules": ["Kruger Snub Ballistic Weapons Kit", "Kruger Ballistic Weapons Kit"] },
     { "ship": "MISC Endeavor", "modules": [
@@ -50,10 +50,10 @@
       "Endeavor Medical Bay (2x2)", "Endeavor Research Lab (2x1)",
       "Endeavor General Science (2x1)", "Endeavor Telescope Array (2x1)"
     ]},
-    { "ship": "RSI Aurora MK II", "modules": [
+    { "ship": "Aurora Mk II", "modules": [
       "Aurora MK II - DM Module", "Aurora MK II - TS Module"
     ] },
-    { "ship": "RSI Galaxy", "modules": [
+    { "ship": "Galaxy", "modules": [
       "Galaxy - Cargo Module", "Galaxy - Med Bay Module",
       "Galaxy - Refinery Module"
     ] },
