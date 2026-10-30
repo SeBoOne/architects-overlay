@@ -128,7 +128,7 @@ async def main():
                     return "EXC:" + (r["exceptionDetails"].get("text") or "")
                 return r.get("result", {}).get("value")
 
-            VK = {"F11": 122, "Escape": 27, "Enter": 13, "ArrowDown": 40}
+            VK = {"F11": 122, "Escape": 27, "Enter": 13, "ArrowDown": 40, "ArrowUp": 38}
             async def key(k):
                 vk = VK[k]
                 await call("Input.dispatchKeyEvent", {"type": "rawKeyDown", "key": k, "code": k,
@@ -220,6 +220,46 @@ async def main():
             check("typeahead-dd-inside-scroll-container",
                   c and c["ddTop"] >= c["scTop"] - 1 and c["ddBottom"] <= c["scBottom"] + 1, clip)
             await shot("05-typeahead-not-clipped.png")
+
+            # ---- 5b: Tastatur-Navigation des Typeahead (D1) ----
+            # 4x ArrowDown muss monoton [1,2,3,4] markieren; Enter uebernimmt
+            # den markierten Eintrag ins Input-Feld.
+            await js("(() => { const i = document.querySelector('.hform-modal .rta-input');"
+                     " i.focus(); i.value='a';"
+                     " i.dispatchEvent(new Event('input',{bubbles:true})); return 'OK'; })()")
+            await asyncio.sleep(0.4)
+            async def hi_idx():
+                return await js("[...document.querySelectorAll('.hform-modal .rta-dd .rta-item')]"
+                                ".findIndex(x=>x.classList.contains('is-hi'))")
+            seq = []
+            for _ in range(4):
+                await key("ArrowDown")
+                seq.append(await hi_idx())
+            check("kbd-arrowdown-monotonic", seq == [1, 2, 3, 4], "seq=" + str(seq))
+            await key("ArrowDown")
+            picked_expect = await js("document.querySelector('.hform-modal .rta-dd .rta-item.is-hi')?.innerText.trim()")
+            await key("Enter")
+            picked = await js("document.querySelector('.hform-modal .rta-input')?.value")
+            check("kbd-enter-picks-highlight", str(picked_expect) and str(picked or "").startswith(str(picked_expect).split(" · ")[0]),
+                  "input=" + str(picked) + " expected=" + str(picked_expect))
+            # ArrowUp laeuft ebenfalls monoton rueckwaerts: reopen, 2x Down (hi=2),
+            # dann 2x Up -> [1, 0].
+            await js("(() => { const i = document.querySelector('.hform-modal .rta-input');"
+                     " i.focus(); i.value='a';"
+                     " i.dispatchEvent(new Event('input',{bubbles:true})); return 'OK'; })()")
+            await asyncio.sleep(0.4)
+            await key("ArrowDown"); await key("ArrowDown")
+            check("kbd-pre-up-position", (await hi_idx()) == 2, "hi=" + str(await hi_idx()))
+            up_seq = []
+            for _ in range(2):
+                await key("ArrowUp")
+                up_seq.append(await hi_idx())
+            check("kbd-arrowup-monotonic", up_seq == [1, 0], "seq=" + str(up_seq))
+            # Feld leeren, damit die spaeteren Checks von definiertem Zustand starten.
+            await js("(() => { const i = document.querySelector('.hform-modal .rta-input');"
+                     " i.focus(); i.value='';"
+                     " i.dispatchEvent(new Event('input',{bubbles:true})); return 'OK'; })()")
+            await asyncio.sleep(0.3)
 
             # ---- 6: Detail-View — Modul-Autocomplete ebenfalls nicht geclippt ----
             await js("(() => { const b = document.querySelector('.hform-modal .hform-foot button:nth-child(2)'); if (b) b.click(); return 'OK'; })()")

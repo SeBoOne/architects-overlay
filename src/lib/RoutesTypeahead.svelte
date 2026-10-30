@@ -52,8 +52,11 @@
 	}
 
 	function openDropdown() {
+		const was = open;
 		open = true;
-		hi = 0;
+		// Highlight nur beim Uebergang geschlossen->offen auf 0 setzen,
+		// sonst frisst der Reset den ersten ArrowDown/ArrowUp-Schritt.
+		if (!was) hi = 0;
 		requestAnimationFrame(measureDropUp);
 	}
 
