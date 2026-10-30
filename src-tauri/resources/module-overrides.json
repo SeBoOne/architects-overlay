@@ -1,17 +1,25 @@
 {
   "_meta": {
     "description": "Manuelle Modul/Weapon-Kit-Zuweisungen (Schiff -> Module). Quelle: Sebo, da diese Items in der SC-Wiki-API nicht als Module erkennbar sind (Bombracks, Weapon Kits, Endeavor-Bays).",
-    "api_probes": {
-      "Aegis Eclips": "https://api.star-citizen.wiki/api/items?filter%5Btags%5D=Eclipse_BombRack&filter%5Btype%5D=BombLauncher",
-      "Aegis Retaliator": "https://api.star-citizen.wiki/api/items?filter%5Btags%5D=Retaliator_BombRack_Front&filter%5Btype%5D=BombLauncher + Rear (4 Racks gesamt)",
-      "Anvil Gladiator": "https://api.star-citizen.wiki/api/items?filter%5Btags%5D=Gladiator_BombRack&filter%5Btype%5D=BombLauncher"
-    },
+    "api_probes": {},
     "note": "Kit-Namen (Idris/Kruger/Nova/Endeavor) werden per Name gematcht (die API splitet Kits in Bestandteile)."
   },
   "ships": [
-    { "ship": "Aegis Eclips", "modules": ["Eclipse BombRack"] },
-    { "ship": "Aegis Retaliator", "modules": ["Retaliator BombRack Front", "Retaliator BombRack Rear"] },
-    { "ship": "Anvil Gladiator", "modules": ["Gladiator BombRack"] },
+    { "ship": "Aegis Eclipse", "modules": [
+      "S10 Bomb Rack Weapon Kit", "S10 Bomb Rack Weapon Kit",
+      "S3 Bomb Rack Weapon Kit"
+    ]},
+    { "ship": "Aegis Retaliator", "modules": [
+      "Living Module - Front", "Living Module - Rear",
+      "Cargo Module - Front", "Cargo Module - Rear",
+      "Torpedo Module - Front", "Torpedo Module - Rear",
+      "Dropship Module","Size 3 Bomb Rack - Front",
+      "Size 3 Bomb Rack - Rear", "Size 5 Bomb Rack - Front",
+      "Size 5 Bomb Rack - Rear"
+    ]},
+    { "ship": "Anvil Gladiator", "modules": [
+      "S5 Bomb Rack Weapon Kit", "S3 Bomb Rack Weapon Kit"
+    ]},
     { "ship": "Aegis Idris M", "modules": ["Idris-T Kit", "Idris-K Kit"] },
     { "ship": "Aegis Idris P", "modules": ["Idris-T Kit", "Idris-K Kit"] },
     { "ship": "Kruger L-21 Wolf", "modules": ["Kruger Laser Weapons Kit"] },
@@ -42,6 +50,13 @@
       "Endeavor Medical Bay (2x2)", "Endeavor Research Lab (2x1)",
       "Endeavor General Science (2x1)", "Endeavor Telescope Array (2x1)"
     ]},
+    { "ship": "RSI Aurora MK II", "modules": [
+      "Aurora MK II - DM Module", "Aurora MK II - TS Module"
+    ] },
+    { "ship": "RSI Galaxy", "modules": [
+      "Galaxy - Cargo Module", "Galaxy - Med Bay Module",
+      "Galaxy - Refinery Module"
+    ] },
     { "ship": "RSI Meteor", "modules": ["RSI Meteor - Laser Weapon Kit"] },
     { "ship": "Tumbril Nova", "modules": ["NV57 Weapon Kit"] }
   ]
