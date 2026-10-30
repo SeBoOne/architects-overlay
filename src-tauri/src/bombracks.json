@@ -1,0 +1,4 @@
+{
+  "_doc": "Manuelle Bombrack-Mapping-Tabelle (S3, t_988e132f, Punkt 5): Bombracks sind in der SC-Wiki-API NICHT auffindbar (Research docs/research/scwiki-modules.md §2 — alle Filter-Queries 0 Results). Diese Liste wird daher manuell gepflegt. Sebo nennt Schiffe+Module im Review — dort eintragen: modules[].name = Anzeige-Name des Moduls, modules[].ships = Liste der Schiffe, die das Modul tragen können (SC-Wiki-Vehicle-Namen, z. B. 'MISC Hull C'). Die Liste wird beim Lesen mit dem API-Datensatz verschmolzen — ein Resync ist nach einer Änderung NICHT nötig.",
+  "modules": []
+}

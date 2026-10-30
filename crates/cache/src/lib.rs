@@ -19,6 +19,7 @@
 //! [`sync::spawn_sync`] provides the background refetch loop (tokio).
 
 pub mod inventory;
+pub mod modul_compat;
 pub mod sync;
 
 use std::path::Path;
@@ -409,6 +410,11 @@ CREATE TABLE IF NOT EXISTS route_enrichment (
 -- modules. `origin` distinguishes pledge vs ingame purchases; `insurance`
 -- carries the pledge's insurance (LTI/Standard/…) and is NULL for ingame.
 -- Modules may reference their base ship by name.
+CREATE TABLE IF NOT EXISTS modul_compat (
+  module_name TEXT PRIMARY KEY,
+  category    TEXT NOT NULL DEFAULT '',
+  ships       TEXT NOT NULL DEFAULT '[]'
+);
 CREATE TABLE IF NOT EXISTS hangar (
   id             INTEGER PRIMARY KEY,
   name           TEXT    NOT NULL,
@@ -611,7 +617,12 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   „wartet auf Freigabe"), da UEX 2.0 wartende Ads in keinem Endpoint
 ///   listet. Abgleich gegen die API-Antwort (Reconciliation) entfernt die
 ///   Zeile, sobald das Listing live ist. Rein additiv.
-pub const SCHEMA_VERSION: i64 = 11;
+/// * v12 — S3 (t_988e132f): neue additive Tabelle `modul_compat`
+///   (Schiffs-Modul-Kompatibilität aus der SC-Wiki-API, siehe
+///   `modul_compat`-Modul). `meta`-Keys `modul_compat:version` (Game-Version
+///   des Datensatzes) + `modul_compat:synced_at` (Epoch). Rein additiv —
+///   `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten betroffen.
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.

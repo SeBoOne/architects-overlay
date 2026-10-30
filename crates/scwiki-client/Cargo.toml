@@ -1,0 +1,19 @@
+[package]
+name = "scwiki_client"
+version = "0.1.0"
+description = "Schlanker SC-Wiki-API-Client — nur Zweck Schiffs-Modul-Kompatibilität (S3, t_988e132f)"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# rustls statt native-tls: keine OpenSSL-Abhängigkeit in Windows-Bundles.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "time"] }
+log = "0.4"
+thiserror = "2"
+
+[dev-dependencies]
+wiremock = "0.6"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

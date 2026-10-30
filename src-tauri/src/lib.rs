@@ -23,6 +23,7 @@ mod overlay;
 mod providers;
 #[cfg(desktop)]
 mod routes;
+mod scwiki_sync;
 #[cfg(desktop)]
 mod trade;
 #[cfg(desktop)]
@@ -45,6 +46,9 @@ pub fn run() {
             hangar::hangar_delete,
             hangar::hangar_import,
             hangar::hangar_export,
+            scwiki_sync::modul_compat_status,
+            scwiki_sync::modul_compat_refresh,
+            scwiki_sync::modul_for_ship,
             trade::math_eval,
             trade::get_prices,
             trade::sync_status,
@@ -261,6 +265,10 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     // NEITHER is coupled to overlay visibility (PS t_c84e545d).
     let handle = app.handle();
     trade::start_background_refresh(handle, &provider, &cache, &composite, &tracker);
+
+    // S3 (t_988e132f): stündlicher Modul-Kompatibilitäts-Check + erster Lauf
+    // kurz nach dem Boot — unabhängig vom Overlay sichtbar (wie price-sync).
+    scwiki_sync::spawn_modul_sync(cache.clone());
 
     // Dev shell: a second, hidden window (label "main") showing the same
     // SvelteKit palette as the spotlight. Release builds must NOT create it —

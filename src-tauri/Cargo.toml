@@ -27,6 +27,7 @@ tauri-build = { version = "2.7.3", features = [] }
 provider = { path = "../crates/provider" }
 uex_client = { path = "../crates/uex-client" }
 cache = { path = "../crates/cache" }
+scwiki_client = { path = "../crates/scwiki-client" }
 game_detection = { path = "../crates/game-detection" }
 settings = { path = "../crates/settings" }
 math_eval = { path = "../crates/math-eval", package = "math-eval" }

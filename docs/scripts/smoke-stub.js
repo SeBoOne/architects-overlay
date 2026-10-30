@@ -153,6 +153,18 @@ window.__TAURI_INTERNALS__ = {
 				return { provider: 'uex', syncing: true, online: true, last_error: null, datasets: [] };
 			case 'hangar_list':
 				return JSON.parse(JSON.stringify(window.__HANGAR_DATA__));
+			/* S3 (t_988e132f): Modul-Kompatibilität — Fixture zur Laufzeit
+			   überschreibbar (window.__MODUL_*__), echte Svelte-Logik läuft. */
+			case 'modul_compat_status':
+				return window.__MODUL_STATUS__ || null;
+			case 'modul_compat_refresh':
+				return window.__MODUL_REFRESH__ || 'synced';
+			case 'modul_for_ship': {
+				const ship = String(a.ship || '').trim().toLowerCase();
+				if (ship === '') return { known: false, has_ports: true, modules: window.__MODUL_ALL__ || [] };
+				const map = window.__MODUL_FOR_SHIP__ || {};
+				return map[ship] || { known: false, has_ports: true, modules: [] };
+			}
 			case 'hangar_add': {
 				const r = hangarUpsertStub(a.item);
 				return window.__HANGAR_DATA__.find((i) => i.id === r.id);

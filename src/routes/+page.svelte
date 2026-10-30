@@ -312,6 +312,52 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// PW-1 (t_fbe40115): Username-Feld entfallen — Name wird automatisch aus
 	// dem Secret-Key ermittelt; usernameNote zeigt nur noch den Status.
 	let usernameNote = $state('');
+	// S3 (t_988e132f): Modul-Kompatibilität (SC-Wiki) — Status + manueller Sync.
+	type ModulStatus = {
+		version: string;
+		synced_at: number;
+		age_seconds: number | null;
+		module_count: number;
+		ship_count: number;
+	};
+	let modulStatus = $state<ModulStatus | null>(null);
+	let modulBusy = $state(false);
+	let modulNote = $state('');
+	async function modulLoadStatus() {
+		try {
+			modulStatus = await invoke<ModulStatus>('modul_compat_status');
+		} catch {
+			modulStatus = null;
+		}
+	}
+	async function modulRefreshNow() {
+		modulBusy = true;
+		modulNote = '';
+		try {
+			const r = await invoke<string>('modul_compat_refresh');
+			modulNote =
+				r === 'synced'
+					? 'Modul-Kompatibilität aktualisiert.'
+					: r === 'fresh'
+						? 'Daten sind bereits aktuell.'
+						: 'Aktualisierung läuft bereits.';
+			await modulLoadStatus();
+		} catch (e) {
+			modulNote = String(e);
+		} finally {
+			modulBusy = false;
+		}
+	}
+	function modulAgeText(): string {
+		const s = modulStatus?.age_seconds;
+		if (s == null) return 'Alter unbekannt';
+		if (s < 120) return `vor ${s} s`;
+		const m = Math.round(s / 60);
+		if (m < 120) return `vor ${m} min`;
+		const h = Math.round(m / 60);
+		if (h < 48) return `vor ${h} h`;
+		return `vor ${Math.round(h / 24)} Tagen`;
+	}
 	// K6 (t_9b385831, P2): kurze Confirm-Zeile im Config-View nach Aktionen
 	// (Preisquelle umstellen) — analog K3 Notif-Timeout: verschwindet nach 3 s
 	// von selbst, damit die Wirkung sichtbar ist, ohne das View zuzumüllen.
@@ -809,6 +855,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// den registrierten Modul-Einträgen (Import liefert z. B. „600i
 	// Exploration Module“), Freitext bleibt erlaubt.
 	let hangarModPick = $state('');
+	// S3 (t_988e132f): SC-Wiki-Modul-Kompatibilität. Das Autocomplete in den
+	// Ship-Details schlägt NUR Module vor, die laut Zuordnung zum Schiff
+	// passen; ohne Zuordnungseintrag (Fallschirm) den ganzen Katalog.
+	type ModulHit = { name: string; category: string };
+	type ModulForShip = { known: boolean; has_ports: boolean; modules: ModulHit[] };
+	let hangarWikiMods = $state<ModulForShip | null>(null);
+	let hangarWikiAll = $state<ModulHit[] | null>(null);
+	async function hangarLoadWikiMods(name: string) {
+		hangarWikiMods = null;
+		if (!name.trim()) return;
+		try {
+			hangarWikiMods = await invoke<ModulForShip>('modul_for_ship', { ship: name });
+		} catch {
+			hangarWikiMods = null; // Fallschirm: alle Module anbieten
+		}
+	}
+	async function hangarLoadCatalog() {
+		try {
+			const r = await invoke<ModulForShip>('modul_for_ship', { ship: '' });
+			hangarWikiAll = r.modules;
+		} catch {
+			hangarWikiAll = null;
+		}
+	}
+	// Modul-Eingabefeld nur bei Schiffen, die laut Zuordnung Ports haben
+	// (oder fallschirmweise, wenn die Zuordnung das Schiff nicht kennt).
+	const hangarModFieldVisible = $derived(
+		!hangarWikiMods || hangarWikiMods.known === false ? true : hangarWikiMods.has_ports
+	);
 	// R2: Zuordnung eines „unverbundenen“ Moduls (Basisschiff-Autocomplete).
 	let hangarAssignBase = $state('');
 	// P10: current suggestions for the add-form (reactive to Field-Content).
@@ -891,18 +966,43 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			? hangarBaseSuggest().map((n) => ({ value: n, label: n }))
 			: ([] as { value: string; label: string }[])
 	);
-	// R2 (Punkt 8): Modul-Autocomplete aus den registrierten Modul-Einträgen
-	// (Import liefert z. B. „600i Exploration Module“), Freitext bleibt erlaubt.
+	// R2 (Punkt 8): Modul-Autocomplete — S3 (t_988e132f): NUR Module, die
+	// laut SC-Wiki-Zuordnung zum Schiff passen; ohne Zuordnungseintrag
+	// (Fallschirm) der ganze Katalog. Registrierte Modul-Einträge (Bestand)
+	// bleiben zusätzlich wählbar. Freitext bleibt erlaubt.
 	function hangarModuleSuggest() {
 		const q = hangarModPick.trim().toLowerCase();
 		const out: string[] = [];
 		const seen = new Set<string>();
+		const push = (n: string) => {
+			if (n && !seen.has(n)) {
+				seen.add(n);
+				out.push(n);
+			}
+		};
+		const wiki = hangarWikiMods;
+		if (wiki && wiki.known) {
+			// Passende Module zuerst.
+			for (const m of wiki.modules) {
+				if (q === '' || m.name.toLowerCase().includes(q)) {
+					push(m.name);
+					if (out.length >= 10) break;
+				}
+			}
+		} else {
+			// Fallschirm: ganzer Katalog (SC-Wiki), dann registrierte Einträge.
+			for (const m of hangarWikiAll ?? []) {
+				if (q === '' || m.name.toLowerCase().includes(q)) {
+					push(m.name);
+					if (out.length >= 10) break;
+				}
+			}
+		}
 		for (const it of hangarItems) {
 			if (it.entity_type !== 'module') continue;
 			const dn = hangarDisplayName(it);
 			if ((q === '' || dn.toLowerCase().includes(q) || it.name.toLowerCase().includes(q)) && !seen.has(dn)) {
-				seen.add(dn);
-				out.push(dn);
+				push(dn);
 				if (out.length >= 10) break;
 			}
 		}
@@ -1099,6 +1199,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function hangarOpenDetail(item: HangarItem) {
 		hangarDetail = item;
 		hangarView = 'detail';
+		// S3 (t_988e132f): Zuordnung für dieses Schiff laden (Fallschirm null).
+		if (item.entity_type !== 'module') {
+			void hangarLoadWikiMods(item.name);
+			if (hangarWikiAll === null) void hangarLoadCatalog();
+		} else {
+			hangarWikiMods = null;
+		}
 	}
 
 	function hangarBack() {
@@ -1158,6 +1265,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		detailHit = null;
 		expanded = null;
 		focusIdx = null;
+		// S3 (t_988e132f): Modul-Kompatibilitäts-Status beim Öffnen frisch lesen.
+		void modulLoadStatus();
 		xpan = null;
 		xpanToken++;
 		dSel = 0;
@@ -4487,10 +4596,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{:else}
 									<div class="hmodempty">Keine Module zugeordnet.</div>
 								{/each}
+								<!-- S3 (t_988e132f): Eingabefeld nur bei Schiffen, die laut
+								     Zuordnung Ports haben (Fallschirm: Zuordnung kennt das
+								     Schiff nicht → Feld bleibt sichtbar). -->
+								{#if hangarModFieldVisible}
 								<div class="hmod-add">
 									<RoutesTypeahead bind:value={hangarModPick} options={hangarModOpts} fullWidth ariaLabel="Modul suchen" placeholder="Modul suchen … (z. B. Exploration Module)" onselect={() => {}} />
 									<button type="button" class="hbtn" disabled={hangarBusy || !hangarModPick.trim()} onclick={hangarModuleAdd}>Hinzufügen</button>
 								</div>
+								{:else}
+								<div class="hmodempty">Dieses Schiff hat keine Modul-Ports (SC-Wiki-Zuordnung).</div>
+								{/if}
 							</div>
 						{:else if !hangarDetail.base_ship}
 							<!-- R2: unverbundenes Modul (Migration/Bestand ohne base_ship) —
@@ -4945,7 +5061,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if mktConfirmNote}
 							<div class="cfg-note">{mktConfirmNote}</div>
 						{/if}
-</section>
+				</section>
+				<!-- S3 (t_988e132f): Modul-Kompatibilität aus der SC-Wiki-API —
+				     Datenstand + manueller Sync (Background prüft stündlich die
+				     Game-Version, resynced nur bei Versionswechsel). -->
+				<section class="cfg-sect">
+					<div class="h">Modul-Kompatibilität (SC-Wiki)</div>
+					<div class="cfg-key-status">
+						Datenstand:
+						{#if modulStatus && modulStatus.version}
+							<b class="ok">{modulStatus.version}</b>
+							· {modulAgeText()} · {modulStatus.module_count} Module / {modulStatus.ship_count} Schiffe
+						{:else}
+							<b class="off">noch kein Sync</b>
+						{/if}
+					</div>
+					<div class="cfg-key-row">
+						<button type="button" class="btn" disabled={modulBusy} onclick={() => void modulRefreshNow()}>
+							{modulBusy ? 'Aktualisiere …' : 'Modul-Kompatibilität aktualisieren'}
+						</button>
+					</div>
+					{#if modulNote}
+						<div class="cfg-note">{modulNote}</div>
+					{/if}
+					<div class="cfg-note">
+						Quelle: SC-Wiki (Hardpoints × Modul-Katalog) — 1 Sync pro Game-Version.
+						Bombracks sind dort nicht auffindbar und werden manuell im Repo
+						(bombracks.json) gepflegt.
+					</div>
+				</section>
 				</div>
 			</div>
 		{:else if phase === 'loading'}
