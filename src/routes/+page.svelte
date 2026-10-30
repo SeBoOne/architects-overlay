@@ -674,7 +674,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	let hangarFilter = $state<'all' | 'pledge' | 'ingame' | 'lti' | 'module'>('all');
 	let hangarSel = $state(0);
-	let hangarView = $state<'list' | 'detail'>('list');
+	// TC (t_f269f5b7): Detail ist ein modales Popup (wie die Formular-Popups) —
+	// hangarDetail != null = Popup offen; die Liste bleibt dahinter stehen.
+	// Das alte hangarView 'list'/'detail' (eigene Detail-Seite) ist entfernt.
 	let hangarDetail = $state<HangarItem | null>(null);
 
 	// P9 (Karte t_aa6cc070): DAS HAUPT-Suchfeld (input) serves as In-Context-
@@ -1031,8 +1033,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		hangarFormIns = '';
 		hangarFormOpen = true;
 		hangarEdit = false;
-		hangarView = 'list';
 		hangarDetail = null;
+		hangarWikiMods = null;
 	}
 
 	function hangarStartEdit(it: HangarItem) {
@@ -1119,10 +1121,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			hangarConfirm = null;
 			await loadHangar(true);
 			hangarNoteSet(`Gelöscht: ${hangarDisplayName(item)}`);
-			if (hangarView === 'detail') {
-				hangarView = 'list';
-				hangarDetail = null;
-			}
+			// TC (t_f269f5b7): Löschung erfolgte aus dem Detail-Popup — Popup
+			// schließt sich, Liste dahinter aktualisiert sich via loadHangar.
+			hangarDetail = null;
+			hangarWikiMods = null;
 		} catch (e) {
 			hangarNoteSet(String(e));
 		} finally {
@@ -1197,8 +1199,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await invoke<HangarItem>('hangar_update', { item: { ...m, base_ship: base } });
 			hangarAssignBase = '';
 			await loadHangar(true);
-			hangarView = 'list';
+			// TC (t_f269f5b7): Zuordnung im Detail-Popup — Popup schließt,
+			// das zugeordnete Modul verschwindet aus der Liste (verlinkt).
 			hangarDetail = null;
+			hangarWikiMods = null;
 			hangarNoteSet(`Zugeordnet: ${hangarDisplayName(m)} → ${base}`);
 		} catch (e) {
 			hangarNoteSet(String(e));
@@ -1208,8 +1212,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	function hangarOpenDetail(item: HangarItem) {
+		// TC (t_f269f5b7): öffnet das Detail-POPUP (kein View-Wechsel mehr) —
+		// die Liste bleibt dahinter unverändert stehen.
 		hangarDetail = item;
-		hangarView = 'detail';
 		// S4: Zuweisung für dieses Schiff laden (nur Datei — ohne Eintrag
 		// bleibt hangarWikiMods null → kein Modul-Feld).
 		if (item.entity_type !== 'module') {
@@ -1217,6 +1222,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} else {
 			hangarWikiMods = null;
 		}
+	}
+
+	// TC (t_f269f5b7): Popup schließen (Esc/Close) — zurück zur Liste ohne
+	// View-Wechsel; Modul-Zuweisung der letzten Ansicht verwerfen.
+	function hangarCloseDetail() {
+		hangarDetail = null;
+		hangarWikiMods = null;
 	}
 
 	function hangarBack() {
@@ -1231,9 +1243,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			hangarEdit = false;
 			return;
 		}
-		if (hangarView === 'detail') {
-			hangarView = 'list';
-			hangarDetail = null;
+		if (hangarDetail) {
+			// TC (t_f269f5b7): Esc im Detail-Popup schließt das Popup —
+			// eine Ebene zurück zur Liste (Escape-Back-Kette konsistent).
+			hangarCloseDetail();
 		} else {
 			// Hangar-Root: zurück zur Suche (analog Platzhalter-Esc).
 			railMode = null;
@@ -4059,7 +4072,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					}
 					return;
 				}
-				if (hangarView === 'list') {
+				// TC (t_f269f5b7): Detail-Popup offen → schluckt ebenfalls die
+				// Tastatur (Esc oben schließt es); die Liste darunter navigiert
+				// nicht. Typeahead/Selects im Popup tippen über die Feld-Handler.
+				if (hangarDetail) {
+					return;
+				}
+				// Liste (immer sichtbar — das Detail ist ein Popup): ↑/↓ Auswahl,
+				// Enter öffnet das Detail-Popup.
+				{
 					if (k === 'ArrowDown') {
 						hangarSel = Math.min(hangarSel + 1, Math.max(hangarFiltered.length - 1, 0));
 						e.preventDefault();
@@ -4535,7 +4556,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								type="button"
 								class="hchip"
 								class:is-on={hangarFilter === f}
-								onclick={() => { hangarFilter = f as typeof hangarFilter; hangarSel = 0; hangarView = 'list'; hangarDetail = null; }}
+								onclick={() => { hangarFilter = f as typeof hangarFilter; hangarSel = 0; hangarDetail = null; }}
 							>{lbl}</button>
 						{/each}
 					</div>
@@ -4554,7 +4575,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				     Shell-Schrumpfen — die Shell wächst stattdessen via
 				     class:shell-advert, gleicher Mechanismus wie Listing-/Trade-
 				     Popup). -->
-				{#if hangarView === 'list'}
+				<!-- TC (t_f269f5b7): Liste ist IMMER sichtbar — das Detail ist ein
+					     Popup (unten) und ersetzt die alte eigene Detail-Seite
+					     (hangarView 'list'/'detail' entfernt, kein doppelter Pfad). -->
 					<div class="hangar-list" role="listbox" aria-label="Hangar-Einträge">
 						{#each hangarFiltered as it, i (it.id ?? `${it.name}#${i}`)}
 							<button
@@ -4575,30 +4598,39 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{:else}
 							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} {input.trim() ? ` · Search: ${input.trim()}` : ''} — Import oben.</div>
 						{/each}
-					</div>
-				{:else if hangarView === 'detail' && hangarDetail}
-					<div class="hangar-detail">
-						<div class="hd-head">
-							<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
-							<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
-							<span class="hchip ins">{hangarDetail.insurance ?? '—'}</span>
-							{#if !hangarEdit}
-								<button class="hbtn" disabled={hangarBusy} onclick={() => hangarStartEdit(hangarDetail!)}>Bearbeiten</button>
-							{/if}
-							<button class="hbtn danger" disabled={hangarBusy} onclick={() => hangarDelete(hangarDetail!)}>Löschen</button>
 						</div>
-						{#if !hangarEdit}
-						<!-- R2 (Punkt 7): Ship-Code/Pledge/Pledge-ID/Warbond/CCUD ENTFERNT —
-						     Import-Artefakte („nicht wichtig“), keine Anzeige mehr. -->
-						<dl class="hd-grid">
-							<div><dt>Modell</dt><dd>{hangarDetail.name}</dd></div>
-							<div><dt>Hersteller</dt><dd>{hangarDetail.manufacturer || '—'}</dd></div>
-							<div><dt>Typ</dt><dd>{hangarDetail.entity_type}</dd></div>
-							<div><dt>Custom-Name</dt><dd>{hangarDetail.custom_name || '—'}</dd></div>
-							<div><dt>Datum</dt><dd>{isoToDe(hangarDetail.purchase_date) || '—'}</dd></div>
-							<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile entfernt. -->
-						</dl>
-						{#if hangarDetail.entity_type !== 'module' && hangarWikiMods?.known}
+						{#if hangarDetail}
+					<!-- TC (t_f269f5b7): Schiffs-/Fahrzeug-Details als modales Popup —
+					     GLEICHES Muster wie die Anlege-/Edit-Formulare (shell-anchored
+					     advert-scrim, Breite ~90 %, volle Höhe minus Scrim-Rand, Body
+					     scrollt intern). Die Liste bleibt unverändert hinter dem Scrim
+					     stehen; Schließen per Esc (hangarBack) oder Close-Button, ohne
+					     View-Wechsel. -->
+					<div class="advert-scrim" role="presentation">
+						<section class="hdetail-modal" role="dialog" aria-modal="true" aria-label={`Details ${hangarDisplayName(hangarDetail)}`}>
+							<div class="hd-head">
+								<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
+								<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+								<span class="hchip ins">{hangarDetail.insurance ?? '—'}</span>
+								{#if !hangarEdit}
+									<button class="hbtn" disabled={hangarBusy} onclick={() => hangarStartEdit(hangarDetail!)}>Bearbeiten</button>
+								{/if}
+								<button class="hbtn danger" disabled={hangarBusy} onclick={() => hangarDelete(hangarDetail!)}>Löschen</button>
+								<button type="button" class="hd-close" title="Schließen (Esc)" aria-label="Details schließen" onclick={hangarCloseDetail}>✕</button>
+							</div>
+							<div class="hangar-detail">
+							{#if !hangarEdit}
+							<!-- R2 (Punkt 7): Ship-Code/Pledge/Pledge-ID/Warbond/CCUD ENTFERNT —
+							     Import-Artefakte („nicht wichtig“), keine Anzeige mehr. -->
+							<dl class="hd-grid">
+								<div><dt>Modell</dt><dd>{hangarDetail.name}</dd></div>
+								<div><dt>Hersteller</dt><dd>{hangarDetail.manufacturer || '—'}</dd></div>
+								<div><dt>Typ</dt><dd>{hangarDetail.entity_type}</dd></div>
+								<div><dt>Custom-Name</dt><dd>{hangarDetail.custom_name || '—'}</dd></div>
+								<div><dt>Datum</dt><dd>{isoToDe(hangarDetail.purchase_date) || '—'}</dd></div>
+								<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile entfernt. -->
+							</dl>
+							{#if hangarDetail.entity_type !== 'module' && hangarWikiMods?.known}
 							<!-- SA (t_d0076295): Nur-Datei-Regel — der GESAMTE Module-
 							     Bereich erscheint NUR bei Schiffen mit Eintrag in
 							     module-overrides.json; Schiffe ohne Eintrag zeigen
@@ -4634,7 +4666,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								</div>
 								{/if}
 							</div>
-						{:else if hangarDetail.entity_type === 'module' && !hangarDetail.base_ship}
+							{:else if hangarDetail.entity_type === 'module' && !hangarDetail.base_ship}
 							<!-- R2: unverbundenes Modul (Migration/Bestand ohne base_ship) —
 							     bleibt erhalten, bis es hier manuell zugeordnet wird. -->
 							<div class="hd-mods">
@@ -4645,8 +4677,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<button type="button" class="hbtn" disabled={hangarBusy || !hangarAssignBase.trim()} onclick={() => hangarModuleAssign(hangarDetail!)}>Zuordnen</button>
 								</div>
 							</div>
-						{/if}
-						{/if}
+							{/if}
+							{/if}
+							</div>
+						</section>
 					</div>
 				{/if}
 			</div>

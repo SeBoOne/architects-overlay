@@ -3159,12 +3159,50 @@ html[data-window="spotlight"] .shell {
   color: var(--fgdim);
   font: 12px/1.5 var(--font-sans);
 }
+/* TC (t_f269f5b7): Hangar-Detail als modales Popup — gleiches Muster wie
+   .hform-modal (shell-anchored advert-scrim liefert Scrim+Zentrierung):
+   Breite ~90 %, volle Höhe minus Scrim-Rand (padding 14px), Body
+   (.hangar-detail) scrollt intern, Kopfzeile fix oben. Die Liste bleibt
+   hinter dem Scrim stehen (kein View-Wechsel mehr). */
+.hdetail-modal {
+  width: 90%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel2);
+  border: 1px solid var(--lineb);
+  border-radius: 4px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+/* Kopfzeile fix oben (Buttons immer erreichbar), Body scrollt darunter. */
+.hdetail-modal .hd-head {
+  margin-bottom: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--lineb);
+  flex: none;
+}
+.hd-close {
+  margin-left: auto;
+  border: 1px solid var(--lineb);
+  background: transparent;
+  color: var(--fgdim);
+  font: 700 11px/1 var(--font-mono);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.hd-close:hover {
+  color: var(--fg);
+  border-color: var(--accent);
+}
 .hangar-detail {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 12px;
+  scrollbar-width: thin;
+  padding: 12px 14px;
 }
+/* Basis .hd-head (Popup überschreibt oben); Werte wie bisher. */
 .hd-head {
   display: flex;
   align-items: center;
