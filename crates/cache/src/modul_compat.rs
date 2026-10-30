@@ -1,44 +1,41 @@
 //! # cache::modul_compat
 //!
-//! Schiffs-Modul-Kompatibilität (S3, Karte t_988e132f, Schema v12): welche
-//! Module akzeptiert welches Schiff — cross-referenziert aus der SC-Wiki-API
-//! (Port-Hardpoints × Item-Katalog, siehe `scwiki_client::build_compat`).
+//! Schiffs-Modul-Zuweisung (S4, Karte t_66980b3c, Schema v12): welche
+//! Module akzeptiert welches Schiff — AUSSCHLIESSLICH aus
+//! `module-overrides.json` (Repo-Baseline + Remote-Override von der
+//! Gitea-Raw-URL, siehe `scwiki_sync`). Die SC-Wiki-API liefert KEINE
+//! Modul-Daten mehr (Hardpoints/Ports und Item-Katalog sind raus).
 //!
 //! Snapshot-Semantik: [`Cache::modul_compat_store`] ersetzt den kompletten
-//! Datensatz (eine Game-Version = ein Sync, Etikette Punkt 6). Versionierung
-//! über `meta`-Keys `modul_compat:version` + `modul_compat:synced_at` — der
-//! Background-Sync prüft stündlich `/api/game-versions/default` und resynced
-//! nur bei Versionswechsel (oder leerer Tabelle = erster Lauf).
+//! Datensatz (ein Sync = die aktuelle Datei). Versionierung über den
+//! `meta`-Key `modul_compat:version` (Quelle-Label) + `modul_compat:synced_at`.
 //!
 //! Reads:
 //! * [`Cache::modul_compat_state`] — Datensatz + Version + Alter.
-//! * [`Cache::modul_modules_for_ship`] — `None` = Schiff ist der Zuordnung
-//!   unbekannt (Fallschirm: Frontend bietet alle Module an); `Some(list)` =
-//!   passende Module (leere Liste = Schiff ohne Ports → kein Modulfeld).
-//! * [`Cache::modul_ships_with_ports`] — Schiffe mit ≥ 1 Port.
+//! * [`Cache::modul_modules_for_ship`] — `None` = Schiff hat keinen Eintrag
+//!   in der Datei → kein Modul-Feld (S4 Nur-Datei-Regel); `Some(list)` =
+//!   die Datei-Module des Schiffs.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{Cache, CacheError, Result};
 
-/// `meta`-Key: Game-Version, für die der Datensatz gilt.
+/// `meta`-Key: Quelle/Version, für die der Datensatz gilt (S4: immer das
+/// Quelle-Label „module-overrides.json“ — kein Game-Version-Trigger mehr).
 pub const META_VERSION: &str = "modul_compat:version";
 /// `meta`-Key: Sync-Zeitpunkt (Epoch-Sekunden).
 pub const META_SYNCED_AT: &str = "modul_compat:synced_at";
-/// `meta`-Key: JSON-Liste der Vehicle-Namen OHNE Ports (dort versteckt das
-/// Frontend das Modul-Eingabefeld — Karte S3 Punkt 4).
-pub const META_NO_PORTS: &str = "modul_compat:noport_ships";
-/// `meta`-Key: Remote-Override-Text (`module-overrides.json` vom Gitea-Raw,
-/// S3/D2). Zwischen-Syncs gecacht; Fallback beim Lesen ist die Repo-Baseline.
+/// `meta`-Key: Remote-Override-Text (`module-overrides.json` vom Gitea-Raw).
+/// Zwischen-Syncs gecacht; Fallback beim Lesen ist die Repo-Baseline.
 pub const META_OVERRIDES: &str = "modul_compat:overrides";
 
 /// Eine Modul-Zuordnungs-Zeile.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct ModulCompatRow {
     pub name: String,
-    /// Deutsches Kategorie-Label (z. B. „Schild", „Modul").
+    /// Deutsches Kategorie-Label (z. B. „Bombrack“, „Weapon-Kit“, „Modul“).
     pub category: String,
-    /// Schiffsnamen (SC-Wiki-Vehicle-Namen), die das Modul akzeptieren.
+    /// Schiffsnamen (exakt wie in der Datei gepflegt), die das Modul annehmen.
     pub ships: Vec<String>,
 }
 
@@ -48,8 +45,6 @@ pub struct ModulCompatState {
     pub version: String,
     pub synced_at: u64,
     pub rows: Vec<ModulCompatRow>,
-    /// Vehicle-Namen ohne Ports (leer = kein Modulfeld-Versteck möglich).
-    pub no_port_ships: Vec<String>,
 }
 
 fn now_unix() -> u64 {
@@ -60,8 +55,8 @@ fn now_unix() -> u64 {
 }
 
 /// Case-insensitive Schiffsnamen-Normalisierung für den Match gegen Hangar-
-/// Einträge (Umlaute/Whitespace tolerant, „Mk II"-Rauschen bleibt drin —
-/// exakte Vehicle-Namen der SC-Wiki sind die Referenz).
+/// Einträge (Umlaute/Whitespace tolerant — exakte Datei-Namen sind die
+/// Referenz, der Match ist nur Case/Whitespace-tolerant).
 fn norm(name: &str) -> String {
     name.trim()
         .to_lowercase()
@@ -77,13 +72,8 @@ fn rusqlite_err(e: serde_json::Error) -> rusqlite::Error {
 }
 
 impl Cache {
-    /// Ersetzt den kompletten Datensatz (Snapshot einer Game-Version).
-    pub fn modul_compat_store(
-        &self,
-        version: &str,
-        rows: &[ModulCompatRow],
-        no_port_ships: &[impl AsRef<str>],
-    ) -> Result<()> {
+    /// Ersetzt den kompletten Datensatz (Snapshot der Zuweisungs-Datei).
+    pub fn modul_compat_store(&self, version: &str, rows: &[ModulCompatRow]) -> Result<()> {
         if version.trim().is_empty() {
             return Err(CacheError::Open("modul_compat_store: leere Version".into()));
         }
@@ -100,15 +90,9 @@ impl Cache {
                 }
             }
             let now = now_unix();
-            let no_ports_list: Vec<String> = no_port_ships
-                .iter()
-                .map(|s| s.as_ref().to_string())
-                .collect();
-            let no_ports = serde_json::to_string(&no_ports_list).map_err(rusqlite_err)?;
             for (key, value) in [
                 (META_VERSION, version.to_string()),
                 (META_SYNCED_AT, now.to_string()),
-                (META_NO_PORTS, no_ports),
             ] {
                 tx.execute(
                     "INSERT INTO meta (key, value) VALUES (?1, ?2)
@@ -146,6 +130,14 @@ impl Cache {
         })
     }
 
+    /// Remote-Override-Cache verwerfen (Tests).
+    pub fn modul_overrides_cache_clear(&self) -> Result<()> {
+        self.with(|conn| {
+            conn.execute("DELETE FROM meta WHERE key = ?1", [META_OVERRIDES])?;
+            Ok(())
+        })
+    }
+
     /// Gesamter Datensatz inkl. Version + Alter (`None` = noch nie gesynced).
     pub fn modul_compat_state(&self) -> Result<Option<ModulCompatState>> {
         self.with(|conn| {
@@ -177,24 +169,19 @@ impl Cache {
             let synced_at: u64 = meta(META_SYNCED_AT)?
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0);
-            let no_port_ships = meta(META_NO_PORTS)?
-                .and_then(|v| serde_json::from_str::<Vec<String>>(&v).ok())
-                .unwrap_or_default();
             Ok(Some(ModulCompatState {
                 version,
                 synced_at,
                 rows: out,
-                no_port_ships,
             }))
         })
     }
 
-    /// Module, die `ship` laut Zuordnung akzeptiert.
+    /// Module, die `ship` laut Zuweisungs-Datei angenommen werden.
     ///
-    /// * `Ok(None)` — Zuordnung unbekannt (leer oder Schiff nicht gefunden):
-    ///   Fallschirm, Frontend bietet alle Module an.
-    /// * `Ok(Some(list))` — passende Module; leere Liste = Schiff bekannt,
-    ///   aber ohne Ports bzw. ohne passendes Modul im Katalog.
+    /// * `Ok(None)` — Schiff hat keinen Eintrag in der Datei: KEIN
+    ///   Modul-Feld (S4 Nur-Datei-Regel, kein Fallschirm mehr).
+    /// * `Ok(Some(list))` — die Datei-Module des Schiffs (nicht leer).
     pub fn modul_modules_for_ship(&self, ship: &str) -> Result<Option<Vec<ModulCompatRow>>> {
         let needle = norm(ship);
         if needle.is_empty() {
@@ -202,11 +189,6 @@ impl Cache {
         }
         let state = self.modul_compat_state()?;
         let Some(state) = state else { return Ok(None) };
-        // Schiff OHNE Ports → bekannt, aber leere Modulliste (Karte S3
-        // Punkt 4: kein Modulfeld für diese Schiffe).
-        if state.no_port_ships.iter().any(|s| norm(s) == needle) {
-            return Ok(Some(Vec::new()));
-        }
         let mut out = Vec::new();
         for row in &state.rows {
             if row.ships.iter().any(|s| norm(s) == needle) {
@@ -220,7 +202,7 @@ impl Cache {
         }
     }
 
-    /// Normalisierte Namen aller Schiffe, die laut Zuordnung ≥ 1 Port haben.
+    /// Normalisierte Namen aller Schiffe mit ≥ 1 Zuweisung in der Datei.
     pub fn modul_ships_with_ports(&self) -> Result<Vec<String>> {
         let state = self.modul_compat_state()?;
         let Some(state) = state else {
@@ -255,32 +237,25 @@ mod tests {
 
         cache
             .modul_compat_store(
-                "4.10.2-LIVE.12881860",
+                "module-overrides.json",
                 &[
-                    row("Aurora Mk II DM Module", "Modul", &["Aurora Mk II"]),
-                    row("5CA 'Akura'", "Schild", &["C2 Hercules", "Aurora Mk II"]),
+                    row("Aurora MK II - DM Module", "Modul", &["RSI Aurora MK II"]),
+                    row("5CA 'Akura'", "Schild", &["RSI Galaxy"]),
                 ],
-                &["Hull E"],
             )
             .unwrap();
         let state = cache.modul_compat_state().unwrap().unwrap();
-        assert_eq!(state.version, "4.10.2-LIVE.12881860");
+        assert_eq!(state.version, "module-overrides.json");
         assert_eq!(state.rows.len(), 2);
-        assert_eq!(state.no_port_ships, vec!["Hull E".to_string()]);
         assert!(state.synced_at > 0);
 
-        // Erneuter Store ersetzt (Snapshot, kein Anwachsen).
+        // Erneuter Store ersetzt (Snapshot, kein Anwachsen) — S4-Migration:
+        // alte API-Zeilen verfallen dabei.
         cache
-            .modul_compat_store(
-                "4.11.0-LIVE.1",
-                &[row("X", "Modul", &["Y"])],
-                &[] as &[&str],
-            )
+            .modul_compat_store("module-overrides.json", &[row("X", "Modul", &["Y"])])
             .unwrap();
         let state = cache.modul_compat_state().unwrap().unwrap();
-        assert_eq!(state.version, "4.11.0-LIVE.1");
         assert_eq!(state.rows.len(), 1);
-        assert!(state.no_port_ships.is_empty());
     }
 
     #[test]
@@ -288,41 +263,35 @@ mod tests {
         let cache = Cache::open_in_memory().unwrap();
         cache
             .modul_compat_store(
-                "v1",
+                "module-overrides.json",
                 &[
-                    row("Aurora Mk II DM Module", "Modul", &["Aurora Mk II"]),
-                    row("Aurora Mk II TS Module", "Modul", &["Aurora Mk II"]),
-                    row("5CA 'Akura'", "Schild", &["C2 Hercules"]),
+                    row("Aurora MK II - DM Module", "Modul", &["RSI Aurora MK II"]),
+                    row("Aurora MK II - TS Module", "Modul", &["RSI Aurora MK II"]),
+                    row("Galaxy - Cargo Module", "Modul", &["RSI Galaxy"]),
                 ],
-                &["Hull E"],
             )
             .unwrap();
 
         let aur = cache
-            .modul_modules_for_ship("aurora   mk ii")
+            .modul_modules_for_ship("rsi aurora   mk ii")
             .unwrap()
             .unwrap();
         assert_eq!(aur.len(), 2);
-        // Schiff mit Ports und passendem Modul → genau die Zuordnungszeile.
         assert_eq!(
             cache
-                .modul_modules_for_ship("C2 Hercules")
+                .modul_modules_for_ship("RSI Galaxy")
                 .unwrap()
                 .unwrap()
                 .len(),
             1
         );
-        // Schiff OHNE Ports → Some(leer) → kein Modulfeld.
-        assert_eq!(
+        // Schiff ohne Datei-Eintrag → None → kein Modul-Feld (S4).
+        assert!(
             cache
-                .modul_modules_for_ship("Hull E")
+                .modul_modules_for_ship("Aegis Arrow")
                 .unwrap()
-                .unwrap()
-                .len(),
-            0
+                .is_none()
         );
-        // Unbekanntes Schiff (nicht in Zuordnung) → None (Fallschirm: alle).
-        assert!(cache.modul_modules_for_ship("Kraken").unwrap().is_none());
         assert!(cache.modul_modules_for_ship("").unwrap().is_none());
     }
 
@@ -331,12 +300,11 @@ mod tests {
         let cache = Cache::open_in_memory().unwrap();
         cache
             .modul_compat_store(
-                "v1",
+                "module-overrides.json",
                 &[
-                    row("A", "Modul", &["Aurora Mk II", "aurora mk ii"]),
-                    row("B", "Schild", &["C2 Hercules"]),
+                    row("A", "Modul", &["RSI Aurora MK II", "rsi aurora mk ii"]),
+                    row("B", "Modul", &["RSI Galaxy"]),
                 ],
-                &[] as &[&str],
             )
             .unwrap();
         let ships = cache.modul_ships_with_ports().unwrap();

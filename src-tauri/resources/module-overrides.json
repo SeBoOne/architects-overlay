@@ -1,8 +1,8 @@
 {
   "_meta": {
-    "description": "Manuelle Modul/Weapon-Kit-Zuweisungen (Schiff -> Module). Quelle: Sebo, da diese Items in der SC-Wiki-API nicht als Module erkennbar sind (Bombracks, Weapon Kits, Endeavor-Bays).",
-    "api_probes": {},
-    "note": "Kit-Namen (Idris/Kruger/Nova/Endeavor) werden per Name gematcht (die API splitet Kits in Bestandteile)."
+    "description": "Modul-Zuweisungen (Schiff -> Module) — seit S4 (t_66980b3c) die EINZIGE Quelle der Hangar-Modul-Kompatibilität (keine SC-Wiki-API mehr). Schiffe ohne Eintrag bekommen gar kein Modul-Feld.",
+    "ship_name_rule": "Schiffsname EXAKT wie im Hangar gepflegt (Match ist nur Case-/Whitespace-tolerant), z. B. 'RSI Aurora MK II'.",
+    "sync": "Bei jedem Sync/Refresh lädt die App diese Datei von der Gitea-Raw-URL (branch main) und cachet sie; Fallback: Remote-Cache -> Repo-Baseline (diese Datei). Doppelte Modul-Namen pro Schiff werden vereinigt."
   },
   "ships": [
     { "ship": "Aegis Eclipse", "modules": [

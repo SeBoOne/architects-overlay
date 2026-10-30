@@ -1,0 +1,106 @@
+{
+  "_doc": "Erzeugt vom Live-Test live_sync_file_only_and_decision (echte Gitea-Raw/Repo-Baseline + reale modul_for_ship_decision-Logik, S4 Nur-Datei-Regel) — NICHT von Hand editieren.",
+  "for_ship": {
+    "aegis arrow": {
+      "has_ports": false,
+      "known": false,
+      "modules": []
+    },
+    "aegis eclipse": {
+      "has_ports": true,
+      "known": true,
+      "modules": [
+        {
+          "category": "Bombrack",
+          "name": "S10 Bomb Rack Weapon Kit"
+        },
+        {
+          "category": "Bombrack",
+          "name": "S3 Bomb Rack Weapon Kit"
+        }
+      ]
+    },
+    "aegis retaliator": {
+      "has_ports": true,
+      "known": true,
+      "modules": [
+        {
+          "category": "Modul",
+          "name": "Cargo Module - Front"
+        },
+        {
+          "category": "Modul",
+          "name": "Cargo Module - Rear"
+        },
+        {
+          "category": "Modul",
+          "name": "Dropship Module"
+        },
+        {
+          "category": "Modul",
+          "name": "Living Module - Front"
+        },
+        {
+          "category": "Modul",
+          "name": "Living Module - Rear"
+        },
+        {
+          "category": "Bombrack",
+          "name": "Size 3 Bomb Rack - Front"
+        },
+        {
+          "category": "Bombrack",
+          "name": "Size 3 Bomb Rack - Rear"
+        },
+        {
+          "category": "Bombrack",
+          "name": "Size 5 Bomb Rack - Front"
+        },
+        {
+          "category": "Bombrack",
+          "name": "Size 5 Bomb Rack - Rear"
+        },
+        {
+          "category": "Modul",
+          "name": "Torpedo Module - Front"
+        },
+        {
+          "category": "Modul",
+          "name": "Torpedo Module - Rear"
+        }
+      ]
+    },
+    "rsi aurora mk ii": {
+      "has_ports": true,
+      "known": true,
+      "modules": [
+        {
+          "category": "Modul",
+          "name": "Aurora MK II - DM Module"
+        },
+        {
+          "category": "Modul",
+          "name": "Aurora MK II - TS Module"
+        }
+      ]
+    },
+    "rsi galaxy": {
+      "has_ports": true,
+      "known": true,
+      "modules": [
+        {
+          "category": "Modul",
+          "name": "Galaxy - Cargo Module"
+        },
+        {
+          "category": "Modul",
+          "name": "Galaxy - Med Bay Module"
+        },
+        {
+          "category": "Modul",
+          "name": "Galaxy - Refinery Module"
+        }
+      ]
+    }
+  }
+}

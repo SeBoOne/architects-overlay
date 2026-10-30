@@ -1,6 +1,0 @@
-{
-  "_doc": "Kuratierte Liste der Schiffe OHNE Modul-Ports (S3, t_988e132f, Punkt 4 — Review D1). Die paginierte SC-Wiki-/api/vehicles-Liste enthaelt keinen einzigen Port-losen Vehicle (Live-Scan 4.10.2: 310 Vehicles, 0 ohne Ports) — einige Schiffe fehlen in der Liste komplett (z. B. Hull E), sind aber im Einzel-Endpoint belegt portlos: GET /api/vehicles/hull-e -> ports:0, hardpoints:0 (verifiziert 2026-10-30). Diese Schiffe stehen daher hier manuell. Sebo kann die Liste ergaenzen (ships[] = Hangar-Namen, Case/Whitespace-tolerant, Praefix/Suffix wie 'MISC' wird toleriert). Die Liste wird beim Lesen gezogen — ein Resync nach einer Aenderung ist NICHT noetig.",
-  "ships": [
-    "Hull E"
-  ]
-}

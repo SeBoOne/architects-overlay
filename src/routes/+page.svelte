@@ -337,10 +337,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const r = await invoke<string>('modul_compat_refresh');
 			modulNote =
 				r === 'synced'
-					? 'Modul-Kompatibilität aktualisiert.'
-					: r === 'fresh'
-						? 'Daten sind bereits aktuell.'
-						: 'Aktualisierung läuft bereits.';
+					? 'Modul-Zuweisungen aktualisiert (module-overrides.json).'
+					: 'Aktualisierung läuft bereits.';
 			await modulLoadStatus();
 		} catch (e) {
 			modulNote = String(e);
@@ -857,32 +855,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let hangarModPick = $state('');
 	// S3 (t_988e132f): SC-Wiki-Modul-Kompatibilität. Das Autocomplete in den
 	// Ship-Details schlägt NUR Module vor, die laut Zuordnung zum Schiff
-	// passen; ohne Zuordnungseintrag (Fallschirm) den ganzen Katalog.
+	// S4 (t_66980b3c): Nur-Datei-Regel — Modul-Feld NUR bei Schiffen mit
+	// Eintrag in module-overrides.json; Autocomplete = ausschließlich deren
+	// Datei-Module. Kein API-Fallschirm mehr („kein Eintrag → alle Module“
+	// entfallen: kein Eintrag → gar kein Feld).
 	type ModulHit = { name: string; category: string };
 	type ModulForShip = { known: boolean; has_ports: boolean; modules: ModulHit[] };
 	let hangarWikiMods = $state<ModulForShip | null>(null);
-	let hangarWikiAll = $state<ModulHit[] | null>(null);
 	async function hangarLoadWikiMods(name: string) {
 		hangarWikiMods = null;
 		if (!name.trim()) return;
 		try {
 			hangarWikiMods = await invoke<ModulForShip>('modul_for_ship', { ship: name });
 		} catch {
-			hangarWikiMods = null; // Fallschirm: alle Module anbieten
+			hangarWikiMods = null; // kein Feld, bis die Zuordnung antwortet
 		}
 	}
-	async function hangarLoadCatalog() {
-		try {
-			const r = await invoke<ModulForShip>('modul_for_ship', { ship: '' });
-			hangarWikiAll = r.modules;
-		} catch {
-			hangarWikiAll = null;
-		}
-	}
-	// Modul-Eingabefeld nur bei Schiffen, die laut Zuordnung Ports haben
-	// (oder fallschirmweise, wenn die Zuordnung das Schiff nicht kennt).
 	const hangarModFieldVisible = $derived(
-		!hangarWikiMods || hangarWikiMods.known === false ? true : hangarWikiMods.has_ports
+		hangarWikiMods !== null && hangarWikiMods.known && hangarWikiMods.modules.length > 0
 	);
 	// R2: Zuordnung eines „unverbundenen“ Moduls (Basisschiff-Autocomplete).
 	let hangarAssignBase = $state('');
@@ -982,16 +972,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		};
 		const wiki = hangarWikiMods;
 		if (wiki && wiki.known) {
-			// Passende Module zuerst.
+			// S4: ausschließlich die Datei-Module des Schiffs.
 			for (const m of wiki.modules) {
-				if (q === '' || m.name.toLowerCase().includes(q)) {
-					push(m.name);
-					if (out.length >= 10) break;
-				}
-			}
-		} else {
-			// Fallschirm: ganzer Katalog (SC-Wiki), dann registrierte Einträge.
-			for (const m of hangarWikiAll ?? []) {
 				if (q === '' || m.name.toLowerCase().includes(q)) {
 					push(m.name);
 					if (out.length >= 10) break;
@@ -1199,10 +1181,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function hangarOpenDetail(item: HangarItem) {
 		hangarDetail = item;
 		hangarView = 'detail';
-		// S3 (t_988e132f): Zuordnung für dieses Schiff laden (Fallschirm null).
+		// S4: Zuweisung für dieses Schiff laden (nur Datei — ohne Eintrag
+		// bleibt hangarWikiMods null → kein Modul-Feld).
 		if (item.entity_type !== 'module') {
 			void hangarLoadWikiMods(item.name);
-			if (hangarWikiAll === null) void hangarLoadCatalog();
 		} else {
 			hangarWikiMods = null;
 		}
@@ -4596,16 +4578,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{:else}
 									<div class="hmodempty">Keine Module zugeordnet.</div>
 								{/each}
-								<!-- S3 (t_988e132f): Eingabefeld nur bei Schiffen, die laut
-								     Zuordnung Ports haben (Fallschirm: Zuordnung kennt das
-								     Schiff nicht → Feld bleibt sichtbar). -->
+								<!-- S4 (t_66980b3c): Nur-Datei-Regel — Feld NUR bei
+							     Schiffen mit Eintrag in module-overrides.json;
+							     kein API-Fallschirm mehr. -->
 								{#if hangarModFieldVisible}
 								<div class="hmod-add">
 									<RoutesTypeahead bind:value={hangarModPick} options={hangarModOpts} fullWidth ariaLabel="Modul suchen" placeholder="Modul suchen … (z. B. Exploration Module)" onselect={() => {}} />
 									<button type="button" class="hbtn" disabled={hangarBusy || !hangarModPick.trim()} onclick={hangarModuleAdd}>Hinzufügen</button>
 								</div>
 								{:else}
-								<div class="hmodempty">Dieses Schiff hat keine Modul-Ports (SC-Wiki-Zuordnung).</div>
+								<div class="hmodempty">Keine Modul-Zuweisung für dieses Schiff (module-overrides.json).</div>
 								{/if}
 							</div>
 						{:else if !hangarDetail.base_ship}
@@ -5062,11 +5044,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="cfg-note">{mktConfirmNote}</div>
 						{/if}
 				</section>
-				<!-- S3 (t_988e132f): Modul-Kompatibilität aus der SC-Wiki-API —
-				     Datenstand + manueller Sync (Background prüft stündlich die
-				     Game-Version, resynced nur bei Versionswechsel). -->
+				<!-- S4 (t_66980b3c): Modul-Zuweisungen ausschließlich aus
+				     module-overrides.json — kein game-versions-Trigger mehr;
+				     der Button zieht NUR die Remote-Datei. -->
 				<section class="cfg-sect">
-					<div class="h">Modul-Kompatibilität (SC-Wiki)</div>
+					<div class="h">Modul-Zuweisungen</div>
 					<div class="cfg-key-status">
 						Datenstand:
 						{#if modulStatus && modulStatus.version}
@@ -5078,18 +5060,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 					<div class="cfg-key-row">
 						<button type="button" class="btn" disabled={modulBusy} onclick={() => void modulRefreshNow()}>
-							{modulBusy ? 'Aktualisiere …' : 'Modul-Kompatibilität aktualisieren'}
+							{modulBusy ? 'Aktualisiere …' : 'Modul-Zuweisungen aktualisieren'}
 						</button>
 					</div>
 					{#if modulNote}
 						<div class="cfg-note">{modulNote}</div>
 					{/if}
 					<div class="cfg-note">
-						Quelle: SC-Wiki (Hardpoints × Modul-Katalog) — 1 Sync pro Game-Version.
-						Manuelle Zuweisungen (BombRacks, Weapon-Kits, Endeavor-Bays) aus
-						module-overrides.json — Repo-Baseline, optional per Remote-Datei
-						(Gitea-Raw) überschrieben; Änderungen greifen mit dem nächsten
-						Sync/Refresh.
+						Quelle: module-overrides.json (Repo-Baseline) — die EINZIGE Quelle
+						der Modul-Zuordnung; Modul-Felder erscheinen nur bei Schiffen mit
+						Eintrag in der Datei. Optional per Remote-Datei (Gitea-Raw)
+						überschrieben; der Button zieht nur diese Datei (kein
+						Game-Version-Check mehr).
 					</div>
 				</section>
 				</div>
