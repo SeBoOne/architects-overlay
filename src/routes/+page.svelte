@@ -683,7 +683,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// base_ship + ship_code go into the haystack so "Cutlass" finds the Modules.
 	// Leerstring = everything (like the other In-Context-Filters).
 	const hangarFiltered = $derived.by(() => {
-		let items = hangarItems;
+		// TB (t_78a4a5e5, Punkt 2): verlinkte Module sind KEINE Listen-Einträge
+		// mehr — sie erscheinen ausschließlich in den Ship-Details ihres
+		// Basisschiffs. Bezugslose bleiben sichtbar („Modul (unverbunden)“,
+		// R2-Vereinbarung: manuelle Zuordnung bis sie verlinkt sind).
+		let items = hangarItems.filter((i) => i.entity_type !== 'module' || !i.base_ship.trim());
 		if (hangarFilter === 'pledge') items = items.filter((i) => i.origin === 'pledge');
 		else if (hangarFilter === 'ingame') items = items.filter((i) => i.origin === 'ingame');
 		else if (hangarFilter === 'lti') items = items.filter((i) => i.insurance === 'LTI');
@@ -856,6 +860,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// den registrierten Modul-Einträgen (Import liefert z. B. „600i
 	// Exploration Module“), Freitext bleibt erlaubt.
 	let hangarModPick = $state('');
+	// TB (t_78a4a5e5, Punkt 2): Modul-Add erfasst zusätzlich Versicherung
+	// und Herkunft (gleiche Optionen wie der Hangar-Eintrag). Herkunft ist
+	// Pflichtwahl (startet leer), Versicherung '' = Ohne.
+	let hangarModIns = $state('');
+	let hangarModOrigin = $state('');
 	// S3 (t_988e132f): SC-Wiki-Modul-Kompatibilität. Das Autocomplete in den
 	// Ship-Details schlägt NUR Module vor, die laut Zuordnung zum Schiff
 	// S4 (t_66980b3c): Nur-Datei-Regel — Modul-Feld NUR bei Schiffen mit
@@ -1122,11 +1131,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	// R2 (Punkt 8): Modul in den Ship-Details hinzufügen (entity_type=module,
-	// base_ship=Schiff) — der einzige Weg, Module anzulegen.
+	// base_ship=Schiff) — der einzige Weg, Module anzulegen. TB
+	// (t_78a4a5e5, Punkt 2): mit Versicherung + Herkunft aus den Selects.
 	async function hangarModuleAdd() {
 		const ship = hangarDetail;
 		const modName = hangarModPick.trim();
 		if (!ship || !modName) return;
+		if (!hangarModOrigin) {
+			hangarNoteSet('Bitte die Herkunft des Moduls wählen.');
+			return;
+		}
 		hangarBusy = true;
 		hangarNoteSet('');
 		try {
@@ -1136,10 +1150,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					name: modName,
 					entity_type: 'module',
 					base_ship: ship.name,
-					origin: ship.origin
+					origin: hangarModOrigin,
+					insurance: hangarModIns === '' ? null : hangarModIns
 				}
 			});
 			hangarModPick = '';
+			hangarModIns = '';
+			hangarModOrigin = '';
 			await loadHangar(true);
 			const fresh = hangarItems.find((i) => i.id === ship.id);
 			if (fresh) hangarDetail = fresh;
@@ -4589,8 +4606,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="hd-mods">
 								<div class="h">Module ({hangarModulesOf(hangarDetail.name).length})</div>
 								{#each hangarModulesOf(hangarDetail.name) as m (m.id ?? m.name)}
+									<!-- TB (t_78a4a5e5, Punkt 2): Modulzeile zeigt Versicherung
+									     UND Herkunft; Klick auf den Namen öffnet das Edit-Popup. -->
 									<div class="hmod">
-										<span>{hangarDisplayName(m)}</span>
+										<button type="button" class="hmod-name" title="Modul bearbeiten" aria-label={`Modul ${hangarDisplayName(m)} bearbeiten`} onclick={() => hangarStartEdit(m)}>{hangarDisplayName(m)}</button>
+										<span class="hchip o-{m.origin}">{m.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
 										<span class="hchip ins">{m.insurance ?? '—'}</span>
 										<button type="button" class="hmod-x" title="Modul entfernen" aria-label={`Modul ${hangarDisplayName(m)} entfernen`} disabled={hangarBusy} onclick={() => hangarModuleRemove(m)}>✕</button>
 									</div>
@@ -4603,6 +4623,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{#if hangarModFieldVisible}
 								<div class="hmod-add">
 									<RoutesTypeahead bind:value={hangarModPick} options={hangarModOpts} fullWidth ariaLabel="Modul suchen" placeholder="Modul suchen … (z. B. Exploration Module)" onselect={() => {}} />
+								</div>
+								<!-- TB (t_78a4a5e5, Punkt 2): Versicherung + Herkunft je Modul —
+								     gleiche Optionen wie der Hangar-Eintrag; Herkunft ist
+								     Pflichtwahl (startet leer), Versicherung '' = Ohne. -->
+								<div class="hmod-add hmod-add-meta">
+									<SelectCombo bind:value={hangarModOrigin} ariaLabel="Modul-Herkunft" placeholder="— Herkunft wählen —" options={[{ value: 'pledge', label: 'Pledged' }, { value: 'ingame', label: 'In-Game' }]} />
+									<SelectCombo bind:value={hangarModIns} ariaLabel="Modul-Versicherung" options={INSURANCE_CHOICES} placeholder="Ohne" />
 									<button type="button" class="hbtn" disabled={hangarBusy || !hangarModPick.trim()} onclick={hangarModuleAdd}>Hinzufügen</button>
 								</div>
 								{/if}
@@ -4636,8 +4663,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="trk-field">
 								<span class="trk-lbl">Name</span>
 								<!-- R2 (Punkt 2/9): einheitlicher Typeahead (Maus + Tastatur),
-								     ALLE Schiffe UND Fahrzeuge (registrierte zuerst, dann Katalog). -->
-								<RoutesTypeahead bind:value={hangarForm.name} options={hangarNameOpts} fullWidth ariaLabel="Schiff/Fahrzeug-Name" placeholder="z. B. Cutlass Black" onselect={hangarPickName} />
+								     ALLE Schiffe UND Fahrzeuge (registrierte zuerst, dann Katalog).
+								     TB (t_78a4a5e5, Punkt 2): bei Modul-Edit Freitext — das
+								     Name-Typeahead schlägt Schiffe vor und würde via
+								     hangarPickName den entity_type des Moduls überschreiben. -->
+								{#if hangarForm.entity_type === 'module'}
+									<input class="rtext" style="width: 100%" aria-label="Modul-Name" placeholder="z. B. Cargo/Explorer-Modul" bind:value={hangarForm.name} />
+								{:else}
+									<RoutesTypeahead bind:value={hangarForm.name} options={hangarNameOpts} fullWidth ariaLabel="Schiff/Fahrzeug-Name" placeholder="z. B. Cutlass Black" onselect={hangarPickName} />
+								{/if}
 							</div>
 							<div class="hform-row">
 								<!-- R2 (Punkt 3): Overlay-Dropdowns (QY-2-Stil) statt nativer
@@ -4646,8 +4680,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="trk-field">
 									<span class="trk-lbl">Typ</span>
 									<!-- TB (t_78a4a5e5, Punkt 1): startet leer (Platzhalter) —
-									     Pflichtwahl bei Speichern. -->
-									<SelectCombo bind:value={hangarForm.entity_type} ariaLabel="Typ" placeholder="— bitte wählen —" options={[{ value: 'ship', label: 'Schiff' }, { value: 'vehicle', label: 'Fahrzeug' }]} />
+									     Pflichtwahl bei Speichern. TB Punkt 2: bei Modul-Edit
+									     statisch „Modul“ (Module werden nicht als Schiff/Fahrzeug
+									     umtypisiert; die Auswahl kennt keinen Modul-Eintrag). -->
+									{#if hangarForm.entity_type === 'module'}
+										<input class="rtext" style="width: 100%" value="Modul" disabled aria-label="Typ (Modul)" />
+									{:else}
+										<SelectCombo bind:value={hangarForm.entity_type} ariaLabel="Typ" placeholder="— bitte wählen —" options={[{ value: 'ship', label: 'Schiff' }, { value: 'vehicle', label: 'Fahrzeug' }]} />
+									{/if}
 								</div>
 								<div class="trk-field">
 									<span class="trk-lbl">Herkunft</span>

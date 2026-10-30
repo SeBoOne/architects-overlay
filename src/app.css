@@ -3437,3 +3437,21 @@ html[data-window="spotlight"] .shell {
 .hmod-add .rta-input {
   width: 100%;
 }
+/* TB (t_78a4a5e5, Punkt 2): Modul-Add-Zeile mit Versicherung + Herkunft
+   (Selects rechts neben dem Typeahead), klickbarer Modul-Name zum Editieren. */
+.hmod-add-meta .scb-input {
+  width: 170px;
+  flex: initial;
+}
+.hmod-name {
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+.hmod-name:hover {
+  color: var(--accent);
+}
