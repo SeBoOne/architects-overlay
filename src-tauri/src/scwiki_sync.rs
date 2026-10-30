@@ -1,58 +1,57 @@
-//! SC-Wiki-Modul-Kompatibilität (S3, Karte t_988e132f): Background-Sync,
-//! Tauri-Commands und die manuelle Modul-Zuweisung (BombRacks/Weapon-Kits).
+//! Modul-Zuweisung (S4, Karte t_66980b3c): Modul-Kompatibilität kommt
+//! AUSSCHLIESSLICH aus `module-overrides.json` — die SC-Wiki-API liefert
+//! KEINE Modul-Daten mehr (weder Hardpoints/Ports noch Item-Katalog).
 //!
-//! * Stündlicher Check von `/api/game-versions/default` — nur bei
-//!   Versionswechsel (oder leerer Tabelle) Resync (Etikette: 1 Sync pro
-//!   Version, ~30 geringratete Requests).
-//! * `modul_compat_refresh` — manueller Force-Sync aus den Settings.
-//! * `modul_for_ship` — Zuordnungs-Abfrage für das Hangar-Modul-Autocomplete.
-//! * Manuelle Zuweisung (`module-overrides.json`, S3/D2 — Items, die in der
-//!   SC-Wiki-API nicht als Module erkennbar sind): Repo-Baseline wird zur
-//!   Lesezeit in den API-Datensatz verschmolzen — Änderungen an der Liste
-//!   brauchen KEINEN Resync. Bei jedem Sync/Refresh wird zusätzlich die
-//!   Remote-Datei von der Gitea-Raw-URL geladen (für Endnutzer ohne
-//!   Update-Trigger), im Cache gecacht; Fallback-Kette: Remote-Cache →
-//!   Repo-Baseline.
+//! * Die `modul_compat`-Tabelle wird bei jedem Sync aus der Zuweisungs-Datei
+//!   neu befüllt (Repo-Baseline, zusätzlich Remote-Override von der
+//!   Gitea-Raw-URL — Fehler sind nicht fatal, Fallback-Kette Remote-Cache →
+//!   Repo-Baseline). Der erste Sync überschreibt damit auch alte API-Daten
+//!   (Migration: API-Datensatz verfällt, Nutzereinträge im Hangar bleiben).
+//! * Stündlicher Lauf: lädt die Remote-Datei (1 Request) — kein
+//!   game-versions-Trigger mehr.
+//! * `modul_compat_refresh` — manueller Force-Sync aus den Settings
+//!   („Modul-Zuweisungen aktualisieren“), zieht NUR die Remote-Datei.
+//! * `modul_for_ship` — Nur-Datei-Regel: Schiff mit Eintrag in der Datei →
+//!   Modul-Feld mit GENAU den Datei-Modulen; Schiff ohne Eintrag → gar
+//!   kein Modul-Feld (kein API-Fallschirm mehr).
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use cache::Cache;
 use cache::modul_compat::{ModulCompatRow, ModulCompatState};
-use scwiki_client::{MODULE_TYPES, ScWikiClient};
 use serde::Serialize;
 use tauri::State;
 
 use crate::trade::TradeState;
 
-/// Stündlicher Versions-Check (Karte: „prüft stündlich /game-versions/default").
+/// Stündlicher Remote-Refresh (1 Request auf die Gitea-Raw-URL — kein
+/// Game-Version-Check mehr, die Zuweisung lebt in der Datei).
 pub const MODUL_SYNC_INTERVAL: Duration = Duration::from_secs(60 * 60);
-/// Erster Sync-Lauf kurz nach Boot, damit die Tabelle beim ersten Hangar-
-/// Aufruf gefüllt ist („erster Lauf" aus der Karte).
+/// Erster Lauf kurz nach Boot, damit die Tabelle beim ersten Hangar-Aufruf
+/// aus der Datei gefüllt ist.
 const FIRST_SYNC_DELAY: Duration = Duration::from_secs(15);
 
 /// Prozessweite Busy-Markierung gegen parallele Syncs (Stunde + manueller
 /// Button). `AtomicBool` genügt: nur ein App-Prozess pro Cache.
 static SYNC_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-#[derive(Debug, serde::Deserialize)]
-struct NoPortFile {
-    #[serde(default)]
-    ships: Vec<String>,
-}
+// ---------- Modul-Zuweisung (module-overrides.json, S4: einzige Quelle) ----------
 
-// ---------- Manuelle Modul-Zuweisung (S3/D2, module-overrides.json) ----------
+/// Quelle-Label für die `meta`-Version (Info-Anzeige in den Settings — die
+/// SC-Wiki-Game-Version ist als Trigger entfallen).
+pub const SOURCE_LABEL: &str = "module-overrides.json";
 
-/// Repo-Baseline der manuellen Zuweisung (Sebo-Lieferung, 16 Schiffe:
-/// BombRacks per API-Tag, Idris/Kruger/Meteor/Nova-Kits + Endeavor-Bays per
-/// Name-Match — in der SC-Wiki-API nicht als Module erkennbar).
+/// Repo-Baseline der Zuweisung (Sebo, 17 Schiffe: Eclipse/Retaliator/
+/// Gladiator-BombRacks, Idris/Kruger/Meteor/Nova-Kits, Endeavor-Bays,
+/// Aurora MK II, Galaxy). Einzige Quelle der Modul-Zuordnung (S4).
 const BASELINE_OVERRIDES: &str = include_str!("../resources/module-overrides.json");
 
-/// Remote-Override (Gitea-Raw, branch `main`): Endnutzer ohne Update-Trigger
-/// bekommen Änderungen an der Zuweisung mit dem nächsten Sync/Refresh —
-/// gecacht im Cache-DB, Fallback auf die Repo-Baseline. Hinweis: Das Gitea-
-/// Repo ist privat — kann der Endnutzer die URL nicht lesen (403/404),
-/// greift die Fallback-Kette (Remote-Cache → Repo-Baseline).
+/// Remote-Override (Gitea-Raw, branch `main`): Sebo pflegt die Datei im Repo,
+/// Endnutzer bekommen Änderungen mit dem nächsten Sync/Refresh — gecacht im
+/// Cache-DB, Fallback auf die Repo-Baseline. Hinweis: Das Gitea-Repo ist
+/// privat — kann der Endnutzer die URL nicht lesen (403/404), greift die
+/// Fallback-Kette (Remote-Cache → Repo-Baseline).
 const REMOTE_OVERRIDES_URL: &str = "https://git.sebo-home.de/sebo/architects-overlay/raw/branch/main/resources/module-overrides.json";
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -70,7 +69,7 @@ struct OverrideFile {
 }
 
 /// Deutsche Kategorie-Labels für die Autocomplete-Anzeige (aus dem
-/// Zuweisungs-Namen abgeleitet — die API kennt die Items nicht).
+/// Zuweisungs-Namen abgeleitet).
 fn override_category(module: &str) -> String {
     let ml = module.to_lowercase();
     if ml.contains("bomb rack") || ml.contains("bombrack") {
@@ -82,19 +81,9 @@ fn override_category(module: &str) -> String {
     }
 }
 
-/// Strenge Match-Norm für Overrides: lowercase, Satzzeichen/-striche als
-/// Trenner („RSI Meteor - Laser Weapon Kit" matcht auch
-/// „RSI Meteor Laser Weapon Kit" der API).
-fn match_norm(name: &str) -> String {
-    name.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|p| !p.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 /// Übersetzt eine Zuweisungs-Datei (ship → modules) in Zuordnungs-Zeilen
 /// (Modul → Schiffe). Parse-Fehler sind NICHT fatal — leere Liste + Log.
+/// Doppelte Modul-Namen pro Datei werden vereinigt (ein Eintrag pro Modul).
 fn override_rows(text: &str, source: &str) -> Vec<ModulCompatRow> {
     match serde_json::from_str::<OverrideFile>(text) {
         Ok(file) => {
@@ -133,44 +122,7 @@ fn override_rows(text: &str, source: &str) -> Vec<ModulCompatRow> {
     }
 }
 
-/// Verschmilzt Override-Zeilen in die API-Zeilen (S3/D2, toleranter
-/// Name-Match): Kits werden von der API in Bestandteile aufgeteilt — eine
-/// API-Zeile, deren strenge Norm den Kit-Namen enthält („… Weapons Kit
-/// Cannon" ⊃ „Kruger Ballistic Weapons Kit"), bekommt die Kit-Schiffe
-/// zugeschlagen; zusätzlich existiert der Kit-Name selbst als Zeile
-/// (Fallschirm: genau der Name, den Sebo pflegt). Guard: Kit-Norm ≥ 10
-/// Zeichen, damit kurze Namen nicht über den ganzen Katalog laufen.
-fn merge_overrides_rows(
-    mut rows: Vec<ModulCompatRow>,
-    overrides: &[ModulCompatRow],
-) -> Vec<ModulCompatRow> {
-    for o in overrides {
-        let on = match_norm(&o.name);
-        for r in rows.iter_mut() {
-            let rn = match_norm(&r.name);
-            if !on.is_empty() && on.len() >= 10 && rn != on && rn.contains(&on) {
-                for s in &o.ships {
-                    if !r.ships.contains(s) {
-                        r.ships.push(s.clone());
-                    }
-                }
-            }
-        }
-        match rows.iter_mut().find(|r| match_norm(&r.name) == on) {
-            Some(existing) => {
-                for s in &o.ships {
-                    if !existing.ships.contains(s) {
-                        existing.ships.push(s.clone());
-                    }
-                }
-            }
-            None => rows.push(o.clone()),
-        }
-    }
-    rows
-}
-
-/// Effektive Override-Zeilen zum Lesen: Remote-Cache (letzte erfolgreich
+/// Effektive Zuweisungs-Zeilen zum Lesen: Remote-Cache (letzte erfolgreich
 /// gefetchte Remote-Datei) → sonst Repo-Baseline.
 fn effective_override_rows(cache: &Cache) -> Vec<ModulCompatRow> {
     let cached = cache
@@ -192,8 +144,8 @@ fn effective_override_rows(cache: &Cache) -> Vec<ModulCompatRow> {
 }
 
 /// Lädt bei jedem Sync/Refresh die Remote-Datei von der Gitea-Raw-URL und
-/// cachet sie (S3/D2). Fehler sind NICHT fatal — Fallback-Kette greift beim
-/// nächsten Lesen (Remote-Cache → Repo-Baseline).
+/// cachet sie. Fehler sind NICHT fatal — Fallback-Kette greift beim nächsten
+/// Lesen (Remote-Cache → Repo-Baseline).
 async fn sync_remote_overrides(cache: &Cache) {
     let client = match reqwest::Client::builder()
         .timeout(REMOTE_TIMEOUT)
@@ -243,106 +195,33 @@ async fn sync_remote_overrides(cache: &Cache) {
     }
 }
 
-/// Kuratierte Liste der Schiffe OHNE Modul-Ports (`no_port_ships.json`,
-/// Review D1): Die paginierte `/api/vehicles`-Liste kennt keinen einzigen
-/// Port-losen Vehicle (Live-Stand 4.10.2: 310 Vehicles, 0 ohne Ports) und
-/// lässt Schiffe wie Hull E komplett weg — die sind nur im Einzel-Endpoint
-/// belegt portlos. Parse-Fehler sind NICHT fatal (wie bombracks.json).
-fn curated_no_port_ships() -> Vec<String> {
-    match serde_json::from_str::<NoPortFile>(include_str!("no_port_ships.json")) {
-        Ok(file) => file.ships,
-        Err(e) => {
-            log::error!("no_port_ships.json unparsabel — Liste übersprungen: {e}");
-            Vec::new()
-        }
-    }
-}
-
-/// Match gegen die kuratierte Liste: exakt ODER als eigenständige Namens-
-/// gruppe („MISC Hull E" matcht „Hull E", „Hull C" matcht „Hull E" nicht).
-fn matches_curated(needle: &str, candidates: &[String]) -> bool {
-    candidates.iter().any(|c| {
-        let n = norm_name(c);
-        if n.is_empty() {
-            return false;
-        }
-        n == needle
-            || needle.starts_with(&format!("{n} "))
-            || needle.ends_with(&format!(" {n}"))
-            || needle.contains(&format!(" {n} "))
-    })
-}
-
-/// Ein Sync-Durchlauf. `force=true` (Settings-Button) synced auch, wenn die
-/// gespeicherte Version noch aktuell ist. Rückkehr: "fresh" | "synced".
-pub async fn sync_once(cache: &Cache, force: bool) -> Result<String, String> {
+/// Ein Sync-Durchlauf: Remote-Datei laden (nicht fatal), dann die Tabelle
+/// AUSSCHLIESSLICH aus der effektiven Zuweisungs-Datei neu befüllen
+/// (Snapshot: DELETE + INSERT — ersetzt auch alte API-Daten, Migration S4).
+/// Rückkehr: "synced" | "busy".
+pub async fn sync_once(cache: &Cache) -> Result<String, String> {
     if SYNC_BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return Ok("busy".to_string());
     }
-    let out = sync_once_inner(cache, force).await;
+    let out = sync_once_inner(cache).await;
     SYNC_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
     out
 }
 
-async fn sync_once_inner(cache: &Cache, force: bool) -> Result<String, String> {
-    let client = ScWikiClient::new(scwiki_client::DEFAULT_BASE_URL)
-        .map_err(|e| format!("scwiki client: {e}"))?;
-    let version = client
-        .game_version_default()
-        .await
-        .map_err(|e| format!("scwiki game-version: {e}"))?;
-
-    if !force {
-        if let Some(state) = cache.modul_compat_state().map_err(|e| e.to_string())? {
-            if state.version == version.code && !state.rows.is_empty() {
-                return Ok("fresh".to_string());
-            }
-        }
-    }
-
-    let vehicles = client
-        .vehicles()
-        .await
-        .map_err(|e| format!("scwiki vehicles: {e}"))?;
-    let no_port_ships: Vec<String> = vehicles
-        .iter()
-        .filter(|v| v.ports.is_empty())
-        .map(|v| v.name.clone())
-        .chain(curated_no_port_ships())
-        .collect();
-    let with_ports: Vec<scwiki_client::VehiclePorts> = vehicles
-        .into_iter()
-        .filter(|v| !v.ports.is_empty())
-        .collect();
-
-    let items = client
-        .items_by_types(MODULE_TYPES)
-        .await
-        .map_err(|e| format!("scwiki items: {e}"))?;
-
-    // Remote-Override mit jedem echten Sync laden (S3/D2) — Fehler sind
-    // nicht fatal (Fallback-Kette Cache → Repo-Baseline).
+async fn sync_once_inner(cache: &Cache) -> Result<String, String> {
+    // Remote-Override laden (S4: einzige Fremd-Quelle neben der Baseline;
+    // Fehler sind nicht fatal — Fallback-Kette Cache → Repo-Baseline).
     sync_remote_overrides(cache).await;
-
-    let compat = scwiki_client::build_compat(&with_ports, &items);
-    // Reine API-Snapshot-Zeilen speichern — Overrides werden zur Lesezeit
-    // verschmolzen (Änderungen an der Liste brauchen keinen Resync).
-    let rows: Vec<ModulCompatRow> = compat
-        .into_iter()
-        .map(|r| ModulCompatRow {
-            name: r.module_name,
-            category: r.category,
-            ships: r.ships,
-        })
-        .collect();
+    let rows = effective_override_rows(cache);
+    if rows.is_empty() {
+        return Err("module-overrides: keine Zuweisungen (Baseline unparsabel?)".to_string());
+    }
     cache
-        .modul_compat_store(&version.code, &rows, &no_port_ships)
+        .modul_compat_store(SOURCE_LABEL, &rows)
         .map_err(|e| e.to_string())?;
     log::info!(
-        "modul-sync: {} gespeichert (version {}, {} Schiffe ohne Ports)",
-        rows.len(),
-        version.code,
-        no_port_ships.len()
+        "modul-sync: {} Zuweisungen aus der Datei gespeichert",
+        rows.len()
     );
     Ok("synced".to_string())
 }
@@ -352,7 +231,7 @@ async fn sync_once_inner(cache: &Cache, force: bool) -> Result<String, String> {
 pub fn spawn_modul_sync(cache: Arc<Cache>) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_SYNC_DELAY).await;
-        match sync_once(&cache, false).await {
+        match sync_once(&cache).await {
             Ok(ref other) if other == "synced" => {
                 log::info!("modul-sync: erster Lauf abgeschlossen")
             }
@@ -361,7 +240,7 @@ pub fn spawn_modul_sync(cache: Arc<Cache>) {
         }
         loop {
             tokio::time::sleep(MODUL_SYNC_INTERVAL).await;
-            if let Err(e) = sync_once(&cache, false).await {
+            if let Err(e) = sync_once(&cache).await {
                 log::warn!("modul-sync: stündlicher Lauf fehlgeschlagen: {e}");
             }
         }
@@ -387,9 +266,11 @@ pub struct ModulHit {
 
 #[derive(Serialize, Debug)]
 pub struct ModulForShip {
-    /// `false` = Schiff in der Zuordnung unbekannt (Fallschirm: alle Module).
+    /// `false` = Schiff hat KEINEN Eintrag in module-overrides.json →
+    /// kein Modul-Feld (S4 Nur-Datei-Regel).
     pub known: bool,
-    /// `false` = Schiff ohne Ports → Modul-Eingabefeld verstecken.
+    /// `true` nur bei Schiffen mit Datei-Eintrag (S4: es gibt keine
+    /// API-Ports mehr, das Feld hängt allein an der Datei).
     pub has_ports: bool,
     pub modules: Vec<ModulHit>,
 }
@@ -398,105 +279,57 @@ pub struct ModulForShip {
 pub fn modul_compat_status(state: State<'_, TradeState>) -> Result<ModulStatus, String> {
     let cache = &state.cache;
     let s: Option<ModulCompatState> = cache.modul_compat_state().map_err(|e| e.to_string())?;
-    Ok(match s {
-        None => ModulStatus {
+    // Zählung auf die EFFEKTIVE Datei (Remote-Cache → Repo-Baseline) — auch
+    // vor dem ersten Sync aussagekräftig.
+    let rows = effective_override_rows(cache);
+    if rows.is_empty() {
+        return Ok(ModulStatus {
             version: String::new(),
             synced_at: 0,
             age_seconds: None,
             module_count: 0,
             ship_count: 0,
-        },
-        Some(s) => {
-            let age = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-                .checked_sub(s.synced_at);
-            // Zählung auf den EFFEKTIVEN Datensatz (API + Overrides).
-            let merged = merge_overrides_rows(s.rows.clone(), &effective_override_rows(cache));
-            ModulStatus {
-                version: s.version,
-                synced_at: s.synced_at,
-                age_seconds: age,
-                module_count: merged.len(),
-                ship_count: merged
-                    .iter()
-                    .flat_map(|r| r.ships.iter())
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len(),
-            }
-        }
+        });
+    }
+    let synced_at = s.as_ref().map_or(0, |s| s.synced_at);
+    let age = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+        .checked_sub(synced_at)
+        .filter(|_| synced_at > 0);
+    Ok(ModulStatus {
+        version: SOURCE_LABEL.to_string(),
+        synced_at,
+        age_seconds: age,
+        module_count: rows.len(),
+        ship_count: rows
+            .iter()
+            .flat_map(|r| r.ships.iter())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
     })
 }
 
 #[tauri::command]
 pub async fn modul_compat_refresh(state: State<'_, TradeState>) -> Result<String, String> {
-    sync_once(&state.cache, true).await
+    sync_once(&state.cache).await
 }
 
-/// Modul-Zuordnung für ein Schiff (Hangar-Modul-Autocomplete). Leerer
-/// `ship` → gesamter Katalog (Fallschirm-Quelle für „alle Module").
-/// Reine Entscheidungslogik hinter `modul_for_ship` — ohne Tauri-State
-/// testbar (Review D1: Belege müssen den echten Pfad treffen). `overrides`
-/// = manuelle Zuweisung (module-overrides.json, zur Lesezeit verschmolzen).
-pub fn modul_for_ship_decision(
-    ship: &str,
-    curated: &[String],
-    overrides: &[ModulCompatRow],
-    s: Option<&ModulCompatState>,
-) -> ModulForShip {
+/// Modul-Zuordnung für ein Schiff (Hangar-Modul-Autocomplete) — S4
+/// Nur-Datei-Regel: nur Schiffe mit Eintrag in `module-overrides.json`
+/// bekommen das Feld, Autocomplete = ausschließlich deren Datei-Module.
+/// Reine Entscheidungslogik — ohne Tauri-State testbar.
+pub fn modul_for_ship_decision(ship: &str, overrides: &[ModulCompatRow]) -> ModulForShip {
     let needle = norm_name(ship);
-    // Kuratierte No-Port-Liste (no_port_ships.json, Review D1) — gilt auch
-    // VOR dem ersten Sync (Feld muss nie auf ein portloses Schiff zeigen).
-    if !ship.trim().is_empty() && matches_curated(&needle, curated) {
-        return ModulForShip {
-            known: true,
-            has_ports: false,
-            modules: Vec::new(),
-        };
-    }
-    let Some(s) = s else {
-        // Kein API-Datensatz: Fallschirm — Feld zeigen. Override-Schiffe
-        // (z. B. BombRack-Träger) kennen ihre Module aber auch jetzt schon.
-        let modules: Vec<ModulHit> = overrides
-            .iter()
-            .filter(|r| r.ships.iter().any(|v| norm_name(v) == needle))
-            .map(|r| ModulHit {
-                name: r.name.clone(),
-                category: r.category.clone(),
-            })
-            .collect();
-        return ModulForShip {
-            known: !ship.trim().is_empty() && !modules.is_empty(),
-            has_ports: true,
-            modules,
-        };
-    };
-    // Effektiver Katalog: API-Snapshot + Overrides (S3/D2).
-    let rows = merge_overrides_rows(s.rows.clone(), overrides);
-    if ship.trim().is_empty() {
-        // Gesamtkatalog (Fallschirm).
+    if needle.is_empty() {
         return ModulForShip {
             known: false,
-            has_ports: true,
-            modules: rows
-                .iter()
-                .map(|r| ModulHit {
-                    name: r.name.clone(),
-                    category: r.category.clone(),
-                })
-                .collect(),
-        };
-    }
-    // Ohne Ports → bekannt, kein Modulfeld.
-    if s.no_port_ships.iter().any(|v| norm_name(v) == needle) {
-        return ModulForShip {
-            known: true,
             has_ports: false,
             modules: Vec::new(),
         };
     }
-    let modules: Vec<ModulHit> = rows
+    let modules: Vec<ModulHit> = overrides
         .iter()
         .filter(|r| r.ships.iter().any(|v| norm_name(v) == needle))
         .map(|r| ModulHit {
@@ -505,12 +338,11 @@ pub fn modul_for_ship_decision(
         })
         .collect();
     if modules.is_empty() {
-        // Mit Ports, aber keine passenden Module in der Zuordnung →
-        // Fallschirm (alle Module), dokumentiert in der Karte.
+        // Kein Datei-Eintrag → gar kein Modul-Feld (S4).
         ModulForShip {
             known: false,
-            has_ports: true,
-            modules: Vec::new(),
+            has_ports: false,
+            modules,
         }
     } else {
         ModulForShip {
@@ -523,17 +355,8 @@ pub fn modul_for_ship_decision(
 
 #[tauri::command]
 pub fn modul_for_ship(state: State<'_, TradeState>, ship: String) -> Result<ModulForShip, String> {
-    let s: Option<ModulCompatState> = state
-        .cache
-        .modul_compat_state()
-        .map_err(|e| e.to_string())?;
     let overrides = effective_override_rows(&state.cache);
-    Ok(modul_for_ship_decision(
-        &ship,
-        &curated_no_port_ships(),
-        &overrides,
-        s.as_ref(),
-    ))
+    Ok(modul_for_ship_decision(&ship, &overrides))
 }
 
 /// Gleiche Normalisierung wie `cache::modul_compat::norm` (Case +
@@ -558,88 +381,49 @@ mod tests {
         }
     }
 
-    /// Kuratierte No-Port-Liste: geparst, nicht leer, Hull E drin.
-    #[test]
-    fn curated_no_port_list_parses() {
-        let list = curated_no_port_ships();
-        assert!(!list.is_empty(), "no_port_ships.json leer — D1 unbelegt");
-        assert!(
-            list.iter().any(|s| norm_name(s) == "hull e"),
-            "Hull E fehlt in der kuratierten Liste: {list:?}"
-        );
-    }
-
-    /// Namens-Match: Präfix/Suffix-Toleranz, keine Fehltreffer.
-    #[test]
-    fn curated_match_tolerates_prefix_but_no_crossmatch() {
-        let list = vec!["Hull E".to_string()];
-        assert!(matches_curated(&norm_name("Hull E"), &list));
-        assert!(matches_curated(&norm_name("MISC Hull E"), &list));
-        assert!(!matches_curated(&norm_name("MISC Hull C"), &list));
-        assert!(!matches_curated(&norm_name("Kraken"), &list));
-        assert!(!matches_curated(&norm_name(""), &list));
-    }
-
-    /// Der reale Entscheidungs-Pfad (Review D1): Hull E aus der kuratierten
-    /// Liste → Feld versteckt; das gilt auch VOR dem ersten Sync (State None).
-    #[test]
-    fn decision_hides_module_field_for_curated_no_port_ship() {
-        let curated = curated_no_port_ships();
-        let overrides = Vec::new();
-        for ship in ["Hull E", "MISC Hull E", "  hull   e  "] {
-            let d = modul_for_ship_decision(ship, &curated, &overrides, None);
-            assert!(d.known && !d.has_ports, "{ship}: {d:?}");
-            assert!(d.modules.is_empty());
-        }
-        // Portloses Gegenstück darf nicht fälschlich matchen.
-        let d = modul_for_ship_decision("MISC Hull C", &curated, &overrides, None);
-        assert!(!d.known && d.has_ports, "Hull C: {d:?}");
-        // Mit Cache-Datensatz bleibt Aurora der Normalfall (Feld sichtbar,
-        // nur passende Module).
-        let cache = Cache::open_in_memory().unwrap();
-        cache
-            .modul_compat_store(
-                "v1",
-                &[ModulCompatRow {
-                    name: "Aurora Mk II DM Module".into(),
-                    category: "Modul".into(),
-                    ships: vec!["Aurora Mk II".into()],
-                }],
-                &["Hull E"],
-            )
-            .unwrap();
-        let state = cache.modul_compat_state().unwrap().unwrap();
-        let d = modul_for_ship_decision("Aurora Mk II", &curated, &overrides, Some(&state));
-        assert!(d.known && d.has_ports && d.modules.len() == 1, "{d:?}");
-    }
-
-    /// Sebo-Lieferung (S3/D2): Die Repo-Baseline parst, enthält 16 Schiffe —
-    /// BombRacks (Eclips/Retaliator/Gladiator), Kits (Idris/Kruger/Meteor/
-    /// Nova) und Endeavor-Bays.
+    /// Sebos Lieferung (S4-Baseline): Die Datei parst, enthält 17 Schiffe —
+    /// Eclipse/Retaliator/Gladiator-BombRacks, Kits (Idris/Kruger/Meteor/
+    /// Nova), Endeavor-Bays, Aurora MK II und Galaxy.
     #[test]
     fn override_baseline_parses_with_sebo_ships() {
         let rows = override_rows(BASELINE_OVERRIDES, "test");
         assert!(!rows.is_empty(), "Baseline unparsabel oder leer");
-        let ships: std::collections::BTreeSet<&str> = rows
-            .iter()
-            .flat_map(|r| r.ships.iter().map(|s| s.as_str()))
-            .collect();
-        assert!(ships.len() >= 15, "zu wenige Schiffe: {ships:?}");
-        for ship in [
-            "Aegis Eclips",
-            "Aegis Retaliator",
-            "Anvil Gladiator",
-            "Aegis Idris M",
-            "Kruger L-21 Wolf",
-            "MISC Endeavor",
-            "RSI Meteor",
-            "Tumbril Nova",
-        ] {
-            assert!(ships.contains(ship), "{ship} fehlt: {ships:?}");
+        let mut by_ship: std::collections::BTreeMap<&str, usize> =
+            std::collections::BTreeMap::new();
+        for r in &rows {
+            for s in &r.ships {
+                *by_ship.entry(s.as_str()).or_default() += 1;
+            }
         }
-        let eclipse = rows.iter().find(|r| r.name == "Eclipse BombRack").unwrap();
+        assert!(by_ship.len() >= 17, "zu wenige Schiffe: {by_ship:?}");
+        for (ship, modules) in [
+            ("Aegis Eclipse", 2), // 3 Datei-Einträge, S10 doppelt → 2 unique
+            ("Aegis Retaliator", 11),
+            ("RSI Galaxy", 3),
+            ("RSI Aurora MK II", 2),
+            ("Anvil Gladiator", 2),
+            ("Aegis Idris M", 2),
+            ("Kruger L-21 Wolf", 1),
+            ("MISC Endeavor", 9),
+            ("RSI Meteor", 1),
+            ("Tumbril Nova", 1),
+        ] {
+            assert_eq!(by_ship.get(ship), Some(&modules), "{ship}: {by_ship:?}");
+        }
+        let eclipse = rows
+            .iter()
+            .find(|r| r.name == "S10 Bomb Rack Weapon Kit")
+            .unwrap();
         assert_eq!(eclipse.category, "Bombrack");
-        assert!(eclipse.ships.contains(&"Aegis Eclips".to_string()));
+        assert!(eclipse.ships.contains(&"Aegis Eclipse".to_string()));
+        // Retaliator hat eigene Racks („Size 3/5 Bomb Rack …“) — keine
+        // geteilte Zeile mit dem Eclipse-S10-Kit.
+        assert!(!eclipse.ships.contains(&"Aegis Retaliator".to_string()));
+        let ret_rack = rows
+            .iter()
+            .find(|r| r.name == "Size 5 Bomb Rack - Front")
+            .unwrap();
+        assert!(ret_rack.ships.contains(&"Aegis Retaliator".to_string()));
         let kit = rows
             .iter()
             .find(|r| r.name == "Kruger Ballistic Weapons Kit")
@@ -651,246 +435,194 @@ mod tests {
         assert!(idris.ships.contains(&"Aegis Idris P".to_string()));
     }
 
-    /// Toleranter Name-Match (S3/D2): Kits werden von der API in Bestand-
-    /// teile aufgeteilt — die API-Zeile bekommt die Kit-Schiffe; der Kit-Name
-    /// selbst existiert als Zeile; Satzzeichen-Toleranz („-"); kurze Namen
-    /// laufen nicht über den Katalog (Len-Guard).
+    /// S4 Nur-Datei-Regel am echten Entscheidungs-Pfad: Eclipse = nur seine
+    /// Racks, Retaliator = seine 11 Module, Galaxy = seine 3 Module,
+    /// Aurora MK II = DM/TS — und ein Schiff OHNE Datei-Eintrag (Arrow)
+    /// bekommt GAR KEIN Modul-Feld mehr (kein API-Fallschirm).
     #[test]
-    fn merge_overrides_tolerant_kit_components() {
-        let api = vec![
-            row("Kruger Ballistic Weapons Kit Cannon", "Waffe", &[]),
-            row("RSI Meteor Laser Weapon Kit", "Waffe", &[]),
-            row("Aurora Mk II DM Module", "Modul", &["Aurora Mk II"]),
-        ];
-        let overrides = vec![
-            ModulCompatRow {
-                name: "Kruger Ballistic Weapons Kit".into(),
-                category: "Weapon-Kit".into(),
-                ships: vec!["Kruger S-65 Stingray".into()],
-            },
-            ModulCompatRow {
-                name: "RSI Meteor - Laser Weapon Kit".into(),
-                category: "Weapon-Kit".into(),
-                ships: vec!["RSI Meteor".into()],
-            },
-            ModulCompatRow {
-                name: "Aegis".into(), // kurz — kein Katalog-Overmatch
-                category: "Modul".into(),
-                ships: vec!["X".into()],
-            },
-        ];
-        let merged = merge_overrides_rows(api, &overrides);
-        // Bestandteil trägt die Kit-Schiffe …
-        let comp = merged
-            .iter()
-            .find(|r| r.name == "Kruger Ballistic Weapons Kit Cannon")
-            .unwrap();
+    fn decision_file_only_rule() {
+        let overrides = override_rows(BASELINE_OVERRIDES, "test");
+        assert!(!overrides.is_empty());
+
+        let ecl = modul_for_ship_decision("Aegis Eclipse", &overrides);
+        assert!(ecl.known && ecl.has_ports, "{ecl:?}");
         assert!(
-            comp.ships.contains(&"Kruger S-65 Stingray".to_string()),
-            "{comp:?}"
+            ecl.modules.iter().all(|m| m.name.contains("Bomb Rack")),
+            "Fremd-Module bei Eclipse: {ecl:?}"
         );
-        // … Kit-Name existiert selbst als Zeile …
         assert!(
-            merged
+            ecl.modules
                 .iter()
-                .any(|r| r.name == "Kruger Ballistic Weapons Kit")
+                .all(|m| !m.name.contains("Retaliator") && !m.name.contains("Galadiator")),
+            "Fremd-BombRacks bei Eclipse: {ecl:?}"
         );
-        // … Satzzeichen-Toleranz: Der Meteor-Override matcht die API-Zeile
-        // (kein Duplikat "RSI Meteor - Laser Weapon Kit").
-        let meteor = merged
-            .iter()
-            .find(|r| r.name == "RSI Meteor Laser Weapon Kit")
-            .unwrap();
+
+        let ret = modul_for_ship_decision("Aegis Retaliator", &overrides);
+        assert_eq!(ret.modules.len(), 11, "{ret:?}");
+        // Genau die 11 Datei-Module (Living/Cargo/Torpedo/Dropship + 4 Racks),
+        // keine Fremd-Module (z. B. Galaxy Refinery).
         assert!(
-            meteor.ships.contains(&"RSI Meteor".to_string()),
-            "{meteor:?}"
-        );
-        assert!(
-            !merged
+            ret.modules
                 .iter()
-                .any(|r| r.name == "RSI Meteor - Laser Weapon Kit")
+                .all(|m| !m.name.contains("Galaxy") && !m.name.contains("Refinery")),
+            "{ret:?}"
         );
-        // Len-Guard: Kurzer Override-Name matcht keine Fremdzeilen …
-        let sabre = merged
-            .iter()
-            .find(|r| r.name.contains("Aurora Mk II DM"))
-            .unwrap();
-        assert!(!sabre.ships.contains(&"X".to_string()), "{sabre:?}");
-        // … existiert aber als eigene Zeile.
-        assert!(merged.iter().any(|r| r.name == "Aegis"));
-        // Aurora-Zeile unverändert (2 Schiffe nie dabei).
-        assert_eq!(sabre.ships, vec!["Aurora Mk II".to_string()]);
-        // Merge ist idempotent (keine Doppel-Schiffe bei zweitem Lauf).
-        let again = merge_overrides_rows(merged.clone(), &overrides);
-        let comp2 = again
-            .iter()
-            .find(|r| r.name == "Kruger Ballistic Weapons Kit Cannon")
-            .unwrap();
-        assert_eq!(comp2.ships.len(), comp.ships.len());
+
+        let gal = modul_for_ship_decision("RSI Galaxy", &overrides);
+        assert_eq!(gal.modules.len(), 3, "{gal:?}");
+        for expect in ["Cargo Module", "Med Bay Module", "Refinery Module"] {
+            assert!(
+                gal.modules.iter().any(|m| m.name.contains(expect)),
+                "{expect} fehlt: {gal:?}"
+            );
+        }
+
+        // Match ist Case/Whitespace-tolerant (Hangar-Name „RSI Aurora MK II“).
+        let aur = modul_for_ship_decision("  rsi aurora   mk ii ", &overrides);
+        assert!(aur.known && aur.modules.len() == 2, "{aur:?}");
+
+        // Schiff ohne Datei-Eintrag → GAR KEIN Modul-Feld (S4 Kernregel).
+        for ship in ["Arrow", "Aegis Arrow", "Kraken", "MISC Hull C"] {
+            let d = modul_for_ship_decision(ship, &overrides);
+            assert!(
+                !d.known && !d.has_ports && d.modules.is_empty(),
+                "{ship}: {d:?}"
+            );
+        }
+        // Leerer Name ebenso.
+        let d = modul_for_ship_decision("", &overrides);
+        assert!(!d.known && d.has_ports == false && d.modules.is_empty());
     }
 
-    /// Lesezeit-Merge (S3/D2): Eclips bekommt sein BombRack auch OHNE
-    /// API-Datensatz (vor dem ersten Sync); mit Datensatz bleibt die
-    /// Aurora-Zuordnung unangetastet.
+    /// Remote-Cache-Vorrang: gecachte Remote-Datei überschreibt die Baseline;
+    /// unparsabler Remote-Cache fällt auf die Baseline zurück.
     #[test]
-    fn decision_merges_overrides_at_read_time() {
-        let curated = curated_no_port_ships();
-        let overrides = vec![ModulCompatRow {
-            name: "Eclipse BombRack".into(),
-            category: "Bombrack".into(),
-            ships: vec!["Aegis Eclips".into()],
-        }];
-        // Vor dem ersten Sync: Override-Schiff ist bekannt mit seinem Modul.
-        let d = modul_for_ship_decision("Aegis Eclips", &curated, &overrides, None);
-        assert!(d.known && d.has_ports, "{d:?}");
-        assert_eq!(d.modules.len(), 1);
-        assert_eq!(d.modules[0].name, "Eclipse BombRack");
-        // Fremdes Schiff bleibt Fallschirm.
-        let d = modul_for_ship_decision("Aurora Mk II", &curated, &overrides, None);
-        assert!(!d.known && d.has_ports && d.modules.is_empty(), "{d:?}");
-        // Mit API-Datensatz: Overrides kommen in der Zuordnung dazu.
+    fn effective_rows_remote_cache_precedence() {
         let cache = Cache::open_in_memory().unwrap();
+        // Ohne Remote-Cache: Baseline.
+        let base = effective_override_rows(&cache);
+        assert!(base.iter().any(|r| r.name == "S10 Bomb Rack Weapon Kit"));
+        // Remote-Cache mit eigener Datei → deren Zeilen.
         cache
-            .modul_compat_store(
-                "v1",
-                &[row("DM", "Modul", &["Aurora Mk II"])],
-                &[] as &[&str],
+            .modul_overrides_cache_set(
+                r#"{"ships": [{"ship": "Test Ship", "modules": ["Test Modul A"]}]}"#,
             )
             .unwrap();
-        let state = cache.modul_compat_state().unwrap().unwrap();
-        let ecl = modul_for_ship_decision("Aegis Eclips", &curated, &overrides, Some(&state));
-        assert!(ecl.known && ecl.modules.len() == 1, "{ecl:?}");
+        let eff = effective_override_rows(&cache);
+        assert_eq!(eff.len(), 1);
+        assert_eq!(eff[0].name, "Test Modul A");
+        // Unparsabler Remote-Cache → Fallback Baseline.
+        cache.modul_overrides_cache_set("{ kaputt").unwrap();
+        let eff = effective_override_rows(&cache);
+        assert!(eff.iter().any(|r| r.name == "S10 Bomb Rack Weapon Kit"));
     }
 
-    async fn sync_once_wait_busy(cache: &Cache, force: bool) -> String {
-        // Tests laufen parallel und teilen SYNC_BUSY — "busy" einfach
-        // abwarten statt als Erfolg zu verbuchen.
-        loop {
-            let out = sync_once(cache, force).await.unwrap();
+    /// Sync befüllt die Tabelle ausschließlich aus der Datei (Snapshot
+    /// ersetzt alte API-Daten — Migration S4); der Entscheidungs-Pfad liest
+    /// die Lesezeit-Zeilen (Remote-Cache → Baseline).
+    #[test]
+    fn sync_stores_file_rows_only() {
+        let cache = Cache::open_in_memory().unwrap();
+        // Simulierter alter API-Datensatz (Migration: muss verfallen).
+        cache
+            .modul_compat_store(
+                "4.10.2-LIVE.12881860",
+                &[row("API Legacy Modul", "Modul", &["Aurora Mk II"])],
+            )
+            .unwrap();
+        // Remote-Cache leer → Sync befüllt aus der Repo-Baseline.
+        cache.modul_overrides_cache_clear().unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let out = rt.block_on(async {
+            loop {
+                let out = sync_once(&cache).await.unwrap();
+                if out != "busy" {
+                    break out;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        });
+        assert_eq!(out, "synced");
+        let state = cache.modul_compat_state().unwrap().expect("Datensatz");
+        assert_eq!(state.version, SOURCE_LABEL);
+        // Kein API-Legacy-Modul mehr in der Tabelle.
+        assert!(
+            !state.rows.iter().any(|r| r.name == "API Legacy Modul"),
+            "API-Altbestand nicht verfallen: {}",
+            state.rows.len()
+        );
+        // Alles kommt aus der Datei: Eclipse + Galaxy drin, Aurora Mk II
+        // (alte API-Schreibweise) nicht mehr als Zeilen-Schiff.
+        let ships: std::collections::BTreeSet<String> = state
+            .rows
+            .iter()
+            .flat_map(|r| r.ships.iter().cloned())
+            .collect();
+        assert!(ships.contains("Aegis Eclipse") && ships.contains("RSI Galaxy"));
+        assert!(!ships.contains("Aurora Mk II"), "API-Rest: {ships:?}");
+    }
+
+    /// Live-Beleg für S4 (t_66980b3c): Der Sync läuft gegen die echte
+    /// Gitea-Raw-URL (privat → im CI/lokal ohne Login fällt er auf die
+    /// Repo-Baseline zurück — beides muss "synced" liefern), die Tabelle
+    /// enthält danach ausschließlich Datei-Zeilen, und die Nur-Datei-Regel
+    /// liefert Eclipse/Racks, Retaliator/11, Galaxy/3, Arrow/kein Feld.
+    /// Ignored by default — `cargo test -p architects-overlay --lib --
+    /// --ignored modul` (nur 1 geringrateter Request pro Lauf).
+    #[tokio::test]
+    #[ignore = "live Gitea-Raw — run with -- --ignored"]
+    async fn live_sync_file_only_and_decision() {
+        let cache = Cache::open_in_memory().unwrap();
+        let outcome = loop {
+            let out = sync_once(&cache).await.unwrap();
             if out != "busy" {
-                return out;
+                break out;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-    }
-
-    /// Live-Beleg für S3 (t_988e132f): Der Sync läuft einmal gegen die echte
-    /// SC-Wiki-API, die Tabelle füllt sich, und die Cross-Referenz liefert
-    /// für die Aurora Mk II ihre Defense/Transport-Module (DM/TS). Ignored
-    /// by default — `cargo test -p architects-overlay --lib -- --ignored
-    /// scwiki` (nur wenige geringratete Requests, 1 Sync pro Version).
-    #[tokio::test]
-    #[ignore = "live SC-Wiki — run with -- --ignored"]
-    async fn live_sync_fills_cache_and_aurora() {
-        let cache = Cache::open_in_memory().unwrap();
-        let outcome = sync_once_wait_busy(&cache, true).await;
+        };
         assert_eq!(outcome, "synced");
 
         let state = cache.modul_compat_state().unwrap().expect("Datensatz");
-        assert!(!state.version.is_empty(), "Game-Version gespeichert");
+        assert_eq!(state.version, SOURCE_LABEL);
         assert!(state.synced_at > 0);
-        assert!(!state.rows.is_empty(), "Modul-Zuordnung gefüllt");
+        assert!(!state.rows.is_empty(), "Zuweisungen aus der Datei gefüllt");
 
-        // Aurora Mk II: Defense/Transport-Module laut Zuordnung.
-        let aur = cache
-            .modul_modules_for_ship("Aurora Mk II")
-            .unwrap()
-            .expect("Aurora Mk II in Zuordnung");
-        let names: Vec<&str> = aur.iter().map(|r| r.name.as_str()).collect();
-        assert!(
-            names.iter().any(|n| n.contains("DM Module")),
-            "DM-Modul fehlt in Aurora-Zuordnung: {names:?}"
-        );
-        assert!(
-            names.iter().any(|n| n.contains("TS Module")),
-            "TS-Modul fehlt in Aurora-Zuordnung: {names:?}"
-        );
+        // Entscheidungs-Pfad auf den GESPEICHERTEN (nicht nur Lesezeit-)
+        // Datensatz: Nur-Datei-Regel greift.
+        let ecl = modul_for_ship_decision("Aegis Eclipse", &state.rows);
+        assert!(ecl.known && ecl.modules.iter().all(|m| m.name.contains("Bomb Rack")));
+        let ret = modul_for_ship_decision("Aegis Retaliator", &state.rows);
+        assert_eq!(ret.modules.len(), 11);
+        let gal = modul_for_ship_decision("RSI Galaxy", &state.rows);
+        assert_eq!(gal.modules.len(), 3);
+        let arrow = modul_for_ship_decision("Aegis Arrow", &state.rows);
+        assert!(!arrow.known && !arrow.has_ports && arrow.modules.is_empty());
 
-        // Schiffe ohne Ports (falls vorhanden) sind bekannt — Live-Stand
-        // 4.10.2: alle 310 Vehicles tragen Ports, die Liste darf also leer
-        // sein; die Query selbst darf nur nicht fehlschlagen.
-        let _ = &state.no_port_ships;
+        // Zweiter Lauf ist erneut "synced" (kein Game-Version-Gate mehr).
+        let second = loop {
+            let out = sync_once(&cache).await.unwrap();
+            if out != "busy" {
+                break out;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        };
+        assert_eq!(second, "synced");
 
-        // Zweiter Lauf ohne Force → "fresh" (Etikette: 1 Sync pro Version).
-        let second = sync_once(&cache, false).await.unwrap();
-        assert_eq!(second, "fresh");
-    }
-
-    /// Live-Beleg für den D1-Fix (Review Runde 1): Hull E ist in der
-    /// paginierten /api/vehicles-Liste nicht enthalten, im Einzel-Endpoint
-    /// aber belegt portlos (ports:0) — und über die kuratierte Liste liefert
-    /// der reale Entscheidungs-Pfad has_ports:false. Schreibt außerdem das
-    /// Fixture für die UI-Probe (docs/scripts/s3-modul-fixture.json) aus
-    /// echten modul_for_ship_decision-Ergebnissen — inkl. BombRack-/Kit-
-    /// Schiff aus der Sebo-Lieferung (S3/D2, zur Lesezeit verschmolzen).
-    #[tokio::test]
-    #[ignore = "live SC-Wiki — run with -- --ignored"]
-    async fn live_hull_e_portless_and_probe_fixture() {
-        let client = ScWikiClient::new(scwiki_client::DEFAULT_BASE_URL).unwrap();
-        // API-Beleg: Hull E existiert (Einzeln-Endpoint) und hat 0 Ports.
-        let hull_e = client.vehicle_by_slug("hull-e").await.unwrap();
-        assert!(
-            hull_e.ports.is_empty(),
-            "Hull E plötzlich mit Ports — kuratierte Liste prüfen"
-        );
-
-        let curated = curated_no_port_ships();
-        let d = modul_for_ship_decision("Hull E", &curated, &[], None);
-        assert!(d.known && !d.has_ports, "Hull E: {d:?}");
-
-        // Fixture aus dem echten Pfad für die UI-Probe.
-        let cache = Cache::open_in_memory().unwrap();
-        let outcome = sync_once_wait_busy(&cache, true).await;
-        assert_eq!(outcome, "synced");
-        let state = cache.modul_compat_state().unwrap();
+        // Fixture aus dem echten Pfad für die UI-Probe (S4): Nur-Datei-
+        // Ergebnisse für die Probe-Schiffe — inkl. Arrow OHNE Datei-Eintrag.
         let overrides = effective_override_rows(&cache);
-        assert!(
-            overrides.iter().any(
-                |r| r.name == "Eclipse BombRack" && r.ships.iter().any(|s| s == "Aegis Eclips")
-            ),
-            "Repo-Baseline nicht geladen: Eclipse BombRack fehlt"
-        );
-        let aurora = modul_for_ship_decision("Aurora Mk II", &curated, &overrides, state.as_ref());
-        assert!(aurora.has_ports && !aurora.modules.is_empty(), "{aurora:?}");
-        // S3/D2: BombRack-Schiff aus Sebos Lieferung — Modul kommt aus der
-        // manuellen Zuweisung (API kennt es nicht als Modul).
-        let eclips = modul_for_ship_decision("Aegis Eclips", &curated, &overrides, state.as_ref());
-        assert!(eclips.known && eclips.has_ports, "{eclips:?}");
-        assert!(
-            eclips.modules.iter().any(|m| m.name == "Eclipse BombRack"),
-            "Eclipse BombRack fehlt in Eclips-Zuordnung: {eclips:?}"
-        );
-        // Kein Fremd-BombRack (Retaliator/Gladiator) im Eclips-Vorschlag.
-        assert!(
-            eclips
-                .modules
-                .iter()
-                .all(|m| !m.name.contains("Retaliator") && !m.name.contains("Gladiator")),
-            "Fremd-BombRacks in Eclips-Zuordnung: {eclips:?}"
-        );
-        // Kit-Schiff: Kruger P-52 Merlin → Snub Laser Kit.
-        let merlin =
-            modul_for_ship_decision("Kruger P-52 Merlin", &curated, &overrides, state.as_ref());
-        assert!(merlin.known, "{merlin:?}");
-        assert!(
-            merlin
-                .modules
-                .iter()
-                .any(|m| m.name == "Kruger Snub Laser Weapons Kit"),
-            "Kruger Snub Laser Weapons Kit fehlt: {merlin:?}"
-        );
         let fixture = serde_json::json!({
-            "_doc": "Erzeugt vom Live-Test live_hull_e_portless_and_probe_fixture (echte SC-Wiki-API + reale modul_for_ship_decision-Logik + Lesezeit-Merge der Sebo-Overrides) — NICHT von Hand editieren.",
-            "generated_version": cache.modul_compat_state().unwrap().unwrap().version,
+            "_doc": "Erzeugt vom Live-Test live_sync_file_only_and_decision (echte Gitea-Raw/Repo-Baseline + reale modul_for_ship_decision-Logik, S4 Nur-Datei-Regel) — NICHT von Hand editieren.",
             "for_ship": {
-                "aurora mk ii": aurora,
-                "hull e": d,
-                "aegis eclips": eclips,
-                "kruger p-52 merlin": merlin,
+                "aegis eclipse": modul_for_ship_decision("Aegis Eclipse", &overrides),
+                "aegis retaliator": modul_for_ship_decision("Aegis Retaliator", &overrides),
+                "rsi galaxy": modul_for_ship_decision("RSI Galaxy", &overrides),
+                "rsi aurora mk ii": modul_for_ship_decision("RSI Aurora MK II", &overrides),
+                "aegis arrow": modul_for_ship_decision("Aegis Arrow", &overrides),
             }
         });
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../docs/scripts/s3-modul-fixture.json");
+            .join("../docs/scripts/s4-modul-fixture.json");
         std::fs::write(&path, serde_json::to_string_pretty(&fixture).unwrap()).unwrap();
         println!("fixture geschrieben: {}", path.display());
     }

@@ -52,6 +52,26 @@ Rust-Workspace prüfen:
 cargo check --workspace
 ```
 
+## Modul-Zuweisungen (module-overrides.json)
+
+Seit S4 (t_66980b3c) kommt die Hangar-Modul-Kompatibilität **ausschließlich**
+aus `src-tauri/resources/module-overrides.json` — die SC-Wiki-API liefert
+keine Modul-Daten mehr (Hardpoints/Ports und Item-Katalog sind raus).
+
+Pflege der Datei:
+- Eintrag pro Schiff: `"ship"` = Schiffsname **exakt** wie im Hangar gepflegt
+  (Match ist nur Case-/Whitespace-tolerant, z. B. `RSI Aurora MK II`).
+- `"modules"` = Liste der Modul-Namen, so wie sie im Autocomplete erscheinen
+  sollen (z. B. `Galaxy - Cargo Module`). Doppelte Namen pro Schiff werden
+  beim Einlesen vereinigt.
+- Schiffe **ohne** Eintrag in der Datei bekommen **gar kein** Modul-Feld im
+  Hangar — die Datei ist die einzige Quelle (kein API-Fallback).
+- Remote-Override: Die App lädt bei jedem Sync/Refresh (stündlicher Loop +
+  Settings-Button „Modul-Zuweisungen aktualisieren“) die Datei von der
+  Gitea-Raw-URL (`resources/module-overrides.json` auf `main`) und cachet
+  sie; Fallback-Kette bei Fehler: Remote-Cache → Repo-Baseline. Änderungen
+  an der Datei im Repo greifen damit auch ohne App-Update.
+
 ## Shortcuts
 
 | Taste | Kontext | Aktion |
