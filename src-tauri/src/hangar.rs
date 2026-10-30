@@ -159,7 +159,10 @@ pub fn parse_xplorer_json(text: &str) -> Result<(Vec<HangarItem>, usize), String
             manufacturer: str_of(v, "manufacturer_name")
                 .or_else(|| str_of(v, "manufacturer_code"))
                 .unwrap_or_default(),
-            purchase_price: parse_usd(str_of(v, "pledge_cost").as_deref()),
+            // TB (t_78a4a5e5, Punkt 3): Hangar-Preise werden nicht mehr
+            // geführt — Importe ignorieren `pledge_cost` (Spalte bleibt in
+            // der DB, wird nicht mehr befüllt/gezeigt).
+            purchase_price: None,
             purchase_date: parse_xplorer_date(str_of(v, "pledge_date").as_deref()),
             pledge_id: str_of(v, "pledge_id").unwrap_or_default(),
             pledge_name: String::new(),
@@ -188,12 +191,12 @@ pub fn parse_ccugame_csv(text: &str) -> Result<(Vec<HangarItem>, usize), String>
     let i_name = idx("name").ok_or("CCUgame-CSV: Spalte 'name' fehlt")?;
     let i_pledge = idx("pledgeId");
     let i_ins = idx("insurance");
-    let i_msrp = idx("msrp");
-    let i_pledge_cost = idx("pledge");
     let i_date = idx("date");
     let i_custom = idx("customName");
     let _i_account = idx("account");
     let _i_package = idx("packageName");
+    let _i_msrp = idx("msrp"); // TB (t_78a4a5e5, Punkt 3): bewusst verworfen.
+    let _i_pledge_cost = idx("pledge"); // TB (t_78a4a5e5, Punkt 3): bewusst verworfen.
 
     let mut out = Vec::new();
     for row in rows.iter() {
@@ -222,10 +225,8 @@ pub fn parse_ccugame_csv(text: &str) -> Result<(Vec<HangarItem>, usize), String>
             base_ship: String::new(),
             ship_code: String::new(),
             manufacturer: String::new(),
-            purchase_price: cell(i_pledge_cost)
-                .parse::<f64>()
-                .ok()
-                .or_else(|| parse_usd(Some(&cell(i_pledge_cost)))),
+            // TB (t_78a4a5e5, Punkt 3): Import ignoriert msrp/pledge-Preise.
+            purchase_price: None,
             purchase_date: cell(i_date),
             pledge_id: cell(i_pledge),
             pledge_name: String::new(),
@@ -234,7 +235,6 @@ pub fn parse_ccugame_csv(text: &str) -> Result<(Vec<HangarItem>, usize), String>
             created_at: None,
             updated_at: None,
         });
-        let _ = i_msrp; // MSRP zeigt den Listenpreis, kein eigenes Feld nötig — bewusst verworfen.
     }
     Ok((out, skipped))
 }
@@ -255,16 +255,8 @@ fn normalize_insurance(raw: &str) -> Option<String> {
     Some(raw.to_string())
 }
 
-/// "$180.00 USD" / "$0.00" → 180.0.
-fn parse_usd(v: Option<&str>) -> Option<f64> {
-    let v = v?.trim();
-    let digits: String = v
-        .chars()
-        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == ',' || *c == '-')
-        .collect();
-    let digits = digits.replace(',', "");
-    digits.parse::<f64>().ok()
-}
+// TB (t_78a4a5e5, Punkt 3): `parse_usd` entfernt — Hangar-Preise werden
+// nicht mehr geführt (Import verwirft msrp/pledge_cost).
 
 /// "July 12, 2024" → "2024-07-12"; nicht parsebar → Originaltext zurück.
 fn parse_xplorer_date(v: Option<&str>) -> String {
@@ -973,13 +965,14 @@ mod tests {
         assert_eq!(rift.name, "600i Exploration Module");
         assert_eq!(rift.custom_name, "Riftwalker");
         assert_eq!(rift.insurance.as_deref(), Some("LTI"));
-        assert_eq!(rift.purchase_price, Some(180.0));
+        // TB (t_78a4a5e5, Punkt 3): Import schreibt keine Preise mehr.
+        assert_eq!(rift.purchase_price, None);
         assert_eq!(rift.purchase_date, "2024-07-12");
         assert_eq!(rift.pledge_id, "71394952");
         assert_eq!(rift.manufacturer, "Origin Jumpworks");
         // Nicht-LTI → kein insurance-Feld
         assert!(items[1].insurance.is_none());
-        assert_eq!(items[1].purchase_price, Some(0.0));
+        assert_eq!(items[1].purchase_price, None);
     }
 
     #[test]
@@ -997,7 +990,8 @@ mod tests {
         assert_eq!(items.len(), 3);
         assert_eq!(items[0].insurance.as_deref(), Some("LTI"));
         assert_eq!(items[0].custom_name, "Riftwalker");
-        assert_eq!(items[0].purchase_price, Some(180.0));
+        // TB (t_78a4a5e5, Punkt 3): CSV-Import schreibt keine Preise mehr.
+        assert_eq!(items[0].purchase_price, None);
         assert_eq!(items[1].insurance.as_deref(), Some("3 Monate"));
         assert_eq!(items[1].custom_name, "");
         // Leere Versicherung → None, leerer pledgeId → keine Merge-Key
@@ -1011,6 +1005,17 @@ mod tests {
     }
 
     #[test]
+    fn import_parsers_ignore_prices() {
+        // TB (t_78a4a5e5, Punkt 3): Importe verwerfen Preisangaben (XPLorer
+        // `pledge_cost`, CCUgame `msrp`/`pledge`) — die DB-Spalte bleibt,
+        // wird aber nie mehr befüllt.
+        let (x, _) = parse_xplorer_json(XPLORER_SAMPLE).unwrap();
+        assert!(x.iter().all(|i| i.purchase_price.is_none()), "XPLorer: keine Preise");
+        let (c, _) = parse_ccugame_csv(CCUGAME_SAMPLE).unwrap();
+        assert!(c.iter().all(|i| i.purchase_price.is_none()), "CSV: keine Preise");
+    }
+
+    #[test]
     fn normalize_insurance_maps_values() {
         assert_eq!(normalize_insurance("LTI").as_deref(), Some("LTI"));
         assert_eq!(normalize_insurance("lti").as_deref(), Some("LTI"));
@@ -1018,15 +1023,6 @@ mod tests {
         assert_eq!(normalize_insurance("120").as_deref(), Some("120 Monate"));
         assert_eq!(normalize_insurance(""), None);
         assert_eq!(normalize_insurance("Standard"), Some("Standard".into()));
-    }
-
-    #[test]
-    fn parse_usd_handles_currency_strings() {
-        assert_eq!(parse_usd(Some("$180.00 USD")), Some(180.0));
-        assert_eq!(parse_usd(Some("$0.00")), Some(0.0));
-        assert_eq!(parse_usd(Some("75")), Some(75.0));
-        assert_eq!(parse_usd(Some("n/a")), None);
-        assert_eq!(parse_usd(None), None);
     }
 
     #[test]

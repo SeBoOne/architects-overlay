@@ -842,7 +842,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let hangarFormOpen = $state(false);
 	let hangarEdit = $state(false);
 	let hangarForm = $state<HangarItem>(hangarBlank());
-	let hangarFormPrice = $state('');
+	// TB (t_78a4a5e5, Punkt 3): Hangar-Preise ENTFERNT — kein Preis-Feld mehr
+	// im Formular, keine Anzeige; die DB-Spalte bleibt, wird nicht mehr befüllt.
 	// R2 (Punkt 6): Datum im Formular als dd.mm.jjjj (Anzeige/Eingabe) —
 	// gespeichert wird ISO (Konvertierung in hangarSaveForm).
 	let hangarFormDate = $state('');
@@ -1017,7 +1018,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	function hangarOpenAdd() {
 		hangarForm = hangarBlank();
-		hangarFormPrice = '';
 		hangarFormDate = '';
 		hangarFormIns = '';
 		hangarFormOpen = true;
@@ -1028,7 +1028,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	function hangarStartEdit(it: HangarItem) {
 		hangarForm = { ...it };
-		hangarFormPrice = it.purchase_price != null ? String(it.purchase_price) : '';
 		hangarFormDate = isoToDe(it.purchase_date);
 		hangarFormIns = it.insurance ?? '';
 		hangarEdit = true;
@@ -1068,13 +1067,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const name = hangarForm.name.trim();
 			if (!name) throw new Error('Name fehlt');
-			const price = hangarFormPrice.trim();
 			const item: HangarItem = {
 				...hangarForm,
 				name,
 				insurance: hangarFormIns === '' ? null : hangarFormIns,
 				purchase_date: deToIso(hangarFormDate),
-				purchase_price: price === '' ? null : Number(price.replace(',', '.'))
+				// TB (t_78a4a5e5, Punkt 3): Preise werden nicht mehr erfasst —
+				// Spalte bleibt in der DB, wird aber nie mehr befüllt.
+				purchase_price: null
 			};
 			let msg;
 			if (item.id != null) {
@@ -4553,7 +4553,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								</span>
 								<span class="hchip o-{it.origin}">{it.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
 								<span class="hchip ins">{it.insurance ?? '—'}</span>
-								<span class="hprice">{it.purchase_price != null ? `$${it.purchase_price.toFixed(2)}` : ''}</span>
+								<!-- TB (t_78a4a5e5, Punkt 3): Preis-Anzeige entfernt. -->
 							</button>
 						{:else}
 							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} {input.trim() ? ` · Search: ${input.trim()}` : ''} — Import oben.</div>
@@ -4579,7 +4579,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div><dt>Typ</dt><dd>{hangarDetail.entity_type}</dd></div>
 							<div><dt>Custom-Name</dt><dd>{hangarDetail.custom_name || '—'}</dd></div>
 							<div><dt>Datum</dt><dd>{isoToDe(hangarDetail.purchase_date) || '—'}</dd></div>
-							<div><dt>Preis</dt><dd>{hangarDetail.purchase_price != null ? `$${hangarDetail.purchase_price.toFixed(2)}` : '—'}</dd></div>
+							<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile entfernt. -->
 						</dl>
 						{#if hangarDetail.entity_type !== 'module' && hangarWikiMods?.known}
 							<!-- SA (t_d0076295): Nur-Datei-Regel — der GESAMTE Module-
@@ -4660,11 +4660,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<span class="trk-lbl">Versicherung</span>
 									<SelectCombo bind:value={hangarFormIns} ariaLabel="Versicherung" options={INSURANCE_CHOICES} placeholder="Ohne" />
 								</div>
-								<div class="trk-field">
-									<span class="trk-lbl">Preis (USD)</span>
-									<input class="rtext" style="width: 100%" inputmode="decimal" placeholder="z. B. 180" bind:value={hangarFormPrice} />
+								<!-- TB (t_78a4a5e5, Punkt 3): Preis-Feld entfernt. -->
 								</div>
-							</div>
 							<!-- R2 (Punkt 6): Datumseingabe dd.mm.jjjj (gespeichert ISO). -->
 							<div class="hform-row">
 								<div class="trk-field">
@@ -4718,7 +4715,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledge' : hangarForm.origin === 'ingame' ? 'Ingame' : '—'}</span></div>
 				<div class="c-row"><b>Versicherung</b><span>{hangarFormIns || 'Ohne'}</span></div>
 				<div class="c-row"><b>Datum</b><span>{hangarFormDate || '—'}</span></div>
-				<div class="c-row"><b>Preis</b><span>{hangarFormPrice ? `$${hangarFormPrice}` : '—'}</span></div>
+				<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile im Confirm entfernt. -->
 				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Eingaben sind bis zur Entscheidung gesperrt.</div>
 			{/if}
 			<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">

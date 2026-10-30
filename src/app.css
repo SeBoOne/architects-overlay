@@ -3152,10 +3152,7 @@ html[data-window="spotlight"] .shell {
   font-size: 11px;
   margin-left: 6px;
 }
-.hprice {
-  font: 11px/1 var(--font-mono);
-  color: var(--fgdim);
-}
+/* .hprice entfernt (TB t_78a4a5e5, Punkt 3 — Hangar-Preise raus). */
 .hangar-empty {
   padding: 20px;
   text-align: center;
