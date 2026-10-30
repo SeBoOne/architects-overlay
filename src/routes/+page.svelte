@@ -4214,7 +4214,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <svelte:window onkeydown={onKey} />
 
 <main class="pal-root" bind:clientWidth={palW}>
-	<div class="shell" class:in-detail={inDetail} class:shell-advert={advertOpen || trkOpen}>
+	<div class="shell" class:in-detail={inDetail} class:shell-advert={advertOpen || trkOpen || hangarFormOpen}>
 
 												<!-- PT: Formular „Trade erfassen" als modales Popup.
 											     QW-5 (t_28bfd027): der frühere confirm-scrim war position:fixed
@@ -4419,8 +4419,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<button class="hbtn" disabled={hangarBusy} onclick={hangarOpenAdd} title="Eintrag manuell anlegen">+ Anlegen</button>
 					</div>
 				</header>
-				{#if hangarNote}<div class="hangar-note">{hangarNote}</div>{/if}
-				{#if hangarView === 'list' && !hangarFormOpen}
+				<!-- S1 (t_38f79fff): KEINE Inline-Meldung über der Liste mehr —
+				     Meldungen erscheinen als Modal-Toast im Vordergrund (siehe
+				     hangar-toast unten, z über Formular-/Confirm-Scrim). -->
+				<!-- S1 (t_38f79fff): Liste bleibt beim offenen Anlegen-/Edit-Popup
+				     UNVERÄNDERT hinter dem Scrim stehen (kein DOM-Entfernen, kein
+				     Shell-Schrumpfen — die Shell wächst stattdessen via
+				     class:shell-advert, gleicher Mechanismus wie Listing-/Trade-
+				     Popup). -->
+				{#if hangarView === 'list'}
 					<div class="hangar-list" role="listbox" aria-label="Hangar-Einträge">
 						{#each hangarFiltered as it, i (it.id ?? `${it.name}#${i}`)}
 							<button
@@ -4606,6 +4613,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<button type="button" class="btn-ghost" disabled={hangarBusy} onclick={() => (hangarConfirm = null)}>Abbrechen</button>
 			</div>
 		</div>
+		</div>
+		{/if}
+		{#if hangarNote}
+		<!-- S1 (t_38f79fff): Hangar-Meldungen als Modal-Toast im VORDERGRUND —
+		     z-index über dem Formular-Popup (150) UND der 2-Schritt-Bestätigung
+		     (210); Erfolg/Fehler landen nie mehr hinter einem Popup. Eigene
+		     Karte (QZ-Vorbild: eigenes Popup), kein Inline-Text über der Liste;
+		     Auto-Fade weiterhin über hangarNoteSet (~3.5 s). -->
+		<div class="hangar-toast" role="alert" aria-live="assertive">
+			<span class="ht-msg">{hangarNote}</span>
+			<button type="button" class="ht-x" title="Meldung schließen" aria-label="Meldung schließen" onclick={() => hangarNoteSet('')}>✕</button>
 		</div>
 		{/if}
 		{:else if inConfig}

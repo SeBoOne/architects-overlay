@@ -21,6 +21,42 @@
 
 	let open = $state(false);
 	let hi = $state(0);
+	// S1 (t_38f79fff): Dropdown kann am unteren Rand eines scroll-internen
+	// Modals (.hform-body overflow-y:auto) abgeschnitten werden. Richtung wird
+	// beim Öffnen gemessen: zu wenig Platz unten (im nächsten Scroll-Container
+	// bzw. Viewport) UND genug oben → nach oben aufklappen.
+	let dropUp = $state(false);
+	let rootEl: HTMLDivElement | null = null;
+
+	function measureDropUp() {
+		const input = rootEl?.querySelector<HTMLInputElement>('.rta-input');
+		if (!input) return;
+		const r = input.getBoundingClientRect();
+		const need = Math.min(280, 8 + options.length * 27);
+		// Nächster Scroll-Container (overflow auto/scroll) begrenzt die Sichtbarkeit.
+		let bottomLimit = window.innerHeight;
+		let topLimit = 0;
+		let p: HTMLElement | null = input.parentElement;
+		while (p && p !== document.body) {
+			const cs = getComputedStyle(p);
+			if (/(auto|scroll|hidden)/.test(cs.overflowY)) {
+				const pr = p.getBoundingClientRect();
+				bottomLimit = Math.min(bottomLimit, pr.bottom);
+				topLimit = Math.max(topLimit, pr.top);
+			}
+			p = p.parentElement;
+		}
+		const below = bottomLimit - r.bottom;
+		const above = r.top - topLimit;
+		dropUp = below < need && above > below;
+	}
+
+	function openDropdown() {
+		open = true;
+		hi = 0;
+		requestAnimationFrame(measureDropUp);
+	}
+
 
 	function clampHi() {
 		if (hi >= options.length) hi = Math.max(0, options.length - 1);
@@ -50,8 +86,7 @@
 		const n = options.length;
 		if (e.key === 'ArrowDown') {
 			if (n) {
-				open = true;
-				clampHi();
+				openDropdown();
 				hi = (hi + 1) % n;
 				e.preventDefault();
 				e.stopPropagation();
@@ -60,8 +95,7 @@
 		}
 		if (e.key === 'ArrowUp') {
 			if (n) {
-				open = true;
-				clampHi();
+				openDropdown();
 				hi = (hi - 1 + n) % n;
 				e.preventDefault();
 				e.stopPropagation();
@@ -86,10 +120,7 @@
 			return;
 		}
 		// Jede andere Taste (Tippen) → Dropdown öffnen/filtern, Cursor ans Ende.
-		if (value.trim() !== '') {
-			open = true;
-			hi = 0;
-		}
+		if (value.trim() !== '') openDropdown();
 	}
 
 	// Beim Fokus die Kandidatenliste zeigen (Schiff: alle Hangar-Schiffe;
@@ -97,8 +128,8 @@
 	// Klick auf einen Eintrag noch vor dem Close registriert wird.
 	let blurTimer: ReturnType<typeof setTimeout> | null = null;
 	function onfocus() {
-		open = options.length > 0;
-		hi = 0;
+		if (options.length > 0) openDropdown();
+		else open = false;
 	}
 	function onblur() {
 		blurTimer = setTimeout(() => {
@@ -108,14 +139,11 @@
 	}
 	function oninput(e: Event) {
 		value = (e.currentTarget as HTMLInputElement).value;
-		if (value.trim() !== '') {
-			open = true;
-			hi = 0;
-		}
+		if (value.trim() !== '') openDropdown();
 	}
 </script>
 
-<div class="rta" style={fullWidth ? 'display:block;width:100%' : ''}>
+<div class="rta" bind:this={rootEl} style={fullWidth ? 'display:block;width:100%' : ''}>
 	<input
 		class="rtext rta-input"
 		type="text"
@@ -132,7 +160,7 @@
 		onblur={onblur}
 	/>
 	{#if open && options.length}
-		<div class="rta-dd" role="listbox">
+		<div class="rta-dd" class:is-up={dropUp} role="listbox">
 			{#each options as o, i (o.value + i)}
 				<button
 					type="button"
@@ -169,6 +197,14 @@
 		margin-top: 2px;
 		display: flex;
 		flex-direction: column;
+	}
+	/* S1 (t_38f79fff): wenn unten der Platz im (Scroll-)Container fehlt,
+	   klappt das Dropdown NACH OBEN auf — nie am unteren Rand abgeschnitten. */
+	.rta-dd.is-up {
+		top: auto;
+		bottom: 100%;
+		margin-top: 0;
+		margin-bottom: 2px;
 	}
 	.rta-item {
 		text-align: left;

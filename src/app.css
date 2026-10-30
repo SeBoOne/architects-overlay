@@ -1352,25 +1352,25 @@ html[data-window="spotlight"] .shell {
    Op-Chip in den 26px-Badge-Slot und der Text in die 44px-Spalte (Ellipsis
    trotz Platz, gequetschte Kauf/Verkauf-Markierung). */
 .mrow.trow {
-	grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto;
 }
 
 /* Kauf/Verkauf-Markierung: feste Mindestbreite + Ausrichtung, damit
    „Kauf“/„Verkauf“ über alle Zeilen gleich breit und nicht gequetscht sind. */
 .mrow.trow .m-op {
-	min-width: 76px;
-	padding: 5px 8px;
-	white-space: nowrap;
+  min-width: 76px;
+  padding: 5px 8px;
+  white-space: nowrap;
 }
 
 /* Kein Ellipsis-Abkürzen in Trades: Titel/Gegenüber dürfen umbrechen bzw.
    volle Breite nutzen (Platz ist da — die Quetschung war ein Grid-Artefakt). */
 .mrow.trow .m-title,
 .mrow.trow .m-sub {
-	white-space: normal;
-	overflow: visible;
-	text-overflow: clip;
-	overflow-wrap: anywhere;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
 }
 
 .mrow {
@@ -3049,13 +3049,42 @@ html[data-window="spotlight"] .shell {
   border-color: #e5484d;
   color: #e5484d;
 }
-.hangar-note {
-  margin: 6px 12px 0;
-  padding: 4px 8px;
+/* S1 (t_38f79fff): Hangar-Meldungen als Modal-Toast im VORDERGRUND —
+   eigene Karte über ALLEN Popups (Formular-Scrim z=150, Confirm z=210,
+   Toast z=260). Kein Inline-Text über der Liste mehr (QZ-Vorbild:
+   eigenes Popup). Auto-Fade ~3.5 s via hangarNoteSet. */
+.hangar-toast {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 260;
+  max-width: min(90%, 640px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--panel2);
   border: 1px solid var(--accent-d);
   border-radius: 4px;
-  font: 11px/1.4 var(--font-sans);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
+  font: 11.5px/1.45 var(--font-sans);
   color: var(--accent-h);
+}
+.hangar-toast .ht-msg {
+  flex: 1;
+  word-break: break-word;
+}
+.hangar-toast .ht-x {
+  border: 0;
+  background: transparent;
+  color: var(--fgdim);
+  font: 700 12px/1 var(--font-mono);
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.hangar-toast .ht-x:hover {
+  color: var(--fg);
 }
 /* P10 (t_aa6cc070): Autocomplete-Chips in the add-form (Name + Basisschip) */
 .hf-suggest,
