@@ -1052,9 +1052,15 @@ mod tests {
         // `pledge_cost`, CCUgame `msrp`/`pledge`) — die DB-Spalte bleibt,
         // wird aber nie mehr befüllt.
         let (x, _) = parse_xplorer_json(XPLORER_SAMPLE).unwrap();
-        assert!(x.iter().all(|i| i.purchase_price.is_none()), "XPLorer: keine Preise");
+        assert!(
+            x.iter().all(|i| i.purchase_price.is_none()),
+            "XPLorer: keine Preise"
+        );
         let (c, _) = parse_ccugame_csv(CCUGAME_SAMPLE).unwrap();
-        assert!(c.iter().all(|i| i.purchase_price.is_none()), "CSV: keine Preise");
+        assert!(
+            c.iter().all(|i| i.purchase_price.is_none()),
+            "CSV: keine Preise"
+        );
     }
 
     #[test]
@@ -1695,7 +1701,10 @@ mod tests {
             module("Bekanntes Modul", "P3", "600i Explorer"),
         ];
         for it in ships.iter().chain(mods.iter()) {
-            cache.with(|c| upsert(c, &mk(it), now)).map_err(|e| e.to_string()).unwrap();
+            cache
+                .with(|c| upsert(c, &mk(it), now))
+                .map_err(|e| e.to_string())
+                .unwrap();
         }
         let linked = cache
             .with(|c| migrate_unlinked_modules(c))
@@ -1714,9 +1723,21 @@ mod tests {
                 .map_err(|e| e.to_string())
                 .unwrap()
         };
-        assert_eq!(base_of("600i Exploration Module"), "600i Explorer", "per pledge verknüpft");
-        assert_eq!(base_of("Fremd-Modul"), "", "ohne pledge-Match bleibt unverbunden");
-        assert_eq!(base_of("Bekanntes Modul"), "600i Explorer", "Bestands-Link unangetastet");
+        assert_eq!(
+            base_of("600i Exploration Module"),
+            "600i Explorer",
+            "per pledge verknüpft"
+        );
+        assert_eq!(
+            base_of("Fremd-Modul"),
+            "",
+            "ohne pledge-Match bleibt unverbunden"
+        );
+        assert_eq!(
+            base_of("Bekanntes Modul"),
+            "600i Explorer",
+            "Bestands-Link unangetastet"
+        );
         // Idempotenz: zweiter Lauf verändert nichts mehr.
         let again = cache
             .with(|c| migrate_unlinked_modules(c))
