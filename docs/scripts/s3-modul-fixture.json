@@ -1,6 +1,16 @@
 {
-  "_doc": "Erzeugt vom Live-Test live_hull_e_portless_and_probe_fixture (echte SC-Wiki-API + reale modul_for_ship_decision-Logik) — NICHT von Hand editieren.",
+  "_doc": "Erzeugt vom Live-Test live_hull_e_portless_and_probe_fixture (echte SC-Wiki-API + reale modul_for_ship_decision-Logik + Lesezeit-Merge der Sebo-Overrides) — NICHT von Hand editieren.",
   "for_ship": {
+    "aegis eclips": {
+      "has_ports": true,
+      "known": true,
+      "modules": [
+        {
+          "category": "Bombrack",
+          "name": "Eclipse BombRack"
+        }
+      ]
+    },
     "aurora mk ii": {
       "has_ports": true,
       "known": true,
@@ -839,6 +849,16 @@
       "has_ports": false,
       "known": true,
       "modules": []
+    },
+    "kruger p-52 merlin": {
+      "has_ports": true,
+      "known": true,
+      "modules": [
+        {
+          "category": "Weapon-Kit",
+          "name": "Kruger Snub Laser Weapons Kit"
+        }
+      ]
     }
   },
   "generated_version": "4.10.2-LIVE.12881860"

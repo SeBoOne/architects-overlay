@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "description": "Manuelle Modul/Weapon-Kit-Zuweisungen (Schiff -> Module). Quelle: Sebo, da diese Items in der SC-Wiki-API nicht als Module erkennbar sind (Bombracks, Weapon Kits, Endeavor-Bays).",
+    "api_probes": {
+      "Aegis Eclips": "https://api.star-citizen.wiki/api/items?filter%5Btags%5D=Eclipse_BombRack&filter%5Btype%5D=BombLauncher",
+      "Aegis Retaliator": "https://api.star-citizen.wiki/api/items?filter%5Btags%5D=Retaliator_BombRack_Front&filter%5Btype%5D=BombLauncher + Rear (4 Racks gesamt)",
+      "Anvil Gladiator": "https://api.star-citizen.wiki/api/items?filter%5Btags%5D=Gladiator_BombRack&filter%5Btype%5D=BombLauncher"
+    },
+    "note": "Kit-Namen (Idris/Kruger/Nova/Endeavor) werden per Name gematcht (die API splitet Kits in Bestandteile)."
+  },
+  "ships": [
+    { "ship": "Aegis Eclips", "modules": ["Eclipse BombRack"] },
+    { "ship": "Aegis Retaliator", "modules": ["Retaliator BombRack Front", "Retaliator BombRack Rear"] },
+    { "ship": "Anvil Gladiator", "modules": ["Gladiator BombRack"] },
+    { "ship": "Aegis Idris M", "modules": ["Idris-T Kit", "Idris-K Kit"] },
+    { "ship": "Aegis Idris P", "modules": ["Idris-T Kit", "Idris-K Kit"] },
+    { "ship": "Kruger L-21 Wolf", "modules": ["Kruger Laser Weapons Kit"] },
+    { "ship": "Kruger L-22 Alpha Wolf", "modules": ["Kruger Ballistic Weapons Kit"] },
+    { "ship": "Kruger P-52 Merlin", "modules": ["Kruger Snub Laser Weapons Kit"] },
+    { "ship": "Kruger S-65 Stingray", "modules": ["Kruger Snub Ballistic Weapons Kit", "Kruger Ballistic Weapons Kit"] },
+    { "ship": "MISC Endeavor", "modules": [
+      "Endeavor Bio Dome (2x1)", "Endeavor Supercollider (2x2)",
+      "Endeavor Service Equipment & Crew (2x1)", "Endeavor Fuel Pod (2x1)",
+      "Endeavor Landing (2x1)", "Endeavor Medical Bay (2x2)",
+      "Endeavor Research Lab (2x1)", "Endeavor General Science (2x1)",
+      "Endeavor Telescope Array (2x1)"
+    ]},
+    { "ship": "MISC Endeavor - Discovery-Class", "modules": [
+      "Endeavor Bio Dome (2x1)", "Endeavor Supercollider (2x2)",
+      "Endeavor Fuel Pod (2x1)", "Endeavor Landing (2x1)",
+      "Endeavor Medical Bay (2x2)", "Endeavor Telescope Array (2x1)"
+    ]},
+    { "ship": "MISC Endeavor - Hope-Class", "modules": [
+      "Endeavor Bio Dome (2x1)", "Endeavor Supercollider (2x2)",
+      "Endeavor Service Equipment & Crew (2x1)", "Endeavor Fuel Pod (2x1)",
+      "Endeavor Research Lab (2x1)", "Endeavor General Science (2x1)",
+      "Endeavor Telescope Array (2x1)"
+    ]},
+    { "ship": "MISC Endeavor - Olympic-Class", "modules": [
+      "Endeavor Supercollider (2x2)", "Endeavor Service Equipment & Crew (2x1)",
+      "Endeavor Fuel Pod (2x1)", "Endeavor Landing (2x1)",
+      "Endeavor Medical Bay (2x2)", "Endeavor Research Lab (2x1)",
+      "Endeavor General Science (2x1)", "Endeavor Telescope Array (2x1)"
+    ]},
+    { "ship": "RSI Meteor", "modules": ["RSI Meteor - Laser Weapon Kit"] },
+    { "ship": "Tumbril Nova", "modules": ["NV57 Weapon Kit"] }
+  ]
+}

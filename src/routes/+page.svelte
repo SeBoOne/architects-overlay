@@ -5086,8 +5086,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{/if}
 					<div class="cfg-note">
 						Quelle: SC-Wiki (Hardpoints × Modul-Katalog) — 1 Sync pro Game-Version.
-						Bombracks sind dort nicht auffindbar und werden manuell im Repo
-						(bombracks.json) gepflegt.
+						Manuelle Zuweisungen (BombRacks, Weapon-Kits, Endeavor-Bays) aus
+						module-overrides.json — Repo-Baseline, optional per Remote-Datei
+						(Gitea-Raw) überschrieben; Änderungen greifen mit dem nächsten
+						Sync/Refresh.
 					</div>
 				</section>
 				</div>

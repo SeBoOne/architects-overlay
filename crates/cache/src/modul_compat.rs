@@ -28,6 +28,9 @@ pub const META_SYNCED_AT: &str = "modul_compat:synced_at";
 /// `meta`-Key: JSON-Liste der Vehicle-Namen OHNE Ports (dort versteckt das
 /// Frontend das Modul-Eingabefeld — Karte S3 Punkt 4).
 pub const META_NO_PORTS: &str = "modul_compat:noport_ships";
+/// `meta`-Key: Remote-Override-Text (`module-overrides.json` vom Gitea-Raw,
+/// S3/D2). Zwischen-Syncs gecacht; Fallback beim Lesen ist die Repo-Baseline.
+pub const META_OVERRIDES: &str = "modul_compat:overrides";
 
 /// Eine Modul-Zuordnungs-Zeile.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -114,6 +117,31 @@ impl Cache {
                 )?;
             }
             tx.commit()?;
+            Ok(())
+        })
+    }
+
+    /// Remote-Override-Text (S3/D2): letzter erfolgreich geforeter
+    /// `module-overrides.json`-Inhalt von der Gitea-Raw-URL.
+    pub fn modul_overrides_cache_get(&self) -> Result<Option<String>> {
+        self.with(|conn| {
+            let mut stmt = conn.prepare("SELECT value FROM meta WHERE key = ?1")?;
+            let mut rows = stmt.query([META_OVERRIDES])?;
+            match rows.next()? {
+                Some(row) => Ok(row.get::<_, Option<String>>(0)?),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// Remote-Override-Text cachen (nach erfolgreichem Fetch + Parse).
+    pub fn modul_overrides_cache_set(&self, text: &str) -> Result<()> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![META_OVERRIDES, text],
+            )?;
             Ok(())
         })
     }

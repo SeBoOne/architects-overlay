@@ -76,6 +76,7 @@ dependencies = [
  "log",
  "math-eval",
  "provider",
+ "reqwest 0.12.28",
  "rusqlite",
  "scwiki_client",
  "serde",

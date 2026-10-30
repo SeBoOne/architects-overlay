@@ -12,10 +12,15 @@ modul_for_ship_decision-Logik, Review D1):
      (u. a. Aurora Mk II DM/TS Module) — Katalog-Fremdmodule (Apollo) NICHT.
   2. Detail Hull E (kuratierte No-Port-Liste, API-belegt ports:0) →
      Modul-Eingabefeld versteckt (+ Hinweis-Zeile).
-  3. F12 → Settings-Section „Modul-Kompatibilität (SC-Wiki)" mit Version +
-     Alter; Button-Klick (stub refresh) setzt die Bestätigungsnote.
+  3. Detail Aegis Eclips (S3/D2: manuelle Zuweisung, API kennt das
+     BombRack nicht als Modul) → Feld zeigt „Eclipse BombRack" (aus der
+     Sebo-Lieferung module-overrides.json), keine Fremd-BombRacks.
+  4. F12 → Settings-Section „Modul-Kompatibilität (SC-Wiki)" mit Version +
+     Alter; Note nennt module-overrides.json; Button-Klick (stub refresh)
+     setzt die Bestätigungsnote.
 
-Screenshots: 01-aurora-modules.png, 02-noport-hidden.png, 03-settings.png.
+Screenshots: 01-aurora-modules.png, 02-noport-hidden.png,
+04-eclips-bombrack.png, 03-settings.png.
 """
 import asyncio, base64, json, os, pathlib
 import websockets, urllib.request
@@ -35,6 +40,9 @@ FIXTURE = json.loads(FIXTURE_PATH.read_text())
 FOR_SHIP = FIXTURE["for_ship"]
 assert "hull e" in FOR_SHIP and FOR_SHIP["hull e"]["has_ports"] is False, \
     "Fixture ohne realen Hull-E-No-Port-Nachweis — erst Live-Test laufen lassen"
+ECLIPSE = "Eclipse BombRack"
+assert "aegis eclips" in FOR_SHIP and ECLIPSE in [m["name"] for m in FOR_SHIP["aegis eclips"]["modules"]], \
+    "Fixture ohne Sebo-Override (Eclipse BombRack) — erst Live-Test laufen lassen"
 
 PASS, FAIL = [], []
 def check(name, ok, detail=""):
@@ -61,6 +69,11 @@ HANGAR = [
     {"id": 2, "name": "Hull E", "origin": "ingame", "insurance": None,
      "custom_name": "", "entity_type": "ship", "base_ship": "", "ship_code": "",
      "manufacturer": "MISC", "purchase_price": None,
+     "purchase_date": "", "pledge_id": "", "pledge_name": "", "warbond": 0,
+     "ccud": 0, "created_at": 1700000000, "updated_at": 1700000000},
+    {"id": 3, "name": "Aegis Eclips", "origin": "pledge", "insurance": None,
+     "custom_name": "", "entity_type": "ship", "base_ship": "", "ship_code": "",
+     "manufacturer": "Aegis Dynamics", "purchase_price": None,
      "purchase_date": "", "pledge_id": "", "pledge_name": "", "warbond": 0,
      "ccud": 0, "created_at": 1700000000, "updated_at": 1700000000},
 ]
@@ -219,13 +232,47 @@ async def main():
                   "keine Modul-Ports" in str(await js("document.querySelector('.hangar-detail .hd-mods') ? document.querySelector('.hangar-detail .hd-mods').innerText : 'NONE'")))
             await shot("02-noport-hidden.png")
 
-            # ---- 3: Settings — Section + Button ----
+            # Deterministische Neu-Navigation für den D2-Schritt (Eclips).
+            await call("Page.navigate", {"url": URL})
+            await asyncio.sleep(2.5)
+            await key("F11")
+            await asyncio.sleep(1.2)
+
+            # ---- 3: Aegis Eclips (S3/D2) — manuelle Zuweisung ----
+            await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('Aegis Eclips')).click()")
+            await asyncio.sleep(1.2)
+            check("eclips-detail-open",
+                  (await js("document.querySelector('.hangar-detail') ? 'yes' : 'no'")) == "yes")
+            check("eclips-module-field-visible",
+                  (await js("document.querySelector('.hangar-detail .hmod-add') ? 'yes' : 'no'")) == "yes")
+            # Query 'bomb': Eclipse BombRack aus der Sebo-Lieferung —
+            # Fremd-BombRacks (Retaliator/Gladiator) dürfen nicht auftauchen.
+            await js("(() => { const i = document.querySelector('.hangar-detail .hmod-add .rta-input'); i.focus(); i.value='bomb'; i.dispatchEvent(new Event('input', {bubbles:true})); })()")
+            await asyncio.sleep(0.5)
+            opts3 = await js("(() => { const d = document.querySelector('.hangar-detail .hmod-add .rta-input');"
+                             " const dd = d.closest('.hmod-add').querySelector('.rta-dd, .rta-dropdown, .rta-menu, [class*=dropdown], [class*=drop]');"
+                             " return dd ? dd.innerText : 'NODROP'; })()")
+            eclips_real = {m["name"] for m in FOR_SHIP["aegis eclips"]["modules"]}
+            suggested3 = [l for l in str(opts3).splitlines() if l.strip()]
+            check("eclips-suggest-subset-of-override",
+                  bool(suggested3) and "NODROP" not in str(opts3)
+                  and all(n in eclips_real for n in suggested3),
+                  f"suggested={suggested3[:6]} nicht in Zuordnung: "
+                  f"{[n for n in suggested3 if n not in eclips_real][:5]}")
+            check("eclips-suggest-bombrack", ECLIPSE in str(opts3), str(opts3)[:200])
+            check("eclips-no-foreign-bombracks",
+                  "Retaliator" not in str(opts3) and "Gladiator" not in str(opts3), str(opts3)[:200])
+            await shot("04-eclips-bombrack.png")
+
+            # ---- 4: Settings — Section + Button ----
             await key("F12")
             await asyncio.sleep(1.5)
             sec = await js("(() => { const h=[...document.querySelectorAll('.cfg-sect .h')].find(x=>x.innerText.toUpperCase().includes('MODUL-KOMPATIBILITÄT')); return h ? h.closest('.cfg-sect').innerText : 'NONE'; })()")
             check("settings-section-present", "MODUL-KOMPATIBILITÄT" in str(sec).upper(), str(sec)[:150])
             check("settings-version-shown", "4.10.2-LIVE.12881860" in str(sec))
             check("settings-age-shown", "vor " in str(sec))
+            # S3/D2: Note nennt die Baseline-Datei der manuellen Zuweisung.
+            check("settings-overrides-note", "module-overrides.json" in str(sec), str(sec)[-250:])
             await js("(() => { const s=[...document.querySelectorAll('.cfg-sect')].find(x=>x.innerText.toUpperCase().includes('MODUL-KOMPATIBILITÄT'));"
                      " [...s.querySelectorAll('button')].find(b=>b.innerText.toUpperCase().includes('AKTUALISIEREN')).click(); })()")
             await asyncio.sleep(0.5)
