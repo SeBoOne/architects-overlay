@@ -4691,7 +4691,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								</div>
 								<div class="trk-field">
 									<span class="trk-lbl">Herkunft</span>
-									<SelectCombo bind:value={hangarForm.origin} ariaLabel="Herkunft" placeholder="— bitte wählen —" options={[{ value: 'ingame', label: 'Ingame' }, { value: 'pledge', label: 'Pledge' }]} />
+									<!-- TB (t_78a4a5e5, Punkt 1): startet leer (Platzhalter) —
+									     Pflichtwahl bei Speichern. Labels lt. Task „Pledged /
+									     In-Game“ (gleiche Werte wie die Modul-Add-Zeile). -->
+									<SelectCombo bind:value={hangarForm.origin} ariaLabel="Herkunft" placeholder="— bitte wählen —" options={[{ value: 'ingame', label: 'In-Game' }, { value: 'pledge', label: 'Pledged' }]} />
 								</div>
 							</div>
 							<div class="hform-row">
@@ -4752,7 +4755,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			{:else}
 				<div class="c-row"><b>Name</b><span>{hangarForm.name}</span></div>
 				<div class="c-row"><b>Typ</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : hangarForm.entity_type === 'module' ? 'Modul' : hangarForm.entity_type ? 'Schiff' : '—'}</span></div>
-				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledge' : hangarForm.origin === 'ingame' ? 'Ingame' : '—'}</span></div>
+				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledged' : hangarForm.origin === 'ingame' ? 'In-Game' : '—'}</span></div>
 				<div class="c-row"><b>Versicherung</b><span>{hangarFormIns || 'Ohne'}</span></div>
 				<div class="c-row"><b>Datum</b><span>{hangarFormDate || '—'}</span></div>
 				<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile im Confirm entfernt. -->
