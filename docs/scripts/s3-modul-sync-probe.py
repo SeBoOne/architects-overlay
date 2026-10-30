@@ -169,7 +169,7 @@ async def main():
             await js("(() => { const i = document.querySelector('.hangar-detail .hmod-add .rta-input'); i.focus(); i.value=''; i.dispatchEvent(new Event('input', {bubbles:true})); })()")
             await asyncio.sleep(0.5)
             opts = await js("(() => { const d = document.querySelector('.hangar-detail .hmod-add .rta-input');"
-                            " const dd = d.closest('.hmod-add').querySelector('.rta-dropdown, .rta-menu, [class*=dropdown]');"
+                            " const dd = d.closest('.hmod-add').querySelector('.rta-dd, .rta-dropdown, .rta-menu, [class*=dropdown], [class*=drop]');"
                             " return dd ? dd.innerText : 'NODROP'; })()")
             check("aurora-suggest-dm-ts", DM in str(opts) and TS in str(opts), str(opts)[:200])
             check("aurora-suggest-not-apollo", APOLLO not in str(opts), str(opts)[:200])
@@ -177,15 +177,24 @@ async def main():
             await js("(() => { const i = document.querySelector('.hangar-detail .hmod-add .rta-input'); i.focus(); i.value='dm'; i.dispatchEvent(new Event('input', {bubbles:true})); })()")
             await asyncio.sleep(0.5)
             opts2 = await js("(() => { const d = document.querySelector('.hangar-detail .hmod-add .rta-input');"
-                             " const dd = d.closest('.hmod-add').querySelector('.rta-dropdown, .rta-menu, [class*=dropdown]');"
+                             " const dd = d.closest('.hmod-add').querySelector('.rta-dd, .rta-dropdown, .rta-menu, [class*=dropdown], [class*=drop]');"
                              " return dd ? dd.innerText : 'NODROP'; })()")
             check("aurora-query-dm-filters", DM in str(opts2) and TS not in str(opts2), str(opts2)[:200])
             await shot("01-aurora-modules.png")
-            await key("Escape")  # zurück zur Liste
+            # Deterministische Neu-Navigation: Reload (Stub via
+            # AddScriptToEvaluateOnNewDocument neu injiziert), F11 → Hangar,
+            # dann direkt Hull E. Escape/F11-Rückweg aus dem Detail ist im
+            # Live-DOM nicht reproduzierbar dispatch-bar (Statusbar-Taste).
+            await call("Page.navigate", {"url": URL})
+            await asyncio.sleep(2.5)
+            await key("F11")
+            await asyncio.sleep(1.2)
+            await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('Hull E'))?.click()")
+            await asyncio.sleep(1.2)
 
             # ---- 2: Hull E (ohne Ports) — Modulfeld versteckt ----
             await js("[...document.querySelectorAll('.hangar-list .hrow')].find(b=>b.innerText.includes('Hull E')).click()")
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.2)
             check("hull-detail-open",
                   (await js("document.querySelector('.hangar-detail') ? 'yes' : 'no'")) == "yes")
             check("hull-module-field-hidden",
@@ -196,17 +205,20 @@ async def main():
 
             # ---- 3: Settings — Section + Button ----
             await key("F12")
-            await asyncio.sleep(1.0)
-            sec = await js("(() => { const h=[...document.querySelectorAll('.cfg-sect .h')].find(x=>x.innerText.includes('Modul-Kompatibilität')); return h ? h.closest('.cfg-sect').innerText : 'NONE'; })()")
-            check("settings-section-present", "Modul-Kompatibilität" in str(sec), str(sec)[:150])
+            await asyncio.sleep(1.5)
+            sec = await js("(() => { const h=[...document.querySelectorAll('.cfg-sect .h')].find(x=>x.innerText.toUpperCase().includes('MODUL-KOMPATIBILITÄT')); return h ? h.closest('.cfg-sect').innerText : 'NONE'; })()")
+            check("settings-section-present", "MODUL-KOMPATIBILITÄT" in str(sec).upper(), str(sec)[:150])
             check("settings-version-shown", "4.10.2-LIVE.12881860" in str(sec))
             check("settings-age-shown", "vor " in str(sec))
-            await js("(() => { const s=[...document.querySelectorAll('.cfg-sect')].find(x=>x.innerText.includes('Modul-Kompatibilität'));"
-                     " [...s.querySelectorAll('button')].find(b=>b.innerText.includes('aktualisieren')).click(); })()")
+            await js("(() => { const s=[...document.querySelectorAll('.cfg-sect')].find(x=>x.innerText.toUpperCase().includes('MODUL-KOMPATIBILITÄT'));"
+                     " [...s.querySelectorAll('button')].find(b=>b.innerText.toUpperCase().includes('AKTUALISIEREN')).click(); })()")
             await asyncio.sleep(0.5)
-            note = await js("(() => { const s=[...document.querySelectorAll('.cfg-sect')].find(x=>x.innerText.includes('Modul-Kompatibilität'));"
+            note = await js("(() => { const s=[...document.querySelectorAll('.cfg-sect')].find(x=>x.innerText.toUpperCase().includes('MODUL-KOMPATIBILITÄT'));"
                             " const n=s.querySelector('.cfg-note'); return n ? n.innerText : 'NONE'; })()")
             check("settings-refresh-note", "aktualisiert" in str(note), str(note))
+            # Section in den Viewport scrollen, damit Screenshot 03 sie zeigt.
+            await js("(() => { const s=[...document.querySelectorAll('.cfg-sect')].find(x=>x.innerText.toUpperCase().includes('MODUL-KOMPATIBILITÄT')); s.scrollIntoView({block:'center'}); return 'OK'; })()")
+            await asyncio.sleep(0.4)
             await shot("03-settings.png")
     finally:
         server.terminate()
