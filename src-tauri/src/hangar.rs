@@ -763,6 +763,7 @@ pub fn hangar_list(state: State<'_, TradeState>) -> Result<Vec<HangarItem>, Stri
     let cache = &state.inner().cache;
     cache
         .with(|conn| {
+            migrate_unlinked_modules(conn)?;
             let mut stmt = conn.prepare(&format!(
                 "SELECT {HANGAR_COLS} FROM hangar ORDER BY entity_type, name"
             ))?;
@@ -770,6 +771,47 @@ pub fn hangar_list(state: State<'_, TradeState>) -> Result<Vec<HangarItem>, Stri
             rows.collect::<rusqlite::Result<Vec<_>>>()
         })
         .map_err(|e| format!("hangar list: {e}"))
+}
+
+/// TB (t_78a4a5e5, Punkt 2) — Migration: Modul-Zeilen wandern in die
+/// Ship-Details. Datenseitig bleibt das zeilenbasierte Modell
+/// (entity_type='module', base_ship) — die Migration VERKNÜPFT nur noch
+/// bezugslose Module, wo möglich:
+///
+/// Ein Modul ohne `base_ship`, dessen `pledge_id` zu genau EINEM Schiff/
+/// Fahrzeug (nicht-module Zeile) passt, bekommt dessen Modellnamen als
+/// base_ship (gleiche Pledge-Gruppe = gehört zusammen, z. B. das
+/// XPLorer-Modul-Objekt neben dem Basisschiff im selben Pledge).
+///
+/// Idempotent (nur base_ship='' betroffen) und verknüpfungsfreundlich:
+/// wirklich Bezugsloses bleibt als „Modul (unverbunden)“ erhalten (R2-
+/// Vereinbarung) — die UI zeigt es in der Liste und bietet dort die
+/// manuelle Zuordnung an.
+fn migrate_unlinked_modules(conn: &mut rusqlite::Connection) -> rusqlite::Result<usize> {
+    let pairs: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT m.id, s.name FROM hangar m \
+             JOIN hangar s ON s.pledge_id = m.pledge_id AND s.entity_type != 'module' \
+             WHERE m.entity_type = 'module' AND TRIM(m.base_ship) = '' \
+               AND TRIM(m.pledge_id) != '' AND TRIM(s.name) != '' \
+             GROUP BY m.id HAVING COUNT(DISTINCT s.id) = 1",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if pairs.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.transaction()?;
+    let now = unix_now() as i64;
+    for (id, base) in &pairs {
+        tx.execute(
+            "UPDATE hangar SET base_ship = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![base, now, id],
+        )?;
+    }
+    tx.commit()?;
+    Ok(pairs.len())
 }
 
 /// R2 (t_2158474c, Punkt 8): Module sind KEINE eigenständigen Einträge mehr —
@@ -1605,6 +1647,102 @@ mod tests {
             );
             assert!(!it.warbond && !it.ccud);
         }
+    }
+
+    #[test]
+    fn migration_links_unlinked_modules_by_pledge() {
+        // TB (t_78a4a5e5, Punkt 2) Migration: Modul ohne base_ship, dessen
+        // pledge_id zu genau EINEM Schiff passt → base_ship gesetzt.
+        // Bezugslos (kein pledge-Match) bleibt unverbunden. Idempotent.
+        let cache = cache::Cache::open_in_memory().unwrap();
+        let now = 1_792_500_000i64;
+        let ship = |name: &str, pledge: &str| HangarItem {
+            id: None,
+            source: "xplorer".into(),
+            name: name.into(),
+            origin: "pledge".into(),
+            insurance: Some("LTI".into()),
+            custom_name: String::new(),
+            entity_type: "ship".into(),
+            base_ship: String::new(),
+            ship_code: String::new(),
+            manufacturer: "Origin".into(),
+            purchase_price: None,
+            purchase_date: String::new(),
+            pledge_id: pledge.into(),
+            pledge_name: String::new(),
+            warbond: false,
+            ccud: false,
+            created_at: None,
+            updated_at: None,
+        };
+        let module = |name: &str, pledge: &str, base: &str| HangarItem {
+            entity_type: "module".into(),
+            base_ship: base.into(),
+            ..ship(name, pledge)
+        };
+        let mk = |i: &HangarItem| -> HangarItem {
+            let mut it = i.clone();
+            it.id = None;
+            it
+        };
+        // Schiff A mit Pledge P1; zwei Module: M1 (P1, bezugslos → verknüpfbar),
+        // M2 (P2, kein Schiff → bleibt unverbunden), M3 (bereits verlinkt).
+        let ships = vec![ship("600i Explorer", "P1")];
+        let mods = vec![
+            module("600i Exploration Module", "P1", ""),
+            module("Fremd-Modul", "P2", ""),
+            module("Bekanntes Modul", "P3", "600i Explorer"),
+        ];
+        for it in ships.iter().chain(mods.iter()) {
+            cache.with(|c| upsert(c, &mk(it), now)).map_err(|e| e.to_string()).unwrap();
+        }
+        let linked = cache
+            .with(|c| migrate_unlinked_modules(c))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(linked, 1, "genau ein bezugsloses Modul verknüpft");
+        let base_of = |name: &str| -> String {
+            cache
+                .with(|c| {
+                    c.query_row(
+                        "SELECT base_ship FROM hangar WHERE name = ?1 AND entity_type = 'module'",
+                        [name],
+                        |r| r.get(0),
+                    )
+                })
+                .map_err(|e| e.to_string())
+                .unwrap()
+        };
+        assert_eq!(base_of("600i Exploration Module"), "600i Explorer", "per pledge verknüpft");
+        assert_eq!(base_of("Fremd-Modul"), "", "ohne pledge-Match bleibt unverbunden");
+        assert_eq!(base_of("Bekanntes Modul"), "600i Explorer", "Bestands-Link unangetastet");
+        // Idempotenz: zweiter Lauf verändert nichts mehr.
+        let again = cache
+            .with(|c| migrate_unlinked_modules(c))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(again, 0, "zweiter Lauf: kein weiteres Update");
+        // Mehrere Schiffe in EINER Pledge-Gruppe: keine automatische Wahl —
+        // das Modul bleibt unverbunden (Mehrdeutigkeit nicht erraten).
+        cache
+            .with(|c| upsert(c, &mk(&ship("Golem", "P4")), now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        cache
+            .with(|c| upsert(c, &mk(&ship("Golem OX", "P4")), now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        cache
+            .with(|c| upsert(c, &mk(&module("Pack-Modul", "P4", "")), now))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        let linked2 = cache
+            .with(|c| migrate_unlinked_modules(c))
+            .map_err(|e| e.to_string())
+            .unwrap();
+        assert_eq!(linked2, 0, "mehrdeutige Pledge-Gruppe bleibt unverbunden");
+        assert_eq!(base_of("Pack-Modul"), "");
     }
 
     #[test]
