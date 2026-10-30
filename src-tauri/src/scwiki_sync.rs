@@ -43,6 +43,12 @@ struct BombrackFile {
     modules: Vec<BombrackEntry>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct NoPortFile {
+    #[serde(default)]
+    ships: Vec<String>,
+}
+
 /// Manuelle Bombrack-Mapping-Tabelle (statisch im Repo, Punkt 5). Parse-
 /// Fehler sind NICHT fatal — der API-Datensatz bleibt nutzbar, der Fehler
 /// geht ins Log.
@@ -81,6 +87,36 @@ fn merge_bombracks(mut rows: Vec<ModulCompatRow>) -> Vec<ModulCompatRow> {
     rows
 }
 
+/// Kuratierte Liste der Schiffe OHNE Modul-Ports (`no_port_ships.json`,
+/// Review D1): Die paginierte `/api/vehicles`-Liste kennt keinen einzigen
+/// Port-losen Vehicle (Live-Stand 4.10.2: 310 Vehicles, 0 ohne Ports) und
+/// lässt Schiffe wie Hull E komplett weg — die sind nur im Einzel-Endpoint
+/// belegt portlos. Parse-Fehler sind NICHT fatal (wie bombracks.json).
+fn curated_no_port_ships() -> Vec<String> {
+    match serde_json::from_str::<NoPortFile>(include_str!("no_port_ships.json")) {
+        Ok(file) => file.ships,
+        Err(e) => {
+            log::error!("no_port_ships.json unparsabel — Liste übersprungen: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Match gegen die kuratierte Liste: exakt ODER als eigenständige Namens-
+/// gruppe („MISC Hull E" matcht „Hull E", „Hull C" matcht „Hull E" nicht).
+fn matches_curated(needle: &str, candidates: &[String]) -> bool {
+    candidates.iter().any(|c| {
+        let n = norm_name(c);
+        if n.is_empty() {
+            return false;
+        }
+        n == needle
+            || needle.starts_with(&format!("{n} "))
+            || needle.ends_with(&format!(" {n}"))
+            || needle.contains(&format!(" {n} "))
+    })
+}
+
 /// Ein Sync-Durchlauf. `force=true` (Settings-Button) synced auch, wenn die
 /// gespeicherte Version noch aktuell ist. Rückkehr: "fresh" | "synced".
 pub async fn sync_once(cache: &Cache, force: bool) -> Result<String, String> {
@@ -116,6 +152,7 @@ async fn sync_once_inner(cache: &Cache, force: bool) -> Result<String, String> {
         .iter()
         .filter(|v| v.ports.is_empty())
         .map(|v| v.name.clone())
+        .chain(curated_no_port_ships())
         .collect();
     let with_ports: Vec<scwiki_client::VehiclePorts> = vehicles
         .into_iter()
@@ -182,13 +219,13 @@ pub struct ModulStatus {
     pub ship_count: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct ModulHit {
     pub name: String,
     pub category: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct ModulForShip {
     /// `false` = Schiff in der Zuordnung unbekannt (Fallschirm: alle Module).
     pub known: bool,
@@ -240,23 +277,34 @@ pub async fn modul_compat_refresh(state: State<'_, TradeState>) -> Result<String
 
 /// Modul-Zuordnung für ein Schiff (Hangar-Modul-Autocomplete). Leerer
 /// `ship` → gesamter Katalog (Fallschirm-Quelle für „alle Module").
-#[tauri::command]
-pub fn modul_for_ship(state: State<'_, TradeState>, ship: String) -> Result<ModulForShip, String> {
-    let s: Option<ModulCompatState> = state
-        .cache
-        .modul_compat_state()
-        .map_err(|e| e.to_string())?;
+/// Reine Entscheidungslogik hinter `modul_for_ship` — ohne Tauri-State
+/// testbar (Review D1: Belege müssen den echten Pfad treffen).
+pub fn modul_for_ship_decision(
+    ship: &str,
+    curated: &[String],
+    s: Option<&ModulCompatState>,
+) -> ModulForShip {
+    let needle = norm_name(ship);
+    // Kuratierte No-Port-Liste (no_port_ships.json, Review D1) — gilt auch
+    // VOR dem ersten Sync (Feld muss nie auf ein portloses Schiff zeigen).
+    if !ship.trim().is_empty() && matches_curated(&needle, curated) {
+        return ModulForShip {
+            known: true,
+            has_ports: false,
+            modules: Vec::new(),
+        };
+    }
     let Some(s) = s else {
         // Kein Datensatz: Fallschirm — alle Module anbieten, Feld zeigen.
-        return Ok(ModulForShip {
+        return ModulForShip {
             known: false,
             has_ports: true,
             modules: Vec::new(),
-        });
+        };
     };
     if ship.trim().is_empty() {
         // Gesamtkatalog (Fallschirm).
-        return Ok(ModulForShip {
+        return ModulForShip {
             known: false,
             has_ports: true,
             modules: s
@@ -267,16 +315,15 @@ pub fn modul_for_ship(state: State<'_, TradeState>, ship: String) -> Result<Modu
                     category: r.category.clone(),
                 })
                 .collect(),
-        });
+        };
     }
-    let needle = norm_name(&ship);
     // Ohne Ports → bekannt, kein Modulfeld.
     if s.no_port_ships.iter().any(|v| norm_name(v) == needle) {
-        return Ok(ModulForShip {
+        return ModulForShip {
             known: true,
             has_ports: false,
             modules: Vec::new(),
-        });
+        };
     }
     let modules: Vec<ModulHit> = s
         .rows
@@ -290,18 +337,31 @@ pub fn modul_for_ship(state: State<'_, TradeState>, ship: String) -> Result<Modu
     if modules.is_empty() {
         // Mit Ports, aber keine passenden Module in der Zuordnung →
         // Fallschirm (alle Module), dokumentiert in der Karte.
-        Ok(ModulForShip {
+        ModulForShip {
             known: false,
             has_ports: true,
             modules: Vec::new(),
-        })
+        }
     } else {
-        Ok(ModulForShip {
+        ModulForShip {
             known: true,
             has_ports: true,
             modules,
-        })
+        }
     }
+}
+
+#[tauri::command]
+pub fn modul_for_ship(state: State<'_, TradeState>, ship: String) -> Result<ModulForShip, String> {
+    let s: Option<ModulCompatState> = state
+        .cache
+        .modul_compat_state()
+        .map_err(|e| e.to_string())?;
+    Ok(modul_for_ship_decision(
+        &ship,
+        &curated_no_port_ships(),
+        s.as_ref(),
+    ))
 }
 
 /// Gleiche Normalisierung wie `cache::modul_compat::norm` (Case +
@@ -317,6 +377,60 @@ fn norm_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Kuratierte No-Port-Liste: geparst, nicht leer, Hull E drin.
+    #[test]
+    fn curated_no_port_list_parses() {
+        let list = curated_no_port_ships();
+        assert!(!list.is_empty(), "no_port_ships.json leer — D1 unbelegt");
+        assert!(
+            list.iter().any(|s| norm_name(s) == "hull e"),
+            "Hull E fehlt in der kuratierten Liste: {list:?}"
+        );
+    }
+
+    /// Namens-Match: Präfix/Suffix-Toleranz, keine Fehltreffer.
+    #[test]
+    fn curated_match_tolerates_prefix_but_no_crossmatch() {
+        let list = vec!["Hull E".to_string()];
+        assert!(matches_curated(&norm_name("Hull E"), &list));
+        assert!(matches_curated(&norm_name("MISC Hull E"), &list));
+        assert!(!matches_curated(&norm_name("MISC Hull C"), &list));
+        assert!(!matches_curated(&norm_name("Kraken"), &list));
+        assert!(!matches_curated(&norm_name(""), &list));
+    }
+
+    /// Der reale Entscheidungs-Pfad (Review D1): Hull E aus der kuratierten
+    /// Liste → Feld versteckt; das gilt auch VOR dem ersten Sync (State None).
+    #[test]
+    fn decision_hides_module_field_for_curated_no_port_ship() {
+        let curated = curated_no_port_ships();
+        for ship in ["Hull E", "MISC Hull E", "  hull   e  "] {
+            let d = modul_for_ship_decision(ship, &curated, None);
+            assert!(d.known && !d.has_ports, "{ship}: {d:?}");
+            assert!(d.modules.is_empty());
+        }
+        // Portloses Gegenstück darf nicht fälschlich matchen.
+        let d = modul_for_ship_decision("MISC Hull C", &curated, None);
+        assert!(!d.known && d.has_ports, "Hull C: {d:?}");
+        // Mit Cache-Datensatz bleibt Aurora der Normalfall (Feld sichtbar,
+        // nur passende Module).
+        let cache = Cache::open_in_memory().unwrap();
+        cache
+            .modul_compat_store(
+                "v1",
+                &[ModulCompatRow {
+                    name: "Aurora Mk II DM Module".into(),
+                    category: "Modul".into(),
+                    ships: vec!["Aurora Mk II".into()],
+                }],
+                &["Hull E"],
+            )
+            .unwrap();
+        let state = cache.modul_compat_state().unwrap().unwrap();
+        let d = modul_for_ship_decision("Aurora Mk II", &curated, Some(&state));
+        assert!(d.known && d.has_ports && d.modules.len() == 1, "{d:?}");
+    }
 
     /// Live-Beleg für S3 (t_988e132f): Der Sync läuft einmal gegen die echte
     /// SC-Wiki-API, die Tabelle füllt sich, und die Cross-Referenz liefert
@@ -358,5 +472,46 @@ mod tests {
         // Zweiter Lauf ohne Force → "fresh" (Etikette: 1 Sync pro Version).
         let second = sync_once(&cache, false).await.unwrap();
         assert_eq!(second, "fresh");
+    }
+
+    /// Live-Beleg für den D1-Fix (Review Runde 1): Hull E ist in der
+    /// paginierten /api/vehicles-Liste nicht enthalten, im Einzel-Endpoint
+    /// aber belegt portlos (ports:0) — und über die kuratierte Liste liefert
+    /// der reale Entscheidungs-Pfad has_ports:false. Schreibt außerdem das
+    /// Fixture für die UI-Probe (docs/scripts/s3-modul-fixture.json) aus
+    /// echten modul_for_ship_decision-Ergebnissen.
+    #[tokio::test]
+    #[ignore = "live SC-Wiki — run with -- --ignored"]
+    async fn live_hull_e_portless_and_probe_fixture() {
+        let client = ScWikiClient::new(scwiki_client::DEFAULT_BASE_URL).unwrap();
+        // API-Beleg: Hull E existiert (Einzeln-Endpoint) und hat 0 Ports.
+        let hull_e = client.vehicle_by_slug("hull-e").await.unwrap();
+        assert!(
+            hull_e.ports.is_empty(),
+            "Hull E plötzlich mit Ports — kuratierte Liste prüfen"
+        );
+
+        let curated = curated_no_port_ships();
+        let d = modul_for_ship_decision("Hull E", &curated, None);
+        assert!(d.known && !d.has_ports, "Hull E: {d:?}");
+
+        // Fixture aus dem echten Pfad für die UI-Probe.
+        let cache = Cache::open_in_memory().unwrap();
+        let _ = sync_once(&cache, true).await.unwrap();
+        let state = cache.modul_compat_state().unwrap();
+        let aurora = modul_for_ship_decision("Aurora Mk II", &curated, state.as_ref());
+        assert!(aurora.has_ports && !aurora.modules.is_empty(), "{aurora:?}");
+        let fixture = serde_json::json!({
+            "_doc": "Erzeugt vom Live-Test live_hull_e_portless_and_probe_fixture (echte SC-Wiki-API + reale modul_for_ship_decision-Logik) — NICHT von Hand editieren.",
+            "generated_version": cache.modul_compat_state().unwrap().unwrap().version,
+            "for_ship": {
+                "aurora mk ii": aurora,
+                "hull e": d,
+            }
+        });
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../docs/scripts/s3-modul-fixture.json");
+        std::fs::write(&path, serde_json::to_string_pretty(&fixture).unwrap()).unwrap();
+        println!("fixture geschrieben: {}", path.display());
     }
 }

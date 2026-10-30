@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """CDP-Probe für t_988e132f (S3: SC-Wiki-Modul-Kompatibilität).
 
-IPC-Grenze gestubbt (smoke-stub.js, window.__MODUL_*__), echte Svelte-UI:
+IPC-Grenze für HANGAR-Daten gestubbt (smoke-stub.js, window.__MODUL_*__),
+echte Svelte-UI. Die Modul-Zuordnung (FOR_SHIP) kommt NICHT hartkodiert,
+sondern aus dem Live-Test `live_hull_e_portless_and_probe_fixture`
+(docs/scripts/s3-modul-fixture.json — echte SC-Wiki-API + reale
+modul_for_ship_decision-Logik, Review D1):
 
   1. F11 → Hangar, Detail Aurora Mk II (Zuordnung bekannt, Ports) →
      Modul-Autocomplete schlägt NUR die passenden Module vor
-     (Aurora Mk II DM/TS Module) — Katalog-Fremdmodule (Apollo) NICHT.
-  2. Detail Hull E (Zuordnung: ohne Ports) → Modul-Eingabefeld versteckt
-     (+ Hinweis-Zeile).
+     (u. a. Aurora Mk II DM/TS Module) — Katalog-Fremdmodule (Apollo) NICHT.
+  2. Detail Hull E (kuratierte No-Port-Liste, API-belegt ports:0) →
+     Modul-Eingabefeld versteckt (+ Hinweis-Zeile).
   3. F12 → Settings-Section „Modul-Kompatibilität (SC-Wiki)" mit Version +
      Alter; Button-Klick (stub refresh) setzt die Bestätigungsnote.
 
@@ -21,6 +25,16 @@ STUB = (ROOT / "docs/scripts/smoke-stub.js").read_text()
 OUT = pathlib.Path(os.environ.get("SHOT_DIR", str(ROOT / "docs/screenshots/scwiki-modules")))
 OUT.mkdir(parents=True, exist_ok=True)
 URL = "http://127.0.0.1:8796/"
+
+# FOR_SHIP kommt aus dem REALEN Backend-Pfad (Review Runde 1, Defekt D1):
+# docs/scripts/s3-modul-fixture.json wird vom Live-Test
+# `live_hull_e_portless_and_probe_fixture` erzeugt (echte SC-Wiki-API +
+# reale modul_for_ship_decision-Logik) — die UI-Probe erfindet hier NICHTS.
+FIXTURE_PATH = ROOT / "docs/scripts/s3-modul-fixture.json"
+FIXTURE = json.loads(FIXTURE_PATH.read_text())
+FOR_SHIP = FIXTURE["for_ship"]
+assert "hull e" in FOR_SHIP and FOR_SHIP["hull e"]["has_ports"] is False, \
+    "Fixture ohne realen Hull-E-No-Port-Nachweis — erst Live-Test laufen lassen"
 
 PASS, FAIL = [], []
 def check(name, ok, detail=""):
@@ -54,12 +68,6 @@ HANGAR = [
 MODUL_STATUS = {
     "version": "4.10.2-LIVE.12881860", "synced_at": 1760000000,
     "age_seconds": 5400, "module_count": 1204, "ship_count": 268,
-}
-FOR_SHIP = {
-    "aurora mk ii": {"known": True, "has_ports": True,
-                      "modules": [{"name": DM, "category": "Modul"},
-                                   {"name": TS, "category": "Modul"}]},
-    "hull e": {"known": True, "has_ports": False, "modules": []},
 }
 
 async def main():
@@ -171,7 +179,15 @@ async def main():
             opts = await js("(() => { const d = document.querySelector('.hangar-detail .hmod-add .rta-input');"
                             " const dd = d.closest('.hmod-add').querySelector('.rta-dd, .rta-dropdown, .rta-menu, [class*=dropdown], [class*=drop]');"
                             " return dd ? dd.innerText : 'NODROP'; })()")
-            check("aurora-suggest-dm-ts", DM in str(opts) and TS in str(opts), str(opts)[:200])
+            # Reale Zuordnung (Fixture): Vorgeschlagenes MUSS Teilmenge der
+            # echten Aurora-Module sein; DM/TS via Query-Filter geprüft.
+            aurora_real = {m["name"] for m in FOR_SHIP["aurora mk ii"]["modules"]}
+            suggested = [l for l in str(opts).splitlines() if l.strip()]
+            check("aurora-suggest-subset-of-compat",
+                  bool(suggested) and "NODROP" not in str(opts)
+                  and all(n in aurora_real for n in suggested),
+                  f"suggested={suggested[:6]}… nicht in Zuordnung: "
+                  f"{[n for n in suggested if n not in aurora_real][:5]}")
             check("aurora-suggest-not-apollo", APOLLO not in str(opts), str(opts)[:200])
             # Query 'dm' filtert auf das DM-Modul
             await js("(() => { const i = document.querySelector('.hangar-detail .hmod-add .rta-input'); i.focus(); i.value='dm'; i.dispatchEvent(new Event('input', {bubbles:true})); })()")

@@ -349,6 +349,18 @@ impl ScWikiClient {
         })
     }
 
+    /// Einzelnes Fahrzeug per Slug (`/api/vehicles/{slug}`) — für Schiffe,
+    /// die in der paginierten Liste fehlen (z. B. Hull E, Review D1).
+    pub async fn vehicle_by_slug(&self, slug: &str) -> Result<VehiclePorts> {
+        let env = self.get(&format!("/vehicles/{slug}"), &[]).await?;
+        let dto: VehicleDto = serde_json::from_value(env.data)
+            .map_err(|e| ScWikiError::Json(format!("vehicles/{slug}: {e}")))?;
+        Ok(VehiclePorts {
+            name: dto.name,
+            ports: port_slots(dto.ports.unwrap_or_default()),
+        })
+    }
+
     /// Alle Fahrzeuge mit ihren Port-Hardpoints (paginiert, Hardcap 50/Seite).
     /// Fahrzeuge OHNE Ports kommen mit leerem `ports`-Vektor zurück — der
     /// Caller trennt damit „Schiffe mit Ports" vs. „ohne Ports" (S3 Punkt 4).
@@ -371,26 +383,7 @@ impl ScWikiClient {
             let vehicles: Vec<VehicleDto> = serde_json::from_value(env.data)
                 .map_err(|e| ScWikiError::Json(format!("vehicles data: {e}")))?;
             for v in vehicles {
-                let ports: Vec<PortSlot> = v
-                    .ports
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|p| {
-                        if p.compatible_types.is_empty() {
-                            return None; // dekorativer Slot ohne Kompatibilität
-                        }
-                        Some(PortSlot {
-                            name: p.name,
-                            compatible: p
-                                .compatible_types
-                                .into_iter()
-                                .map(|c| (c.item_type, c.sub_types))
-                                .collect(),
-                            min_size: p.sizes.as_ref().and_then(|s| s.min),
-                            max_size: p.sizes.as_ref().and_then(|s| s.max),
-                        })
-                    })
-                    .collect();
+                let ports = port_slots(v.ports.unwrap_or_default());
                 out.push(VehiclePorts {
                     name: v.name,
                     ports,
@@ -449,6 +442,28 @@ impl ScWikiClient {
         }
         Ok(out)
     }
+}
+
+/// PortDto-Liste → PortSlot-Liste (dekorative Slots ohne Kompatibilität
+/// fliegen raus — gleiche Filterung wie in `vehicles()`).
+fn port_slots(dtos: Vec<PortDto>) -> Vec<PortSlot> {
+    dtos.into_iter()
+        .filter_map(|p| {
+            if p.compatible_types.is_empty() {
+                return None; // dekorativer Slot ohne Kompatibilität
+            }
+            Some(PortSlot {
+                name: p.name,
+                compatible: p
+                    .compatible_types
+                    .into_iter()
+                    .map(|c| (c.item_type, c.sub_types))
+                    .collect(),
+                min_size: p.sizes.as_ref().and_then(|s| s.min),
+                max_size: p.sizes.as_ref().and_then(|s| s.max),
+            })
+        })
+        .collect()
 }
 
 /// Cross-Referenz Port × Item-Katalog: pro Modul die akzeptierenden Schiffe.

@@ -1,0 +1,845 @@
+{
+  "_doc": "Erzeugt vom Live-Test live_hull_e_portless_and_probe_fixture (echte SC-Wiki-API + reale modul_for_ship_decision-Logik) — NICHT von Hand editieren.",
+  "for_ship": {
+    "aurora mk ii": {
+      "has_ports": true,
+      "known": true,
+      "modules": [
+        {
+          "category": "Waffe",
+          "name": "'WASP' Repeater"
+        },
+        {
+          "category": "Waffe",
+          "name": "'WHIP' Cannon"
+        },
+        {
+          "category": "Waffe",
+          "name": "10-Series Greatsword Cannon"
+        },
+        {
+          "category": "Schild",
+          "name": "5SA 'Rhada'"
+        },
+        {
+          "category": "Schild",
+          "name": "6SA 'Arbiter'"
+        },
+        {
+          "category": "Schild",
+          "name": "7SA 'Concord'"
+        },
+        {
+          "category": "Waffe",
+          "name": "ATVS Repeater"
+        },
+        {
+          "category": "Radar",
+          "name": "Abetti"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Avenger - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Eclipse - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Eclipse - Noise Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Gladius - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Gladius - Noise Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Hammerhead - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Hammerhead - Noise Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Sabre - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Aegis Sabre - Noise Launcher"
+        },
+        {
+          "category": "Schild",
+          "name": "AllStop"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Anvil Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Anvil Gladiator - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Anvil Gladiator - Noise Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Anvil Noise Launcher"
+        },
+        {
+          "category": "Kühler",
+          "name": "ArcticStorm"
+        },
+        {
+          "category": "Waffe",
+          "name": "Ardor-2 Salvaged Repeater"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Atlas"
+        },
+        {
+          "category": "Waffe",
+          "name": "Attrition-2 Repeater"
+        },
+        {
+          "category": "Modul",
+          "name": "Aurora Mk II DM Module"
+        },
+        {
+          "category": "Modul",
+          "name": "Aurora Mk II TS Module"
+        },
+        {
+          "category": "Waffe",
+          "name": "BRVS Repeater"
+        },
+        {
+          "category": "Radar",
+          "name": "Backlund"
+        },
+        {
+          "category": "Modul",
+          "name": "Basher Chopper Bodykit Top"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Beacon"
+        },
+        {
+          "category": "Kühler",
+          "name": "Berian"
+        },
+        {
+          "category": "Kühler",
+          "name": "BlastChill"
+        },
+        {
+          "category": "Kühler",
+          "name": "Bracer"
+        },
+        {
+          "category": "Generator",
+          "name": "Breton"
+        },
+        {
+          "category": "Kühler",
+          "name": "BriskAir IC-10"
+        },
+        {
+          "category": "Schild",
+          "name": "Bulwark"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Burst"
+        },
+        {
+          "category": "Waffe",
+          "name": "CF-227 Badger \"Hazard-Zone\" Repeater"
+        },
+        {
+          "category": "Waffe",
+          "name": "CF-227 Badger Repeater"
+        },
+        {
+          "category": "Waffe",
+          "name": "CVSA Cannon"
+        },
+        {
+          "category": "Radar",
+          "name": "Capston"
+        },
+        {
+          "category": "Generator",
+          "name": "Charger"
+        },
+        {
+          "category": "Schild",
+          "name": "Cloak"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Colossus"
+        },
+        {
+          "category": "Kühler",
+          "name": "Cryo-Star"
+        },
+        {
+          "category": "Waffe",
+          "name": "DR Model-XJ2 Repeater"
+        },
+        {
+          "category": "Waffe",
+          "name": "Deadbolt II Cannon"
+        },
+        {
+          "category": "Waffe",
+          "name": "Deathroll S2 Gatling"
+        },
+        {
+          "category": "Radar",
+          "name": "Delphi RS-10"
+        },
+        {
+          "category": "Generator",
+          "name": "DeltaMax"
+        },
+        {
+          "category": "Waffe",
+          "name": "Dominance-2 Scattergun"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Drake Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Drake Noise Launcher"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Drift"
+        },
+        {
+          "category": "Generator",
+          "name": "DynaFlux"
+        },
+        {
+          "category": "Waffe",
+          "name": "EVSD Cannon"
+        },
+        {
+          "category": "Kühler",
+          "name": "Eco-Flow"
+        },
+        {
+          "category": "Radar",
+          "name": "Ecouter"
+        },
+        {
+          "category": "Kühler",
+          "name": "Endo"
+        },
+        {
+          "category": "Generator",
+          "name": "Endurance"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Eos"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Expedition"
+        },
+        {
+          "category": "Waffe",
+          "name": "FL-22 Cannon"
+        },
+        {
+          "category": "Schild",
+          "name": "FR-66"
+        },
+        {
+          "category": "Schild",
+          "name": "Falco"
+        },
+        {
+          "category": "Generator",
+          "name": "Fierell Cascade"
+        },
+        {
+          "category": "Kühler",
+          "name": "FlashFreeze"
+        },
+        {
+          "category": "Radar",
+          "name": "Fleming"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Flood"
+        },
+        {
+          "category": "Schild",
+          "name": "ForceWall"
+        },
+        {
+          "category": "Generator",
+          "name": "Fortitude"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "FoxFire"
+        },
+        {
+          "category": "Kühler",
+          "name": "Frost-Star"
+        },
+        {
+          "category": "Waffe",
+          "name": "GVSR Repeater"
+        },
+        {
+          "category": "Kühler",
+          "name": "Gelid"
+        },
+        {
+          "category": "Kühler",
+          "name": "Glacier"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Goliath"
+        },
+        {
+          "category": "Schild",
+          "name": "Guardian"
+        },
+        {
+          "category": "Raketen",
+          "name": "Guardian MX Missile Rack"
+        },
+        {
+          "category": "Schild",
+          "name": "HEX"
+        },
+        {
+          "category": "Kühler",
+          "name": "HeatSafe"
+        },
+        {
+          "category": "Generator",
+          "name": "Helios IP-10"
+        },
+        {
+          "category": "Waffe",
+          "name": "Hellion Scattergun Sharkmouth Edition"
+        },
+        {
+          "category": "Waffe",
+          "name": "Hellion Scattergun"
+        },
+        {
+          "category": "Raketen",
+          "name": "Hermes Missile Rack"
+        },
+        {
+          "category": "Radar",
+          "name": "Hunter"
+        },
+        {
+          "category": "Kühler",
+          "name": "Hydrocel"
+        },
+        {
+          "category": "Generator",
+          "name": "HyperGen"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Hyperion"
+        },
+        {
+          "category": "Schild",
+          "name": "INK"
+        },
+        {
+          "category": "Kühler",
+          "name": "IcePlunge"
+        },
+        {
+          "category": "Generator",
+          "name": "IonBurst"
+        },
+        {
+          "category": "Generator",
+          "name": "JS-300"
+        },
+        {
+          "category": "Schild",
+          "name": "Jaghte"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Joker Defcon - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Joker Defcon - Noise Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Joker Defcon Flares Ammo"
+        },
+        {
+          "category": "Generator",
+          "name": "LightBlossom"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "LightFire"
+        },
+        {
+          "category": "Waffe",
+          "name": "Lightstrike II Cannon"
+        },
+        {
+          "category": "Generator",
+          "name": "LumaCore"
+        },
+        {
+          "category": "Waffe",
+          "name": "M4A Cannon"
+        },
+        {
+          "category": "Waffe",
+          "name": "M4A Cannon Defense Division"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "MISC Prospector - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "MISC Prospector - Noise Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "MISC Reliant - Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "MISC Reliant - Noise Launcher"
+        },
+        {
+          "category": "Raketen",
+          "name": "MSD-212 Missile Rack"
+        },
+        {
+          "category": "Raketen",
+          "name": "MSD-221 Missile Rack"
+        },
+        {
+          "category": "Waffe",
+          "name": "MVSA Cannon"
+        },
+        {
+          "category": "Generator",
+          "name": "MagnaBloom"
+        },
+        {
+          "category": "Schild",
+          "name": "Mirage"
+        },
+        {
+          "category": "Raketen",
+          "name": "Mirai Fury 1xS2 Missile Rack"
+        },
+        {
+          "category": "Raketen",
+          "name": "Mirai Fury MX 2xS1 Missile Rack"
+        },
+        {
+          "category": "Raketen",
+          "name": "Missile Rack"
+        },
+        {
+          "category": "Waffe",
+          "name": "NDB-28 Repeater"
+        },
+        {
+          "category": "Waffe",
+          "name": "NN-14 Cannon"
+        },
+        {
+          "category": "Radar",
+          "name": "Observer-Lite"
+        },
+        {
+          "category": "Waffe",
+          "name": "Omnisky VI Cannon"
+        },
+        {
+          "category": "Raketen",
+          "name": "Origin 100i Missile Rack"
+        },
+        {
+          "category": "Raketen",
+          "name": "Origin 125a Missile Rack"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Origin Jumpworks Noise Launcher"
+        },
+        {
+          "category": "Generator",
+          "name": "OverDrive"
+        },
+        {
+          "category": "Schild",
+          "name": "Palisade"
+        },
+        {
+          "category": "Radar",
+          "name": "Pelerous"
+        },
+        {
+          "category": "Kühler",
+          "name": "Polar"
+        },
+        {
+          "category": "Generator",
+          "name": "PowerBolt"
+        },
+        {
+          "category": "Radar",
+          "name": "Prophet"
+        },
+        {
+          "category": "Generator",
+          "name": "QuadraCell"
+        },
+        {
+          "category": "Kühler",
+          "name": "QuikCool"
+        },
+        {
+          "category": "Raketen",
+          "name": "RSI Apollo Medivac S02 Missile Rack"
+        },
+        {
+          "category": "Raketen",
+          "name": "RSI Apollo S02 Missile Rack"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "RSI Decoy Ammo Box"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "RSI Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "RSI Noise Launcher"
+        },
+        {
+          "category": "Radar",
+          "name": "Radar"
+        },
+        {
+          "category": "Generator",
+          "name": "Regulus"
+        },
+        {
+          "category": "Geschütz",
+          "name": "Remote Turret"
+        },
+        {
+          "category": "Generator",
+          "name": "Roughneck"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Rush"
+        },
+        {
+          "category": "Radar",
+          "name": "SNS-R6"
+        },
+        {
+          "category": "Radar",
+          "name": "SNSR5"
+        },
+        {
+          "category": "Radar",
+          "name": "SNSR7"
+        },
+        {
+          "category": "Raketen",
+          "name": "ST-171 Missile Rack"
+        },
+        {
+          "category": "Geschütz",
+          "name": "STR-E2 Gimbal Mount"
+        },
+        {
+          "category": "Waffe",
+          "name": "SW16BR2 “Sawbuck” Repeater"
+        },
+        {
+          "category": "Geschütz",
+          "name": "San'tok.yāi Gimbal Mount"
+        },
+        {
+          "category": "Waffe",
+          "name": "Scorpion GT-215 Gatling"
+        },
+        {
+          "category": "Schild",
+          "name": "SecureHyde"
+        },
+        {
+          "category": "Schild",
+          "name": "Shimmer"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Barebones\" Bodykit Front"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Barebones\" Bodykit Rear Center"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Barebones\" Bodykit Rear Left"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Barebones\" Bodykit Rear Right"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Lunatic\" Bodykit Front"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Lunatic\" Bodykit Rear Center"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Lunatic\" Bodykit Rear Left"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Lunatic\" Bodykit Rear Right"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Slasher\" Bodykit Front"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Slasher\" Bodykit Rear Center"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Slasher\" Bodykit Rear Left"
+        },
+        {
+          "category": "Modul",
+          "name": "Shiv \"Slasher\" Bodykit Rear Right"
+        },
+        {
+          "category": "Waffe",
+          "name": "Singe Cannon (S2)"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Siren"
+        },
+        {
+          "category": "Waffe",
+          "name": "Sledge II Mass Driver Cannon"
+        },
+        {
+          "category": "Generator",
+          "name": "Slipstream"
+        },
+        {
+          "category": "Waffe",
+          "name": "Snapper S2 Repeater"
+        },
+        {
+          "category": "Kühler",
+          "name": "SnowBlind"
+        },
+        {
+          "category": "Generator",
+          "name": "SonicLite"
+        },
+        {
+          "category": "Generator",
+          "name": "Sovereign IP-10"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Spectre"
+        },
+        {
+          "category": "Generator",
+          "name": "StarHeart"
+        },
+        {
+          "category": "Schild",
+          "name": "Steward"
+        },
+        {
+          "category": "Waffe",
+          "name": "Strife Mass Driver Cannon"
+        },
+        {
+          "category": "Waffe",
+          "name": "Suckerpunch-L Cannon"
+        },
+        {
+          "category": "Schild",
+          "name": "Suldrath"
+        },
+        {
+          "category": "Generator",
+          "name": "SunFlare"
+        },
+        {
+          "category": "Waffe",
+          "name": "SureGrip TH2 Tractor Beam"
+        },
+        {
+          "category": "Radar",
+          "name": "Surveyor-Lite"
+        },
+        {
+          "category": "Waffe",
+          "name": "Tarantula GT-870 Mark 2 Cannon"
+        },
+        {
+          "category": "Schild",
+          "name": "Targa"
+        },
+        {
+          "category": "Kühler",
+          "name": "Thermax"
+        },
+        {
+          "category": "Waffe",
+          "name": "Thlilye Laser Gatling"
+        },
+        {
+          "category": "Radar",
+          "name": "Tige"
+        },
+        {
+          "category": "Waffe",
+          "name": "Tigerstrike T-19P"
+        },
+        {
+          "category": "Kühler",
+          "name": "Tundra"
+        },
+        {
+          "category": "Kühler",
+          "name": "Ultra-Flow"
+        },
+        {
+          "category": "Radar",
+          "name": "V801-11"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "VK-00"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Vanduul Decoy Launcher"
+        },
+        {
+          "category": "Defensivwaffe",
+          "name": "Vanduul Noise Launcher"
+        },
+        {
+          "category": "Kühler",
+          "name": "VaporBlock"
+        },
+        {
+          "category": "Geschütz",
+          "name": "VariPuck S2 Gimbal Mount"
+        },
+        {
+          "category": "Schild",
+          "name": "Veil"
+        },
+        {
+          "category": "Radar",
+          "name": "Voir"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Voyage"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Vulcan"
+        },
+        {
+          "category": "Schild",
+          "name": "WEB"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Wayfare"
+        },
+        {
+          "category": "Waffe",
+          "name": "Whiptail STR-E2 Repeater"
+        },
+        {
+          "category": "Generator",
+          "name": "WhiteRose"
+        },
+        {
+          "category": "Kühler",
+          "name": "Winter-Star"
+        },
+        {
+          "category": "Generator",
+          "name": "ZapJet"
+        },
+        {
+          "category": "Quantumantrieb",
+          "name": "Zephyr"
+        },
+        {
+          "category": "Kühler",
+          "name": "ZeroRush"
+        }
+      ]
+    },
+    "hull e": {
+      "has_ports": false,
+      "known": true,
+      "modules": []
+    }
+  },
+  "generated_version": "4.10.2-LIVE.12881860"
+}
