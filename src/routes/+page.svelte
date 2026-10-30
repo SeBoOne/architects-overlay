@@ -820,10 +820,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return {
 			id: null,
 			name: '',
-			origin: 'ingame',
+			// TB (t_78a4a5e5, Punkt 1): Auswahl-Felder starten LEER (Platzhalter
+			// statt Vorauswahl) — die Validierung verlangt vor dem Write eine Wahl.
+			origin: '',
 			insurance: null,
 			custom_name: '',
-			entity_type: 'ship',
+			entity_type: '',
 			base_ship: '',
 			ship_code: '',
 			manufacturer: '',
@@ -1045,6 +1047,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function requestHangarSave() {
 		if (!hangarForm.name.trim()) {
 			hangarNoteSet('Name fehlt');
+			return;
+		}
+		// TB (t_78a4a5e5, Punkt 1): Typ/Herkunft starten leer — Pflichtwahl
+		// erst beim Speichern (Meldung statt Vorauswahl im Formular).
+		if (!hangarForm.entity_type) {
+			hangarNoteSet('Bitte einen Typ wählen.');
+			return;
+		}
+		if (!hangarForm.origin) {
+			hangarNoteSet('Bitte eine Herkunft wählen.');
 			return;
 		}
 		hangarConfirm = { kind: 'save' };
@@ -2351,24 +2363,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			advertCatOpen = false;
 		}
 	});
+	// TB (t_78a4a5e5, Punkt 1): ALLE Auswahl-Felder starten LEER (Platzhalter
+	// statt Vorauswahl) — die komplette Optionsliste ist sofort sichtbar;
+	// nur die Validierung verlangt die Wahl (Pflichtfelder). Nur `operation`
+	// (Chips, beide Optionen immer sichtbar) und `quantity` (Zahl-Eingabe,
+	// sinnvoller Startwert) behalten ihren Default.
 	const emptyAdvertise = (): AdvertiseForm => ({
 		operation: 'sell',
-		listing_type: 'item',
+		listing_type: '',
 		item_id: '',
 		item_label: '',
 		title: '',
 		description: '',
 		price: '',
 		quantity: '1',
-		unit: 'unit',
+		unit: '',
 		location: '',
 		source: '',
-		currency: 'UEC',
+		currency: '',
 		quality: '',
 		hidden: false,
 		availability: '',
 		images: [],
-		hours: '168',
+		hours: '',
 		category: ''
 	});
 	// 2-Schritt: Zustand, welche Aktion gerade auf Bestätigung wartet.
@@ -2694,8 +2711,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	// MC (t_5faaf946): Unit-Auswahl hängt vom Listing-Type ab (Doku [7] —
 	// separate Referenzliste für item/service/contract); UNIT_MAP oben.
+	// TB (t_78a4a5e5, Punkt 1): ohne gewählten Type KEINE Unit-Liste —
+	// das Feld startet leer und verlangt erst die Type-Wahl.
 	function unitsFor(type: AdvertiseForm['listing_type']): string[] {
-		if (type !== 'item' && type !== 'service' && type !== 'contract') return UNIT_MAP.item;
+		if (type !== 'item' && type !== 'service' && type !== 'contract') return [];
 		return UNIT_MAP[type];
 	}
 	// Laufzeit: >24h als Tage anzeigen (48→2d … 720→30d), ≤24h in h bleiben.
@@ -4626,11 +4645,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								     den Ship-Details). -->
 								<div class="trk-field">
 									<span class="trk-lbl">Typ</span>
-									<SelectCombo bind:value={hangarForm.entity_type} ariaLabel="Typ" options={[{ value: 'ship', label: 'Schiff' }, { value: 'vehicle', label: 'Fahrzeug' }]} />
+									<!-- TB (t_78a4a5e5, Punkt 1): startet leer (Platzhalter) —
+									     Pflichtwahl bei Speichern. -->
+									<SelectCombo bind:value={hangarForm.entity_type} ariaLabel="Typ" placeholder="— bitte wählen —" options={[{ value: 'ship', label: 'Schiff' }, { value: 'vehicle', label: 'Fahrzeug' }]} />
 								</div>
 								<div class="trk-field">
 									<span class="trk-lbl">Herkunft</span>
-									<SelectCombo bind:value={hangarForm.origin} ariaLabel="Herkunft" options={[{ value: 'ingame', label: 'Ingame' }, { value: 'pledge', label: 'Pledge' }]} />
+									<SelectCombo bind:value={hangarForm.origin} ariaLabel="Herkunft" placeholder="— bitte wählen —" options={[{ value: 'ingame', label: 'Ingame' }, { value: 'pledge', label: 'Pledge' }]} />
 								</div>
 							</div>
 							<div class="hform-row">
@@ -4693,8 +4714,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Eintrag wird aus dem Hangar GELÖSCHT.</div>
 			{:else}
 				<div class="c-row"><b>Name</b><span>{hangarForm.name}</span></div>
-				<div class="c-row"><b>Typ</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : 'Schiff'}</span></div>
-				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledge' : 'Ingame'}</span></div>
+				<div class="c-row"><b>Typ</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : hangarForm.entity_type === 'module' ? 'Modul' : hangarForm.entity_type ? 'Schiff' : '—'}</span></div>
+				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledge' : hangarForm.origin === 'ingame' ? 'Ingame' : '—'}</span></div>
 				<div class="c-row"><b>Versicherung</b><span>{hangarFormIns || 'Ohne'}</span></div>
 				<div class="c-row"><b>Datum</b><span>{hangarFormDate || '—'}</span></div>
 				<div class="c-row"><b>Preis</b><span>{hangarFormPrice ? `$${hangarFormPrice}` : '—'}</span></div>
@@ -5745,6 +5766,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<SelectCombo
 																	bind:value={advertForm.listing_type}
 																	ariaLabel="Listing Type"
+																	placeholder="— bitte wählen —"
 																	options={[
 																		{ value: 'item', label: 'Item' },
 																		{ value: 'service', label: 'Service' },
@@ -5752,9 +5774,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	]}
 																	onselect={() => {
 																		// Unit-Referenzliste wechselt mit dem Type (Doku [7]);
-																		// fallback auf die erste Unit der neuen Liste.
+																		// TB (t_78a4a5e5, Punkt 1): NIE automatisch vorwählen —
+																		// Unit wird geleert, wenn sie zur neuen Liste nicht passt
+																		// (der Nutzer wählt selbst; Validierung verlangt die Wahl).
 																		const u = unitsFor(advertForm.listing_type);
-																		if (!u.includes(advertForm.unit)) advertForm.unit = u[0];
+																		if (!u.includes(advertForm.unit)) advertForm.unit = '';
 																	}}
 																	/>
 																	{#if advertErrors.listing_type}<span class="chip warn" style="margin-left: 4px">{advertErrors.listing_type}</span>{/if}
@@ -5781,7 +5805,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																				/>
 																{#if advertErrors.price}<span class="chip warn" style="margin-left: 4px">{advertErrors.price}</span>{/if}
 																<span class="m-lbl">Währung</span>
-																<SelectCombo bind:value={advertForm.currency} ariaLabel="Currency" placeholder="UEC" options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
+																<SelectCombo bind:value={advertForm.currency} ariaLabel="Currency" placeholder="Währung wählen" options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
 																{#if advertErrors.currency}<span class="chip warn" style="margin-left: 4px">{advertErrors.currency}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
@@ -5789,7 +5813,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.quantity} />
 																{#if advertErrors.quantity}<span class="chip warn" style="margin-left: 4px">{advertErrors.quantity}</span>{/if}
 																<span class="m-lbl">Einheit</span>
-																<SelectCombo bind:value={advertForm.unit} ariaLabel="Einheit" options={unitsFor(advertForm.listing_type).map((u) => ({ value: u, label: u }))} />
+																<SelectCombo bind:value={advertForm.unit} ariaLabel="Einheit" placeholder="Einheit wählen" options={unitsFor(advertForm.listing_type).map((u) => ({ value: u, label: u }))} />
 																{#if advertErrors.unit}<span class="chip warn" style="margin-left: 4px">{advertErrors.unit}</span>{/if}
 																<span class="m-lbl">Ort</span>
 																<div style="position: relative; display: inline-flex">
@@ -5847,10 +5871,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
 																<span class="m-lbl">Laufzeit</span>
 																<SelectCombo
-										bind:value={advertForm.hours}
-										ariaLabel="Laufzeit"
-										options={HOUR_CHOICES.map((h) => ({ value: h, label: hourLabel(h) }))}
-									/>
+																	bind:value={advertForm.hours}
+																	ariaLabel="Laufzeit"
+																	placeholder="Laufzeit wählen"
+																	options={HOUR_CHOICES.map((h) => ({ value: h, label: hourLabel(h) }))}
+																/>
 																{#if advertErrors.hours}<span class="chip warn" style="margin-left: 4px">{advertErrors.hours}</span>{/if}
 																<span class="m-lbl">Item Source</span>
 																<SelectCombo
