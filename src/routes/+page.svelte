@@ -1,4 +1,12 @@
 <script lang="ts">
+// A11y-Helfer: Enter/Space aktiviert klickbare Nicht-Button-Elemente (nur bei Eigenfokus,
+// keine Kaskade in fokussierte Kind-Buttons). Reine Tastatur-Ergaenzung, kein Verhaltenswechsel.
+function keyActivate(e: KeyboardEvent) {
+	if (e.target !== e.currentTarget) return;
+	if (e.key !== 'Enter' && e.key !== ' ') return;
+	e.preventDefault();
+	(e.currentTarget as HTMLElement).click();
+}
 	// SC Architects Overlay — Suchpalette (Arkanis-UX-Rework, Phase t_1a0b0acb).
 	//
 	// Beide Tauri-Fenster rendern dieselbe Palette ("main" = Entwicklungs-Shell,
@@ -1869,7 +1877,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let chatErr = $state<string | null>(null);
 	let chatDraft = $state('');
 	let chatBusy = $state(false);
-	let chatScroller: HTMLElement | null = null;
+	let chatScroller = $state<HTMLElement | null>(null);
 	// neuer-Nachricht-Indikator: pro Deal-Hash der zuletzt GESEHENE
 	// date_modified-Stand; Row mit aktuellerer Interaktion zeigt einen Punkt.
 	let tradesSeen: Record<string, number> = {};
@@ -4510,7 +4518,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
 												{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
 											</button>
-											<span class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
+											<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
 										</div>
 									</div>
 									</div>
@@ -4540,7 +4548,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<button type="button" class="btn" disabled={trkBusy} onclick={() => { if (trkConfirm) (trkConfirm.kind === 'remove' ? void doTrkRemove() : void doTrkWrite()); }}>
 											{trkBusy ? 'Senden …' : 'Bestätigen'}
 										</button>
-										<span class="btn-ghost" onclick={() => (trkConfirm = null)}>Abbrechen (Esc)</span>
+										<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (trkConfirm = null)}>Abbrechen (Esc)</span>
 									</div>
 								</div>
 							</div>
@@ -4564,6 +4572,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<path d="M15.4 15.4 21 21" />
 				</svg>
 			</span>
+			<!-- svelte-ignore a11y_autofocus --><!-- Autofocus: Suche ist der primäre Einstiegspunkt des Overlays -->
 			<input
 				class="q"
 				type="text"
@@ -4675,7 +4684,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     stehen; Schließen per Esc (hangarBack) oder Close-Button, ohne
 					     View-Wechsel. -->
 					<div class="advert-scrim" role="presentation">
-						<section class="hdetail-modal" role="dialog" aria-modal="true" aria-label={`Details ${hangarDisplayName(hangarDetail)}`}>
+						<div class="hdetail-modal" role="dialog" aria-modal="true" aria-label={`Details ${hangarDisplayName(hangarDetail)}`}>
 							<div class="hd-head">
 								<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
 								<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
@@ -4748,7 +4757,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{/if}
 							{/if}
 							</div>
-						</section>
+						</div>
 					</div>
 				{/if}
 			</div>
@@ -4758,7 +4767,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				     Body scrollt intern, Buttons fix unten. Bearbeiten öffnet DASSELBE
 				     Popup über dem Detail. Bestätigung (2-Schritt) wie elsewhere. -->
 				<div class="advert-scrim" role="presentation">
-					<form class="hform-modal" role="dialog" aria-modal="true" aria-label={hangarEdit ? 'Eintrag bearbeiten' : 'Eintrag anlegen'} onsubmit={(e) => { e.preventDefault(); requestHangarSave(); }}>
+					<div class="hform-modal" role="dialog" aria-modal="true" aria-label={hangarEdit ? 'Eintrag bearbeiten' : 'Eintrag anlegen'}>
+						<form onsubmit={(e) => { e.preventDefault(); requestHangarSave(); }}>
 						<div class="hform-body">
 							<div class="mbar2" style="margin-bottom: 14px"><span class="m-lbl">{hangarEdit ? 'EINTRAG BEARBEITEN' : 'EINTRAG ANLEGEN'}</span></div>
 							<!-- R2 (Punkt 4): Name in voller Popup-Breite (Schiffsnamen sind lang). -->
@@ -4836,6 +4846,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
 						</div>
 					</form>
+					</div>
 			</div>
 		{/if}
 		{#if hangarConfirm}
@@ -5310,7 +5321,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{errorMsg ?? status?.last_error ?? 'Keine Verbindung'}<br />
 						Cache-Stand: {cacheAge()}
 					</div>
-					<span class="btn-ghost" onclick={retrySync}>Erneut versuchen</span>
+					<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={retrySync}>Erneut versuchen</span>
 					<div class="sm" style="margin-top: 10px">
 						<b style="color: var(--fgdim)">O</b> Offline mit Cache fortsetzen
 					</div>
@@ -5401,9 +5412,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<!-- MQ (t_d6ff5212): Verhandlungs-Einstieg sichtbar machen. Die
 							     API bietet KEIN POST /marketplace_negotiations (Research) —
 							     Deals entstehen auf der UEX-Webseite → Deep-Link-Button. -->
-							<span class="btn" title="Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)" onclick={() => void openListingDeepLink(offerDetail!.slug)}>VERHANDELN AUF UEX ↗</span>
-							<span class="btn-ghost" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
-							<span class="btn-ghost" onclick={() => { offerDetail = null; lightbox = null; }}>Zurück</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn" title="Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)" onclick={() => void openListingDeepLink(offerDetail!.slug)}>VERHANDELN AUF UEX ↗</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => { offerDetail = null; lightbox = null; }}>Zurück</span>
 						</div>
 						<div class="md-note">
 							Verhandeln startet auf <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter.
@@ -5413,6 +5424,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							     Klick auf den Scrim (oder Esc) schließt; Klick aufs Bild nicht. -->
 							<div class="lightbox-scrim" role="presentation" onclick={() => (lightbox = null)}>
 								<div class="lightbox-modal" role="dialog" aria-modal="true" aria-label="Bild vergrößert">
+									<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events --><!-- Lightbox-Bild: Klick stoppt nur Propagation (Schließen via Scrim/Esc), keine Interaktion -->
 									<img src={lightbox.uri} alt={'Vergrößert: ' + lightbox.title} onclick={(ev) => ev.stopPropagation()} />
 									<div class="lightbox-cap">{lightbox.title} — Klick außerhalb oder Esc schließt</div>
 								</div>
@@ -5430,9 +5442,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{#if rTab === 'tracking'}
 						<div class="mbar">
 							<span class="m-lbl">Trade Log</span>
-							<span class="chip" onclick={() => void loadTrk(true, true)}>Aktualisieren</span>
-							<span class="chip" title="Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)" onclick={() => openTrkForm()}>+ Trade erfassen</span>
-							<span class="chip" title="Trade Log auf uexcorp.space öffnen (Login im Browser)" onclick={() => void openTrkUex()}>Trade Log auf UEX öffnen ↗</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => void loadTrk(true, true)}>Aktualisieren</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)" onclick={() => openTrkForm()}>+ Trade erfassen</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Trade Log auf uexcorp.space öffnen (Login im Browser)" onclick={() => void openTrkUex()}>Trade Log auf UEX öffnen ↗</span>
 						</div>
 						{#if trkLoading && !myTrades.length}
 							<div class="center" style="padding: 28px 16px">
@@ -5442,7 +5454,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{:else if trkErr && !myTrades.length}
 							<div class="row-empty" style="padding: 28px 16px; color: var(--alert)">
 								{trkErr}
-								<span class="btn-ghost" onclick={() => void loadTrk(false)}>Erneut versuchen</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadTrk(false)}>Erneut versuchen</span>
 							</div>
 						{:else if myTrades.length === 0}
 							{#if trkMsg}
@@ -5498,8 +5510,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											>{t.operation === 'sell' ? '+' : '−'}{fmtPrice((t.scu || 0) * (t.price || 0))}</div>
 											<div class="m-meta">{new Date((t.date_added || 0) * 1000).toLocaleString('de-DE')}</div>
 											<div class="m-meta">
-												<span class="btn-ghost" title="Trade bearbeiten" onclick={() => openTrkForm(t)}>Bearbeiten</span>
-												<span class="btn-ghost" style="color: var(--alert)" title="Trade löschen" onclick={() => requestTrkRemove(t)}>Löschen</span>
+												<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" title="Trade bearbeiten" onclick={() => openTrkForm(t)}>Bearbeiten</span>
+												<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" style="color: var(--alert)" title="Trade löschen" onclick={() => requestTrkRemove(t)}>Löschen</span>
 											</div>
 										</div>
 									</div>
@@ -5617,7 +5629,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											{/if}
 						<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
 							<div class="md-actions">
-								<span class="btn-ghost" onclick={() => (rDetail = null)}>Zurück (Esc)</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (rDetail = null)}>Zurück (Esc)</span>
 							</div>
 						</div>
 					{:else}
@@ -5638,7 +5650,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<RoutesTypeahead bind:value={rFrom} options={fromOpts} placeholder="Startort" ariaLabel="Startort Type-ahead — Tippen filtert, ↵ übernimmt" />
 							<span class="m-lbl">Ziel</span>
 							<RoutesTypeahead bind:value={rTo} options={toOpts} placeholder="Zielort" ariaLabel="Zielort Type-ahead — Tippen filtert, ↵ übernimmt" />
-							<a class="rta-clear" role="button" tabindex="0" title="Filter zurücksetzen" onclick={() => { rShipQ = ''; rScu = 0; rCommodity = ''; rFrom = ''; rTo = ''; rBudget = ''; }}>Filter ×</a>
+							<a class="rta-clear" href="#0" role="button" tabindex="0" title="Filter zurücksetzen" onclick={(ev) => { ev.preventDefault(); rShipQ = ''; rScu = 0; rCommodity = ''; rFrom = ''; rTo = ''; rBudget = ''; }}>Filter ×</a>
 						</div>
 						<div class="mbar2">
 							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>Alle</button>
@@ -5683,7 +5695,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{:else if routes_.length}
 							<div class="mlist">
 								{#each routes_ as r, i (r.commodity_id + '-' + r.buy_terminal_id + '-' + r.sell_terminal_id)}
-									<div
+									<div tabindex="-1" onkeydown={keyActivate}
 										class="mrow rrow"
 										role="option"
 										aria-selected={i === rSel}
@@ -5731,11 +5743,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     (Research §3) → Deep-Link-Buttons, keine Fake-Buttons. -->
 					{#if tradesDeal}
 						<div class="mbar">
-							<span class="chip" onclick={() => (tradesDeal = null)}>← Deals</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => (tradesDeal = null)}>← Deals</span>
 							<span class="m-lbl" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
 								{tradesDeal.listing_title}
 							</span>
-							<span class="chip" title="Deal auf uexcorp.space öffnen (negotiate/hash)" onclick={() => void openTradesDeal(tradesDeal!)}>Deal auf UEX öffnen ↗</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Deal auf uexcorp.space öffnen (negotiate/hash)" onclick={() => void openTradesDeal(tradesDeal!)}>Deal auf UEX öffnen ↗</span>
 							<!-- QW-4 (t_28bfd027): geschlossene Deals sind READ-ONLY. -->
 							{#if tradesDealEnded}<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? 'Abgeschlossen' : 'Beendet'}</span>{/if}
 						</div>
@@ -5798,8 +5810,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{:else}
 						<div class="mbar">
 							<span class="m-lbl">Deals</span>
-							<span class="chip" onclick={() => void loadDeals(true)}>Aktualisieren</span>
-							<span class="chip" title="Eigene Trades im UEX-Manager öffnen (Login im Browser)" onclick={openMyTradesDeepLink}>Trades verwalten ↗</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => void loadDeals(true)}>Aktualisieren</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Eigene Trades im UEX-Manager öffnen (Login im Browser)" onclick={openMyTradesDeepLink}>Trades verwalten ↗</span>
 						</div>
 						<!-- MQ (t_d6ff5212): Deal-Einstieg sichtbar machen — Deals KANN das
 						     Overlay nicht starten (API hat kein POST /marketplace_negotiations).
@@ -5817,8 +5829,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="center">
 									<div class="big" style="color: var(--alert)">Trades nicht erreichbar</div>
 									<div class="sm">{tradesErr}</div>
-									<span class="btn-ghost" onclick={() => void loadDeals(false)}>Erneut versuchen</span>
-									<span class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+									<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadDeals(false)}>Erneut versuchen</span>
+									<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
 								</div>
 							</div>
 						{:else if dealsSorted.length === 0}
@@ -5831,7 +5843,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{/if}
 							<div class="mlist">
 								{#each dealsSorted as n (n.id)}
-									<div
+									<div tabindex="-1" onkeydown={keyActivate}
 										class="mrow trow"
 										role="option"
 										aria-selected={false}
@@ -5866,7 +5878,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						     kommt automatisch aus dem Secret-Key (Settings-Cache). -->
 						<span class="m-lbl">Mein Shop</span>
 						<span class="chip">{shopUser.trim() || 'Username wird ermittelt …'}</span>
-						<span
+						<span role="button" tabindex="0" onkeydown={keyActivate}
 							class="btn-ghost"
 							title="Eigene Offers + Deals neu laden"
 							onclick={() => void loadShop()}
@@ -5884,7 +5896,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
 								<div class="sm">Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
-								<span class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</span>
 							</div>
 						</div>
 					{:else if !cfg?.uex_secret_key_set}
@@ -5910,8 +5922,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="center">
 								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
 								<div class="sm">{shopErr}</div>
-								<span class="btn-ghost" onclick={() => void loadShop()}>Erneut versuchen</span>
-								<span class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadShop()}>Erneut versuchen</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
 							</div>
 						</div>
 					{:else}
@@ -5940,8 +5952,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 															     kann wartende Listings nicht per API liefern; Wartende
 															     kommen lokal (pending_offers) und sind immer sichtbar. -->
 															<span class="m-spacer"></span>
-															<span class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
-															<span class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
+															<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
+															<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
 												</div>
 												{#if advertOpen}
 												<!-- M3a: das „Neues Listing“-Formular als modales Popup
@@ -6212,7 +6224,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												</div>
 												{/each}
 												{#each myOffers as o, i (o.id)}
-									<div
+									<div tabindex="-1" onkeydown={keyActivate}
 										class="mrow"
 										role="option"
 										aria-selected={false}
@@ -6301,7 +6313,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="center">
 							<div class="big" style="color: var(--alert)">Marketplace nicht erreichbar</div>
 							<div class="sm">{mNote}</div>
-							<span class="btn-ghost" onclick={() => loadMarket()}>Erneut versuchen</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => loadMarket()}>Erneut versuchen</span>
 						</div>
 					</div>
 				{:else}
@@ -6332,7 +6344,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{#if visOffers.length}
 						<div class="mlist" bind:this={mListEl} onscroll={onMarketListScroll}>
 							{#each mVew as o, i}
-								<div
+								<div tabindex="-1" onkeydown={keyActivate}
 									class="mrow"
 									role="option"
 									aria-selected={i === mSel}
@@ -6405,7 +6417,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{#each g.hits as h, hi}
 									{@const idx = groupOffset(gi) + hi}
 									<div class="rwrap" class:in-detail={inDetail && expanded === idx}>
-										<div
+										<div onkeydown={keyActivate}
 											class="row"
 											tabindex="-1"
 											class:is-sel={idx === sel}
@@ -6618,7 +6630,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="sect"><div class="h">Zuletzt gesucht</div></div>
 						<div class="recent">
 						{#each recent.slice(0, 6) as q (q)}
-							<span class="r" title="This search" onclick={() => { input = q; void runSearch(); }}>{q}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="r" title="This search" onclick={() => { input = q; void runSearch(); }}>{q}</span>
 						{:else}
 							<span class="r">Keine — tippe, um zu suchen</span>
 						{/each}

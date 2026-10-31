@@ -674,7 +674,7 @@ mod tests {
         )
         .unwrap();
         assert!(f.force_refresh);
-        assert_eq!(MarketplaceFilter::default().force_refresh, false);
+        assert!(!MarketplaceFilter::default().force_refresh);
     }
 
     /// M2b (Write-Layer): der Advertise-Payload serialisiert snake_case und

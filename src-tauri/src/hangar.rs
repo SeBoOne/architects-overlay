@@ -1694,8 +1694,8 @@ mod tests {
         };
         // Schiff A mit Pledge P1; zwei Module: M1 (P1, bezugslos → verknüpfbar),
         // M2 (P2, kein Schiff → bleibt unverbunden), M3 (bereits verlinkt).
-        let ships = vec![ship("600i Explorer", "P1")];
-        let mods = vec![
+        let ships = [ship("600i Explorer", "P1")];
+        let mods = [
             module("600i Exploration Module", "P1", ""),
             module("Fremd-Modul", "P2", ""),
             module("Bekanntes Modul", "P3", "600i Explorer"),
@@ -1707,7 +1707,7 @@ mod tests {
                 .unwrap();
         }
         let linked = cache
-            .with(|c| migrate_unlinked_modules(c))
+            .with(migrate_unlinked_modules)
             .map_err(|e| e.to_string())
             .unwrap();
         assert_eq!(linked, 1, "genau ein bezugsloses Modul verknüpft");
@@ -1740,7 +1740,7 @@ mod tests {
         );
         // Idempotenz: zweiter Lauf verändert nichts mehr.
         let again = cache
-            .with(|c| migrate_unlinked_modules(c))
+            .with(migrate_unlinked_modules)
             .map_err(|e| e.to_string())
             .unwrap();
         assert_eq!(again, 0, "zweiter Lauf: kein weiteres Update");
@@ -1759,7 +1759,7 @@ mod tests {
             .map_err(|e| e.to_string())
             .unwrap();
         let linked2 = cache
-            .with(|c| migrate_unlinked_modules(c))
+            .with(migrate_unlinked_modules)
             .map_err(|e| e.to_string())
             .unwrap();
         assert_eq!(linked2, 0, "mehrdeutige Pledge-Gruppe bleibt unverbunden");
@@ -1770,7 +1770,7 @@ mod tests {
     fn manual_module_without_base_ship_rejected() {
         // R2 Punkt 8: Module sind keine eigenständigen Einträge mehr — manuelle
         // Anlage ohne Basisschiff-Bezug wird abgelehnt, MIT Bezug erlaubt.
-        let mut m = hangarBlankLikeModule();
+        let mut m = hangar_blank_like_module();
         assert!(
             validate_manual_item(&m).is_err(),
             "ohne base_ship abgelehnt"
@@ -1787,7 +1787,7 @@ mod tests {
         );
     }
 
-    fn hangarBlankLikeModule() -> HangarItem {
+    fn hangar_blank_like_module() -> HangarItem {
         HangarItem {
             id: None,
             source: "manual".into(),

@@ -501,7 +501,7 @@ mod tests {
         }
         // Leerer Name ebenso.
         let d = modul_for_ship_decision("", &overrides);
-        assert!(!d.known && d.has_ports == false && d.modules.is_empty());
+        assert!(!d.known && !d.has_ports && d.modules.is_empty());
     }
 
     /// Remote-Cache-Vorrang: gecachte Remote-Datei überschreibt die Baseline;

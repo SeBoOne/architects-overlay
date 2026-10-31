@@ -1458,8 +1458,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp_path(&tmp, "config.toml");
         let mut s = Settings::with_path(path.clone());
-        let mut hk = ModeHotkeys::default();
-        hk.hangar = "F10".to_owned();
+        let hk = ModeHotkeys {
+            hangar: "F10".to_owned(),
+            ..Default::default()
+        };
         s.set_mode_hotkeys(hk);
         s.save().unwrap();
         let loaded = Settings::load_from(&path).unwrap();
@@ -1495,12 +1497,16 @@ mod tests {
 
     #[test]
     fn mode_hotkeys_validation_rejects_f5_and_duplicates() {
-        let mut hk = ModeHotkeys::default();
-        hk.routes = "F5".to_owned();
+        let hk = ModeHotkeys {
+            routes: "F5".to_owned(),
+            ..Default::default()
+        };
         assert!(hk.validate().unwrap_err().contains("reserviert"));
 
-        let mut hk = ModeHotkeys::default();
-        hk.hangar = "F3".to_owned(); // Doppelbelegung mit routes
+        let hk = ModeHotkeys {
+            hangar: "F3".to_owned(), // Doppelbelegung mit routes
+            ..Default::default()
+        };
         assert!(hk.validate().unwrap_err().contains("bereits belegt"));
     }
 }

@@ -41,13 +41,13 @@ pub fn is_calc_char(c: char) -> bool {
     if c == ' ' || c == '\t' {
         return true;
     }
-    if c >= '0' && c <= '9' {
+    if c.is_ascii_digit() {
         return true;
     }
     if c == '.' {
         return true;
     }
-    return c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '(' || c == ')';
+    c == '+' || c == '-' || c == '*' || c == '/' || c == '%' || c == '(' || c == ')'
 }
 
 struct Parser {
@@ -171,7 +171,7 @@ impl Parser {
                 }
                 v
             }
-            Some(c) if c >= '0' && c <= '9' || c == '.' => self.number(),
+            Some(c) if c.is_ascii_digit() || c == '.' => self.number(),
             _ => {
                 self.incomplete = true;
                 0.0
@@ -183,7 +183,7 @@ impl Parser {
     fn number(&mut self) -> f64 {
         let mut raw = String::new();
         while let Some(c) = self.peek() {
-            if c >= '0' && c <= '9' || c == '.' {
+            if c.is_ascii_digit() || c == '.' {
                 raw.push(c);
                 self.take();
             } else {

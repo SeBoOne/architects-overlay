@@ -349,9 +349,7 @@ pub fn route_commodity_locations(
         .find(|r| r.commodity_id == commodity_id)
         .map(|r| r.commodity.clone());
 
-    if commodity_name.is_none() {
-        return None;
-    }
+    commodity_name.as_ref()?;
 
     // Dedupe pro Terminal (der Sweep kann mehrere Zeilen je Ware liefern):
     // bester KAUF = niedrigster buy_price, bester VERKAUF = höchster
@@ -459,7 +457,7 @@ pub fn routes_from_matrix(matrix: &[TradeRoute], filters: &RouteFilters) -> Vec<
     sort_routes(
         &mut out,
         filters.sort,
-        filters.budget.map_or(false, |b| b > 0.0),
+        filters.budget.is_some_and(|b| b > 0.0),
     );
     out
 }
@@ -661,7 +659,7 @@ pub fn compute_routes_full(
     sort_routes(
         &mut out,
         filters.sort,
-        filters.budget.map_or(false, |b| b > 0.0),
+        filters.budget.is_some_and(|b| b > 0.0),
     );
     out
 }
@@ -706,13 +704,26 @@ fn sort_routes(routes: &mut [TradeRoute], sort: RouteSort, budget_active: bool) 
                 a.distance
                     .cmp(&b.distance)
                     .then_with(|| b.profit_per_scu.total_cmp(&a.profit_per_scu))
+                    .then_with(|| a.commodity.cmp(&b.commodity))
             })
         }),
-        RouteSort::TotalProfitDesc => routes
-            .sort_by(|a, b| cmp_rank(a, b).then_with(|| b.profit_total.total_cmp(&a.profit_total))),
-        RouteSort::MarginDesc => {
-            routes.sort_by(|a, b| cmp_rank(a, b).then_with(|| b.margin.total_cmp(&a.margin)))
-        }
+        // Tie-Breaker über commodity (wie ProfitDesc): ohne deterministische
+        // Sekundärordnung flackert die Reihenfolge bei Gleichstand, weil die
+        // Eingabeliste aus HashMap-Iteration kommt (Flaky-Test v0.5.12).
+        RouteSort::TotalProfitDesc => routes.sort_by(|a, b| {
+            cmp_rank(a, b).then_with(|| {
+                b.profit_total
+                    .total_cmp(&a.profit_total)
+                    .then_with(|| a.commodity.cmp(&b.commodity))
+            })
+        }),
+        RouteSort::MarginDesc => routes.sort_by(|a, b| {
+            cmp_rank(a, b).then_with(|| {
+                b.margin
+                    .total_cmp(&a.margin)
+                    .then_with(|| a.commodity.cmp(&b.commodity))
+            })
+        }),
         RouteSort::Natural => {} // Originalliste (keine explizite Sortierung)
     }
 }
@@ -1337,7 +1348,7 @@ mod tests {
                 .unwrap()
                 .ground
         );
-        assert!(sell40.ground == false);
+        assert!(!sell40.ground);
         assert_eq!(
             locs.sells.len(),
             2,

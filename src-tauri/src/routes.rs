@@ -295,8 +295,7 @@ mod tests {
     /// sein muss.
     #[test]
     fn get_route_locations_ipc_accepts_snake_case_commodity_arg() {
-        use tauri::Manager;
-        use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
+        use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, noop_assets};
 
         let app = mock_builder()
             .invoke_handler(tauri::generate_handler![super::get_route_locations])

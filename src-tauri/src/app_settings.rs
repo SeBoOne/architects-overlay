@@ -589,7 +589,7 @@ pub fn settings_set_scale(
     sync: tauri::State<SyncNote>,
     pct: u16,
 ) -> Result<SettingsSnapshot, String> {
-    if pct < settings::SCALE_MIN || pct > settings::SCALE_MAX {
+    if !(settings::SCALE_MIN..=settings::SCALE_MAX).contains(&pct) {
         return Err(format!("scale out of range: {pct}"));
     }
     let mut s = state.inner.lock().expect("settings lock");

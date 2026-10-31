@@ -1932,7 +1932,7 @@ impl Cache {
     /// Epoch key of the matrix artifact (`meta` bookkeeping, not a TTL —
     /// the epoch VALUE is compared to the live dataset epoch).
     pub fn route_matrix_epoch_get(&self) -> Result<Option<String>> {
-        self.meta_get_str(&ROUTE_MATRIX_EPOCH_KEY)
+        self.meta_get_str(ROUTE_MATRIX_EPOCH_KEY)
     }
 
     /// Stamp the matrix with the dataset epoch it was built from (+ build
@@ -1955,7 +1955,7 @@ impl Cache {
     }
 
     pub fn route_matrix_built_at(&self) -> Result<Option<u64>> {
-        self.meta_get(&ROUTE_MATRIX_BUILT_KEY)
+        self.meta_get(ROUTE_MATRIX_BUILT_KEY)
     }
 
     // ----------------- Route-Enrichment (v7, Option b) ------------------
@@ -2585,7 +2585,7 @@ impl Cache {
                         x.price,
                         x.unit,
                         x.currency,
-                        x.deal_value.map(|v| v as f64),
+                        x.deal_value,
                         x.deal_value_currency,
                         x.listing_title,
                         x.listing_slug,
@@ -2822,7 +2822,7 @@ mod tests {
             updated: 1_700_000_000,
         };
         cache
-            .store_prices_sourced(&[p.clone()], SOURCE_WIKI)
+            .store_prices_sourced(std::slice::from_ref(&p), SOURCE_WIKI)
             .unwrap();
         assert!(
             cache
