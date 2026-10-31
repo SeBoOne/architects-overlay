@@ -262,6 +262,22 @@ jobs:
             echo "Mirror-Tag: $tag"
             git push --force public "refs/tags/${tag}:refs/tags/${tag}"
           done
+
+          # Stale-Cleanup: das öffentliche Repo ist Abbild der Dev-Quelle und
+          # bekommt ausschließlich main + v*-Tags. Alles andere (Altlasten
+          # aus früheren Mirrors) wird gelöscht — KEINE Feature-Branches.
+          git ls-remote --heads public | cut -f2 | sed 's|refs/heads/||' \
+            | while read -r branch; do
+                [ "$branch" = "main" ] && continue
+                echo "Loesche Stale-Branch: $branch"
+                git push public --delete "refs/heads/$branch" || true
+              done
+          git ls-remote --tags public | cut -f2 | sed 's|refs/tags/||; s|\^{}$||' | sort -u \
+            | while read -r tag; do
+                case "$tag" in v*) continue ;; esac
+                echo "Loesche Stale-Tag: $tag"
+                git push public --delete "refs/tags/$tag" || true
+              done
         env:
           GITHUBMIRRORTOKEN: ${{ secrets.GITHUBMIRRORTOKEN }}
 
