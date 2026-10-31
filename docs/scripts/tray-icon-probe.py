@@ -178,17 +178,18 @@ async def main():
         check("T3 overlay_config_closed wurde invoked",
               bool(invokes) and "overlay_config_closed" in invokes, f"invokes={invokes[-8:]}")
 
-        # ---------- T4: Zahnrad-Regression ----------
+        # ---------- T4: Einstellungen-Regression (Rail-Button, ex-Zahnrad) ----------
         gear = await js("""
             (async function(){
-              const b = document.querySelector('button.gear');
-              if (!b) return 'NO GEAR BUTTON';
+              const b = [...document.querySelectorAll('nav.rail button')]
+                .find(x => (x.getAttribute('aria-label') || '').startsWith('Einstellungen'));
+              if (!b) return 'NO SETTINGS BUTTON';
               b.click();
               await new Promise(r => setTimeout(r, 300));
               return document.querySelector('.pane-config') ? 'OPEN' : 'MISSING';
             })()
         """)
-        check("T4 Zahnrad-Button öffnet Config-View weiterhin", gear == "OPEN", str(gear))
+        check("T4 Einstellungen-Button öffnet Config-View weiterhin", gear == "OPEN", str(gear))
 
         if console_events:
             print("  console:", console_events[:6])
