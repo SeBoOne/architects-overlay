@@ -11,7 +11,9 @@
 	// `onclose` = optionales Signal, wenn das Dropdown schließt (z. B. Fokus-Reset).
 	let {
 		value = $bindable(''),
-		options = [] as { label: string; value: string }[],
+		// UH (t_424660aa): optionales Badge (z. B. 'Konzept'-Chip für Shipmatrix-
+		// in-concept-Schiffe im Hangar-Autocomplete) — rein dekorativ.
+		options = [] as { label: string; value: string; badge?: string }[],
 		placeholder = '',
 		ariaLabel = '',
 		fullWidth = false,
@@ -174,7 +176,7 @@
 					role="option"
 					aria-selected={i === hi}
 					onclick={() => pick(i)}
-				>{o.label}</button>
+					>{o.label}{#if o.badge}<span class="rta-badge">{o.badge}</span>{/if}</button>
 			{/each}
 		</div>
 	{/if}
@@ -224,5 +226,17 @@
 	.rta-item.is-hi {
 		background: var(--accent-dim, var(--lineb));
 		color: var(--accent);
+	}
+	/* UH (t_424660aa): dezenter 'Konzept'-Chip hinter dem Eintrag. */
+	.rta-badge {
+		display: inline-block;
+		margin-left: 6px;
+		padding: 1px 5px;
+		border: 1px solid var(--lineb);
+		border-radius: 8px;
+		font: 500 9px/1.4 var(--font-mono);
+		letter-spacing: 0.04em;
+		opacity: 0.75;
+		vertical-align: 1px;
 	}
 </style>

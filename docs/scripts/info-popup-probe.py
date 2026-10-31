@@ -204,7 +204,7 @@ async def main():
               var b = m ? m.closest('.info-badge').textContent : '';
               return { mark: m ? m.textContent.trim() : null,
                        hasWiki: b.includes('api.star-citizen.wiki'),
-                       label: b.includes('Modul-Kompatibilität') };
+                       label: b.includes('Schiffsdaten') && b.includes('Konzept') };
             })()
         """)
         check("SC-Wiki-Text-Badge: SC-WIKI API + api.star-citizen.wiki + Label",

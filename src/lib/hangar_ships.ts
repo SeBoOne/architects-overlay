@@ -3,11 +3,17 @@
 //
 // Data source decision (Card: "pruef what is available, else static package"):
 // Neither UEX (api.uexcorp.uk/2.0 — verified live: only commodities/items/
-// terminals endpoints, no ship route) nor the Wiki API (api.star-citizen.wiki
-// — /api/ships + variants verified 404 live) offers a ship list. Hence a
-// manually curated static package, checked into the repo. Manufacturer is
-// the commonly used studio name; empty string = unknown/not curated (the
-// field then stays empty and the user fills it).
+// terminals endpoints, no ship route) nor the Wiki ships endpoints
+// (api.star-citizen.wiki/api/ships + variants verified 404 live) offer a
+// ship list. Hence a manually curated static package, checked into the repo.
+// Manufacturer is the commonly used studio name; empty string = unknown/not
+// curated (the field then stays empty and the user fills it).
+//
+// UH (t_424660aa): Konzept-Schiffe ergänzt aus der SC-Wiki SHIPMATRIX
+// (api.star-citizen.wiki/api/shipmatrix/vehicles — DIESE Route existiert und
+// liefert ALLE 265 vehicles inkl. 31 in-concept, paginiert Seite 1-9;
+// production_status 'in-concept' → concept: true). Kuratierte Bestands-
+// einträge gehen vor (Shipmatrix füllt nur Lücken).
 //
 // Snub detection: the hangar schema has no ship_category column, so we use
 // the FIXED list from the Star Citizen Wiki category "Snub ships"
@@ -21,6 +27,9 @@ export type ShipDatum = {
 	manufacturer: string;
 	kind: 'ship' | 'vehicle';
 	snub?: boolean;
+	// UH (t_424660aa): Shipmatrix production_status 'in-concept' → dezenter
+	// 'Konzept'-Chip im Hangar-Autocomplete (RoutesTypeahead badge).
+	concept?: boolean;
 };
 
 // Canonical Snub list (Wiki category "Snub ships" — keep in sync, single
@@ -307,6 +316,43 @@ export const SHIP_CATALOG: ShipDatum[] = [
 	{ name: 'Storm AA', manufacturer: 'Tumbril', kind: 'vehicle' },
 	// --- Vanduul ---
 	{ name: 'Mauler Destroyer', manufacturer: 'Vanduul', kind: 'ship' },
+	// UH (t_424660aa): Konzept-Schiffe — SC-Wiki Shipmatrix
+	// (api.star-citizen.wiki/api/shipmatrix/vehicles, production_status
+	// 'in-concept', live 2026-10-31: 265 vehicles / 31 in-concept; 'Javelin'
+	// existierte bereits im Kuratierungs-Paket und bleibt unveraendert —
+	// Kuratierung geht vor). concept=true -> dezenter 'Konzept'-Chip im
+	// Hangar-Autocomplete. Modul-Logik unangetastet (keine Zuordnung).
+	// --- Konzept (Shipmatrix in-concept) ---
+	{ name: 'Arrastra', manufacturer: 'RSI', kind: 'ship', concept: true },
+	{ name: 'Crucible', manufacturer: 'Anvil', kind: 'ship', concept: true },
+	{ name: 'E1 Spirit', manufacturer: 'Crusader', kind: 'ship', concept: true },
+	{ name: 'Endeavor', manufacturer: 'MISC', kind: 'ship', concept: true },
+	{ name: 'Expanse', manufacturer: 'MISC', kind: 'ship', concept: true },
+	{ name: 'G12', manufacturer: 'Origin', kind: 'vehicle', concept: true },
+	{ name: 'G12a', manufacturer: 'Origin', kind: 'vehicle', concept: true },
+	{ name: 'G12r', manufacturer: 'Origin', kind: 'vehicle', concept: true },
+	{ name: 'Galaxy', manufacturer: 'RSI', kind: 'ship', concept: true },
+	{ name: 'Genesis', manufacturer: 'Crusader', kind: 'ship', concept: true },
+	{ name: 'Geotack Planetary Beacon', manufacturer: 'Greycat', kind: 'vehicle', concept: true },
+	{ name: 'Geotack-X Planetary Beacon', manufacturer: 'Greycat', kind: 'vehicle', concept: true },
+	{ name: 'Hull D', manufacturer: 'MISC', kind: 'ship', concept: true },
+	{ name: 'Hull E', manufacturer: 'MISC', kind: 'ship', concept: true },
+	{ name: 'Kraken', manufacturer: 'Drake', kind: 'ship', concept: true },
+	{ name: 'Kraken Privateer', manufacturer: 'Drake', kind: 'ship', concept: true },
+	{ name: 'Legionnaire', manufacturer: 'Anvil', kind: 'ship', concept: true },
+	{ name: 'Liberator', manufacturer: 'Anvil', kind: 'ship', concept: true },
+	{ name: 'Merchantman', manufacturer: 'Banu', kind: 'ship', concept: true },
+	{ name: 'Nautilus', manufacturer: 'Aegis', kind: 'ship', concept: true },
+	{ name: 'Nautilus Solstice Edition', manufacturer: 'Aegis', kind: 'ship', concept: true },
+	{ name: 'Odin', manufacturer: 'Anvil', kind: 'ship', concept: true },
+	{ name: 'Odyssey', manufacturer: 'MISC', kind: 'ship', concept: true },
+	{ name: 'Orion', manufacturer: 'RSI', kind: 'ship', concept: true },
+	{ name: 'Pioneer', manufacturer: 'Consolidated Outland', kind: 'ship', concept: true },
+	{ name: 'Ranger CV', manufacturer: 'Tumbril', kind: 'vehicle', concept: true },
+	{ name: 'Ranger RC', manufacturer: 'Tumbril', kind: 'vehicle', concept: true },
+	{ name: 'Ranger TR', manufacturer: 'Tumbril', kind: 'vehicle', concept: true },
+	{ name: 'Vulcan', manufacturer: 'Aegis', kind: 'ship', concept: true },
+	{ name: 'Zeus Mk II MR', manufacturer: 'RSI', kind: 'ship', concept: true },
 ];
 
 // Snub-Test: fixed list (see header). Case-insensitive, trims.
