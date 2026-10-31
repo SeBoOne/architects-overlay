@@ -27,7 +27,9 @@ mod version;
 pub use download::{MAX_DOWNLOAD_BYTES, download_asset};
 pub use gitea::{Asset, Release, fetch_latest};
 pub use integrity::{CHECKSUMS_ASSET, parse_checksums, sha256_file};
-pub use plan::{AppKind, Plan, linux_update_dir, windows_update_dir};
+pub use plan::{
+    AppKind, Plan, bare_binary_exe, linux_update_dir, plan_for_release, windows_update_dir,
+};
 pub use version::{is_newer, parse_version};
 
 /// Fehler eines Update-Vorgangs. Deutsche Meldungen (Config-View-Note
@@ -172,6 +174,19 @@ pub async fn perform_download(plan: &Plan) -> Result<std::path::PathBuf> {
         Plan::LinuxAppImage { asset_name, asset_url, checksum, .. } => {
             let path = download_asset(asset_url, &linux_update_dir()?, MAX_DOWNLOAD_BYTES)
                 .await?;
+            integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
+            Ok(path)
+        }
+        Plan::LinuxBin { asset_name, asset_url, checksum, exe_path } => {
+            // TH t_df9646a3: Download ZUSAMMEN mit der exe (gleiche Dateisystem —
+            // das atomare Rename über die laufende Datei ist nur garantiert im
+            // selben Dateisystem; der eigentliche Swap passiert beim
+            // aufrufenden Install-Schritt in der App-Schicht).
+            let dir = exe_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let path = download_asset(asset_url, &dir, MAX_DOWNLOAD_BYTES).await?;
             integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
             Ok(path)
         }

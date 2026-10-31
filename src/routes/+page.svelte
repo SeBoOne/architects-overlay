@@ -1338,7 +1338,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		upBusy = true;
 		try {
 			// Bei nsis/appimage beendet sich das Overlay selbst nach dem
-			// verifizierten Download — die Antwort ist Best-Effort-Status.
+			// verifizierten Download; linux-bin ersetzt nur die exe und zeigt
+			// den Neustart-Hinweis — die Antwort ist Best-Effort-Status.
 			upStatus = await invoke<UpdaterStatus>('updater_install');
 		} catch (e) {
 			upStatus = upStatus ? { ...upStatus, note: String(e) } : upStatus;

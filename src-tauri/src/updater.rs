@@ -19,6 +19,9 @@
 //! (alte umbenennen → neue schreiben → exec-Rechte → alte löschen,
 //! Umsetzung 4) und relaunchen. .deb: KEIN Self-Update — Hint mit dem
 //! apt-Befehl (keine root-Aktionen aus der App, Umsetzung 4).
+//! Linux Bare-Binary (TH t_df9646a3): rohes Binary-Asset `*_linux64`
+//! herunterladen → SHA256 → atomar über die laufende exe renamen + Hinweis
+//! „Neustart des Overlays anwenden lassen“ — KEIN Auto-Restart/Exit.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -264,9 +267,34 @@ fn install_appimage(new_path: &std::path::Path, target: &std::path::Path) -> Res
     Ok(())
 }
 
+/// Linux Bare-Binary (TH t_df9646a3): das verifizierte Binary-Asset mit
+/// exec-Rechten atomar über die laufende exe renamen (rename über die
+/// aktive exe geht auf Linux). KEIN Auto-Restart, kein systemctl-Eingriff
+/// aus der App — die App zeigt nur den Hinweis „Neustart des Overlays
+/// anwenden lassen“ (systemd restart oder Overlay schließen/öffnen).
+#[cfg(target_os = "linux")]
+fn install_bare_bin(new_path: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let old = target.with_extension("bin.old");
+    if old.exists() {
+        let _ = std::fs::remove_file(&old);
+    }
+    std::fs::rename(target, &old).map_err(|e| format!("Binary ersetzen (alt): {e}"))?;
+    if let Err(e) = std::fs::rename(new_path, target) {
+        // Rollback: alte Datei zurückbenennen — nie kaputt hinterlassen.
+        let _ = std::fs::rename(&old, target);
+        return Err(format!("Binary ersetzen (neu): {e}"));
+    }
+    std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o755))
+        .map_err(|e| format!("Binary exec-Rechte: {e}"))?;
+    let _ = std::fs::remove_file(&old);
+    Ok(())
+}
+
 /// On-demand Install (Karte Umsetzung 3/4): der Button-Klick IST die
 /// Bestätigung. Windows → setup.exe (silent child) + Exit; Linux AppImage →
-/// atomar ersetzen + Relaunch + Exit; .deb → Err mit dem apt-Hint.
+/// atomar ersetzen + Relaunch + Exit; Linux Bare-Binary → atomar ersetzen
+/// + Neustart-Hinweis (KEIN Auto-Restart/Exit); .deb → Err mit dem apt-Hint.
 #[tauri::command]
 pub async fn updater_install(
     app: tauri::AppHandle,
@@ -326,6 +354,28 @@ pub async fn updater_install(
                 let _ = new_path;
                 let _ = appimage_path;
                 return Err("AppImage-Update nur unter Linux möglich.".into());
+            }
+        }
+        Plan::LinuxBin { exe_path, .. } => {
+            #[cfg(target_os = "linux")]
+            {
+                let target = exe_path.clone();
+                install_bare_bin(&new_path, &target)?;
+                state.set_note(format!(
+                    "Update v{} installiert — Neustart des Overlays anwenden lassen (systemd restart oder Overlay schließen/öffnen).",
+                    avail.version
+                ));
+                // TH t_df9646a3: kein Auto-Restart, kein systemctl aus der
+                // App — nur Datei-Swap + Nutzerhinweis. Die App läuft WEITER.
+                log::info!("updater: bare-bin install done -> {}", avail.version);
+                let settings_state = app.state::<SettingsState>();
+                return Ok(status(&app, state.inner(), settings_state.inner()));
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = new_path;
+                let _ = exe_path;
+                return Err("Binary-Update nur unter Linux möglich.".into());
             }
         }
         Plan::DebHint { .. } => unreachable!("oben geprüft"),

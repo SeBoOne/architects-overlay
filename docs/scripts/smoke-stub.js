@@ -92,6 +92,40 @@ window.__TAURI_INTERNALS__ = {
 				return { visible: true, game_running: true, click_through: false };
 			case 'overlay_set_visible':
 				return true;
+			// TH t_df9646a3 / UC t_d323be7e: nur wenn die Probe
+			// `__stubState.updater_available` setzt — sonst undefiniert
+			// (wie bisher, kein Update-Chip in anderen Proben).
+			case 'updater_status':
+			case 'updater_check_now':
+				if (typeof stubState.updater_available !== 'undefined') {
+					return {
+						enabled: true,
+						interval_hours: 6,
+						app_version: stubState.app_version || '0.5.20',
+						note: stubState.updater_note || '',
+						checking: false,
+						last_check_secs: null,
+						available: stubState.updater_available,
+					};
+				}
+				return undefined;
+			case 'updater_install':
+				if (typeof stubState.updater_available !== 'undefined') {
+					// TH t_df9646a3: Bare-Binary-Swap — kein Auto-Restart, die
+					// Note zeigt den Neustart-Hinweis, die App läuft weiter.
+					stubState.updater_note = 'Update v0.5.21 installiert — Neustart des Overlays anwenden lassen (systemd restart oder Overlay schließen/öffnen).';
+					stubState.updater_available = null;
+					return {
+						enabled: true,
+						interval_hours: 6,
+						app_version: stubState.app_version || '0.5.20',
+						note: stubState.updater_note,
+						checking: false,
+						last_check_secs: null,
+						available: null,
+					};
+				}
+				return undefined;
 			case 'settings_get':
 				return stubSettings();
 			case 'settings_set_palette':

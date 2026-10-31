@@ -51,18 +51,33 @@ jobs:
       - name: Rust-Build + Bundle
         run: pnpm tauri build
 
+      # TH t_df9646a3: rohes Binary als Release-Asset — Installationen, die
+      # das Binary direkt nach ~/.local/bin kopiert haben (weder AppImage
+      # noch .deb), bekommen damit einen Update-Plan (Plan::LinuxBin).
+      # Naming analog zu den anderen Assets, Plattform-Token `linux64`.
+      - name: Raw-Binary-Asset (linux64)
+        run: |
+          cp target/release/architects-overlay target/release/architects-overlay_${TAG#v}_linux64
+          chmod +x target/release/architects-overlay_${TAG#v}_linux64
+          ls -l target/release/architects-overlay_*_linux64
+        env:
+          TAG: ${{ github.ref_name }}
+
       - name: Release-Assets anhängen
         uses: softprops/action-gh-release@v2
         with:
           files: |
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
+            target/release/architects-overlay_*_linux64
 
       # TG: SHA256-Manifest der Linux-Assets für den latest.json-Job.
+      # TH t_df9646a3: das linux64-Asset bekommt SHA256 wie die anderen —
+      # der latest.json-Job nimmt es über die Manifests automatisch auf.
       - name: SHA256-Manifest (Linux)
         run: |
           cd target/release/bundle
-          sha256sum deb/*.deb appimage/*.AppImage > sha256-linux.txt
+          sha256sum deb/*.deb appimage/*.AppImage ../architects-overlay_*_linux64 > sha256-linux.txt
           cat sha256-linux.txt
 
       - name: Manifest als Artefakt hochladen

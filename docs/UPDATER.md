@@ -79,6 +79,16 @@ auf Installer-Exit warten müsste.
 - **.deb-Installationen**: kein Self-Update — die App führt KEINE root-
   Aktionen aus (Umsetzung 4). Die UI zeigt einen apt-Hinweis mit dem
   Download-Pfad + `sudo apt install /tmp/<file>.deb`.
+- **Bare-Binary (TH t_df9646a3)** — die exe wurde direkt nach `~/.local/bin`
+  (oder sonstwo außerhalb `/usr`/`/opt`) kopiert, weder AppImage noch .deb:
+  das Release trägt das rohe Binary als Asset `architects-overlay_<version>_linux64`
+  (CI: Linux-Job lädt es mit exec-Rechten hoch; SHA256 via latest.json/
+  SHA256SUMS wie die anderen Assets). Ablauf: Download → SHA256 verifizieren
+  → atomares Rename über die laufende exe (rename über die aktive exe geht
+  auf Linux) → `chmod 0o755`. **Kein Auto-Restart, kein systemctl-Eingriff
+  aus der App** — die Note zeigt: „Update v{X} installiert — Neustart des
+  Overlays anwenden lassen (systemd restart oder Overlay schließen/öffnen).“
+  Die App läuft nach dem Swap weiter (Plan::LinuxBin, kind `linux-bin`).
 
 ## Integrität (Umsetzung 5)
 
