@@ -88,6 +88,46 @@ xattr -cr "/Applications/Architects Overlay.app"
   SmartScreen-Hinweis (kein signiertes Installer-Zertifikat) — „Trotzdem
   ausführen“.
 - Cache/Konfig unter `%APPDATA%/com.sebo.architects-overlay/`.
+- **Prozesserkenung im Hintergrund:** Das Overlay fragt alle 5 s
+  `tasklist /FO CSV /NH` mit dem Windows-Flag `CREATE_NO_WINDOW` ab — es
+  flackert also **kein** Konsolenfenster mehr auf.
+
+### Test ohne Star Citizen (Fake-Prozess)
+
+Zum Prüfen des Game-Gates ohne installiertes SC reicht eine umbenannte
+Exe-Kopie — die Erkennung matcht das **IMAGE-Feld** der tasklist-Ausgabe
+(case-insensitive `STARCITIZEN.EXE`):
+
+```bat
+mkdir C:\Temp 2>nul
+copy %SystemRoot%\System32\notepad.exe C:\Temp\StarCitizen.exe
+start "" C:\Temp\StarCitizen.exe
+```
+
+Danach: Overlay-Game-Gate schaltet nach spätestens ~5 s ein; beenden des
+Fensters schaltet das Gate wieder aus. Zur Diagnose, falls das Gate **nicht**
+aufgeht:
+
+```bat
+:: 1) Läuft der Fake-Prozess überhaupt unter dem Namen?
+tasklist /FO CSV /NH | findstr /i "StarCitizen.exe"
+:: Erwartet: eine Zeile "StarCitizen.exe","<pid>",...
+
+:: 2) Läuft die Exe unter anderem Namen (z.B. `start StarCitizen.exe` →
+::    Titel statt Datei, oder ein Launcher-Renaming)? Besser:
+wmic process where "ExecutablePath like 'C:\\Temp\\%'" get Name,ExecutablePath
+
+:: 3) Hat Defender/SmartScreen die Kopie stummgeschickt oder gelöscht?
+::    → prüfen, ob C:\Temp\StarCitizen.exe noch existiert, und
+::    Defender-Log (SCHUTZVERLAUF) bzw. Quarantäne checken.
+```
+
+Die Zeile aus Schritt 1 **ist** das Match-Kriterium des Overlays: enthält sie
+`StarCitizen.exe`, erkennt das Overlay den Prozess. Schlägt Schritt 1 fehl
+(Prozess heißt anders oder ist sofort wieder beendet), kann das Overlay per
+Definition nichts sehen. Das Overlay-Log protokolliert jede Änderung des
+Detektionszustands (`game-detection: running=true/false`), sodass sich
+beim Livetest direkt ablesen lässt, was erkannt wurde.
 
 ---
 

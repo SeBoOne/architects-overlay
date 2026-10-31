@@ -37,6 +37,25 @@ const KNOWN_TOKENS: [&str; 6] = [
     "RSI_SPECTRESYS.EXE",
 ];
 
+/// Spawn a command without a visible console window on Windows.
+///
+/// GUI (subsystem:windows) binaries that shell out to console tools
+/// (`tasklist`, `ps`, …) otherwise make Windows allocate a new console per
+/// spawn — visible as a terminal flash on every game-detection poll. Applying
+/// `CREATE_NO_WINDOW` suppresses that allocation. No-op on non-Windows.
+pub fn hide_console(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 /// A candidate process to inspect.
 pub struct ProcEntry {
     /// The process's decoded command line (argv joined on NUL).
@@ -126,12 +145,10 @@ fn windows_procs() -> Vec<ProcEntry> {
     if cfg!(test) {
         return out;
     }
-    if let Ok(output) = Command::new("tasklist")
-        .arg("/FO")
-        .arg("CSV")
-        .arg("/NH")
-        .output()
-    {
+    let mut cmd = Command::new("tasklist");
+    cmd.arg("/FO").arg("CSV").arg("/NH");
+    hide_console(&mut cmd);
+    if let Ok(output) = cmd.output() {
         // Match against the raw line: the CSV row repeats the image name
         // verbatim, so substring matching suffices and avoids CSV parsing.
         if let Ok(stdout) = String::from_utf8(output.stdout) {
