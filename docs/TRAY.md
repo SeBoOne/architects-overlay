@@ -2,8 +2,8 @@
 
 Das Overlay registriert ein System-Tray (StatusNotifier, libayatana) mit drei
 Menüpunkten. Implementiert in `src-tauri/src/tray.rs`, Icon
-`src-tauri/icons/tray-amber-32.png` (Amber-Diamond, Palette-Token `--accent`
-`#f2a33c`, per `include_bytes!` eingebettet).
+`src-tauri/icons/tray-drake-32.png` (Drake-Emblem aus `brand/logo/logo.svg`,
+per `include_bytes!` eingebettet; Regeneration via `brand/logo/rebuild-icons.sh`).
 
 ## Menü
 

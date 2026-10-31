@@ -15,8 +15,8 @@
 //!   starting. Linux-only until the Windows pipeline exists; the code is
 //!   desktop-gated like the rest of the shell modules.
 //!
-//! The icon is an amber HUD diamond (palette token `--accent: #f2a33c`),
-//! 32×32 RGBA, embedded at compile time.
+//! The icon is the Drake brand emblem (`brand/logo/logo.svg`), 32×32 RGBA,
+//! embedded at compile time (see `brand/logo/rebuild-icons.sh`).
 
 #[cfg(desktop)]
 pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
@@ -29,7 +29,7 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&toggle, &config, &separator, &quit])?;
 
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-amber-32.png"))
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-drake-32.png"))
         .expect("embedded tray icon decodes");
 
     let result = TrayIconBuilder::with_id("architects-overlay-tray")
