@@ -606,6 +606,10 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // workspace coherence). The dialog suspend/restore cycle
                 // (event listener) clears it again whenever one of our own
                 // dialogs needs the input.
+                // Windows-Build: die Hyprland-Fokusbrücke existiert nur auf
+                // Linux (arm_focus_ownership ist linux-cfg'd) — der Aufruf
+                // muss es ebenso sein, sonst bricht der MSVC-Build (E0425).
+                #[cfg(target_os = "linux")]
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(500));
                     if win.is_visible().unwrap_or(false) {

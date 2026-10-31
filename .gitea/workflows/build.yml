@@ -142,12 +142,13 @@ jobs:
           rustc -V
           cargo -V
 
-      - name: pnpm installieren (corepack — Shim neben node.exe, im PATH)
+      - name: pnpm installieren (gepinnt)
         shell: bash
         run: |
-          corepack enable pnpm
-          corepack prepare pnpm@12.14.0 --activate
-          pnpm -v
+          npm install -g pnpm@12.14.0
+          # GITHUB_PATH wirkt unter act_runner 0.2.13 auch für PowerShell-
+          # Steps (belegt: Run 208 kam bis zum Tauri-Build):
+          echo "$(npm config get prefix)" >> "$GITHUB_PATH"
 
       - name: Dependencies installieren
         run: pnpm install --frozen-lockfile
