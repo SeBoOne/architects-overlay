@@ -4,7 +4,8 @@
 //!
 //! * Die `modul_compat`-Tabelle wird bei jedem Sync aus der Zuweisungs-Datei
 //!   neu befüllt (Repo-Baseline, zusätzlich Remote-Override von der
-//!   Gitea-Raw-URL — Fehler sind nicht fatal, Fallback-Kette Remote-Cache →
+//!   GitHub-Raw-URL (öffentliches Mirror-Repo) — Fehler sind nicht fatal,
+//!   Fallback-Kette Remote-Cache →
 //!   Repo-Baseline). Der erste Sync überschreibt damit auch alte API-Daten
 //!   (Migration: API-Datensatz verfällt, Nutzereinträge im Hangar bleiben).
 //! * Stündlicher Lauf: lädt die Remote-Datei (1 Request) — kein
@@ -47,12 +48,14 @@ pub const SOURCE_LABEL: &str = "module-overrides.json";
 /// Aurora MK II, Galaxy). Einzige Quelle der Modul-Zuordnung (S4).
 const BASELINE_OVERRIDES: &str = include_str!("../resources/module-overrides.json");
 
-/// Remote-Override (Gitea-Raw, branch `main`): Sebo pflegt die Datei im Repo,
-/// Endnutzer bekommen Änderungen mit dem nächsten Sync/Refresh — gecacht im
-/// Cache-DB, Fallback auf die Repo-Baseline. Hinweis: Das Gitea-Repo ist
-/// privat — kann der Endnutzer die URL nicht lesen (403/404), greift die
-/// Fallback-Kette (Remote-Cache → Repo-Baseline).
-const REMOTE_OVERRIDES_URL: &str = "https://git.sebo-home.de/sebo/architects-overlay/raw/branch/main/resources/module-overrides.json";
+/// Remote-Override (öffentliches GitHub-Mirror-Repo, branch `main` —
+/// TF t_0d510f31): Sebo pflegt die Datei im Repo, Endnutzer bekommen
+/// Änderungen mit dem nächsten Sync/Refresh — gecacht im Cache-DB,
+/// Fallback auf die Repo-Baseline. Die URL ist öffentlich (raw.
+/// githubusercontent.com, kein Auth-Header nötig); schlägt der Fetch fehl
+/// (403/404/Offline), greift die Fallback-Kette (Remote-Cache →
+/// Repo-Baseline). Pflege: docs/MODULE-OVERRIDES.md.
+const REMOTE_OVERRIDES_URL: &str = "https://raw.githubusercontent.com/SeBoOne/architects-overlay/main/src-tauri/resources/module-overrides.json";
 const REMOTE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, serde::Deserialize)]
@@ -143,7 +146,7 @@ fn effective_override_rows(cache: &Cache) -> Vec<ModulCompatRow> {
     }
 }
 
-/// Lädt bei jedem Sync/Refresh die Remote-Datei von der Gitea-Raw-URL und
+/// Lädt bei jedem Sync/Refresh die Remote-Datei von der GitHub-Raw-URL und
 /// cachet sie. Fehler sind NICHT fatal — Fallback-Kette greift beim nächsten
 /// Lesen (Remote-Cache → Repo-Baseline).
 async fn sync_remote_overrides(cache: &Cache) {
@@ -576,14 +579,14 @@ mod tests {
     }
 
     /// Live-Beleg für S4 (t_66980b3c): Der Sync läuft gegen die echte
-    /// Gitea-Raw-URL (privat → im CI/lokal ohne Login fällt er auf die
+    /// GitHub-Raw-URL (öffentlich — TF t_0d510f31; offline fällt er auf die
     /// Repo-Baseline zurück — beides muss "synced" liefern), die Tabelle
     /// enthält danach ausschließlich Datei-Zeilen, und die Nur-Datei-Regel
     /// liefert Eclipse/Racks, Retaliator/11, Galaxy/3, Arrow/kein Feld.
     /// Ignored by default — `cargo test -p architects-overlay --lib --
     /// --ignored modul` (nur 1 geringrateter Request pro Lauf).
     #[tokio::test]
-    #[ignore = "live Gitea-Raw — run with -- --ignored"]
+    #[ignore = "live GitHub-Raw — run with -- --ignored"]
     async fn live_sync_file_only_and_decision() {
         let cache = Cache::open_in_memory().unwrap();
         let outcome = loop {

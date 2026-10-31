@@ -25,7 +25,8 @@ use super::{Cache, CacheError, Result};
 pub const META_VERSION: &str = "modul_compat:version";
 /// `meta`-Key: Sync-Zeitpunkt (Epoch-Sekunden).
 pub const META_SYNCED_AT: &str = "modul_compat:synced_at";
-/// `meta`-Key: Remote-Override-Text (`module-overrides.json` vom Gitea-Raw).
+/// `meta`-Key: Remote-Override-Text (`module-overrides.json` vom
+/// öffentlichen GitHub-Mirror-Raw).
 /// Zwischen-Syncs gecacht; Fallback beim Lesen ist die Repo-Baseline.
 pub const META_OVERRIDES: &str = "modul_compat:overrides";
 

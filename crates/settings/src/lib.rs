@@ -49,6 +49,21 @@ pub const UPDATER_INTERVAL_MAX: u32 = 24;
 pub const UPDATER_REPO_DEFAULT: &str = "SeBoOne/architects-overlay";
 pub const UPDATER_BASE_URL_DEFAULT: &str = "https://api.github.com";
 
+/// TF t_0d510f31: Bestandsinstallationen tragen persistierte Updater-Werte aus
+/// der Zeit VOR dem S5-Mirror-Umzug (Gitea git.sebo-home.de — seit der
+/// Public-Mirror-Umstellung 403 für Nicht-Logins). Solche Legacy-Werte werden
+/// beim Laden auf die neuen Defaults migriert (und persistiert).
+fn is_legacy_gitea_base_url(url: &str) -> bool {
+    url.to_ascii_lowercase().contains("git.sebo-home.de")
+}
+
+/// TF t_0d510f31: alter Repo-Wert (Gitea-Slug `sebo/architects-overlay`,
+/// Klein-/Großschreibung egal) oder verwaiste `-dev`-Referenz.
+fn is_legacy_updater_repo(repo: &str) -> bool {
+    let r = repo.trim().to_ascii_lowercase();
+    r == "sebo/architects-overlay" || r.ends_with("-dev")
+}
+
 /// Intervall normalisieren: 0/zu klein → Min (1 h), zu groß → Max (24 h).
 pub fn norm_updater_interval(h: u32) -> u32 {
     h.clamp(UPDATER_INTERVAL_MIN, UPDATER_INTERVAL_MAX)
@@ -654,7 +669,7 @@ impl Settings {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => RawConfig::default(),
             Err(e) => return Err(SettingsError::Io(e.to_string())),
         };
-        Ok(Settings {
+        let mut settings = Settings {
             path: path.to_path_buf(),
             uex_api_key: raw.uex.as_ref().and_then(|u| u.api_key.clone()),
             uex_secret_key: raw.uex.as_ref().and_then(|u| u.secret_key.clone()),
@@ -723,14 +738,44 @@ impl Settings {
                 .as_ref()
                 .and_then(|u| u.repo.clone())
                 .filter(|r| !r.trim().is_empty())
+                .map(|r| {
+                    if is_legacy_updater_repo(&r) {
+                        UPDATER_REPO_DEFAULT.to_owned()
+                    } else {
+                        r
+                    }
+                })
                 .unwrap_or_else(|| UPDATER_REPO_DEFAULT.to_owned()),
             updater_base_url: raw
                 .updater
                 .as_ref()
                 .and_then(|u| u.base_url.clone())
                 .filter(|u| !u.trim().is_empty())
+                .map(|u| {
+                    if is_legacy_gitea_base_url(&u) {
+                        UPDATER_BASE_URL_DEFAULT.to_owned()
+                    } else {
+                        u
+                    }
+                })
                 .unwrap_or_else(|| UPDATER_BASE_URL_DEFAULT.to_owned()),
-        })
+        };
+        // TF t_0d510f31: migrierte Legacy-Werte zurück in die Datei
+        // schreiben, damit der alte Gitea-Eintrag dauerhaft verschwindet.
+        // Persist-Fehler sind nicht fatal — der gemigrierte Wert ist
+        // ohnehin im Speicher aktiv.
+        let had_legacy = raw.updater.as_ref().map_or(false, |u| {
+            u.base_url.as_deref().map_or(false, |b| {
+                !b.trim().is_empty() && is_legacy_gitea_base_url(b)
+            }) || u
+                .repo
+                .as_deref()
+                .map_or(false, |r| !r.trim().is_empty() && is_legacy_updater_repo(r))
+        });
+        if had_legacy {
+            let _ = settings.save();
+        }
+        Ok(settings)
     }
 
     /// Settings handle pinned to a given file path (tests/embedded use).
@@ -904,7 +949,7 @@ impl Settings {
     }
 
     /// Releases-API-Base-URL (Default https://api.github.com — GitHub-Mirror, S5;
-    /// Gitea-Instanz wie https://git.sebo-home.de bleibt möglich).
+    /// Andere Gitea-Instanzen bleiben möglich).
     pub fn updater_base_url(&self) -> &str {
         &self.updater_base_url
     }
@@ -1082,6 +1127,76 @@ mod tests {
         assert_eq!(s2.updater_interval_hours(), UPDATER_INTERVAL_MIN);
         s2.set_updater_interval_hours(999);
         assert_eq!(s2.updater_interval_hours(), UPDATER_INTERVAL_MAX);
+    }
+
+    #[test]
+    fn updater_legacy_gitea_values_migrate_to_github() {
+        // TF t_0d510f31: Bestandsinstallation mit dem ALTEN Gitea-Default —
+        // Load migriert auf die GitHub-Defaults UND persistiert sie zurück.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[updater]\nenabled = true\ninterval_hours = 6\nrepo = \"sebo/architects-overlay\"\nbase_url = \"https://git.sebo-home.de\"\n",
+        )
+        .unwrap();
+
+        let s = Settings::load_from(&path).unwrap();
+        assert_eq!(s.updater_repo(), UPDATER_REPO_DEFAULT);
+        assert_eq!(s.updater_base_url(), UPDATER_BASE_URL_DEFAULT);
+
+        // Migration persistiert: Datei trägt die neuen Werte, der alte
+        // Gitea-Eintrag ist verschwunden (Sebo-Finding: 403 gegen Gitea).
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("api.github.com"), "{content}");
+        assert!(content.contains("SeBoOne/architects-overlay"), "{content}");
+        assert!(!content.contains("git.sebo-home.de"), "{content}");
+
+        // Reload ist stabil: keine Legacy-Werte mehr, Defaults bleiben.
+        let reloaded = Settings::load_from(&path).unwrap();
+        assert_eq!(reloaded.updater_base_url(), UPDATER_BASE_URL_DEFAULT);
+        assert_eq!(reloaded.updater_repo(), UPDATER_REPO_DEFAULT);
+    }
+
+    #[test]
+    fn updater_legacy_repo_variants_migrate() {
+        // Alter Slug in anderer Schreibweise + verwaiste -dev-Referenz
+        // (SeBoOne/architects-overlay-dev wird von Sebo gelöscht).
+        for legacy in [
+            "sebo/architects-overlay",
+            "SEBO/Architects-Overlay",
+            "SeBoOne/architects-overlay-dev",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("config.toml");
+            std::fs::write(
+                &path,
+                &format!("[updater]\nrepo = \"{legacy}\"\nbase_url = \"https://api.github.com\"\n"),
+            )
+            .unwrap();
+            let s = Settings::load_from(&path).unwrap();
+            assert_eq!(s.updater_repo(), UPDATER_REPO_DEFAULT, "{legacy}");
+            assert_eq!(s.updater_base_url(), UPDATER_BASE_URL_DEFAULT, "{legacy}");
+        }
+    }
+
+    #[test]
+    fn updater_custom_non_legacy_values_survive_load() {
+        // Nutzer-eigene, nicht-legacy Werte dürfen die Migration NICHT
+        // anfassen (kein Überschreiben fremder Konfiguration).
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[updater]\nrepo = \"SomebodyElse/overlay\"\nbase_url = \"https://api.example.com\"\n",
+        )
+        .unwrap();
+        let s = Settings::load_from(&path).unwrap();
+        assert_eq!(s.updater_repo(), "SomebodyElse/overlay");
+        assert_eq!(s.updater_base_url(), "https://api.example.com");
+        // Nicht migriert → Datei unberührt (kein Auto-Save).
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("SomebodyElse/overlay"), "{content}");
     }
 
     #[test]
