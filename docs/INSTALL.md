@@ -7,6 +7,46 @@ ausgetestet. Windows-Builds entstehen über den GitHub-Actions-Mirror
 
 ---
 
+## Schnell-Start Linux — Einzeiler
+
+```sh
+curl -fsSL https://git.sebo-home.de/sebo/architects-overlay/raw/branch/main/scripts/install.sh | bash
+```
+
+Das Script erkennt die Distro automatisch:
+
+- **Debian-basiert** (apt vorhanden): lädt das `.deb` aus dem neuesten Release
+  und installiert es via `apt` — Abhängigkeiten, `arch-overlay`-CLI,
+  Desktop-Datei und Icons kommen aus dem Paket.
+- **Alle anderen Distros** (Arch, Fedora, …): AppImage nach `~/.local/bin`,
+  Desktop-Datei nach `~/.local/share/applications`, Icon nach
+  `~/.local/share/icons/hicolor/128x128/apps`, plus CLI-Wrapper
+  `arch-overlay` (im PATH).
+
+> **Voraussetzung:** Das Repo (bzw. seine Releases) muss öffentlich lesbar
+> sein; bei privatem Repo zusätzlich `GITEA_TOKEN=<token>` in der Umgebung
+> setzen. x86_64 erforderlich.
+
+### Flags
+
+| Flag | Wirkung |
+| --- | --- |
+| *(keine)* | Installieren (interaktiv, mit Rückfrage) |
+| `--yes` / `-y` | Ohne Rückfrage (für `curl \| bash`) automatisch gesetzt |
+| `--version vX.Y.Z` | Bestimmte Release-Version pinnen |
+| `--uninstall` | App entfernen — Nutzerdaten bleiben |
+| `--purge` | App **inkl.** Nutzerdaten/Cache entfernen
+  (`~/.local/share/com.sebo.architects-overlay`) |
+| `--help` | Hilfe |
+
+### CLI
+
+Nach der Installation steht `arch-overlay <toggle|show|hide|clickthrough|state>`
+zur Verfügung (steuert die laufende Overlay-Instanz über ihren Control-Socket;
+Wayland-Fallback statt globaler Shortcuts, siehe docs/WAYLAND.md).
+
+---
+
 ## macOS (Apple Silicon / aarch64)
 
 > **Status (C4 t_ee85f9d7):** Der macOS-Build ist über die CI vorbereitet,
