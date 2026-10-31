@@ -11,10 +11,11 @@
 //!
 //! Ausführungsentscheidung Windows (dokumentiert in docs/UPDATER.md):
 //! die App lädt setup.exe herunter, verifiziert SHA256, startet das Setup
-//! SILENT (`/S`) als CHILD-PROZESS (detached, CREATE_NO_WINDOW — gleiche
-//! Mechanik wie der tasklist-Fix t_d323b29e) und beendet sich dann sauber
-//! selbst; NSIS schließt eine laufende Instanz ab und installiert. Kein
-//! Auto-Restart — der Nutzer startet das Overlay selbst neu.
+//! SILENT (`/S`) + `/R` als CHILD-PROZESS (detached, CREATE_NO_WINDOW —
+//! gleiche Mechanik wie der tasklist-Fix t_d323b29e) und beendet sich dann
+//! sauber selbst; NSIS schließt eine laufende Instanz ab, installiert und
+//! startet das Overlay nach Abschluss selbst neu (`/R` — Sebo-Wunsch:
+//! nach dem Update wird das Overlay wieder gestartet).
 //! Linux AppImage: neue Datei atomar am laufenden AppImage-Pfad ersetzen
 //! (alte umbenennen → neue schreiben → exec-Rechte → alte löschen,
 //! Umsetzung 4) und relaunchen. .deb: KEIN Self-Update — Hint mit dem
@@ -232,8 +233,12 @@ fn spawn_nsis_silent(installer: &std::path::Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
+    // `/S` silent + `/R`: NSIS-Template startet die App nach Abschluss der
+    // Installation selbst neu (Sebo-Wunsch: nach dem Update wird das Overlay
+    // wieder gestartet, nicht nur installiert).
     std::process::Command::new(installer)
         .arg("/S")
+        .arg("/R")
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
         .map_err(|e| format!("Setup konnte nicht gestartet werden: {e}"))?;
