@@ -156,8 +156,8 @@ jobs:
       - name: Frontend bauen (vite → ./build)
         run: pnpm build
 
-      - name: Tauri-Bundle bauen (NSIS-Installer + MSI)
-        run: pnpm tauri build
+      - name: Tauri-Bundle bauen (NSIS — MSI wartet auf WiX-Fix in der VM)
+        run: pnpm tauri build --bundles nsis
 
       - name: Artefakte hochladen (CI-Artifact)
         uses: actions/upload-artifact@v3
