@@ -322,7 +322,7 @@ jobs:
                   echo "Asset vorhanden (skip): $name"
                   continue
                 fi
-                curl -fsSL -o "/tmp/$name" "$url"
+                curl -fsSL -H "$GT_AUTH" -o "/tmp/$name" "$url"
                 curl -fsS -X POST -H "$GH_AUTH" \
                   -H "Content-Type: application/octet-stream" \
                   --data-binary "@/tmp/$name" \
