@@ -669,7 +669,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	type HangarImportResult = { imported: number; updated: number; skipped: number; format: string };
 	// Autocomplete-Candidate (P10): Name + Manufacturer + kind — from the
 	// static package and/or already-registered Hangar entries.
-	type HangarSuggestion = { name: string; manufacturer: string; kind: string };
+	// UH (t_424660aa): concept = Shipmatrix 'in-concept' → 'Konzept'-Badge im
+	// Name-Typeahead.
+	type HangarSuggestion = { name: string; manufacturer: string; kind: string; concept?: boolean };
 
 	// P11 (Karte t_aa6cc070): Action-Message under the Filter/Import/Add-Buttons
 	// auto-fades after ~3.5 s (Timeout, NO Blocker-Refactor). All hangar_* note
@@ -918,11 +920,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const q = hangarForm.name.trim().toLowerCase();
 		const out: HangarSuggestion[] = [];
 		const seen = new Set<string>();
-		const add = (name: string, manufacturer: string, kind: string) => {
+		const add = (name: string, manufacturer: string, kind: string, concept?: boolean) => {
 			const key = name.toLowerCase();
 			if (name && !seen.has(key)) {
 				seen.add(key);
-				out.push({ name, manufacturer, kind });
+				out.push({ name, manufacturer, kind, concept });
 			}
 		};
 		for (const it of hangarItems) {
@@ -930,7 +932,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const hay = `${it.name} ${it.custom_name}`.toLowerCase();
 			if (!q || hay.includes(q) || it.manufacturer.toLowerCase().includes(q)) add(it.name, it.manufacturer, it.entity_type);
 		}
-		for (const s of suggestShips(q, 12)) add(s.name, s.manufacturer, s.kind);
+		for (const s of suggestShips(q, 12)) add(s.name, s.manufacturer, s.kind, s.concept);
 		return out.slice(0, 10);
 	}
 	function hangarPickSuggestion(s: HangarSuggestion) {
@@ -979,7 +981,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	const hangarNameOpts = $derived(
 		hangarNameSuggest().map((s) => ({
 			value: s.name,
-			label: s.manufacturer ? `${s.name} · ${s.manufacturer}` : s.name
+			label: s.manufacturer ? `${s.name} · ${s.manufacturer}` : s.name,
+			badge: s.concept ? 'Konzept' : undefined
 		}))
 	);
 	const hangarBaseOpts = $derived(
@@ -6870,7 +6873,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							>
 								<span class="info-badge-mark">SC-WIKI API</span>
 								<span class="info-badge-text">
-									<b>Modul-Kompatibilität</b>
+									<!-- UH (t_424660aa): Shipmatrix-Schiffsdaten (inkl.
+									     Konzept-Schiffe) laufen jetzt auch über die SC-Wiki-API
+									     → Attribution erweitert. -->
+									<b>Module &amp; Schiffsdaten inkl. Konzept</b>
 									<span>Star Citizen Wiki API · api.star-citizen.wiki</span>
 								</span>
 							</span>
