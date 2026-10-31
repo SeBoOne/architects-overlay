@@ -330,7 +330,7 @@ export const SHIP_CATALOG: ShipDatum[] = [
 	{ name: 'Expanse', manufacturer: 'MISC', kind: 'ship', concept: true },
 	{ name: 'G12', manufacturer: 'Origin', kind: 'vehicle', concept: true },
 	{ name: 'G12a', manufacturer: 'Origin', kind: 'vehicle', concept: true },
-	{ name: 'G12r', manufacturer: 'Origin', kind: 'ship', concept: true },
+	{ name: 'G12r', manufacturer: 'Origin', kind: 'vehicle', concept: true },
 	{ name: 'Galaxy', manufacturer: 'RSI', kind: 'ship', concept: true },
 	{ name: 'Genesis', manufacturer: 'Crusader', kind: 'ship', concept: true },
 	{ name: 'Geotack Planetary Beacon', manufacturer: 'Greycat', kind: 'vehicle', concept: true },
