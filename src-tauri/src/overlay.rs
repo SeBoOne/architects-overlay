@@ -210,15 +210,22 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
 /// The CSS floats the compact palette inside this window.
 fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<WebviewWindow<R>> {
     // Best-effort monitor size for the initial map; the real geometry is
-    // decided on every show (cursor monitor), never here.
+    // decided on every show (cursor monitor), never here. On Windows the
+    // initial size is the work_area too (t_bd8cbdfd) — never the taskbar.
     let (w, h) = app
         .primary_monitor()
         .ok()
         .flatten()
-        .map(|m| (m.size().width as f64, m.size().height as f64))
+        .map(|m| {
+            #[cfg(target_os = "windows")]
+            let sz = m.work_area().size;
+            #[cfg(not(target_os = "windows"))]
+            let sz = m.size();
+            (sz.width as f64, sz.height as f64)
+        })
         .unwrap_or((PANEL_W, PANEL_H));
 
-    let win = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         SPOTLIGHT_LABEL,
         // Same SvelteKit frontend as the main window; it renders the compact
@@ -236,8 +243,20 @@ fn create_spotlight_window<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<Web
     // it by hand anyway (borderless, no decorations).
     .resizable(true)
     .inner_size(w, h)
-    .visible(false) // shown when Star Citizen is detected
-    .build()?;
+    .visible(false); // shown when Star Citizen is detected
+
+    // Windows overlay shape (t_bd8cbdfd): ein echtes Overlay ist historisch —
+    // randlos OHNE jede Chrome (auch kein Fensterschatten), NICHT
+    // verschieb-/größenänderbar (die vier Drag-Ränder + Aero-Snap von
+    // v0.5.12 entfallen damit; ohne Dekorationen gibt es auch keine
+    // Titel-Leiste mehr, die das Fenster bewegen könnte). skip_taskbar und
+    // always_on_top oben gelten schon für beide Plattformen. Linux bleibt
+    // unangetastet: dort MUSS resizable(true) bleiben (Kommentar oben —
+    // min=max-Geometrie würde den Wayland-Resize-Weg blockieren).
+    #[cfg(target_os = "windows")]
+    let builder = builder.shadow(false).resizable(false);
+
+    let win = builder.build()?;
 
     // Every *show* re-places the window on the monitor under the pointer —
     // the multi-monitor behaviour — see `place_on_pointer_monitor`.
@@ -558,6 +577,11 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // 1080×1920 on the transform-3 monitor only via compositor
                 // resize/move dispatch after the map).
                 place_on_pointer_monitor(&win);
+                // t_bd8cbdfd (Punkt 4): Windows has no Hyprland topmost handling —
+                // re-assert always-on-top on every show (VM-Livetest showed the
+                // overlay losing topmost status after game focus switches).
+                #[cfg(target_os = "windows")]
+                let _ = win.set_always_on_top(true);
                 let _ = win.show();
                 // NOTE: no panel-size re-assert here. The single source of
                 // window geometry is `place_on_pointer_monitor` (full
@@ -806,12 +830,23 @@ fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
         return;
     };
 
-    let mpos = mon.position();
-    let msize = mon.size();
-    // Arkanis-style: the overlay uses the WHOLE monitor — the transparent
-    // window spans the screen, the palette UI floats inside it (CSS keeps the
-    // visible shell compact). This also makes the click/keyboard surface
-    // predictable across monitor layouts.
+    let (mpos, msize) = {
+        // Linux (unchanged, Arkanis-style): the overlay uses the WHOLE monitor —
+        // the transparent window spans the screen, the palette UI floats inside
+        // it (CSS keeps the visible shell compact). This also makes the click/
+        // keyboard surface predictable across monitor layouts.
+        // Windows (t_bd8cbdfd, Punkte 3+6): size = work_area (Monitor minus
+        // Taskleiste), not the full monitor — the overlay must never cover the
+        // taskbar and must not block it.
+        #[cfg(target_os = "windows")]
+        let target = {
+            let wa = mon.work_area();
+            (wa.position, wa.size)
+        };
+        #[cfg(not(target_os = "windows"))]
+        let target = (mon.position(), mon.size());
+        target
+    };
     // tao lever: on X11/XWayland this resizes outright; on Wayland it only
     // acts pre-map (GTK default-size hint for the upcoming map) and is
     // silently dropped after map (wire proof t_5133f3e9, WAYLAND_DEBUG:
