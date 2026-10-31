@@ -230,6 +230,14 @@ html[data-window="spotlight"] .shell {
   box-shadow: var(--shadow-shell);
 }
 
+/* UG (t_a1f0d83f): solange das Info-Popup offen ist, bekommt die Shell einen
+   min-height-Floor — das Popup ist jetzt größer (Abschnitte + 112px-Logo) und
+   die content-driven Shell (~311px im Such-Start-View) würde es sonst mit
+   internem Scroll quetschen. max-height 84vh bleibt die Obergrenze. */
+.shell-info {
+  min-height: calc(640px / var(--ui-scale, 1));
+}
+
 /* Rail-Spalte: der bisherige Shell-Inhalt (Suchzeile, Panes, Fußzeile). */
 .shell-main {
   flex: 1;
@@ -2103,57 +2111,54 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 14px;
 }
 
-/* TW (t_f178b084): Info-Popup — der advert-scrim oben liefert Scrim +
-   Zentrierung (inline z-index 240 setzt das Popup ÜBER alle übrigen
-   Popups/Scrims); die Karte ist eine kompakte Info-Karte (Lockup + Version
-   + Disclaimer + Badges + Links), kein Formular-Popup. Overlay-Dark-Style,
-   keine Fremd-Ressourcen (nur das offizielle UEX-Badge-PNG). */
+/* UG (t_a1f0d83f): Info-Popup-Politur — breiter (~88 %), Sebos Vector-Logo
+   prominent MITTIG im Kopf, Abschnitts-Struktur (Über → Datenquellen →
+   Rechtliches → Footer-Links), offizielles CIG-„Made by the Community"-Badge
+   (unverändert, White-Variante fürs Dark-Design). */
 .info-modal {
-  width: min(640px, 94%);
+  width: min(88%, 1200px);
   max-height: 100%;
   overflow-y: auto;
   background: var(--panel2);
   border: 1px solid var(--lineb);
   border-radius: 4px;
-  padding: 12px 14px 14px;
+  padding: 12px 18px 16px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   scrollbar-width: thin;
 }
 
+/* Kopf: Logo + Titel + Version MITTIG; ✕ absolut rechts oben. */
 .info-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding-bottom: 8px;
+  position: relative;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--lineb);
 }
 
-.info-lockup {
-  height: 30px;
+.info-head .hd-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin-left: 0;
+}
+
+.info-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.info-logo {
+  height: 112px;
   width: auto;
   user-select: none;
 }
 
-/* Repo-/Release-Chips rechts im Kopf (vor dem ✕). Begründung im Markup:
-   die Shell-Höhe ist content-driven — unten wäre die Zeile abgeschnitten. */
-.info-links {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* hd-close bringt margin-left:auto mit (setzt sich sonst rechts fest) —
-   im Info-Kopf leitet .info-links den rechten Bund, ✕ schließt direkt an. */
-.info-head .hd-close {
-  margin-left: 0;
-}
-
-.info-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 10px;
+.info-title {
+  font: 700 14px/1.3 var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg);
 }
 
 .info-meta {
@@ -2165,10 +2170,62 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   text-transform: uppercase;
 }
 
-.info-disclaimer {
+.info-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+/* Echte Absätze: eine Sektion pro Themenblock (kein gequetschter Block). */
+.info-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-sec-title {
   margin: 0;
-  font: 500 10.5px/1.45 var(--font-mono);
+  font: 700 10.5px/1.4 var(--font-mono);
+  color: var(--fgfaint);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--lineb);
+  padding-bottom: 4px;
+}
+
+.info-text,
+.info-disclaimer,
+.info-license {
+  margin: 0;
+  font: 500 10.5px/1.5 var(--font-mono);
   color: var(--fgdim);
+}
+
+.info-disclaimer {
+  color: var(--fgdim);
+}
+
+.info-license {
+  color: var(--fgfaint);
+}
+
+/* CIG-Fan-Asset: offizielles „Made by the Community"-PNG (White), unverändert. */
+.info-cig {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.info-cig img {
+  height: 40px;
+  width: 40px;
+  user-select: none;
+}
+
+.info-cig-src {
+  font: 500 10px/1.4 var(--font-mono);
+  color: var(--fgfaint);
 }
 
 .info-badges {
