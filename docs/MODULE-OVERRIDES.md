@@ -1,12 +1,12 @@
 # Module-Overrides — Zuweisungs-Datei pflegen
 
-Quelle der Modul-Zuordnung (S4): `resources/module-overrides.json` im Repo.
+Quelle der Modul-Zuordnung (S4): `src-tauri/resources/module-overrides.json` im Repo.
 Schiff mit Eintrag in der Datei → Modul-Feld mit genau den Datei-Modulen;
 Schiff ohne Eintrag → gar kein Modul-Feld.
 
 ## Ablauf: neue Zuweisung einpflegen
 
-1. **Gitea (Entwicklung)**: `resources/module-overrides.json` im privaten
+1. **Gitea (Entwicklung)**: `src-tauri/resources/module-overrides.json` im privaten
    Repo `git.sebo-home.de/sebo/architects-overlay` auf `main` bearbeiten —
    Format:
 

@@ -949,7 +949,7 @@ impl Settings {
     }
 
     /// Releases-API-Base-URL (Default https://api.github.com — GitHub-Mirror, S5;
-    /// Gitea-Instanz wie https://git.sebo-home.de bleibt möglich).
+    /// Andere Gitea-Instanzen bleiben möglich).
     pub fn updater_base_url(&self) -> &str {
         &self.updater_base_url
     }
