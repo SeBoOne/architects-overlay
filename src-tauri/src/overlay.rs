@@ -1172,14 +1172,27 @@ fn spawn_hyprland_events<R: Runtime>(_handle: &AppHandle<R>) {}
 /// Background poller: every `POLL_INTERVAL_MS` re-checks whether Star Citizen
 /// runs and updates the overlay accordingly. Detached — dies with the process,
 /// so it needs no explicit shutdown signalling. Reading /proc on each tick is
-/// cheap relative to a 2 s cadence, and only state *changes* touch the window.
-const POLL_INTERVAL_MS: u64 = 2000;
+/// cheap relative to a 5 s cadence, and only state *changes* touch the window.
+/// (5 s statt 2 s: schließt auch das Windows-typische tasklist-Flackern
+/// wahrnehmbar — Detection-Latenz beim SC-Start bleibt unkritisch.)
+const POLL_INTERVAL_MS: u64 = 5000;
 
 fn spawn_game_poller<R: Runtime>(handle: &AppHandle<R>) {
     let app = handle.clone();
     std::thread::spawn(move || {
+        let mut last: Option<bool> = None;
         loop {
             let running = game_detection::is_game_running();
+            // Log only transitions — enough to diagnose a missed detection
+            // (e.g. a fake StarCitizen.exe test copy) without log spam per poll.
+            if last != Some(running) {
+                log::info!(
+                    "game-detection: running={} (poll every {}ms)",
+                    running,
+                    POLL_INTERVAL_MS
+                );
+                last = Some(running);
+            }
             set_game_running(&app, running);
             std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
         }
