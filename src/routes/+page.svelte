@@ -5249,14 +5249,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{#if modulNote}
 						<div class="cfg-note">{modulNote}</div>
 					{/if}
-					<div class="cfg-note">
-						Quelle: module-overrides.json (Repo-Baseline) — die EINZIGE Quelle
-						der Modul-Zuordnung; Modul-Felder erscheinen nur bei Schiffen mit
-						Eintrag in der Datei. Optional per Remote-Datei (Gitea-Raw)
-						überschrieben; der Button zieht nur diese Datei (kein
-						Game-Version-Check mehr).
-					</div>
-				</section>
+					</section>
 					</div>
 					<!-- UD (t_a36daafb): thematische Gruppe „App“ — reine UI-Umordnung -->
 					<div class="cfg-group">
