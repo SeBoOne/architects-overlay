@@ -297,11 +297,18 @@ jobs:
           echo "Neuester Tag: ${TAG}"
 
           # Release zum Tag suchen; fehlt es, anlegen (Tag wurde soeben gespiegelt).
-          ID="$(curl -sS -H "$GH_AUTH" "$GH_API/releases/tags/${TAG}" | jq -r '.id // empty')"
+          CODE="$(curl -sS -o /tmp/rel.json -w '%{http_code}' -H "$GH_AUTH" "$GH_API/releases/tags/${TAG}")"
+          echo "GET releases/tags/${TAG} -> ${CODE} $(head -c 200 /tmp/rel.json)"
+          ID="$(jq -r '.id // empty' /tmp/rel.json)"
           if [ -z "${ID}" ]; then
-            ID="$(curl -fsS -X POST -H "$GH_AUTH" -H 'Content-Type: application/json' \
+            CODE="$(curl -sS -o /tmp/newrel.json -w '%{http_code}' -X POST -H "$GH_AUTH" \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/vnd.github+json' \
               -d "{\"tag_name\":\"${TAG}\",\"name\":\"Architects Overlay ${TAG}\",\"body\":\"Release-Spiegel der Gitea-Dev-Release (Gitea = Dev-Quelle, GitHub = oeffentliche Release-Quelle).\"}" \
-              "$GH_API/releases" | jq -r '.id')"
+              "$GH_API/releases")"
+            echo "POST releases -> ${CODE} $(head -c 300 /tmp/newrel.json)"
+            ID="$(jq -r '.id // empty' /tmp/newrel.json)"
+            [ -n "${ID}" ] || exit 1
           fi
 
           # Assets: von der Gitea-Release nehmen, fehlende auf GitHub hochladen
