@@ -39,3 +39,4 @@ src-tauri/gen
 market_screens/
 __pycache__/
 *.pyc
+.worktrees/
