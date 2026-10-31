@@ -143,7 +143,12 @@ jobs:
           cargo -V
 
       - name: pnpm installieren (gepinnt)
-        run: npm install -g pnpm@12.14.0
+        shell: bash
+        run: |
+          npm install -g pnpm@12.14.0
+          # npm-Global-Prefix in den PATH aller Folgesteps heben
+          # (PowerShell-Shells kennen %APPDATA%\npm sonst nicht):
+          echo "$(npm config get prefix)" >> "$GITHUB_PATH"
 
       - name: Dependencies installieren
         run: pnpm install --frozen-lockfile
