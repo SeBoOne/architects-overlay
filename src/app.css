@@ -2218,8 +2218,8 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 }
 
 .info-cig img {
-  height: 40px;
-  width: 40px;
+  height: 72px;
+  width: auto;
   user-select: none;
 }
 
@@ -2252,9 +2252,9 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 }
 
 .info-badge img {
-  height: 22px;
+  height: 34px;
   width: auto;
-  border-radius: 2px;
+  border-radius: 3px;
   user-select: none;
 }
 

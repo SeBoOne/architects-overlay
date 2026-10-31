@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="brand/logo/drake/lockup-horizontal.png" alt="Architects Overlay" width="460">
+<img src="brand/logo/logo.svg" alt="Architects Overlay" width="300">
 
 **Trade overlay for Star Citizen** — prices, marketplace, trade routes and
 your hangar as a lean overlay above the game. Built by the community, for
@@ -8,6 +8,11 @@ the community.
 
 [Download](https://github.com/SeBoOne/architects-overlay/releases/latest) ·
 [Install](#installation) · [License](#license)
+
+<img src="brand/third-party/MadeByTheCommunity_White.png" alt="Made by the Community" width="180">
+&nbsp;
+<a href="https://uexcorp.space"><img src="https://img.shields.io/badge/UEX-API-e01e2c" alt="UEX API" height="28"></a>
+<a href="https://api.star-citizen.wiki"><img src="https://img.shields.io/badge/SC_Wiki-API-7fd4ff" alt="SC-Wiki API" height="28"></a>
 
 </div>
 
