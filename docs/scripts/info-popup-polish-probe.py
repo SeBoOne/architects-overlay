@@ -9,7 +9,7 @@ historischer Beleg) für den neuen Stand:
   2. Klick öffnet das Info-Popup (advert-scrim, z-index 240; Shell wächst mit
      class="shell-info").
   3. Neuer Inhalt: Sebos Vector-Logo (info-logo) prominent MITTIG (~112 px,
-     zentriert), Titel + Version v0.5.20 + Build-Datum, Abschnitte Über →
+     zentriert), Titel + Version (= tauri.conf.json) + Build-Datum, Abschnitte Über →
      Datenquellen → Rechtliches → Footer-Links, breites Popup (≥ 80 % der
      Shell), UEX-Badge + SC-Wiki-Badge mit Label „Schiffsdaten“ (KEIN
      „Modul-Kompatibilität“ mehr), CIG-„Made by the Community“-Badge
@@ -26,6 +26,7 @@ import websockets
 
 ROOT = pathlib.Path(os.environ.get("SHOT_ROOT", str(pathlib.Path(__file__).resolve().parents[2])))
 STUB = (ROOT / "docs/scripts/smoke-stub.js").read_text()
+APP_VERSION = json.loads((ROOT / "src-tauri/tauri.conf.json").read_text())["version"]
 OUT = pathlib.Path(os.environ.get("SHOT_DIR", str(ROOT / "docs/screenshots/info-popup-polish")))
 OUT.mkdir(parents=True, exist_ok=True)
 PORT = os.environ.get("INFO_PROBE_PORT", "8796")
@@ -145,6 +146,8 @@ async def main():
         await call("Page.addScriptToEvaluateOnNewDocument", {"source": STUB})
         await call("Page.navigate", {"url": URL})
         await wait_for("document.querySelector('.spot-status .info-btn')")
+        # Stub-Version an tauri.conf.json koppeln (Probe setzt das nach Navigation).
+        await js(f"window.__PROBE_VERSION__ = {APP_VERSION!r}")
 
         # ---- Gate 1: Chip RECHTS neben dem Fokus/Klick-Button ----------------
         chips = await js("""
@@ -210,7 +213,7 @@ async def main():
         title = await txt(".info-modal .info-title")
         check("Titel „Architects Overlay“", "Architects Overlay" in (title or ""), repr(title))
         meta = await txt(".info-modal .info-meta")
-        check("Version v0.5.20 (tauri.conf.json)", "Version v0.5.20" in meta, meta)
+        check(f"Version v{APP_VERSION} (tauri.conf.json)", f"Version v{APP_VERSION}" in meta, meta)
         check("Build-Datum (YYYY-MM-DD)", "Build 20" in meta, meta)
 
         secs = await js("""

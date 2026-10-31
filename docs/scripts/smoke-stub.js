@@ -459,10 +459,11 @@ window.__TAURI_INTERNALS__ = {
 				if (!INFO_URLS[kind]) throw new Error('Unbekannter Info-Link: ' + kind);
 				return INFO_URLS[kind];
 			}
-			// TW: tauri packageInfo (getVersion()) — Stub liefert die Version aus
-			// tauri.conf.json (Handstand mit __APP_VERSION__-Define im Probe).
+			// TW/UG: tauri packageInfo (getVersion()) — Stub liefert die Version;
+			// Probe setzt window.__PROBE_VERSION__ auf den Stand aus tauri.conf.json
+			// (Fallback '0.5.20' für ältere Proben ohne Injection).
 			case 'plugin:app|version':
-				return '0.5.20';
+				return window.__PROBE_VERSION__ || '0.5.20';
 			case 'get_prices': {
 				const name = String(a.commodity || '');
 				const now = Math.floor(Date.now() / 1000);
