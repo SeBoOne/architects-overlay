@@ -11,8 +11,8 @@ the community.
 
 <img src="brand/third-party/MadeByTheCommunity_White.png" alt="Made by the Community" width="180">
 &nbsp;
-<a href="https://uexcorp.space"><img src="https://img.shields.io/badge/UEX-API-e01e2c" alt="UEX API" height="28"></a>
-<a href="https://api.star-citizen.wiki"><img src="https://img.shields.io/badge/SC_Wiki-API-7fd4ff" alt="SC-Wiki API" height="28"></a>
+<a href="https://uexcorp.space"><img src="brand/third-party/badge-uex.svg" alt="UEX API — Daten & Marktplatz" height="34"></a>
+<a href="https://api.star-citizen.wiki"><img src="brand/third-party/badge-scwiki.svg" alt="SC-Wiki API — Schiffsdaten" height="34"></a>
 
 </div>
 

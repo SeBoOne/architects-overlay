@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="176" height="56" viewBox="0 0 176 56" role="img" aria-label="SC-Wiki API">
+  <!-- Badge im Overlay-Info-Stil -->
+  <rect x="1" y="1" width="174" height="54" rx="3" fill="#1b1e24" stroke="#2a2e36" stroke-width="1"/>
+  <rect x="1" y="1" width="102" height="54" rx="3" fill="#e8a33d"/>
+  <text x="52" y="34" text-anchor="middle" font-family="'Cascadia Mono','Consolas',monospace" font-size="15" font-weight="700" fill="#14161a">SC-WIKI API</text>
+  <text x="112" y="34" font-family="'Segoe UI',system-ui,sans-serif" font-size="14" fill="#e8e6e1">Schiffsdaten</text>
+</svg>
