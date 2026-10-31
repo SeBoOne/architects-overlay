@@ -44,6 +44,12 @@ function keyActivate(e: KeyboardEvent) {
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
+	// TW (t_f178b084): Info-Popup — Laufzeit-Version aus tauri packageInfo
+	// (getVersion()); Fallback __APP_VERSION__ = tauri.conf.json (Build-Zeit).
+	import { getVersion } from '@tauri-apps/api/app';
+	// Relatives Import (kein $lib-Alias, siehe oben): Lockup horizontal
+	// (Emblem + Wordmark) für den Info-Popup-Kopf.
+	import lockupUrl from '../lib/assets/lockup-horizontal.svg';
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
@@ -4008,6 +4014,49 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		overlay = await invoke<OverlayState>('overlay_get_state');
 	}
 
+	// TW (t_f178b084): Info-Popup („ⓘ“-Chip RECHTS neben dem Fokus/Klick-Button
+	// im spot-status-Bereich) — Lockup + Version + Build-Datum, Community-
+	// Disclaimer (Pflicht), UEX-Badge (offizielles PNG-Asset) + SC-Wiki-
+	// Text-Badge, Repo-/Release-Links. Kein View-Wechsel: shell-anchored
+	// advert-scrim wie die übrigen Popups; andere offene Popups bleiben
+	// unangetastet (eigener State, Esc schließt nur dieses Popup).
+	let infoOpen = $state(false);
+	let infoVersion = $state<string | null>(null);
+	let infoMsg = $state<string | null>(null);
+
+	async function openInfo() {
+		infoMsg = null;
+		infoOpen = true;
+		if (infoVersion === null) {
+			// Sofort lesbar (Build-Zeit-Konstante aus tauri.conf.json), dann
+			// die echte Laufzeit-Version aus packageInfo nachziehen.
+			infoVersion = __APP_VERSION__;
+			try {
+				const v = await getVersion();
+				if (v) infoVersion = v;
+			} catch {
+				// Ohne Tauri (SSR/dev) bleibt die Build-Zeit-Konstante.
+			}
+		}
+	}
+
+	function closeInfo() {
+		infoOpen = false;
+		infoMsg = null;
+	}
+
+	async function openInfoLink(kind: string) {
+		// Whitelist im Backend (info::open_info_link) — die UI nennt nur den
+		// kind, niemals eine freie URL. Fehler als Meldung IM Popup (nicht
+		// modal), kein Retry, kein View-Wechsel.
+		infoMsg = null;
+		try {
+			await invoke<string>('open_info_link', { kind });
+		} catch (e) {
+			infoMsg = String(e);
+		}
+	}
+
 	async function retrySync() {
 		errorMsg = null;
 		phase = 'loading';
@@ -4035,6 +4084,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// kein Suchfeld. Capture konsumiert das Event vollständig.
 		if (scCapture) {
 			captureShortcut(e);
+			return;
+		}
+		// TW (t_f178b084): Info-Popup offen → es schluckt die Tastatur komplett
+		// (Esc/✕ schließen). Der Guard steht VOR den Guards der anderen Popups:
+		// Esc schließt nur das Info-Popup und lässt die dahinter liegenden
+		// Popups unangetastet (kein gegenseitiges Zerstören).
+		if (infoOpen) {
+			if (k === 'Escape') {
+				e.preventDefault();
+				closeInfo();
+			}
 			return;
 		}
 		// M3a: Advert-Popup offen → Navigation/Escape des Marktplatzes
@@ -6727,9 +6787,99 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<button onclick={toggleClickThrough}>
 						{overlay?.click_through ? 'KLICK' : 'FOKUS'}
 					</button>
+					<!-- TW (t_f178b084): Info-Chip RECHTS neben dem Fokus/Klick-Button
+					     — öffnet das Info-Popup (modales Muster, kein View-Wechsel). -->
+					<button
+						type="button"
+						class="info-btn"
+						title="Info — Architects Overlay"
+						aria-label="Info öffnen"
+						onclick={openInfo}>ⓘ</button
+					>
 				</div>
 			{/if}
 		</div>
+		{#if infoOpen}
+			<!-- TW (t_f178b084): Info-Popup — GLEICHES Muster wie die Formular-/
+			     Detail-Popups (shell-anchored advert-scrim, inline z-index über
+			     den übrigen Scrims): Scrim über der Shell, Karte zentriert,
+			     Esc/✕ schließt, KEIN View-Wechsel. Andere offene Popups bleiben
+			     unangetastet (eigener State). -->
+			<div class="advert-scrim" style="z-index: 240" role="presentation">
+				<div class="info-modal" role="dialog" aria-modal="true" aria-label="Info — Architects Overlay">
+					<div class="info-head">
+						<img class="info-lockup" src={lockupUrl} alt="Architects Overlay" draggable="false" />
+						<!-- Repo-/Release-Chips im Kopf (neben ✕): die Shell-Höhe ist
+						     content-driven (Such-Start-View ≈ 311 CSS-px) — eine eigene
+						     Link-Zeile unten drückte den Inhalt über die Card-Grenze
+						     (Probe-Beleg: scrollH 338 > clientH 281, Chips abgeschnitten).
+						     Im Kopf ist alles ohne Scroll erreichbar. -->
+						<div class="info-links">
+							<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Öffentliches Repository (GitHub)" onclick={() => void openInfoLink('repo')}>GitHub-Repo ↗</span>
+							<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Release-Seite: Downloads + Changelog" onclick={() => void openInfoLink('releases')}>Releases / Changelog ↗</span>
+						</div>
+						<button
+							type="button"
+							class="hd-close"
+							title="Schließen (Esc)"
+							aria-label="Info schließen"
+							onclick={closeInfo}>✕</button
+						>
+					</div>
+					<div class="info-body">
+						<div class="info-meta">
+							<span>Version v{infoVersion}</span>
+							<span>Build {__BUILD_DATE__}</span>
+						</div>
+						<p class="info-disclaimer">
+							Architects Overlay ist ein inoffizielles Community-Projekt für Star Citizen.
+							Es steht in keiner Verbindung zu Cloud Imperium Games (CIG), Roberts Space
+							Industries oder deren Partnern und wird nicht offiziell unterstützt oder
+							gesponsert. Star Citizen, Roberts Space Industries und das RSI-Logo sind
+							Marken von Cloud Imperium Games Corp.
+						</p>
+						<div class="info-badges">
+							<!-- UEX: offizielles API-Badge-Asset (uexcorp.space/about/resources) —
+							     Link zur API-Doku; das Overlay ruft die API 2.0
+							     (api.uexcorp.space) für Daten & Marktplatz auf. -->
+							<span
+								class="info-badge"
+								role="button"
+								tabindex="0"
+								onkeydown={keyActivate}
+								title="UEX API-Dokumentation öffnen"
+								onclick={() => void openInfoLink('uex_api')}
+							>
+								<img src="/uex-api-badge-powered.png" alt="Powered by UEX" draggable="false" />
+								<span class="info-badge-text">
+									<b>Daten &amp; Marktplatz</b>
+									<span>UEX Corp API · api.uexcorp.space</span>
+								</span>
+							</span>
+							<!-- SC-Wiki: keine offiziellen Badge-Assets gefunden (Swagger-
+							     Doku, kein Logo-Download) → Text-Badge im Overlay-Stil.
+							     Die Wiki-Doku enthält keine gesonderte Credit-Pflicht;
+							     Attribution hiermit erledigt (API + Namen + Link). -->
+							<span
+								class="info-badge"
+								role="button"
+								tabindex="0"
+								onkeydown={keyActivate}
+								title="Star Citizen Wiki API öffnen"
+								onclick={() => void openInfoLink('scwiki_api')}
+							>
+								<span class="info-badge-mark">SC-WIKI API</span>
+								<span class="info-badge-text">
+									<b>Modul-Kompatibilität</b>
+									<span>Star Citizen Wiki API · api.star-citizen.wiki</span>
+								</span>
+							</span>
+						</div>
+						{#if infoMsg}<span class="info-msg" role="status">{infoMsg}</span>{/if}
+					</div>
+				</div>
+			</div>
+		{/if}
 		</div><!-- /shell-main -->
 	</div>
 </main>

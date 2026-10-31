@@ -8,6 +8,11 @@ declare global {
 		// interface PageState {}
 		// interface Platform {}
 	}
+
+	// TW (t_f178b084): Build-Zeit-Konstanten (vite.config.ts define) — Version
+	// aus src-tauri/tauri.conf.json, Build-Datum zum Build-Zeitpunkt.
+	const __APP_VERSION__: string;
+	const __BUILD_DATE__: string;
 }
 
 export {};
