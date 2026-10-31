@@ -47,9 +47,9 @@ function keyActivate(e: KeyboardEvent) {
 	// TW (t_f178b084): Info-Popup — Laufzeit-Version aus tauri packageInfo
 	// (getVersion()); Fallback __APP_VERSION__ = tauri.conf.json (Build-Zeit).
 	import { getVersion } from '@tauri-apps/api/app';
-	// Relatives Import (kein $lib-Alias, siehe oben): Lockup horizontal
-	// (Emblem + Wordmark) für den Info-Popup-Kopf.
-	import lockupUrl from '../lib/assets/lockup-horizontal.svg';
+	// Relatives Import (kein $lib-Alias, siehe oben): Sebos Vector-Logo
+	// (Kopie von brand/logo/logo.svg) für den Info-Popup-Kopf (UG t_a1f0d83f).
+	import logoUrl from '../lib/assets/logo.svg';
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
@@ -4498,7 +4498,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <svelte:window onkeydown={onKey} />
 
 <main class="pal-root" bind:clientWidth={palW}>
-	<div class="shell" class:in-detail={inDetail} class:shell-advert={advertOpen || trkOpen || hangarFormOpen}>
+	<!-- UG (t_a1f0d83f): shell-info — solange das Info-Popup offen ist,
+	     bekommt die content-driven Shell ein min-height-Floor, damit das
+	     (jetzt größere, Abschnitts-) Popup ohne internen Scroll vollständig
+	     in die Shell passt (max-height 84vh bleibt die Obergrenze). -->
+	<div
+		class="shell"
+		class:in-detail={inDetail}
+		class:shell-advert={advertOpen || trkOpen || hangarFormOpen}
+		class:shell-info={infoOpen}
+	>
 
 												<!-- PT: Formular „Trade erfassen" als modales Popup.
 											     QW-5 (t_28bfd027): der frühere confirm-scrim war position:fixed
@@ -6805,18 +6814,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			     den übrigen Scrims): Scrim über der Shell, Karte zentriert,
 			     Esc/✕ schließt, KEIN View-Wechsel. Andere offene Popups bleiben
 			     unangetastet (eigener State). -->
+			<!-- UG (t_a1f0d83f): Info-Popup-Politur — Sebos Vector-Logo (brand/logo/
+			     logo.svg) prominent MITTIG im Kopf, Abschnitts-Struktur (Über →
+			     Datenquellen → Rechtliches → Footer-Links). Shell wächst mit
+			     (class:shell-info → min-height), damit das Popup ohne internen
+			     Scroll vollständig in die content-driven Shell passt. -->
 			<div class="advert-scrim" style="z-index: 240" role="presentation">
 				<div class="info-modal" role="dialog" aria-modal="true" aria-label="Info — Architects Overlay">
 					<div class="info-head">
-						<img class="info-lockup" src={lockupUrl} alt="Architects Overlay" draggable="false" />
-						<!-- Repo-/Release-Chips im Kopf (neben ✕): die Shell-Höhe ist
-						     content-driven (Such-Start-View ≈ 311 CSS-px) — eine eigene
-						     Link-Zeile unten drückte den Inhalt über die Card-Grenze
-						     (Probe-Beleg: scrollH 338 > clientH 281, Chips abgeschnitten).
-						     Im Kopf ist alles ohne Scroll erreichbar. -->
-						<div class="info-links">
-							<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Öffentliches Repository (GitHub)" onclick={() => void openInfoLink('repo')}>GitHub-Repo ↗</span>
-							<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Release-Seite: Downloads + Changelog" onclick={() => void openInfoLink('releases')}>Releases / Changelog ↗</span>
+						<div class="info-hero">
+							<img class="info-logo" src={logoUrl} alt="Architects Overlay — Sebos Vector-Logo" draggable="false" />
+							<div class="info-title">Architects Overlay</div>
+							<div class="info-meta">
+								<span>Version v{infoVersion}</span>
+								<span>Build {__BUILD_DATE__}</span>
+							</div>
 						</div>
 						<button
 							type="button"
@@ -6827,55 +6839,85 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						>
 					</div>
 					<div class="info-body">
-						<div class="info-meta">
-							<span>Version v{infoVersion}</span>
-							<span>Build {__BUILD_DATE__}</span>
-						</div>
-						<p class="info-disclaimer">
-							Architects Overlay ist ein inoffizielles Community-Projekt für Star Citizen.
-							Es steht in keiner Verbindung zu Cloud Imperium Games (CIG), Roberts Space
-							Industries oder deren Partnern und wird nicht offiziell unterstützt oder
-							gesponsert. Star Citizen, Roberts Space Industries und das RSI-Logo sind
-							Marken von Cloud Imperium Games Corp.
-						</p>
-						<div class="info-badges">
-							<!-- UEX: offizielles API-Badge-Asset (uexcorp.space/about/resources) —
-							     Link zur API-Doku; das Overlay ruft die API 2.0
-							     (api.uexcorp.space) für Daten & Marktplatz auf. -->
-							<span
-								class="info-badge"
-								role="button"
-								tabindex="0"
-								onkeydown={keyActivate}
-								title="UEX API-Dokumentation öffnen"
-								onclick={() => void openInfoLink('uex_api')}
-							>
-								<img src="/uex-api-badge-powered.png" alt="Powered by UEX" draggable="false" />
-								<span class="info-badge-text">
-									<b>Daten &amp; Marktplatz</b>
-									<span>UEX Corp API · api.uexcorp.space</span>
+						<section class="info-sec">
+							<h3 class="info-sec-title">Über</h3>
+							<p class="info-text">
+								Architects Overlay ist ein inoffizielles Community-Projekt für Star Citizen:
+								Handelsrouten, Marktplatz-Preise und Hangar-Verwaltung direkt im Spiel —
+								als Overlay von der Community, für die Community. Non-Commercial, ohne
+								RSI-/CIG-Assets als eigenes Branding.
+							</p>
+						</section>
+						<section class="info-sec">
+							<h3 class="info-sec-title">Datenquellen</h3>
+							<div class="info-badges">
+								<!-- UEX: offizielles API-Badge-Asset (uexcorp.space/about/resources) —
+								     Link zur API-Doku; das Overlay ruft die API 2.0
+								     (api.uexcorp.space) für Daten & Marktplatz auf. -->
+								<span
+									class="info-badge"
+									role="button"
+									tabindex="0"
+									onkeydown={keyActivate}
+									title="UEX API-Dokumentation öffnen"
+									onclick={() => void openInfoLink('uex_api')}
+								>
+									<img src="/uex-api-badge-powered.png" alt="Powered by UEX" draggable="false" />
+									<span class="info-badge-text">
+										<b>Daten &amp; Marktplatz</b>
+										<span>UEX Corp API · api.uexcorp.space</span>
+									</span>
 								</span>
-							</span>
-							<!-- SC-Wiki: keine offiziellen Badge-Assets gefunden (Swagger-
-							     Doku, kein Logo-Download) → Text-Badge im Overlay-Stil.
-							     Die Wiki-Doku enthält keine gesonderte Credit-Pflicht;
-							     Attribution hiermit erledigt (API + Namen + Link). -->
-							<span
-								class="info-badge"
-								role="button"
-								tabindex="0"
-								onkeydown={keyActivate}
-								title="Star Citizen Wiki API öffnen"
-								onclick={() => void openInfoLink('scwiki_api')}
-							>
-								<span class="info-badge-mark">SC-WIKI API</span>
-								<span class="info-badge-text">
-									<b>Modul-Kompatibilität</b>
-									<span>Star Citizen Wiki API · api.star-citizen.wiki</span>
+								<!-- SC-Wiki: keine offiziellen Badge-Assets gefunden (Swagger-
+								     Doku, kein Logo-Download) → Text-Badge im Overlay-Stil.
+								     Die Wiki-Doku enthält keine gesonderte Credit-Pflicht;
+								     Attribution hiermit erledigt (API + Namen + Link). -->
+								<span
+									class="info-badge"
+									role="button"
+									tabindex="0"
+									onkeydown={keyActivate}
+									title="Star Citizen Wiki API öffnen — Schiffsdaten"
+									onclick={() => void openInfoLink('scwiki_api')}
+								>
+									<span class="info-badge-mark">SC-WIKI API</span>
+									<span class="info-badge-text">
+										<b>Schiffsdaten</b>
+										<span>Star Citizen Wiki API · api.star-citizen.wiki</span>
+									</span>
 								</span>
-							</span>
-						</div>
-						{#if infoMsg}<span class="info-msg" role="status">{infoMsg}</span>{/if}
+							</div>
+						</section>
+						<section class="info-sec">
+							<h3 class="info-sec-title">Rechtliches</h3>
+							<p class="info-disclaimer">
+								Architects Overlay steht in keiner Verbindung zu Cloud Imperium Games (CIG),
+								Roberts Space Industries oder deren Partnern und wird nicht offiziell
+								unterstützt oder gesponsert. Star Citizen, Roberts Space Industries und das
+								RSI-Logo sind Marken von Cloud Imperium Games Corp.
+							</p>
+							<div class="info-cig">
+								<!-- CIG Fan-Content-Policy: „Made by the Community“-Asset —
+								     OFFIZIELL, UNVERÄNDERT (kein Umfärben); Quelle: CIG Fankit/
+								     Fandom-FAQ (siehe brand/third-party/README.md). -->
+								<img
+									src="/cig-made-by-the-community.png"
+									alt="Made by the Community"
+									draggable="false"
+								/>
+								<span class="info-cig-src">
+									Offizielles CIG-Fan-Asset („Made by the Community“), unverändert.
+								</span>
+							</div>
+							<p class="info-license">Lizenz: MIT — Lizenztext im Repository (LICENSE).</p>
+						</section>
+						<footer class="info-foot">
+							<div class="info-links">
+								<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Öffentliches Repository (GitHub)" onclick={() => void openInfoLink('repo')}>GitHub-Repo ↗</span>
+								<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Release-Seite: Downloads + Changelog" onclick={() => void openInfoLink('releases')}>Releases / Changelog ↗</span>
+							</div>
+							{#if infoMsg}<span class="info-msg" role="status">{infoMsg}</span>{/if}
+						</footer>
 					</div>
 				</div>
 			</div>

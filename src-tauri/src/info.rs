@@ -15,7 +15,7 @@ use tauri::AppHandle;
 /// - `uex`        → UEX Corp (Daten & Marktplatz, api.uexcorp.space)
 /// - `uex_api`    → UEX API-Dokumentation (uexcorp.space/api)
 /// - `scwiki`     → Star Citizen Wiki (star-citizen.wiki)
-/// - `scwiki_api` → SC-Wiki API (api.star-citizen.wiki, Modul-Kompatibilität)
+/// - `scwiki_api` → SC-Wiki API (api.star-citizen.wiki, Schiffsdaten)
 /// - `repo`       → öffentliches GitHub-Repo (SeBoOne/architects-overlay)
 /// - `releases`   → Release-Seite (Changelog/Downloads)
 const URLS: &[(&str, &str)] = &[
