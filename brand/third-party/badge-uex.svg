@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="196" height="56" viewBox="0 0 196 56" role="img" aria-label="UEX API">
-  <!-- Badge im Overlay-Info-Stil (akzentuiertes Mark + Label, dunkel, 1px Line) -->
-  <rect x="1" y="1" width="194" height="54" rx="3" fill="#1b1e24" stroke="#2a2e36" stroke-width="1"/>
-  <rect x="1" y="1" width="86" height="54" rx="3" fill="#e8a33d"/>
-  <text x="44" y="34" text-anchor="middle" font-family="'Cascadia Mono','Consolas',monospace" font-size="17" font-weight="700" fill="#14161a">UEX API</text>
-  <text x="98" y="34" font-family="'Segoe UI',system-ui,sans-serif" font-size="15" fill="#e8e6e1">Daten &amp; Marktplatz</text>
-</svg>

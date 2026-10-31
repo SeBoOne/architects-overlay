@@ -10,9 +10,11 @@ the community.
 [Install](#installation) · [License](#license)
 
 <img src="brand/third-party/MadeByTheCommunity_White.png" alt="Made by the Community" width="180">
-&nbsp;
-<a href="https://uexcorp.space"><img src="brand/third-party/badge-uex.svg" alt="UEX API — Daten & Marktplatz" height="34"></a>
-<a href="https://api.star-citizen.wiki"><img src="brand/third-party/badge-scwiki.svg" alt="SC-Wiki API — Schiffsdaten" height="34"></a>
+
+<p>
+  <a href="https://uexcorp.space"><img src="static/uex-api-badge-powered.png" alt="Powered by UEX" height="40"></a>&nbsp;&nbsp;
+  <a href="https://api.star-citizen.wiki"><img src="static/scwiki-api-badge.png" alt="SC-Wiki API" height="40"></a>
+</p>
 
 </div>
 
