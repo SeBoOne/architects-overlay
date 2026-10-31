@@ -38,6 +38,20 @@ const CONFIG_FILE: &str = "config.toml";
 /// value inside [`SCALE_MIN`..`SCALE_MAX`] — hand-edited out-of-range values
 /// are normalized (`norm_scale`), never rejected, so the overlay boots.
 pub const SCALE_DEFAULT: u16 = 100;
+
+/// UC t_d323be7e: Update-Check-Defaults (Karte Umsetzung 1). Repo-URL und
+/// Gitea-Instanz sind konfigurierbar; Intervall in Stunden (Default 6 h),
+/// mit Clamp 1..=24 (norm_updater_interval).
+pub const UPDATER_INTERVAL_DEFAULT: u32 = 6;
+pub const UPDATER_INTERVAL_MIN: u32 = 1;
+pub const UPDATER_INTERVAL_MAX: u32 = 24;
+pub const UPDATER_REPO_DEFAULT: &str = "sebo/architects-overlay";
+pub const UPDATER_BASE_URL_DEFAULT: &str = "https://git.sebo-home.de";
+
+/// Intervall normalisieren: 0/zu klein → Min (1 h), zu groß → Max (24 h).
+pub fn norm_updater_interval(h: u32) -> u32 {
+    h.clamp(UPDATER_INTERVAL_MIN, UPDATER_INTERVAL_MAX)
+}
 pub const SCALE_MIN: u16 = 50;
 pub const SCALE_MAX: u16 = 200;
 
@@ -259,21 +273,24 @@ fn normalize_key_token(tok: &str) -> std::result::Result<String, String> {
     if tok.len() == 1 && tok.as_bytes()[0].is_ascii_digit() {
         return Ok(tok.to_string());
     }
-    if let Ok(n) = tok[1..].parse::<u8>() {
-        if tok.starts_with('F') && (1..=24).contains(&n) {
-            return Ok(format!("F{n}"));
-        }
+    if let Ok(n) = tok[1..].parse::<u8>()
+        && tok.starts_with('F')
+        && (1..=24).contains(&n)
+    {
+        return Ok(format!("F{n}"));
     }
     // `KEYU`/`DIGIT5` schreiben dieselbe Taste explizit — akzeptieren.
-    if let Some(rest) = tok.strip_prefix("KEY") {
-        if rest.len() == 1 && rest.as_bytes()[0].is_ascii_alphabetic() {
-            return Ok(rest.to_string());
-        }
+    if let Some(rest) = tok.strip_prefix("KEY")
+        && rest.len() == 1
+        && rest.as_bytes()[0].is_ascii_alphabetic()
+    {
+        return Ok(rest.to_string());
     }
-    if let Some(rest) = tok.strip_prefix("DIGIT") {
-        if rest.len() == 1 && rest.as_bytes()[0].is_ascii_digit() {
-            return Ok(rest.to_string());
-        }
+    if let Some(rest) = tok.strip_prefix("DIGIT")
+        && rest.len() == 1
+        && rest.as_bytes()[0].is_ascii_digit()
+    {
+        return Ok(rest.to_string());
     }
     if tok.starts_with("NUMPAD") || tok.starts_with("NUM") {
         return Err("Ziffernblock-Tasten werden nicht unterstützt — Haupttastatur nutzen.".into());
@@ -372,6 +389,24 @@ struct RawConfig {
     ui: Option<UiSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     shortcuts: Option<ShortcutsSection>,
+    /// UC t_d323be7e: Update-Check-Konfiguration (Default-Repo/Intervall).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    updater: Option<UpdaterSection>,
+}
+
+/// UC t_d323be7e: `[updater]`-Sektion. `base_url`/`repo` sind Config-only
+/// (keine UI-Felder — die Instanz/Repo wechselt man nicht per Klick);
+/// `enabled`/`interval_hours` werden aus der Config-View gesetzt.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct UpdaterSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    interval_hours: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    base_url: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -566,6 +601,11 @@ pub struct Settings {
     /// PB (t_1c9bc240, B1): Mode-Hotkeys (F1–F12 der In-App-Modi). Fehlend in
     /// der Config = neue Defaults (Migrationspfad, siehe ShortcutsSection).
     mode_hotkeys: ModeHotkeys,
+    /// UC t_d323be7e: Update-Check (Default an, 6 h, Default-Repo/Instanz).
+    updater_enabled: bool,
+    updater_interval_hours: u32,
+    updater_repo: String,
+    updater_base_url: String,
 }
 
 impl Default for Settings {
@@ -583,6 +623,10 @@ impl Default for Settings {
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
             mode_hotkeys: ModeHotkeys::default(),
+            updater_enabled: true,
+            updater_interval_hours: UPDATER_INTERVAL_DEFAULT,
+            updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
+            updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
         }
     }
 }
@@ -666,6 +710,25 @@ impl Settings {
                     }
                 })
                 .unwrap_or_default(),
+            updater_enabled: raw.updater.as_ref().and_then(|u| u.enabled).unwrap_or(true),
+            updater_interval_hours: raw
+                .updater
+                .as_ref()
+                .and_then(|u| u.interval_hours)
+                .map(norm_updater_interval)
+                .unwrap_or(UPDATER_INTERVAL_DEFAULT),
+            updater_repo: raw
+                .updater
+                .as_ref()
+                .and_then(|u| u.repo.clone())
+                .filter(|r| !r.trim().is_empty())
+                .unwrap_or_else(|| UPDATER_REPO_DEFAULT.to_owned()),
+            updater_base_url: raw
+                .updater
+                .as_ref()
+                .and_then(|u| u.base_url.clone())
+                .filter(|u| !u.trim().is_empty())
+                .unwrap_or_else(|| UPDATER_BASE_URL_DEFAULT.to_owned()),
         })
     }
 
@@ -684,6 +747,10 @@ impl Settings {
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
             mode_hotkeys: ModeHotkeys::default(),
+            updater_enabled: true,
+            updater_interval_hours: UPDATER_INTERVAL_DEFAULT,
+            updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
+            updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
         }
     }
 
@@ -807,6 +874,42 @@ impl Settings {
         self.mode_hotkeys = hotkeys.normalize();
     }
 
+    /// UC t_d323be7e: Update-Check konfiguriert? (Default: ja.)
+    pub fn updater_enabled(&self) -> bool {
+        self.updater_enabled
+    }
+
+    pub fn set_updater_enabled(&mut self, on: bool) {
+        self.updater_enabled = on;
+    }
+
+    /// Prüfen-Intervall in Stunden (Clamp 1..=24, Default 6).
+    pub fn updater_interval_hours(&self) -> u32 {
+        self.updater_interval_hours
+    }
+
+    pub fn set_updater_interval_hours(&mut self, h: u32) {
+        self.updater_interval_hours = norm_updater_interval(h);
+    }
+
+    /// Gitea-Repo (`owner/name`, konfigurierbar, Default sebo/architects-overlay).
+    pub fn updater_repo(&self) -> &str {
+        &self.updater_repo
+    }
+
+    pub fn set_updater_repo(&mut self, repo: String) {
+        self.updater_repo = repo;
+    }
+
+    /// Gitea-Instanz-URL (Default https://git.sebo-home.de).
+    pub fn updater_base_url(&self) -> &str {
+        &self.updater_base_url
+    }
+
+    pub fn set_updater_base_url(&mut self, url: String) {
+        self.updater_base_url = url;
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -827,6 +930,12 @@ impl Settings {
                 click_through: Some(self.shortcut_click_through.clone()),
                 sync_omarchy: Some(self.shortcut_sync_omarchy),
                 mode_hotkeys: Some(self.mode_hotkeys.clone()),
+            }),
+            updater: Some(UpdaterSection {
+                enabled: Some(self.updater_enabled),
+                interval_hours: Some(self.updater_interval_hours),
+                repo: Some(self.updater_repo.clone()),
+                base_url: Some(self.updater_base_url.clone()),
             }),
         };
         let content = toml::to_string_pretty(&raw)
@@ -942,6 +1051,34 @@ mod tests {
         let loaded2 = Settings::load_from(&path).unwrap();
         assert_eq!(loaded2.palette(), Palette::Mfcd);
         assert_eq!(loaded2.detail_variant(), DetailVariant::C);
+    }
+
+    #[test]
+    fn updater_defaults_and_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        // Defaults ohne [updater]-Sektion: an, 6 h, Default-Repo/Instanz.
+        let s = Settings::load_from(&path).unwrap();
+        assert!(s.updater_enabled());
+        assert_eq!(s.updater_interval_hours(), UPDATER_INTERVAL_DEFAULT);
+        assert_eq!(s.updater_repo(), UPDATER_REPO_DEFAULT);
+        assert_eq!(s.updater_base_url(), UPDATER_BASE_URL_DEFAULT);
+
+        let mut s = Settings::with_path(path.clone());
+        s.set_updater_enabled(false);
+        s.set_updater_interval_hours(12);
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert!(!loaded.updater_enabled());
+        assert_eq!(loaded.updater_interval_hours(), 12);
+
+        // Clamp: out-of-range Intervall normalisiert auf 1..=24.
+        let mut s2 = Settings::with_path(path.clone());
+        s2.set_updater_interval_hours(0);
+        assert_eq!(s2.updater_interval_hours(), UPDATER_INTERVAL_MIN);
+        s2.set_updater_interval_hours(999);
+        assert_eq!(s2.updater_interval_hours(), UPDATER_INTERVAL_MAX);
     }
 
     #[test]

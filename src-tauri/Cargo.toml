@@ -30,6 +30,8 @@ cache = { path = "../crates/cache" }
 scwiki_client = { path = "../crates/scwiki-client" }
 game_detection = { path = "../crates/game-detection" }
 settings = { path = "../crates/settings" }
+# UC t_d323be7e: Update-Check + on-demand Update (Gitea-Releases-API).
+updater = { path = "../crates/updater" }
 math_eval = { path = "../crates/math-eval", package = "math-eval" }
 
 # Hangar-Modul: direkter SQLite-Zugriff auf die eigene `hangar`-Tabelle via

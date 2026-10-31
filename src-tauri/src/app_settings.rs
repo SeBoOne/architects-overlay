@@ -52,6 +52,19 @@ impl SettingsState {
         )
     }
 
+    /// UC t_d323be7e: Update-Check-Konfiguration als Tupel
+    /// `(enabled, interval_hours, repo, base_url)` für den Updater
+    /// (src-tauri/src/updater.rs — `inner` bleibt privat zum Modul).
+    pub fn updater_config(&self) -> (bool, u32, String, String) {
+        let s = self.inner.lock().expect("settings lock");
+        (
+            s.updater_enabled(),
+            s.updater_interval_hours(),
+            s.updater_repo().to_owned(),
+            s.updater_base_url().to_owned(),
+        )
+    }
+
     fn persist(&self, settings: &Settings) {
         if let Err(e) = settings.save() {
             log::warn!("settings: persist failed: {e}");
@@ -129,6 +142,9 @@ pub struct SettingsSnapshot {
     pub omasettings_available: bool,
     /// C2b: Rueckmeldung des letzten Sync-Versuchs (leer = nichts getan).
     pub sync_note: String,
+    /// UC t_d323be7e: Update-Check-Konfiguration (UI-Sicht).
+    pub updater_enabled: bool,
+    pub updater_interval_hours: u32,
 }
 
 impl SettingsSnapshot {
@@ -152,6 +168,8 @@ impl SettingsSnapshot {
             hyprland_session: crate::hyprland_sync::hyprland_session_active(),
             omasettings_available: crate::hyprland_sync::OmarchyPaths::detect().is_some(),
             sync_note: sync_note.to_owned(),
+            updater_enabled: s.updater_enabled(),
+            updater_interval_hours: s.updater_interval_hours(),
         }
     }
 }
@@ -460,6 +478,42 @@ pub fn settings_set_marketplace_confirm(
         crate::overlay::global_shortcuts_active(&app),
         &sync.take(),
     ))
+}
+
+/// UC t_d323be7e: Update-Check an/aus (persistiert sofort).
+#[tauri::command]
+pub fn settings_set_updater_enabled(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    on: bool,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_updater_enabled(on);
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
+}
+
+/// UC t_d323be7e: Check-Intervall in Stunden (Clamp 1..=24 im settings-Crate).
+#[tauri::command]
+pub fn settings_set_updater_interval(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    hours: u32,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_updater_interval_hours(hours);
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
 }
 
 /// PB (t_1c9bc240, B1): EINEN Mode-Hotkey setzen (nur die konfigurierbaren

@@ -1,0 +1,170 @@
+//! # updater — Update-Check + on-demand Update für das Overlay
+//!
+//! UC t_d323be7e. Check ist EIN GET auf die Gitea-Releases-API (latest
+//! release) — sonst nichts (kein Telemetrie/Phoning, Karte
+//! Umsetzung 7). Downloads passieren nur auf expliziten Nutzerwunsch
+//! („Jetzt aktualisieren“) und werden vor dem Installieren per SHA256
+//! gegen die Release-Checksummen verifiziert (Umsetzung 5) — kein
+//! Trust-on-Download ohne Check. Fehlerpfade lassen die laufende
+//! Version immer unangetastet (Umsetzung 6).
+//!
+//! Layout (layered wie der Rest des Workspaces, keine UI-Abhängigkeiten):
+//! - `version`  semver-Vergleich inkl. Pre-release-Suffixe (Umsetzung 1)
+//! - `gitea`    HTTPS-only GET /repos/{repo}/releases/latest (Umsetzung 1)
+//! - `integrity` SHA256-Datei-Hash + Checksums-Parsing (Umsetzung 5)
+//! - `plan`     Asset-Auswahl nach Plattform/Installationsart (Umsetzung 3/4)
+//! - `download` Streaming-Download mit Größenlimit + Tempfile (Umsetzung 6)
+//! - `perform_download` Windows: setup.exe-Pfad zurückgeben (NSIS
+//!   übernimmt das Selbst-Erstzen); Linux: AppImage atomar ersetzen
+
+mod download;
+mod gitea;
+mod integrity;
+mod plan;
+mod version;
+
+pub use download::{MAX_DOWNLOAD_BYTES, download_asset};
+pub use gitea::{Asset, Release, fetch_latest};
+pub use integrity::{CHECKSUMS_ASSET, parse_checksums, sha256_file};
+pub use plan::{AppKind, Plan, linux_update_dir, windows_update_dir};
+pub use version::{is_newer, parse_version};
+
+/// Fehler eines Update-Vorgangs. Deutsche Meldungen (Config-View-Note
+/// folgt dem K6-Muster der anderen Settings-Meldungen).
+#[derive(Debug)]
+pub enum UpdaterError {
+    /// Repo-URL/Base-URL ist kein HTTPS — Umsetzung 5: HTTPS-only.
+    InsecureUrl(String),
+    /// Kein Netz / Gitea nicht erreichbar / HTTP-Fehler.
+    Network(String),
+    /// Release/Asset-Struktur unlesbar.
+    Malformed(String),
+    /// Keine Prüfsumme für das Asset auffindbar — bewusst REFUSAL statt
+    /// Download (Karte: kein Trust-on-Download ohne Check).
+    NoChecksum(String),
+    /// SHA256-Mismatch — verifizierter Abbruch, temporäre Datei verworfen.
+    ChecksumMismatch { expected: String, actual: String },
+    /// Download größer als das Größenlimit (halber/Riesen-Download-Schutz).
+    TooLarge { limit_bytes: u64 },
+    /// Dateisystemfehler (Temp-Datei, Rename, Rechte).
+    Io(String),
+    /// Self-Update für die Installationsart nicht möglich (z. B. .deb —
+    /// Umsetzung 4: keine root-Aktionen aus der App).
+    NotSupported(String),
+}
+
+impl std::fmt::Display for UpdaterError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InsecureUrl(url) => {
+                write!(f, "Update-URL ist nicht HTTPS — abgelehnt: {url}")
+            }
+            Self::Network(msg) => write!(f, "Gitea nicht erreichbar: {msg}"),
+            Self::Malformed(msg) => write!(f, "Release-Antwort unlesbar: {msg}"),
+            Self::NoChecksum(asset) => write!(
+                f,
+                "Keine SHA256-Prüfsumme für {asset} im Release — Update aus Sicherheitsgründen abgelehnt."
+            ),
+            Self::ChecksumMismatch { expected, actual } => write!(
+                f,
+                "SHA256-Prüfung fehlgeschlagen (erwartet {expected}, tatsächlich {actual}) — Update abgelehnt."
+            ),
+            Self::TooLarge { limit_bytes } => {
+                write!(
+                    f,
+                    "Download größer als das Limit ({limit_bytes} Bytes) — abgelehnt."
+                )
+            }
+            Self::Io(msg) => write!(f, "Dateisystem: {msg}"),
+            Self::NotSupported(msg) => write!(f, "Self-Update nicht möglich: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for UpdaterError {}
+
+pub type Result<T> = std::result::Result<T, UpdaterError>;
+
+impl From<std::io::Error> for UpdaterError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e.to_string())
+    }
+}
+
+/// Ergebnis eines Update-Checks: aktuelle + neueste Version und der
+/// auf dieser Plattform/Installation passende Plan.
+#[derive(Debug)]
+pub struct CheckResult {
+    pub current_version: String,
+    pub latest_version: String,
+    pub tag: String,
+    pub plan: Plan,
+}
+
+/// One-shot Update-Check (Umsetzung 1): GET latest release, Versionsvergleich
+/// gegen `current_version` und Plan-Auswahl. Liefert `Ok(None)`, wenn keine
+/// neuere Version existiert. Netzverkehr bleibt auf GETs begrenzt (Karte
+/// Umsetzung 7): Release-GET + optional EIN GET auf das Sidecar-`SHA256SUMS`
+/// (nur wenn der Release eines hat UND eine neuere Version vorliegt).
+pub async fn check(
+    base_url: &str,
+    repo: &str,
+    current_version: &str,
+) -> Result<Option<CheckResult>> {
+    let release = fetch_latest(base_url, repo).await?;
+    if !version::is_newer(current_version, &release.tag_name) {
+        return Ok(None);
+    }
+    // Sidecar-Checksummen einsammeln, sobald klar ist, dass ein Update
+    // vorliegt (spart den zweiten GET im Normalfall "aktuell").
+    let checksums_text = match plan::checksums_asset(&release) {
+        Some(asset) => match gitea::fetch_text(&asset.download_url).await {
+            Ok(text) => Some(text),
+            // Sidecar nicht erreichbar → Fallback auf Release-Body; erst
+            // der spätere Download-Versuch schlägt ggf. mit NoChecksum fehl.
+            Err(e) => {
+                log::warn!("updater: SHA256SUMS sidecar nicht lesbar: {e}");
+                None
+            }
+        },
+        None => None,
+    };
+    let plan = plan::plan_for_release(&release, checksums_text.as_deref()).ok_or_else(|| {
+        UpdaterError::Malformed(format!(
+            "Kein passendes Asset im Release {} für diese Plattform",
+            release.tag_name
+        ))
+    })?;
+    Ok(Some(CheckResult {
+        current_version: current_version.to_owned(),
+        latest_version: release.tag_name.trim_start_matches('v').to_owned(),
+        tag: release.tag_name.clone(),
+        plan,
+    }))
+}
+
+/// Execute the install step of a plan (Umsetzung 3/4). Windows: downloads
+/// setup.exe, verifies SHA256, returns the installer path — the app module
+/// spawns it detached and exits (decision documented in docs/UPDATER.md).
+/// Linux AppImage: downloads, verifies, atomically replaces the running
+/// AppImage, returns the new path for a user-consented relaunch. Deb:
+/// never installs (NotSupported) — the UI shows the apt hint instead.
+pub async fn perform_download(plan: &Plan) -> Result<std::path::PathBuf> {
+    match plan {
+        Plan::WindowsNsis { asset_name, asset_url, checksum } => {
+            let path = download_asset(asset_url, &windows_update_dir()?, MAX_DOWNLOAD_BYTES)
+                .await?;
+            integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
+            Ok(path)
+        }
+        Plan::LinuxAppImage { asset_name, asset_url, checksum, .. } => {
+            let path = download_asset(asset_url, &linux_update_dir()?, MAX_DOWNLOAD_BYTES)
+                .await?;
+            integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
+            Ok(path)
+        }
+        Plan::DebHint { .. } => Err(UpdaterError::NotSupported(
+            ".deb-Installationen aktualisieren sich per apt — die App führt keine root-Aktionen aus.".into(),
+        )),
+    }
+}

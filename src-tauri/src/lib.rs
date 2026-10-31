@@ -28,6 +28,8 @@ mod scwiki_sync;
 mod trade;
 #[cfg(desktop)]
 mod tray;
+#[cfg(desktop)]
+mod updater;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -94,6 +96,11 @@ pub fn run() {
             routes::vehicles_scu,
             routes::location_suggest,
             app_settings::settings_get,
+            app_settings::settings_set_updater_enabled,
+            app_settings::settings_set_updater_interval,
+            updater::updater_status,
+            updater::updater_check_now,
+            updater::updater_install,
             app_settings::settings_set_palette,
             app_settings::settings_set_detail_variant,
             app_settings::settings_set_uex_api_key,
@@ -146,6 +153,11 @@ pub fn run() {
                 // apply data-palette / data-detail-variant.
                 tauri::Manager::manage(app, app_settings::SettingsState::load());
                 tauri::Manager::manage(app, app_settings::SyncNote::default());
+                // UC t_d323be7e: Update-State + periodischer Check (Start +
+                // alle N Stunden, Karte Umsetzung 1). Eigener Thread, kein
+                // Block des Setups — Fehler landen nur in der Note.
+                tauri::Manager::manage(app, updater::UpdaterState::default());
+                updater::start_background_check(app.handle().clone());
 
                 setup_trade(app)?;
 

@@ -110,9 +110,14 @@ jobs:
 
           # Assets anhängen (existierende Dateien; Duplikat-Upload = warnen,
           # z. B. bei Re-Tag gleicher Version — Artefakte liegen eh im Run).
+          # Plus SHA256SUMS-Sidecar (UC t_d323be7e): der Updater im Overlay
+          # verifiziert JEKEN Download gegen diese Prüfsumme, bevor er
+          # installiert (kein Trust-on-Download ohne Check).
           for f in target/release/bundle/deb/*.deb \
                    target/release/bundle/appimage/*.AppImage; do
             [ -f "$f" ] || continue
+            hash="$(sha256sum "$f" | cut -d' ' -f1)"
+            echo "$hash  $(basename "$f")" >> SHA256SUMS
             if ! curl -fsS -X POST -H "$AUTH" -F "attachment=@${f}" \
               "$API/repos/${GITHUB_REPOSITORY}/releases/${ID}/assets" >/dev/null; then
               echo "WARN: Asset-Upload fehlgeschlagen (übersprungen): ${f}"
@@ -120,6 +125,14 @@ jobs:
               echo "Release-Asset: ${f}"
             fi
           done
+          if [ -s SHA256SUMS ]; then
+            if curl -fsS -X POST -H "$AUTH" -F "attachment=@SHA256SUMS" \
+              "$API/repos/${GITHUB_REPOSITORY}/releases/${ID}/assets" >/dev/null; then
+              echo "Release-Asset: SHA256SUMS"
+            else
+              echo "WARN: SHA256SUMS-Upload fehlgeschlagen — ohne Prüfsumme lehnt der Updater den Download ab."
+            fi
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -197,13 +210,24 @@ jobs:
           }
 
           $files = Get-ChildItem -Path 'target\release\bundle\nsis\*-setup.exe', 'target\release\bundle\msi\*.msi' -ErrorAction SilentlyContinue
+          $sums = 'target\SHA256SUMS'
+          if (Test-Path $sums) { Remove-Item $sums }
           foreach ($f in $files) {
+            # SHA256SUMS-Sidecar (UC t_d323be7e): der Updater verifiziert jeden
+            # Download gegen diese Prüfsumme — ohne lehnt er ab (kein
+            # Trust-on-Download ohne Check).
+            $hash = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash.ToLower()
+            Add-Content -Path $sums -Value "$hash  $($f.Name)"
             curl.exe -sS -X POST -H "Authorization: token $env:GITHUB_TOKEN" -F "attachment=@$($f.FullName)" "$api/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)/assets" | Out-Null
             if ($LASTEXITCODE -ne 0) {
               Write-Warning "Asset-Upload fehlgeschlagen (uebersprungen): $($f.FullName)"
             } else {
               Write-Host "Release-Asset: $($f.FullName)"
             }
+          }
+          if ((Test-Path $sums) -and (Get-Item $sums).Length -gt 0) {
+            curl.exe -sS -X POST -H "Authorization: token $env:GITHUB_TOKEN" -F "attachment=@$sums" "$api/repos/$env:GITHUB_REPOSITORY/releases/$($release.id)/assets" | Out-Null
+            Write-Host "Release-Asset: SHA256SUMS"
           }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

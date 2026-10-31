@@ -301,6 +301,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		hyprland_session: boolean;
 		omasettings_available: boolean;
 		sync_note: string;
+		// UC t_d323be7e: Update-Check-Regler (an/aus + Intervall in Stunden).
+		updater_enabled: boolean;
+		updater_interval_hours: number;
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -1282,6 +1285,66 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	// UC t_d323be7e: Auto-Updater — Status-Chip + on-demand Update aus der
+	// Settings. Der periodische Check läuft im Backend (Start + alle N
+	// Stunden); die UI zeigt nur an und installiert NICHTS ohne Klick auf
+	// „Jetzt aktualisieren“ (Umsetzung 2: on-demand only).
+	type UpdaterStatus = {
+		enabled: boolean;
+		interval_hours: number;
+		app_version: string;
+		note: string;
+		checking: boolean;
+		available: { version: string; kind: string } | null;
+	};
+	let upStatus = $state<UpdaterStatus | null>(null);
+	let upBusy = $state(false);
+
+	async function loadUpdaterStatus() {
+		try {
+			upStatus = await invoke<UpdaterStatus>('updater_status');
+		} catch { /* Ohne Backend (SSR/dev) — kein Chip. */ }
+	}
+
+	async function updaterCheckNow() {
+		upBusy = true;
+		try {
+			upStatus = await invoke<UpdaterStatus>('updater_check_now');
+		} catch (e) {
+			upStatus = upStatus ? { ...upStatus, note: String(e) } : upStatus;
+		}
+		upBusy = false;
+	}
+
+	async function updaterInstallNow() {
+		if (upStatus?.available?.kind === 'deb') return; // kein Self-Update — nur Hint
+		upBusy = true;
+		try {
+			// Bei nsis/appimage beendet sich das Overlay selbst nach dem
+			// verifizierten Download — die Antwort ist Best-Effort-Status.
+			upStatus = await invoke<UpdaterStatus>('updater_install');
+		} catch (e) {
+			upStatus = upStatus ? { ...upStatus, note: String(e) } : upStatus;
+		}
+		upBusy = false;
+	}
+
+	async function setUpdaterEnabled(on: boolean) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_updater_enabled', { on });
+			applySettings(cfg);
+			void loadUpdaterStatus();
+		} catch { /* ohne Backend nichts tun */ }
+	}
+
+	async function setUpdaterInterval(h: number) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_updater_interval', { hours: h });
+			applySettings(cfg);
+			void loadUpdaterStatus();
+		} catch { /* ohne Backend nichts tun */ }
+	}
+
 	function openConfig() {
 		// Kein Enter-Filter-Zustand darf bestehen, während der Config-View offen
 		// ist: Detail + In-Context-Filter + Auswahl werden vorab geräumt.
@@ -1299,6 +1362,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		secretKeyInput = '';
 		secretKeyNote = '';
 		usernameNote = '';
+		// UC t_d323be7e: Update-Status beim Öffnen frisch lesen.
+		void loadUpdaterStatus();
 		cancelShortcutCapture();
 		// PB (t_1c9bc240, B1): Config-Open startet immer sauber.
 		cancelModeHotkeyCapture();
@@ -3161,6 +3226,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				// Tray "Config öffnen": Fenster zeigen macht das Backend — hier
 				// nur der Config-View (gleicher Pfad wie der Zahnrad-Button).
 				await listen(overlayTrayOpenConfig, () => openConfig());
+				// UC t_d323be7e: Backend-Signal nach einem Update-Check —
+				// die Note/im Config-View zieht live nach (auch im Tray-Pfad).
+				await listen('updater://status', () => { void loadUpdaterStatus(); });
 				// Arkanis: sobald das Overlay-Fenster Fokus bekommt, springt der
 				// Cursor ins Suchfeld (window-focus handler).
 				if (typeof window !== 'undefined') {
@@ -5166,6 +5234,62 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						überschrieben; der Button zieht nur diese Datei (kein
 						Game-Version-Check mehr).
 					</div>
+				</section>
+				<!-- UC t_d323be7e: Auto-Updater — dezenter Update-Chip + on-demand
+				     „Jetzt aktualisieren“ (nie auto-install ohne Wunsch). Bei
+				     .deb-Installationen nur der apt-Hinweis (keine root-Aktionen
+				     aus der App). -->
+				<section class="cfg-sect">
+					<div class="h">Aktualisierung</div>
+					<div class="cfg-chips">
+						<button
+							type="button"
+							class="chip"
+							class:is-on={cfg?.updater_enabled !== false}
+							onclick={() => void setUpdaterEnabled(true)}
+						>Auto-Check an</button>
+						<button
+							type="button"
+							class="chip"
+							class:is-on={cfg?.updater_enabled === false}
+							onclick={() => void setUpdaterEnabled(false)}
+						>Auto-Check aus</button>
+					</div>
+					<div class="cfg-chips">
+						{#each [2, 6, 12, 24] as h}
+							<button
+								type="button"
+								class="chip"
+								class:is-on={(cfg?.updater_interval_hours ?? 6) === h}
+								onclick={() => void setUpdaterInterval(h)}
+							>{h} h</button>
+						{/each}
+					</div>
+					<div class="cfg-note">
+						Overlay {upStatus?.app_version ?? '…'} · geprüft gegen die Gitea-Release (alle {cfg?.updater_interval_hours ?? 6} h, nur ein GET — kein Telemetrie).
+					</div>
+					{#if upStatus}
+						{#if upStatus.available}
+							<div class="cfg-key-status">
+								<b class="ok">Update v{upStatus.available.version} verfügbar</b>
+							</div>
+						{:else if upStatus.note}
+							<div class="cfg-note">{upStatus.note}</div>
+						{/if}
+						<div class="cfg-key-row">
+							<button type="button" class="btn" disabled={upBusy} onclick={() => void updaterCheckNow()}>
+								{upBusy ? 'Prüfe …' : 'Jetzt prüfen'}
+							</button>
+							{#if upStatus.available && upStatus.available.kind !== 'deb'}
+								<button type="button" class="btn" disabled={upBusy} onclick={() => void updaterInstallNow()}>
+									{upBusy ? 'Lade …' : `Jetzt aktualisieren (v${upStatus.available.version})`}
+								</button>
+							{/if}
+						</div>
+						{#if upStatus.note && upStatus.available}
+							<div class="cfg-note">{upStatus.note}</div>
+						{/if}
+					{/if}
 				</section>
 				</div>
 			</div>
