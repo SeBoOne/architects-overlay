@@ -142,13 +142,12 @@ jobs:
           rustc -V
           cargo -V
 
-      - name: pnpm installieren (gepinnt)
+      - name: pnpm installieren (corepack — Shim neben node.exe, im PATH)
         shell: bash
         run: |
-          npm install -g pnpm@12.14.0
-          # npm-Global-Prefix in den PATH aller Folgesteps heben
-          # (PowerShell-Shells kennen %APPDATA%\npm sonst nicht):
-          echo "$(npm config get prefix)" >> "$GITHUB_PATH"
+          corepack enable pnpm
+          corepack prepare pnpm@12.14.0 --activate
+          pnpm -v
 
       - name: Dependencies installieren
         run: pnpm install --frozen-lockfile
