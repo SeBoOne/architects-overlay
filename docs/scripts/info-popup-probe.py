@@ -185,9 +185,9 @@ async def main():
         check("Community-Disclaimer: inoffizielles Community-Projekt",
               "inoffizielles Community-Projekt" in dis, dis[:120])
         check("Disclaimer: nicht mit CIG/RSI verbunden",
-              "keiner Verbindung zu Cloud Imperative Games" in dis, dis[:120])
+              "keiner Verbindung zu Cloud Imperium Games" in dis, dis[:120])
         check("Disclaimer: Markenhinweis (RSI-Logo, CIG Corp)",
-              "Marken von Cloud Imperative Games Corp" in dis, dis[:120])
+              "Marken von Cloud Imperium Games Corp" in dis, dis[:120])
         uex = await js("""
             (function(){
               var b = document.querySelector('.info-badge img[src*="uex-api-badge-powered"]');

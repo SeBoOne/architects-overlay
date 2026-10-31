@@ -6833,10 +6833,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						</div>
 						<p class="info-disclaimer">
 							Architects Overlay ist ein inoffizielles Community-Projekt für Star Citizen.
-							Es steht in keiner Verbindung zu Cloud Imperative Games (CIG), Roberts Space
+							Es steht in keiner Verbindung zu Cloud Imperium Games (CIG), Roberts Space
 							Industries oder deren Partnern und wird nicht offiziell unterstützt oder
 							gesponsert. Star Citizen, Roberts Space Industries und das RSI-Logo sind
-							Marken von Cloud Imperative Games Corp.
+							Marken von Cloud Imperium Games Corp.
 						</p>
 						<div class="info-badges">
 							<!-- UEX: offizielles API-Badge-Asset (uexcorp.space/about/resources) —
