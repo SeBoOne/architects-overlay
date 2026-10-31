@@ -13,6 +13,12 @@
 //!   (rename old → rename new → exec-Rechte), Nutzerdaten unangetastet.
 //! - Linux .deb (kein AppImage, Binary unter /usr|/opt): KEIN Self-Update
 //!   (Umsetzung 4: keine root-Aktionen aus der App) — Hint mit apt-Befehl.
+//! - Linux Bare-Binary (TH t_df9646a3: exe heißt `architects-overlay` und
+//!   ist weder AppImage noch deb-Kontext, Standard: `~/.local/bin/…`): das
+//!   rohe Binary-Asset (`*_linux64`) herunterladen → SHA256 → exec-Rechte
+//!   → atomares Rename über die laufende Datei (rename über die aktive exe
+//!   geht auf Linux) — KEIN Auto-Restart, die App zeigt den Hinweis
+//!   „Neustart des Overlays anwenden lassen“ (systemd/Overlay schließen+öffnen).
 
 use std::path::PathBuf;
 
@@ -26,6 +32,8 @@ pub enum AppKind {
     Nsis,
     AppImage,
     Deb,
+    /// Linux Bare-Binary (z. B. cp nach ~/.local/bin) — TH t_df9646a3.
+    LinuxBin,
 }
 
 /// Der für diese Plattform passende Update-Plan.
@@ -51,6 +59,15 @@ pub enum Plan {
         asset_url: String,
         deb_path_hint: String,
     },
+    /// Linux Bare-Binary (TH t_df9646a3): rohes Binary-Asset herunterladen,
+    /// verifizieren, chmod +x und atomar über die laufende exe renamen
+    /// (kein Auto-Restart — die App zeigt nur den Neustart-Hinweis).
+    LinuxBin {
+        asset_name: String,
+        asset_url: String,
+        checksum: Option<String>,
+        exe_path: PathBuf,
+    },
 }
 
 impl AppKind {
@@ -60,6 +77,7 @@ impl AppKind {
             AppKind::Nsis => "nsis",
             AppKind::AppImage => "appimage",
             AppKind::Deb => "deb",
+            AppKind::LinuxBin => "linux-bin",
         }
     }
 }
@@ -71,6 +89,7 @@ impl Plan {
             Plan::WindowsNsis { .. } => AppKind::Nsis,
             Plan::LinuxAppImage { .. } => AppKind::AppImage,
             Plan::DebHint { .. } => AppKind::Deb,
+            Plan::LinuxBin { .. } => AppKind::LinuxBin,
         }
     }
 
@@ -91,15 +110,20 @@ impl Plan {
                 asset_name,
                 asset_url,
                 ..
+            }
+            | Plan::LinuxBin {
+                asset_name,
+                asset_url,
+                ..
             } => (asset_name, asset_url),
         }
     }
 
     pub fn checksum(&self) -> Option<&str> {
         match self {
-            Plan::WindowsNsis { checksum, .. } | Plan::LinuxAppImage { checksum, .. } => {
-                checksum.as_deref()
-            }
+            Plan::WindowsNsis { checksum, .. }
+            | Plan::LinuxAppImage { checksum, .. }
+            | Plan::LinuxBin { checksum, .. } => checksum.as_deref(),
             Plan::DebHint { .. } => None,
         }
     }
@@ -166,6 +190,17 @@ pub fn plan_for_release(release: &Release, checksums_text: Option<&str>) -> Opti
                 deb_path_hint: format!("/tmp/{}", asset.name),
             });
         }
+        // TH t_df9646a3: Bare-Binary (z. B. cp nach ~/.local/bin) — weder
+        // AppImage noch deb-Kontext. Asset: rohes Binary `*_linux64`.
+        if let Some(exe_path) = bare_binary_exe() {
+            let asset = find_asset(release, "linux64")?;
+            return Some(Plan::LinuxBin {
+                checksum: checksum_for(&asset.name, release, checksums_text),
+                asset_name: asset.name.clone(),
+                asset_url: asset.download_url.clone(),
+                exe_path,
+            });
+        }
     }
     None
 }
@@ -207,6 +242,21 @@ pub fn deb_like_install() -> bool {
         return false;
     };
     exe.starts_with("/usr") || exe.starts_with("/opt")
+}
+
+/// Bare-Binary-Installation (TH t_df9646a3): die laufende exe heißt
+/// `architects-overlay` und ist weder AppImage noch deb-Kontext — der
+/// Standardfall für eine `cp`-Installation nach `~/.local/bin`.
+pub fn bare_binary_exe() -> Option<PathBuf> {
+    if appimage_path().is_some() || deb_like_install() {
+        return None;
+    }
+    let exe = std::env::current_exe().ok()?;
+    let file_name = exe.file_name()?.to_str()?.to_owned();
+    if file_name != "architects-overlay" {
+        return None;
+    }
+    Some(exe)
 }
 
 /// Zielverzeichnis für den Windows-Setup-Download (Temp-Unterordner).
@@ -272,6 +322,59 @@ mod tests {
         let empty = release(&[]);
         assert!(find_asset(&empty, "-setup.exe").is_none());
         assert!(checksums_asset(&empty).is_none());
+    }
+
+    #[test]
+    fn finds_linux64_asset_for_bare_binary() {
+        // TH t_df9646a3: das rohe Binary-Asset `*_linux64` muss für den
+        // Bare-Binary-Plan auffindbar sein (Suffix-Format wie die anderen).
+        let rel = release(&[
+            ("architects-overlay_0.5.20_amd64.AppImage", "u1"),
+            ("architects-overlay_0.5.20_linux64", "u2"),
+            ("SHA256SUMS", "u3"),
+        ]);
+        let asset = find_asset(&rel, "linux64").expect("linux64-Asset fehlt");
+        assert!(asset.name.starts_with("architects-overlay_"));
+        assert!(asset.name.ends_with("linux64"));
+        assert_eq!(asset.download_url, "u2");
+    }
+
+    #[test]
+    fn plan_bare_binary_branches() {
+        // Auf einer Bare-Binary-Installation (kein APPIMAGE, kein /usr|/opt)
+        // muss der Linux-Zweig den LinuxBin-Plan liefern — hier im
+        // Test-Runner (cargo test läuft als `architects-overlay`-kombi-Name
+        // nicht, daher der konditionale Schutz analog zu oben).
+        let rel = release(&[
+            ("architects-overlay_0.5.20_amd64.AppImage", "u1"),
+            ("architects-overlay_0.5.20_linux64", "u2"),
+        ]);
+        if !cfg!(windows) && appimage_path().is_none() && !deb_like_install() {
+            let exe = std::env::current_exe().unwrap();
+            let is_bare = exe
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n == "architects-overlay")
+                .unwrap_or(false);
+            let plan = plan_for_release(&rel, None);
+            if is_bare {
+                // Bare-Binary-Installation → LinuxBin-Plan mit dem linux64-Asset.
+                assert!(matches!(plan, Some(Plan::LinuxBin { .. })));
+            } else {
+                // Test-Runner heißt nicht architects-overlay → kein Plan
+                // (kein falscher Installationspfad für dev/cargo-Läufe).
+                assert!(plan.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn bare_binary_exe_rejects_non_overlay_names() {
+        // Der Test-Runner heißt nie `architects-overlay` → der Helper muss
+        // None liefern (AppImage/deb-Kontext prüfen die Zwänge abseits).
+        if appimage_path().is_none() && !deb_like_install() {
+            assert!(bare_binary_exe().is_none());
+        }
     }
 
     #[test]
