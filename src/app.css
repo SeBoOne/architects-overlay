@@ -478,6 +478,31 @@ html[data-window="spotlight"] .shell {
   background: transparent;
 }
 
+/* UA t_2f9924a9: Scrollbar-Parität Windows/Linux. Windows-WebView2 rendert
+   Scrollbars nativ (unstyled), Linux/WebKitGTK bringt dezente Overlay-Scrollbars.
+   Die Plattform-Klasse (app.html, UA-Erkennung vor First-Paint) scope't globale
+   WebKit-Scrollbars NUR auf Windows — Linux bleibt nativ unverändert. Bei
+   Fokusverlust (window-blurred) wird der Thumb dezenter, wie die Overlay-
+   Scrollbars unter Linux, die ohne Fokus dunkler/nichtiger wirken. */
+html.platform-windows ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html.platform-windows ::-webkit-scrollbar-thumb {
+  background: var(--lineb);
+  border-radius: 4px;
+}
+
+html.platform-windows ::-webkit-scrollbar-track,
+html.platform-windows ::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--lineb) 55%, transparent);
+}
+
 /* Gruppenband (Variante C): Vollflächen-Akzentband. Laut Design-Vertrag wird
    es auf „Unterstreichung + Chip" zurückgenommen, sobald >3 Gruppen stehen —
    die Palette zeigt maximal 3, also bleibt das Band. */
