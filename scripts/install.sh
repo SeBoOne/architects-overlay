@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # SC Architects Overlay — Linux Installer / Uninstaller
 #
-# Einzeiler (Repo muss öffentlich lesbar sein):
-#   curl -fsSL https://git.sebo-home.de/sebo/architects-overlay/raw/branch/main/scripts/install.sh | bash
+# Einzeiler (öffentliches GitHub-Mirror-Repo, S5):
+#   curl -fsSL https://raw.githubusercontent.com/SeBoOne/architects-overlay/main/scripts/install.sh | bash
+#
+# Gitea (private Dev-Instanz) bleibt als RELEASE_BASE möglich:
+#   RELEASE_BASE=https://git.sebo-home.de REPO_SLUG=sebo/architects-overlay bash install.sh
 #
 # Flags:
 #   --version vX.Y.Z   Release pinnen (default: neuestes Release)
@@ -22,8 +25,13 @@
 
 set -euo pipefail
 
-GITEA_BASE="${GITEA_BASE:-https://git.sebo-home.de}"
-REPO_SLUG="${REPO_SLUG:-sebo/architects-overlay}"
+# Release-Quelle (S5): öffentlicher GitHub-Mirror ist Default. RELEASE_BASE
+# (oder kompatibel GITEA_BASE) schaltet auf eine Gitea-Instanz um — der
+# Script-Support erkennt die API-Form am Host (github.com → GitHub-API).
+RELEASE_BASE="${RELEASE_BASE:-${GITEA_BASE:-https://api.github.com}}"
+IS_GITHUB=0
+[[ "$RELEASE_BASE" == *github.com* ]] && IS_GITHUB=1
+REPO_SLUG="${REPO_SLUG:-$( [[ $IS_GITHUB -eq 1 ]] && echo SeBoOne/architects-overlay || echo sebo/architects-overlay )}"
 GITEA_TOKEN="${GITEA_TOKEN:-}"
 APP_ID="com.sebo.architects-overlay"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_ID"
@@ -78,11 +86,13 @@ else
   SUDO="sudo"
 fi
 
-# ------------------------------------------------------------- Gitea-API -----
+# ---------------------------------------------------- Releases-API (S5) ------
 
 api_get() {
-  # $1 = API-Pfad (ohne Base). Gibt Body aus, Fehlermeldung bei HTTP != 200.
-  local url="$GITEA_BASE/api/v1/$1"
+  # $1 = API-Pfad ab der Base (GitHub: ohne Prefix, Gitea: mit /api/v1).
+  local base_path="" 
+  [[ $IS_GITHUB -eq 0 ]] && base_path="api/v1/"
+  local url="$RELEASE_BASE/$base_path$1"
   local args=(-fsS -H "Accept: application/json")
   [[ -n "$GITEA_TOKEN" ]] && args+=(-H "Authorization: token $GITEA_TOKEN")
   curl "${args[@]}" "$url" || return 1
@@ -97,11 +107,13 @@ get_release_json() {
   if [[ -n "$PINNED_VERSION" ]]; then
     local tag="${PINNED_VERSION#v}"
     path="repos/$REPO_SLUG/releases/tags/v$tag"
+  elif [[ $IS_GITHUB -eq 1 ]]; then
+    path="repos/$REPO_SLUG/releases/latest"
   else
     path="repos/$REPO_SLUG/releases?limit=1"
   fi
   body="$(api_get "$path")" \
-    || die "Gitea-API nicht erreichbar ($GITEA_BASE) — Netzverbindung prüfen."
+    || die "Releases-API nicht erreichbar ($RELEASE_BASE) — Netzverbindung prüfen."
   RELEASE_JSON="$body"
 }
 

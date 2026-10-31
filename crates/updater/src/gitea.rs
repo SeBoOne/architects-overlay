@@ -1,6 +1,11 @@
-//! Gitea-Releases-API-Client (Karte Umsetzung 1): EIN GET auf
-//! `/api/v1/repos/{repo}/releases/latest` — sonst KEIN Netzverkehr
+//! Releases-API-Client (Karte Umsetzung 1): EIN GET auf
+//! `repos/{repo}/releases/latest` — sonst KEIN Netzverkehr
 //! (kein Telemetrie/Phoning, Karte Umsetzung 7).
+//!
+//! Zwei API-Formen (S5 Endpoint-Switch): GitHub (`https://api.github.com`,
+//! Pfad ohne `/api/v1`) und Gitea (`https://git.sebo-home.de`, Pfad mit
+//! `/api/v1`). Die JSON-Form ist identisch (tag_name/body/assets mit
+//! browser_download_url), daher reicht der URL-Builder-Unterschied.
 //!
 //! HTTPS-only (Umsetzung 5): eine Base-URL ohne `https://` wird VOR dem
 //! Request abgelehnt — unabhängig davon, was in der Config steht.
@@ -42,6 +47,14 @@ struct RawRelease {
     assets: Vec<RawAsset>,
 }
 
+/// GitHub-API-Basis? (`api.github.com` bzw. github.com-Host.)
+fn is_github(base: &str) -> bool {
+    // Host-Anteil vor dem ersten Pfad-Segment prüfen.
+    let rest = base.strip_prefix("https://").unwrap_or(base);
+    let host = rest.split('/').next().unwrap_or(rest);
+    host == "api.github.com" || host == "github.com"
+}
+
 /// Baue die API-URL; lehnt alles ab, was nicht https:// ist (Umsetzung 5).
 pub fn releases_url(base_url: &str, repo: &str) -> Result<String> {
     let base = base_url.trim().trim_end_matches('/');
@@ -54,7 +67,11 @@ pub fn releases_url(base_url: &str, repo: &str) -> Result<String> {
             "Repo-Angabe unlesbar: {repo}"
         )));
     }
-    Ok(format!("{base}/api/v1/repos/{repo}/releases/latest"))
+    if is_github(base) {
+        Ok(format!("{base}/repos/{repo}/releases/latest"))
+    } else {
+        Ok(format!("{base}/api/v1/repos/{repo}/releases/latest"))
+    }
 }
 
 /// GET latest release. Fehlerpfade: kein Netz / Rate-Limit (429) / sonstige
@@ -148,6 +165,16 @@ mod tests {
     #[test]
     fn repo_shape() {
         assert!(releases_url("https://git.sebo-home.de", "norrepo").is_err());
+        // GitHub-Form (S5): ohne /api/v1, Default-Repo des öffentlichen Mirrors.
+        let gh = releases_url("https://api.github.com", "SeBoOne/architects-overlay").unwrap();
+        assert_eq!(
+            gh,
+            "https://api.github.com/repos/SeBoOne/architects-overlay/releases/latest"
+        );
+        assert_eq!(
+            releases_url("https://api.github.com/", "SeBoOne/architects-overlay").unwrap(),
+            "https://api.github.com/repos/SeBoOne/architects-overlay/releases/latest"
+        );
         assert!(releases_url("https://git.sebo-home.de", "").is_err());
     }
 }

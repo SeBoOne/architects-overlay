@@ -45,8 +45,9 @@ pub const SCALE_DEFAULT: u16 = 100;
 pub const UPDATER_INTERVAL_DEFAULT: u32 = 6;
 pub const UPDATER_INTERVAL_MIN: u32 = 1;
 pub const UPDATER_INTERVAL_MAX: u32 = 24;
-pub const UPDATER_REPO_DEFAULT: &str = "sebo/architects-overlay";
-pub const UPDATER_BASE_URL_DEFAULT: &str = "https://git.sebo-home.de";
+/// Öffentliches GitHub-Mirror-Repo (S5): Release-Quelle für den Updater.
+pub const UPDATER_REPO_DEFAULT: &str = "SeBoOne/architects-overlay";
+pub const UPDATER_BASE_URL_DEFAULT: &str = "https://api.github.com";
 
 /// Intervall normalisieren: 0/zu klein → Min (1 h), zu groß → Max (24 h).
 pub fn norm_updater_interval(h: u32) -> u32 {
@@ -892,7 +893,8 @@ impl Settings {
         self.updater_interval_hours = norm_updater_interval(h);
     }
 
-    /// Gitea-Repo (`owner/name`, konfigurierbar, Default sebo/architects-overlay).
+    /// Release-Repo (`owner/name`, konfigurierbar, Default SeBoOne/architects-overlay
+    /// — öffentlicher GitHub-Mirror, S5).
     pub fn updater_repo(&self) -> &str {
         &self.updater_repo
     }
@@ -901,7 +903,8 @@ impl Settings {
         self.updater_repo = repo;
     }
 
-    /// Gitea-Instanz-URL (Default https://git.sebo-home.de).
+    /// Releases-API-Base-URL (Default https://api.github.com — GitHub-Mirror, S5;
+    /// Gitea-Instanz wie https://git.sebo-home.de bleibt möglich).
     pub fn updater_base_url(&self) -> &str {
         &self.updater_base_url
     }

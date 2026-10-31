@@ -4,13 +4,14 @@ Plattform-Übersicht. Jede Sektion ist eigenständig; die Overlay-Funktion hinte
 dem Spiel ist unter **Linux/Hyprland primär entwickelt** und dort am besten
 ausgetestet. Windows-Builds entstehen über den GitHub-Actions-Mirror
 (docs/CI-WINDOWS.md), macOS-Builds über denselben Kanal (C4 t_ee85f9d7).
+Öffentliche Release-Quelle ist das GitHub-Mirror-Repo — Flow: docs/RELEASE.md.
 
 ---
 
 ## Schnell-Start Linux — Einzeiler
 
 ```sh
-curl -fsSL https://git.sebo-home.de/sebo/architects-overlay/raw/branch/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SeBoOne/architects-overlay/main/scripts/install.sh | bash
 ```
 
 Das Script erkennt die Distro automatisch:
@@ -23,9 +24,10 @@ Das Script erkennt die Distro automatisch:
   `~/.local/share/icons/hicolor/128x128/apps`, plus CLI-Wrapper
   `arch-overlay` (im PATH).
 
-> **Voraussetzung:** Das Repo (bzw. seine Releases) muss öffentlich lesbar
-> sein; bei privatem Repo zusätzlich `GITEA_TOKEN=<token>` in der Umgebung
-> setzen. x86_64 erforderlich.
+> **Voraussetzung:** Releases müssen öffentlich ladbar sein — der Default
+> (öffentliches GitHub-Mirror-Repo, S5) erfüllt das. Für die private
+> Gitea-Instanz: `RELEASE_BASE=https://git.sebo-home.de REPO_SLUG=sebo/architects-overlay`
+> (und ggf. `GITEA_TOKEN=<token>`) setzen. x86_64 erforderlich.
 
 ### Flags
 
@@ -64,7 +66,7 @@ Wayland-Fallback statt globaler Shortcuts, siehe docs/WAYLAND.md).
 
 ### Installation
 
-1. Von der Gitea-Release (https://git.sebo-home.de/sebo/architects-overlay/releases)
+1. Von der GitHub-Release (https://github.com/SeBoOne/architects-overlay/releases)
    die Datei `architects-overlay_<version>_aarch64.dmg` herunterladen.
 2. `.dmg` öffnen und die `.app` in den **Programme**-Ordner ziehen.
 3. Beim ersten Start meldet macOS „kann nicht geöffnet werden, da Apple es
@@ -123,7 +125,7 @@ xattr -cr "/Applications/Architects Overlay.app"
 ## Windows (x64)
 
 - Setup: NSIS-Installer (`architects-overlay_<version>_x64-setup.exe`) oder MSI
-  aus der Gitea-Release.
+  aus der GitHub-Release (https://github.com/SeBoOne/architects-overlay/releases).
 - Build-Pipeline: docs/CI-WINDOWS.md. Beim Start erwartet Windows ggf. einen
   SmartScreen-Hinweis (kein signiertes Installer-Zertifikat) — „Trotzdem
   ausführen“.
@@ -173,5 +175,6 @@ beim Livetest direkt ablesen lässt, was erkannt wurde.
 
 ## Linux (Hyprland / X11)
 
-- deb/AppImage aus der Gitea-Release; Setup und Hyprland-Einrichtung:
+- deb/AppImage aus der GitHub-Release (https://github.com/SeBoOne/architects-overlay/releases);
+  Setup und Hyprland-Einrichtung:
   docs/WAYLAND.md. Primär ausgetestete Plattform.

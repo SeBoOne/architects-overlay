@@ -1,6 +1,8 @@
 # Auto-Updater — UC t_d323be7e
 
-Update-Check gegen die Gitea-Releases-API + on-demand Update aus der
+Update-Check gegen die Releases-API des öffentlichen GitHub-Mirrors (S5:
+`https://api.github.com/repos/SeBoOne/architects-overlay/releases/latest`, ohne
+Auth) + on-demand Update aus der
 laufenden App (Windows NSIS + Linux AppImage). Motivation: die unsignierte
 .exe löst bei jedem manuellen Download eine SmartScreen-Warnung aus — der
 Updater lädt/installiert das Update selbst.
@@ -14,10 +16,12 @@ Updater lädt/installiert das Update selbst.
   [updater]
   enabled = true
   interval_hours = 6
-  repo = "sebo/architects-overlay"
-  base_url = "https://git.sebo-home.de"
+  repo = "SeBoOne/architects-overlay"
+  base_url = "https://api.github.com"
   ```
-- Genau **EIN GET** auf `/api/v1/repos/{repo}/releases/latest` — sonst KEIN
+- Genau **EIN GET** auf `repos/{repo}/releases/latest` — GitHub-Form ohne
+  `/api/v1` (S5); eine Gitea-Instanz als `base_url` bleibt möglich (dort
+  `/api/v1/repos/…`). Sonst KEIN
   Netzverkehr (kein Telemetrie/Phoning). Bei einem vorhandenen Update kommt
   optional EIN GET auf das `SHA256SUMS`-Sidecar hinzu.
 - Versionsvergleich: semver mit Pre-release-Suffixen (`v0.6.0-rc.1` ist
@@ -76,10 +80,10 @@ auf Installer-Exit warten müsste.
 ## Wichtig: Sichtbarkeit der Releases
 
 Der Check ist ein UNAUTHENTIFIZIERTES GET auf
-`https://git.sebo-home.de/api/v1/repos/sebo/architects-overlay/releases/latest`
-(Stand 2026-10: das Repo ist privat → 404, der Check meldet „Prüfung
-fehlgeschlagen“). Damit der Updater funktioniert, muss die Release-Seite
-der Instanz anonym lesbar sein (Gitea: Repo public bzw. „public“-Rechte für
+`https://api.github.com/repos/SeBoOne/architects-overlay/releases/latest`
+(S5: das öffentliche GitHub-Mirror-Repo ist die Release-Quelle — es ist
+public, der Check funktioniert damit ohne Token). Damit der Updater funktioniert, muss die Release-Seite
+der Instanz anonym lesbar sein (GitHub-Mirror ist public; Gitea: Repo public bzw. „public“-Rechte für
 Releases) — auch die Asset-Download-URLs müssen ohne Token ladbar sein.
 Wird ein Token nötig, gehört er in die `[updater]`-Sektion (Konfig-only),
 nicht ins Frontend.
@@ -96,7 +100,7 @@ nicht ins Frontend.
 
 ## Komponenten
 
-- `crates/updater/` — versionslose Kernlogik: semver-Vergleich, Gitea-Client,
+- `crates/updater/` — versionslose Kernlogik: semver-Vergleich, Releases-API-Client (GitHub/Gitea),
   SHA256-Integrität, Asset-Auswahl/Plan, Streaming-Download (11 Unit-Tests).
 - `crates/settings/` — `[updater]`-Sektion (`enabled`, `interval_hours`,
   `repo`, `base_url`).
