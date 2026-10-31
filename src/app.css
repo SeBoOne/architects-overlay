@@ -2759,6 +2759,22 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   text-transform: uppercase;
   color: var(--dim);
 }
+/* UD (t_a36daafb): thematische Gruppen — reine UI-Umordnung,
+   keine Settings-Logik; Gruppenkopf hebt sich von den Sektionen ab. */
+.cfg-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cfg-g-head {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
 .cfg-chips {
   display: flex;
   gap: 6px;

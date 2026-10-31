@@ -4912,7 +4912,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<span class="cfg-live">wirkt sofort</span>
 				</div>
 				<div class="cfg-body">
-					<section class="cfg-sect">
+										<!-- UD (t_a36daafb): thematische Gruppe „Darstellung“ — reine UI-Umordnung -->
+					<div class="cfg-group">
+						<div class="h cfg-g-head">Darstellung</div>
+<section class="cfg-sect">
 						<div class="h">Farbpalette</div>
 						<div class="cfg-chips">
 							<button
@@ -4935,7 +4938,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							>Bloom</button>
 						</div>
 					</section>
-					<section class="cfg-sect">
+<section class="cfg-sect">
+						<div class="h">Schriftscale</div>
+						<div class="cfg-chips">
+							{#each [80, 90, 100, 110, 125] as pct}
+								<button
+									type="button"
+									class="chip"
+									class:is-on={cfg?.scale === pct}
+									onclick={() => void chooseScale(pct)}
+								>{pct} %</button>
+							{/each}
+						</div>
+					</section>
+<section class="cfg-sect">
 						<div class="h">Preis-Detail-Variante</div>
 						<div class="cfg-chips">
 							<button
@@ -4952,51 +4968,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							>A</button>
 						</div>
 					</section>
-					<section class="cfg-sect">
-						<div class="h">Datenquellen</div>
-						<!-- PS (t_c84e545d): Item-Preise (patch-getrieben, kein
-						     Auto-Sync) und Commodity-Preise (stündlich) zeigen
-						     ihre Frische GETRENNT und lassen sich per Button
-						     sofort erneuern. -->
-						{#if priceSyncAge}
-							<div class="cfg-note">
-								Commodity-Preise: {rel(priceSyncAge.commodity_age_secs ?? 0)} sync ·
-								{priceSyncAge.commodity_count} Waren · stündlich automatisch
-							</div>
-							<button
-								type="button"
-								class="chip"
-								disabled={priceSyncing}
-								onclick={refreshCommodityPrices}
-							>{priceSyncing ? 'Sync läuft …' : 'Commodity-Preise jetzt aktualisieren'}</button>
-							<div class="cfg-note">
-								Item-Preise: {rel(priceSyncAge.item_age_secs ?? 0)} sync ·
-								{priceSyncAge.item_count} Items · pro Patch konstant (kein Auto-Sync)
-							</div>
-							<button
-								type="button"
-								class="chip"
-								disabled={priceSyncing}
-								onclick={refreshItemPrices}
-							>{priceSyncing ? 'Sync läuft …' : 'Item-Preise jetzt aktualisieren'}</button>
-						{:else}
-							<div class="cfg-note">Datenquellen: noch keine Preisdaten im Cache.</div>
-						{/if}
-					</section>
+					</div>
+					<!-- UD (t_a36daafb): thematische Gruppe „Bedienung“ — reine UI-Umordnung -->
+					<div class="cfg-group">
+						<div class="h cfg-g-head">Bedienung</div>
 <section class="cfg-sect">
-						<div class="h">Schriftscale</div>
-						<div class="cfg-chips">
-							{#each [80, 90, 100, 110, 125] as pct}
-								<button
-									type="button"
-									class="chip"
-									class:is-on={cfg?.scale === pct}
-									onclick={() => void chooseScale(pct)}
-								>{pct} %</button>
-							{/each}
-						</div>
-					</section>
-					<section class="cfg-sect">
 						<div class="h">Tastenkürzel</div>
 						{#each shortcutFields as f (f.id)}
 							<div class="cfg-sc-row" class:is-cap={scCapture === f.id}>
@@ -5083,7 +5059,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     In-App-Modi. Persistiert im Settings-Crate (TOML), Validierung:
 					     nur F1–F12, F5 reserviert für den Resync, keine Doppelbelegung.
 					     Capture-Muster identisch zu den globalen Kürzeln (C2a). -->
-					<section class="cfg-sect">
+<section class="cfg-sect">
 						<div class="h">Mode-Hotkeys</div>
 						{#each modeHotkeyFields as f (f.id)}
 							<div class="cfg-sc-row" class:is-cap={hkCapture === f.id}>
@@ -5115,7 +5091,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="chip" onclick={() => void resetModeHotkeys()}>Standard-Belegung</button>
 						</div>
 					</section>
-					<section class="cfg-sect">
+					</div>
+					<!-- UD (t_a36daafb): thematische Gruppe „Daten & Dienste“ — reine UI-Umordnung -->
+					<div class="cfg-group">
+						<div class="h cfg-g-head">Daten & Dienste</div>
+<section class="cfg-sect">
 						<div class="h">UEX API-Key</div>
 						<div class="cfg-key-status">
 							Status:
@@ -5149,7 +5129,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="cfg-note">{apiKeyNote}</div>
 						{/if}
 					</section>
-					<section class="cfg-sect">
+<section class="cfg-sect">
 						<div class="h">UEX persönlicher Secret-Key</div>
 						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
 							Für den eigenen Shop („Mein Shop“, user-scoped Reads) braucht UEX
@@ -5216,10 +5196,41 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="cfg-note">{mktConfirmNote}</div>
 						{/if}
 				</section>
-				<!-- S4 (t_66980b3c): Modul-Zuweisungen ausschließlich aus
+<section class="cfg-sect">
+						<div class="h">Datenquellen</div>
+						<!-- PS (t_c84e545d): Item-Preise (patch-getrieben, kein
+						     Auto-Sync) und Commodity-Preise (stündlich) zeigen
+						     ihre Frische GETRENNT und lassen sich per Button
+						     sofort erneuern. -->
+						{#if priceSyncAge}
+							<div class="cfg-note">
+								Commodity-Preise: {rel(priceSyncAge.commodity_age_secs ?? 0)} sync ·
+								{priceSyncAge.commodity_count} Waren · stündlich automatisch
+							</div>
+							<button
+								type="button"
+								class="chip"
+								disabled={priceSyncing}
+								onclick={refreshCommodityPrices}
+							>{priceSyncing ? 'Sync läuft …' : 'Commodity-Preise jetzt aktualisieren'}</button>
+							<div class="cfg-note">
+								Item-Preise: {rel(priceSyncAge.item_age_secs ?? 0)} sync ·
+								{priceSyncAge.item_count} Items · pro Patch konstant (kein Auto-Sync)
+							</div>
+							<button
+								type="button"
+								class="chip"
+								disabled={priceSyncing}
+								onclick={refreshItemPrices}
+							>{priceSyncing ? 'Sync läuft …' : 'Item-Preise jetzt aktualisieren'}</button>
+						{:else}
+							<div class="cfg-note">Datenquellen: noch keine Preisdaten im Cache.</div>
+						{/if}
+					</section>
+					<!-- S4 (t_66980b3c): Modul-Zuweisungen ausschließlich aus
 				     module-overrides.json — kein game-versions-Trigger mehr;
 				     der Button zieht NUR die Remote-Datei. -->
-				<section class="cfg-sect">
+<section class="cfg-sect">
 					<div class="h">Modul-Zuweisungen</div>
 					<div class="cfg-key-status">
 						Datenstand:
@@ -5246,11 +5257,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						Game-Version-Check mehr).
 					</div>
 				</section>
-				<!-- UC t_d323be7e: Auto-Updater — dezenter Update-Chip + on-demand
+					</div>
+					<!-- UD (t_a36daafb): thematische Gruppe „App“ — reine UI-Umordnung -->
+					<div class="cfg-group">
+						<div class="h cfg-g-head">App</div>
+					<!-- UC t_d323be7e: Auto-Updater — dezenter Update-Chip + on-demand
 				     „Jetzt aktualisieren“ (nie auto-install ohne Wunsch). Bei
 				     .deb-Installationen nur der apt-Hinweis (keine root-Aktionen
 				     aus der App). -->
-				<section class="cfg-sect">
+<section class="cfg-sect">
 					<div class="h">Aktualisierung</div>
 					<div class="cfg-chips">
 						<button
@@ -5301,7 +5316,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="cfg-note">{upStatus.note}</div>
 						{/if}
 					{/if}
-				</section>
+					</section>
+					</div>
 				</div>
 			</div>
 		{:else if phase === 'loading'}
