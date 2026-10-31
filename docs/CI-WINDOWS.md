@@ -1,3 +1,5 @@
+> **ARCHIV (2026-10-31):** Gitea-CI ist stillgelegt — Builds laufen via GitHub-Actions auf hosted Runnern. Diese Doku beschreibt den alten selfhosted-Runner-Weg (fuer Reaktivierung aufbewahrt).
+>
 # Windows-Runner für Gitea Actions (architects-overlay)
 
 > **STATUS: AUFGESCHOBEN (2026-10-21)** — kein permanent laufender Windows-PC
