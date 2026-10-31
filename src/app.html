@@ -4,6 +4,25 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
+		<script>
+			// UA t_2f9924a9: Windows-WebView2 rendert Scrollbars nativ (unstyled), während
+			// Linux/WebKitGTK dezente Overlay-Scrollbars bringt. Plattform-Klasse + Fokus-Flag
+			// werden früh gesetzt (vor CSS/First-Paint), damit app.css Windows gezielt auf
+			// WebKit-Scrollbars stylen kann und Linux unverändert bleibt.
+			(function () {
+				var doc = document.documentElement;
+				if (navigator.userAgent.indexOf('Windows') !== -1) {
+					doc.classList.add('platform-windows');
+				}
+				doc.classList.add('window-blurred');
+				window.addEventListener('focus', function () {
+					doc.classList.remove('window-blurred');
+				});
+				window.addEventListener('blur', function () {
+					doc.classList.add('window-blurred');
+				});
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
