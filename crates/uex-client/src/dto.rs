@@ -61,19 +61,6 @@ where
     Ok(Option::<u64>::deserialize(d)?.unwrap_or(0))
 }
 
-/// Same for `Option<u64>`, but normalizes an explicit `null` to `Some(0)`.
-/// serde's built-in `Option` mapping (null → None) looks tidy but loses the
-/// UEX semantic: `null` and `0` both mean "no expiry / not set", and 0 is the
-/// sentinel every consumer (sort, display) already treats as "none". Mapping
-/// null → None instead would re-introduce `invalid type: null, expected u64`
-/// as soon as the field is narrowed to a plain `u64`.
-pub(crate) fn de_opt_u64_null_to_zero<'de, D>(d: D) -> Result<Option<u64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Some(Option::<u64>::deserialize(d)?.unwrap_or(0)))
-}
-
 /// `null` → `""` for plain string fields. The live `/marketplace_listings`
 /// endpoint sends `null` for optional text fields (e.g. `location` in ~2% of
 /// rows) instead of an empty string — `#[serde(default)]` alone does NOT cover
@@ -139,16 +126,6 @@ where
     Ok(flex_u64(Option::<serde_json::Value>::deserialize(d)?)
         .unwrap_or(0)
         .min(u8::MAX as u64) as u8)
-}
-
-/// u16-Feld (quality): Zahl, String-Zahl, null → 0.
-pub(crate) fn de_u16_flex_null_to_zero<'de, D>(d: D) -> Result<u16, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(flex_u64(Option::<serde_json::Value>::deserialize(d)?)
-        .unwrap_or(0)
-        .min(u16::MAX as u64) as u16)
 }
 
 /// `Option<f64>`: null/""/nicht-numerisch → None (offener Deal bleibt offen),
@@ -600,8 +577,6 @@ pub struct NegotiationMessageRow {
     pub user_name: String,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub user_username: String,
-    #[serde(default, deserialize_with = "de_string_null_to_empty")]
-    pub user_avatar: String,
     #[serde(default, deserialize_with = "de_string_null_to_empty")]
     pub api_name: String,
     #[serde(default, deserialize_with = "de_u64_flex_null_to_zero")]

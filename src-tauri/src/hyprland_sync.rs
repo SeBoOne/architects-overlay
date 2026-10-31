@@ -84,10 +84,11 @@ fn hyprland_key_token(up: &str) -> Result<String, String> {
     if up.len() == 1 && up.as_bytes()[0].is_ascii_digit() {
         return Ok(up.to_owned());
     }
-    if let Ok(n) = up[1..].parse::<u8>() {
-        if up.starts_with('F') && (1..=24).contains(&n) {
-            return Ok(up.to_owned());
-        }
+    if let Ok(n) = up[1..].parse::<u8>()
+        && up.starts_with('F')
+        && (1..=24).contains(&n)
+    {
+        return Ok(up.to_owned());
     }
     let mapped = match up {
         "SPACE" => "SPACE",
@@ -296,10 +297,10 @@ pub struct OmarchyPaths {
 }
 
 fn user_config_dir() -> Option<PathBuf> {
-    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
-        if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg));
-        }
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME")
+        && !xdg.is_empty()
+    {
+        return Some(PathBuf::from(xdg));
     }
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config"))
 }

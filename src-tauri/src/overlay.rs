@@ -486,11 +486,11 @@ pub fn open_config_from_tray<R: Runtime>(app: &AppHandle<R>) {
 /// `user_visible && game_running` semantics already apply and a hide here
 /// would fight the poller/hotkey state.
 pub fn close_config<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(st) = app.try_state::<OverlayState>() {
-        if st.config_open.swap(false, Ordering::AcqRel) {
-            apply_visibility(app, effective_visible(st.inner()));
-            emit_state(app);
-        }
+    if let Some(st) = app.try_state::<OverlayState>()
+        && st.config_open.swap(false, Ordering::AcqRel)
+    {
+        apply_visibility(app, effective_visible(st.inner()));
+        emit_state(app);
     }
 }
 
@@ -727,10 +727,10 @@ fn cursor_position() -> Option<(i32, i32, &'static str)> {
         // of X11-space coords against layout-space rects therefore misses
         // (or randomly hits) monitors whenever monitors are offset or
         // rotated. The cursorpos answer is exact and needs no transform.
-        if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-            if let Some((x, y)) = hyprland_cursor_position() {
-                return Some((x, y, "hyprland cursorpos"));
-            }
+        if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+            && let Some((x, y)) = hyprland_cursor_position()
+        {
+            return Some((x, y, "hyprland cursorpos"));
         }
         // Non-Hyprland: X11/XWayland query. On a real X11 session the tauri
         // monitor rects come from the same X screen, so the spaces agree.
@@ -1177,7 +1177,7 @@ fn spawn_hyprland_events<R: Runtime>(handle: &AppHandle<R>) {
                         // Synthetic events (hl.dsp.event, probes) arrive with a
                         // `custom>>` prefix — strip it so both shapes match.
                         let line = line.strip_prefix("custom>>").unwrap_or(&line);
-                        if let Some((_addr, class, title)) = parse_openwindow(&line) {
+                        if let Some((_addr, class, title)) = parse_openwindow(line) {
                             if is_in_process_dialog(&class, &title) {
                                 log::info!(
                                     "own dialog opened ({title:?}) -> suspend focus ownership"
@@ -1185,12 +1185,12 @@ fn spawn_hyprland_events<R: Runtime>(handle: &AppHandle<R>) {
                                 dialog_addr = Some(_addr);
                                 suspend_focus_ownership();
                             }
-                        } else if let Some(addr) = line.strip_prefix("closewindow>>") {
-                            if dialog_addr.as_deref() == Some(addr.trim()) {
-                                log::info!("own dialog closed -> restore focus ownership");
-                                dialog_addr = None;
-                                restore_focus_ownership(&app);
-                            }
+                        } else if let Some(addr) = line.strip_prefix("closewindow>>")
+                            && dialog_addr.as_deref() == Some(addr.trim())
+                        {
+                            log::info!("own dialog closed -> restore focus ownership");
+                            dialog_addr = None;
+                            restore_focus_ownership(&app);
                         }
                     }
                     // Stream dropped (compositor restart): loop reconnects.

@@ -20,6 +20,7 @@
 	} = $props();
 
 	let open = $state(false);
+	const ddId = $props.id();
 	let hi = $state(0);
 	// S1 (t_38f79fff): Dropdown kann am unteren Rand eines scroll-internen
 	// Modals (.hform-body overflow-y:auto) abgeschnitten werden. Richtung wird
@@ -155,6 +156,7 @@
 		value={value}
 		autocomplete="off"
 		role="combobox"
+		aria-controls={ddId}
 		aria-expanded={open}
 		style={fullWidth ? 'width:100%' : ''}
 		oninput={oninput}
@@ -163,7 +165,7 @@
 		onblur={onblur}
 	/>
 	{#if open && options.length}
-		<div class="rta-dd" class:is-up={dropUp} role="listbox">
+		<div class="rta-dd" class:is-up={dropUp} role="listbox" id={ddId}>
 			{#each options as o, i (o.value + i)}
 				<button
 					type="button"

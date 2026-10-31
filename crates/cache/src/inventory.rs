@@ -54,7 +54,7 @@ pub struct InventoryEntry {
 /// Payload for adding a position (no id/timestamps — those are assigned).
 /// Entity/location ids arrive from the JS frontend as STRINGS (wiki ids
 /// > 2^53 lose precision as JS numbers — t_1bab1fea blocker 2); bare JSON
-/// numbers are still accepted for older callers.
+/// > numbers are still accepted for older callers.
 #[derive(Clone, Debug, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct NewInventoryEntry {

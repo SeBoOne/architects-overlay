@@ -1,5 +1,5 @@
-//! Live verification of the K1 Cache-Architectur (Stale-First + Profit-Matrix
-//! + Background-Revalidate). Ignored by default like the other network tests.
+//! Live verification of the K1 Cache-Architectur (Stale-First, Profit-Matrix
+//! und Background-Revalidate). Ignored by default like the other network tests.
 //! Run: `cargo test -p uex_client --test matrix_k1 -- --ignored` (needs the
 //! live API; the cold-sweep leg takes ~6 min at 300ms pacing).
 

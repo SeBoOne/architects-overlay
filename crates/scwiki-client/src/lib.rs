@@ -486,10 +486,9 @@ pub fn build_compat(vehicles: &[VehiclePorts], items: &[ModuleItem]) -> Vec<Comp
             if v.ports
                 .iter()
                 .any(|p| p.accepts(&item.item_type, &item.sub_type, item.size))
+                && !row.ships.iter().any(|s| s == &v.name)
             {
-                if !row.ships.iter().any(|s| s == &v.name) {
-                    row.ships.push(v.name.clone());
-                }
+                row.ships.push(v.name.clone());
             }
         }
     }

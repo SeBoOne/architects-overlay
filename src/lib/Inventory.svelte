@@ -1,4 +1,11 @@
 <script lang="ts">
+// A11y-Helfer: Enter/Space aktiviert klickbare Nicht-Button-Elemente (nur bei Eigenfokus).
+function keyActivate(e: KeyboardEvent) {
+	if (e.target !== e.currentTarget) return;
+	if (e.key !== 'Enter' && e.key !== ' ') return;
+	e.preventDefault();
+	(e.currentTarget as HTMLElement).click();
+}
 	// Inventar-Modus (Karte t_1bab1fea, v0.3.0 K2) — lokal, privat,
 	// Qualitätsbewusst. Eine Position = (Item-/Commodity-Referenz ODER
 	// Freitext, Qualität 0–1000 (Pflicht), Standort (Location-Entity ODER
@@ -773,7 +780,7 @@
 			</div>
 			<div class="inv-list">
 				{#each itemRows as r (r.id)}
-					<div class="inv-row" class:is-sel={sel === itemRows.indexOf(r)} onclick={() => (sel = itemRows.indexOf(r))} ondblclick={() => openEdit(r)}>
+					<div role="button" tabindex="0" onkeydown={keyActivate} class="inv-row" class:is-sel={sel === itemRows.indexOf(r)} onclick={() => (sel = itemRows.indexOf(r))} ondblclick={() => openEdit(r)}>
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div class="main">
 							<div class="loc">{r.location_name}{#if r.location_id !== null}<span class="src"> · Location</span>{/if}</div>
@@ -814,7 +821,7 @@
 						<span class="n">{m.list.length} Pos · {fmtQty(m.total)} {m.list[0]?.entity_kind === 'item' ? 'Stk' : 'SCU'}</span>
 					</div>
 					{#each m.list as r (r.id)}
-						<div class="inv-row" class:is-sel={sel === locRows.indexOf(r)} onclick={() => (sel = locRows.indexOf(r))} ondblclick={() => openEdit(r)}>
+						<div role="button" tabindex="0" onkeydown={keyActivate} class="inv-row" class:is-sel={sel === locRows.indexOf(r)} onclick={() => (sel = locRows.indexOf(r))} ondblclick={() => openEdit(r)}>
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div class="main">
 								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? 'Item' : 'Commodity'}</span>{/if}</div>
@@ -875,9 +882,9 @@
 										<span class="n">{l.list.length} Pos · {fmtQty(l.total)}</span>
 									</div>
 									{#each l.list as r (r.id)}
-									<div class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
+									<div role="button" tabindex="0" onkeydown={keyActivate} class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
 										<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
-										<div class="main" onclick={() => openLocation(r.location_name)}>
+										<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openLocation(r.location_name)}>
 											<div class="loc">{r.location_name}</div>
 											<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Purchase {fmtPrice(r.price)} aUEC{/if}</div>
 										</div>
@@ -912,9 +919,9 @@
 							<span class="n">{m.list.length} · {fmtQty(m.total)}</span>
 						</div>
 						{#each m.list as r (r.id)}
-							<div class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
+							<div role="button" tabindex="0" onkeydown={keyActivate} class="inv-row" class:is-sel={sel === navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id)} onclick={() => (sel = navRows.filter((n) => n.kind === 'row').findIndex((n) => n.entry?.id === r.id))} ondblclick={() => openEdit(r)}>
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
-							<div class="main" onclick={() => openItem(r.name)}>
+							<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 								<div class="loc">{r.name}</div>
 								<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Kauf {fmtPrice(r.price)} aUEC{/if}</div>
 							</div>
@@ -926,9 +933,9 @@
 							{/each}
 							{:else}
 				{#each sortedRows as r, i (r.id)}
-					<div class="inv-row" class:is-sel={sel === i} onclick={() => (sel = i)} ondblclick={() => openEdit(r)}>
+					<div role="button" tabindex="0" onkeydown={keyActivate} class="inv-row" class:is-sel={sel === i} onclick={() => (sel = i)} ondblclick={() => openEdit(r)}>
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
-						<div class="main" onclick={() => openItem(r.name)}>
+						<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 							<div class="loc">{r.name} <small>{r.location_name}</small></div>
 							<div class="sub">{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'item' ? 'Item' : 'Commodity'}{#if r.price} · Kauf {fmtPrice(r.price)} aUEC{/if}</div>
 						</div>

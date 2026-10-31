@@ -400,7 +400,7 @@ async fn live_route_enrichment_before_after() {
             buy_terminal_cargo_deck: false,
             buy_terminal_ground: false,
             sell_terminal_id: dest,
-            sell_terminal: format!("Dest {dest}").into(),
+            sell_terminal: format!("Dest {dest}"),
             sell_chain: "Stanton > Dest".into(),
             sell_price: 9000.0,
             sell_terminal_autoload: false,
@@ -447,7 +447,7 @@ async fn live_route_enrichment_before_after() {
             "{} (c{}) → dest {}: profit {:.0}",
             r.commodity, r.commodity_id, r.sell_terminal_id, r.profit_per_scu
         );
-        eprintln!("  enrichment = {}", display(&r));
+        eprintln!("  enrichment = {}", display(r));
     }
 
     let ok = p.refresh_route_enrichment().await.expect("live enrichment");
@@ -467,9 +467,8 @@ async fn live_route_enrichment_before_after() {
         let e: RouteEnrichment = rows.get(&key).cloned().expect("route {key} enrich'd");
         eprintln!("{key}: {}", serde_json::to_string(&e).unwrap());
         assert!(e.scu_reachable > 0.0, "Volumen muss gesetzt sein: {key}");
-        assert_eq!(
+        assert!(
             e.game_version_origin.as_deref().is_some(),
-            true,
             "game_version origin"
         );
         assert!(

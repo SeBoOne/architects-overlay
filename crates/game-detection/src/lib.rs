@@ -180,15 +180,15 @@ fn macos_procs() -> Vec<ProcEntry> {
     }
     // `ps -ax -o command=` → one command line per process, no header (the
     // trailing `=` suppresses the "COMMAND" header row).
-    if let Ok(output) = Command::new("ps").args(["-ax", "-o", "command="]).output() {
-        if let Ok(stdout) = String::from_utf8(output.stdout) {
-            for line in stdout.split('\n') {
-                let line = line.trim();
-                if !line.is_empty() {
-                    out.push(ProcEntry {
-                        cmdline: line.to_string(),
-                    });
-                }
+    if let Ok(output) = Command::new("ps").args(["-ax", "-o", "command="]).output()
+        && let Ok(stdout) = String::from_utf8(output.stdout)
+    {
+        for line in stdout.split('\n') {
+            let line = line.trim();
+            if !line.is_empty() {
+                out.push(ProcEntry {
+                    cmdline: line.to_string(),
+                });
             }
         }
     }

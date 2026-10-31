@@ -162,8 +162,8 @@ fn marketplace_fixture_maps_to_offers() {
 ///     Route-Destination = Jackson's Swap `price_sell=130000`.
 ///   * Jede Feed-Zeile ist einseitig — eine Zeile mit beidseitig > 0 gibt es
 ///     nicht (Sweep: die Ware ist kaufbar ODER verkaufbar, nie beides zugleich).
-/// Die Mappung muss daraus exakt die richtigen KAUForTE bauen:
-/// Kaufort ⇔ UEX `price_buy` > 0, Verkaufsort ⇔ UEX `price_sell` > 0.
+///     Die Mappung muss daraus exakt die richtigen KAUForTE bauen — Kaufort ⇔
+///     UEX `price_buy` > 0, Verkaufort ⇔ UEX `price_sell` > 0.
 #[test]
 fn map_price_point_buy_direction_matches_uex_feed_semantics() {
     use uex_client::private::PriceRow;

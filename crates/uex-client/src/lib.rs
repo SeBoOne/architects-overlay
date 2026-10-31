@@ -239,7 +239,7 @@ impl UexProvider {
                 // price table; an empty result is the honest answer and lets
                 // the UI render the "nicht kaufbar / keine Preisdaten" state
                 // instead of a hard error.
-                return Ok(self.empty_prices_for_other(commodity).await?);
+                return self.empty_prices_for_other(commodity).await;
             }
             Err(other) => return Err(other),
         };
@@ -290,14 +290,14 @@ impl UexProvider {
         // `id → UEX type` — ohne ihn ist der Terminal-Typ nach dem Import
         // nirgends mehr prüfbar und route_meta:terminals könnte nur nach TTL
         // vertraut werden (Trust-by-TTL, Review t_b3153a53).
-        if kind == EntityKind::Terminals {
-            if let Some(types) = self.last_terminal_types() {
-                let payload = serde_json::to_string(&types)
-                    .map_err(|e| ProviderError::Json(e.to_string()))?;
-                self.cache
-                    .route_meta_set(ROUTE_META_TERMINAL_TYPES, now_unix_secs(), &payload)
-                    .map_err(map_cache_err)?;
-            }
+        if kind == EntityKind::Terminals
+            && let Some(types) = self.last_terminal_types()
+        {
+            let payload =
+                serde_json::to_string(&types).map_err(|e| ProviderError::Json(e.to_string()))?;
+            self.cache
+                .route_meta_set(ROUTE_META_TERMINAL_TYPES, now_unix_secs(), &payload)
+                .map_err(map_cache_err)?;
         }
         Ok(())
     }
@@ -1070,22 +1070,16 @@ impl UexProvider {
     /// landed, never on TTL expiry alone.
     fn matrix_epoch(&self) -> Result<String> {
         let (count, max_fetched) = self.cache.terminal_price_stats().map_err(map_cache_err)?;
-        let tf = match self
+        let tf = self
             .cache
             .route_meta_fetched_at(ROUTE_META_TERMINALS)
             .map_err(map_cache_err)?
-        {
-            Some(ts) => ts,
-            None => 0,
-        };
-        let cf = match self
+            .unwrap_or_default();
+        let cf = self
             .cache
             .route_meta_fetched_at(ROUTE_META_COMMODITIES)
             .map_err(map_cache_err)?
-        {
-            Some(ts) => ts,
-            None => 0,
-        };
+            .unwrap_or_default();
         Ok(format!("tp:{count}:{max_fetched};tf:{tf};cf:{cf}"))
     }
 
@@ -2684,7 +2678,7 @@ mod tests {
         svc.listing_type = ListingType::Service;
         let mut buy = offer(3, "Hull-C Charter", "Everus Harbor", "s");
         buy.operation = MarketOperation::Buy;
-        let offers = vec![offer(1, "Gold Ore", "Port Tressler", "s"), svc, buy];
+        let offers = [offer(1, "Gold Ore", "Port Tressler", "s"), svc, buy];
 
         let hits = ids(&UexProvider::apply_local(
             offers[..2].to_vec(),
@@ -2883,7 +2877,7 @@ mod tests {
             .unwrap();
         let (flags, contaminated) = provider.load_route_terminal_flags().unwrap();
         assert!(
-            contaminated == false && flags.len() == 2,
+            !contaminated && flags.len() == 2,
             "cleaner Payload wird trusted"
         );
 

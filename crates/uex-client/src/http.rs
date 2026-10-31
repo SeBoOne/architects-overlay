@@ -201,8 +201,8 @@ impl UexHttpClient {
     /// POST `path` with a JSON body (write-layer, M2b — `marketplace_advertise/`).
     /// Sends Bearer + secret-key headers (Beide Credentials laut Research §1).
     /// Kein Retry bei Fehlern — der Aufrufer entscheidet (Error-Pfad: Meldung
-    /// + Deep-Link). Antwort-Envelope wird wie bei GET entfaltet; type-param
-    /// ist der erwartete `data`-Typ (meist das neue Listing).
+    /// oder Deep-Link). Antwort-Envelope wird wie bei GET entfaltet; der
+    /// type-param ist der erwartete `data`-Typ (meist das neue Listing).
     pub async fn post<T: serde::de::DeserializeOwned>(
         &self,
         path: &str,

@@ -600,7 +600,7 @@ fn is_money_terminal(name: &str) -> bool {
 #[tauri::command]
 pub fn math_eval(expr: String) -> Result<String, String> {
     let expr = expr.trim_start_matches('=').trim();
-    match math_eval::evaluate(&expr) {
+    match math_eval::evaluate(expr) {
         Ok(v) if v.is_finite() => Ok(fmt_number(v)),
         Ok(_) => Err("Ergebnis ist nicht endlich (Division durch 0?)".to_string()),
         Err(e) => Err(e),
@@ -858,9 +858,7 @@ pub async fn refresh_item_prices_now(
 pub async fn refresh_commodity_prices_now(
     state: State<'_, TradeState>,
 ) -> Result<cache::PriceSyncAges, String> {
-    refresh_commodity_price_tables(&state.composite, &state.cache)
-        .await
-        .map_err(|e| e)?;
+    refresh_commodity_price_tables(&state.composite, &state.cache).await?;
     state
         .cache
         .price_sync_ages()
@@ -1138,21 +1136,21 @@ pub async fn send_negotiation_message(
     // (kein Netzwerk-Call — der Gate darf den Chat-Pfad nicht verlangsamen);
     // fehlt die Verhandlung im Snapshot, fällt der Gate durch und die API
     // entscheidet.
-    if let Ok(negotiations) = state.cache.own_negotiations_snapshot() {
-        if let Some(n) = negotiations.iter().find(|n| {
+    if let Ok(negotiations) = state.cache.own_negotiations_snapshot()
+        && let Some(n) = negotiations.iter().find(|n| {
             (id_negotiation != 0 && n.id == id_negotiation) || (!hash.is_empty() && n.hash == hash)
-        }) {
-            // QY (t_07edb03d): read-only auch bei EINSEITIG beendeten Deals —
-            // Live-Befund: `end_negotiation_client/seller` liefert UEX nicht
-            // (immer null); das einseitige Ende signalisiert der Wire über
-            // `date_closed_client` ≠ 0 bei `date_closed` = 0. Beendet =
-            // EINE der beiden Seiten hat abgeschlossen.
-            if n.date_closed.is_some() || n.date_closed_client.is_some() {
-                return Err(
+        })
+    {
+        // QY (t_07edb03d): read-only auch bei EINSEITIG beendeten Deals —
+        // Live-Befund: `end_negotiation_client/seller` liefert UEX nicht
+        // (immer null); das einseitige Ende signalisiert der Wire über
+        // `date_closed_client` ≠ 0 bei `date_closed` = 0. Beendet =
+        // EINE der beiden Seiten hat abgeschlossen.
+        if n.date_closed.is_some() || n.date_closed_client.is_some() {
+            return Err(
                     "Trade beendet (abgeschlossen bzw. einseitig beendet) — Verhandlungen mit Abschluss-Status sind read-only (nur lesbarer Verlauf)."
                         .to_string(),
                 );
-            }
         }
     }
     let id = state
@@ -1229,7 +1227,7 @@ pub fn open_uex_account(app: AppHandle) -> Result<String, String> {
 pub async fn marketplace_photo(_app: AppHandle, url: String) -> Result<String, String> {
     uex_client::fetch_listing_photo(&url)
         .await
-        .map_err(|e| friendly(e))
+        .map_err(friendly)
 }
 
 /// Exakter Ziel-Link aller „Listings verwalten"-Buttons (B3): der
@@ -1676,7 +1674,7 @@ fn merge_suggestions(
 ) -> Vec<provider::ItemSuggestion> {
     let mut merged: Vec<provider::ItemSuggestion> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for sug in filtered.into_iter().chain(full.into_iter()) {
+    for sug in filtered.into_iter().chain(full) {
         if seen.insert(sug.id) {
             merged.push(sug);
         }
@@ -1751,14 +1749,14 @@ pub fn start_background_refresh(
             loop {
                 tokio::time::sleep(PRICE_SYNC_INTERVAL).await;
                 let refreshed = refresh_commodity_price_tables(&composite, &pcache).await;
-                if let Ok(n) = refreshed {
-                    if n > 0 {
-                        log::info!("price sync: renewed {n} commodity tables (hourly cycle)");
-                        let _ = phandle.emit(
-                            SYNC_EVENT,
-                            build_status(&provider_load(&composite), &pcache, &psync_tracker),
-                        );
-                    }
+                if let Ok(n) = refreshed
+                    && n > 0
+                {
+                    log::info!("price sync: renewed {n} commodity tables (hourly cycle)");
+                    let _ = phandle.emit(
+                        SYNC_EVENT,
+                        build_status(&provider_load(&composite), &pcache, &psync_tracker),
+                    );
                 }
             }
         });
@@ -3609,8 +3607,7 @@ mod tests {
     /// mit exakt dem Frontend-Payload.
     #[test]
     fn negotiation_commands_ipc_accept_snake_case_args() {
-        use tauri::Manager;
-        use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, mock_context, noop_assets};
+        use tauri::test::{INVOKE_KEY, get_ipc_response, mock_builder, noop_assets};
 
         let app = mock_builder()
             .invoke_handler(tauri::generate_handler![
