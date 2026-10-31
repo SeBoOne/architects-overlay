@@ -3,6 +3,8 @@
 # Trigger:
 #   push auf main  -> Linux-Bundle als CI-Artifact (Sanity)
 #   Tag v*         -> Linux- + Windows-Bundle, angehängt an die Gitea-Release
+#   daily schedule -> Full-Run inkl. Mirror-Cleanup (Stale-Branches auf dem
+#                     öffentlichen GitHub-Repo werden regelmäßig entfernt)
 #
 # Runner-Labels:
 #   Linux   -> ubuntu-latest       (Docker-Runner; Tauri-Systemdeps werden im
@@ -30,6 +32,14 @@ on:
       - main
     tags:
       - 'v*'
+  # Deterministischer Mirror-Cleanup: der Stale-Cleanup in mirror-public
+  # läuft sonst nur bei Push auf main/v*-Tag — direkte Branch-Pushes an das
+  # GitHub-Repo (oder Altlasten) blieben bis zum nächsten main-Trigger
+  # stehen. Der tägliche Lauf spiegt main+Tags neu und löscht alles andere
+  # auf dem öffentlichen Repo (self-healing).
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
 
 jobs:
   linux:
