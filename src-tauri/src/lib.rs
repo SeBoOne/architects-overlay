@@ -14,6 +14,8 @@ mod hangar;
 #[cfg(desktop)]
 mod hyprland_sync;
 #[cfg(desktop)]
+mod info;
+#[cfg(desktop)]
 mod inventory;
 #[cfg(desktop)]
 mod ipc_socket;
@@ -86,6 +88,7 @@ pub fn run() {
             trade::open_uex_account,
             trade::open_uex_trade_log,
             trade::open_created_listing,
+            info::open_info_link,
             inventory::inventory_list,
             inventory::inventory_locations,
             inventory::inventory_add,

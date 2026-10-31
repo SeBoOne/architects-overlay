@@ -2103,6 +2103,144 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 14px;
 }
 
+/* TW (t_f178b084): Info-Popup — der advert-scrim oben liefert Scrim +
+   Zentrierung (inline z-index 240 setzt das Popup ÜBER alle übrigen
+   Popups/Scrims); die Karte ist eine kompakte Info-Karte (Lockup + Version
+   + Disclaimer + Badges + Links), kein Formular-Popup. Overlay-Dark-Style,
+   keine Fremd-Ressourcen (nur das offizielle UEX-Badge-PNG). */
+.info-modal {
+  width: min(640px, 94%);
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--panel2);
+  border: 1px solid var(--lineb);
+  border-radius: 4px;
+  padding: 12px 14px 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  scrollbar-width: thin;
+}
+
+.info-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--lineb);
+}
+
+.info-lockup {
+  height: 30px;
+  width: auto;
+  user-select: none;
+}
+
+/* Repo-/Release-Chips rechts im Kopf (vor dem ✕). Begründung im Markup:
+   die Shell-Höhe ist content-driven — unten wäre die Zeile abgeschnitten. */
+.info-links {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* hd-close bringt margin-left:auto mit (setzt sich sonst rechts fest) —
+   im Info-Kopf leitet .info-links den rechten Bund, ✕ schließt direkt an. */
+.info-head .hd-close {
+  margin-left: 0;
+}
+
+.info-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.info-meta {
+  display: flex;
+  gap: 16px;
+  font: 500 10.5px/1.5 var(--font-mono);
+  color: var(--fgfaint);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.info-disclaimer {
+  margin: 0;
+  font: 500 10.5px/1.45 var(--font-mono);
+  color: var(--fgdim);
+}
+
+.info-badges {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Badge-Zeile = EIN Klickziel: linkes Mark (offizielles UEX-Badge-PNG bzw.
+   Text-Mark „SC-WIKI API“) + Bezeichnung. */
+.info-badge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--lineb);
+  border-radius: 3px;
+  padding: 6px 10px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.info-badge:hover {
+  border-color: var(--accent);
+}
+
+.info-badge img {
+  height: 22px;
+  width: auto;
+  border-radius: 2px;
+  user-select: none;
+}
+
+.info-badge-mark {
+  font: 700 10px/1.4 var(--font-mono);
+  color: var(--on-accent);
+  background: var(--accent);
+  border-radius: 3px;
+  padding: 4px 8px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.info-badge-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.info-badge-text b {
+  color: var(--fg);
+  font: 700 10px/1.4 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.info-badge-text span {
+  color: var(--fgfaint);
+  font: 500 10.5px/1.4 var(--font-mono);
+}
+
+.info-links {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.info-msg {
+  color: var(--alert);
+  font: 500 10.5px/1.5 var(--font-mono);
+}
+
 .advert-modal {
   position: relative;
   /* PW-2 (t_fbe40115): volle Overlay-Höhe (minus Scrim-Rand, padding 14px)
@@ -2484,6 +2622,22 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .spot-status .dot.live {
   background: var(--ok);
   box-shadow: 0 0 6px var(--ok);
+}
+
+/* TW (t_f178b084): Info-Chip RECHTS neben dem Fokus/Klick-Button (spot-status)
+   — Ghost-Variante der Chip-Optik, springt beim Hover auf Akzent. (Spezifi-
+   zität .foot .info-btn schlägt .foot button — sonst wäre der Chip akzent-
+   gefüllt wie der Fokus/Klick-Button.) */
+.foot .info-btn {
+  color: var(--fgdim);
+  background: transparent;
+  border: 1px solid var(--lineb);
+}
+
+.foot .info-btn:hover {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .foot button {

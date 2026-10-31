@@ -441,6 +441,28 @@ window.__TAURI_INTERNALS__ = {
 			case 'open_marketplace_trades_home':
 				// QZ (t_ab10109f): „Trades verwalten" → Manager-HOME-Tab.
 				return 'https://uexcorp.space/marketplace/manage/tab/home/';
+			// TW (t_f178b084): Info-Popup-Links — Stub spiegelt die
+			// Backend-Whitelist (src-tauri/src/info.rs) und TRACKT die Aufrufe,
+			// damit die Probe kind→URL-Belege führen kann (kein echtes Fenster
+			// im Headless-Smoke).
+			case 'open_info_link': {
+				const kind = String((a || {}).kind || '').trim().toLowerCase();
+				window.__LAST_OPEN_INFO__ = (window.__LAST_OPEN_INFO__ || []).concat([kind]);
+				const INFO_URLS = {
+					uex: 'https://uexcorp.space/',
+					uex_api: 'https://uexcorp.space/api/',
+					scwiki: 'https://star-citizen.wiki/',
+					scwiki_api: 'https://api.star-citizen.wiki/',
+					repo: 'https://github.com/SeBoOne/architects-overlay',
+					releases: 'https://github.com/SeBoOne/architects-overlay/releases'
+				};
+				if (!INFO_URLS[kind]) throw new Error('Unbekannter Info-Link: ' + kind);
+				return INFO_URLS[kind];
+			}
+			// TW: tauri packageInfo (getVersion()) — Stub liefert die Version aus
+			// tauri.conf.json (Handstand mit __APP_VERSION__-Define im Probe).
+			case 'plugin:app|version':
+				return '0.5.20';
 			case 'get_prices': {
 				const name = String(a.commodity || '');
 				const now = Math.floor(Date.now() / 1000);
