@@ -39,9 +39,18 @@ Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
 
 ## Updater / install.sh
 
-- Updater: `https://api.github.com/repos/SeBoOne/architects-overlay/releases/latest`
-  (öffentlich, ohne Auth) — die Settings-Migration (TF) zieht
-  Bestandsinstallationen automatisch vom alten Gitea-Wert rüber.
+- Updater (TG): primär `https://github.com/SeBoOne/architects-overlay/releases/latest/download/latest.json`
+  — Redirect-Pfad, NICHT rate-limited (keine API; die API ist unauth. auf
+  60 req/h pro IP gedeckelt und bricht hinter CGNAT/Uni-Netzen). Jede
+  Release-Pipeline (`.github/workflows/build.yml`, Job `latest-json`) hängt
+  `latest.json` (tag, version, Assets + SHA256s, released_at) als Asset an.
+  Fallback für alte Releases ohne `latest.json`: Releases-API
+  (`releases/latest`, ohne Auth) — bei 429 zeigt der Check „Rate-Limit,
+  später erneut“.
+- Module-Overrides: bewusst WEITERHIN `raw.githubusercontent.com/SeBoOne/architects-overlay/main/src-tauri/resources/module-overrides.json`
+  (TG-Entscheidung) — die Datei lebt im main-Branch und ändert sich
+  unabhängig von Releases; raw.githubusercontent ist nicht an die
+  API-Rate-Limits gebunden.
 - install.sh: `raw.githubusercontent.com/SeBoOne/architects-overlay/main/scripts/install.sh`
   (öffentlich); Gitea bleibt als `RELEASE_BASE`-Opt-in möglich, ist aber
   nicht mehr Standard.

@@ -1,8 +1,8 @@
 //! # updater — Update-Check + on-demand Update für das Overlay
 //!
-//! UC t_d323be7e. Check ist EIN GET auf die Gitea-Releases-API (latest
-//! release) — sonst nichts (kein Telemetrie/Phoning, Karte
-//! Umsetzung 7). Downloads passieren nur auf expliziten Nutzerwunsch
+//! UC t_d323be7e, TG: Check ist EIN GET auf `latest.json` (Redirect-Pfad
+//! `releases/latest/download/`, NICHT rate-limited; Fallback: Releases-API)
+//! — sonst nichts (kein Telemetrie/Phoning, Karte Umsetzung 7). Downloads passieren nur auf expliziten Nutzerwunsch
 //! („Jetzt aktualisieren“) und werden vor dem Installieren per SHA256
 //! gegen die Release-Checksummen verifiziert (Umsetzung 5) — kein
 //! Trust-on-Download ohne Check. Fehlerpfade lassen die laufende
@@ -20,6 +20,7 @@
 mod download;
 mod gitea;
 mod integrity;
+mod latest_json;
 mod plan;
 mod version;
 
@@ -111,23 +112,34 @@ pub async fn check(
     repo: &str,
     current_version: &str,
 ) -> Result<Option<CheckResult>> {
-    let release = fetch_latest(base_url, repo).await?;
+    // TG: Check OHNE Releases-API — latest.json über den Redirect-Pfad
+    // `github.com/{repo}/releases/latest/download/latest.json` (nicht
+    // rate-limited). Fallback: fehlt die Datei (alte Releases), API wie
+    // bisher — bei 429 mit sauberer Rate-Limit-Meldung.
+    let (release, json_checksums) = match latest_json::fetch_latest_json(base_url, repo).await? {
+        Some((release, checksums)) => (release, Some(checksums)),
+        None => (fetch_latest(base_url, repo).await?, None),
+    };
     if !version::is_newer(current_version, &release.tag_name) {
         return Ok(None);
     }
-    // Sidecar-Checksummen einsammeln, sobald klar ist, dass ein Update
+    // Checksummen: bevorzugt aus latest.json (SHA256s pro Asset), sonst
+    // Sidecar-`SHA256SUMS` einsammeln, sobald klar ist, dass ein Update
     // vorliegt (spart den zweiten GET im Normalfall "aktuell").
-    let checksums_text = match plan::checksums_asset(&release) {
-        Some(asset) => match gitea::fetch_text(&asset.download_url).await {
-            Ok(text) => Some(text),
-            // Sidecar nicht erreichbar → Fallback auf Release-Body; erst
-            // der spätere Download-Versuch schlägt ggf. mit NoChecksum fehl.
-            Err(e) => {
-                log::warn!("updater: SHA256SUMS sidecar nicht lesbar: {e}");
-                None
-            }
+    let checksums_text = match json_checksums {
+        Some(text) => text,
+        None => match plan::checksums_asset(&release) {
+            Some(asset) => match gitea::fetch_text(&asset.download_url).await {
+                Ok(text) => Some(text),
+                // Sidecar nicht erreichbar → Fallback auf Release-Body; erst
+                // der spätere Download-Versuch schlägt ggf. mit NoChecksum fehl.
+                Err(e) => {
+                    log::warn!("updater: SHA256SUMS sidecar nicht lesbar: {e}");
+                    None
+                }
+            },
+            None => None,
         },
-        None => None,
     };
     let plan = plan::plan_for_release(&release, checksums_text.as_deref()).ok_or_else(|| {
         UpdaterError::Malformed(format!(

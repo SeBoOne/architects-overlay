@@ -58,6 +58,19 @@ jobs:
             target/release/bundle/deb/*.deb
             target/release/bundle/appimage/*.AppImage
 
+      # TG: SHA256-Manifest der Linux-Assets für den latest.json-Job.
+      - name: SHA256-Manifest (Linux)
+        run: |
+          cd target/release/bundle
+          sha256sum deb/*.deb appimage/*.AppImage > sha256-linux.txt
+          cat sha256-linux.txt
+
+      - name: Manifest als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256-linux
+          path: target/release/bundle/sha256-linux.txt
+
   windows:
     name: Windows (windows-latest) — NSIS/MSI
     runs-on: windows-latest
@@ -92,3 +105,83 @@ jobs:
           files: |
             target/release/bundle/nsis/*.exe
             target/release/bundle/msi/*.msi
+
+      # TG: SHA256-Manifest der Windows-Assets für den latest.json-Job.
+      - name: SHA256-Manifest (Windows)
+        shell: bash
+        run: |
+          cd target/release/bundle
+          sha256sum nsis/*.exe msi/*.msi > sha256-windows.txt
+          cat sha256-windows.txt
+
+      - name: Manifest als Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256-windows
+          path: target/release/bundle/sha256-windows.txt
+
+  # TG: latest.json — Update-Check-Index OHNE GitHub-API. Der Updater holt
+  # diese Datei über den NICHT rate-limiteden Redirect-Pfad
+  # `releases/latest/download/latest.json` statt `/releases/latest` (API:
+  # 60 req/h pro IP — bricht für CGNAT/Uni-Netze).
+  latest-json:
+    name: latest.json (Update-Index)
+    runs-on: ubuntu-latest
+    needs: [linux, windows]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Manifests herunterladen
+        uses: actions/download-artifact@v4
+        with:
+          pattern: sha256-*
+          merge-multiple: true
+          path: manifests/
+
+      - name: latest.json + SHA256SUMS bauen
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          export RELEASED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          python3 - <<'PY'
+          import json, os, glob
+          tag = os.environ["TAG"]
+          version = tag.removeprefix("v")
+          repo = os.environ["REPO_URL"]
+          lines = []
+          assets = []
+          for mf in sorted(glob.glob("manifests/sha256-*.txt")):
+              for line in open(mf):
+                  line = line.strip()
+                  if not line:
+                      continue
+                  sha, path = line.split(None, 1)
+                  name = os.path.basename(path.strip())
+                  lines.append(f"{sha}  {name}")
+                  assets.append({
+                      "name": name,
+                      "url": f"{repo}/releases/download/{tag}/{name}",
+                      "sha256": sha,
+                  })
+          latest = {
+              "tag": tag,
+              "version": version,
+              "released_at": os.environ.get("RELEASED_AT", ""),
+              "assets": assets,
+          }
+          with open("latest.json", "w") as f:
+              json.dump(latest, f, indent=2)
+              f.write("\n")
+          with open("SHA256SUMS", "w") as f:
+              f.write("\n".join(lines) + "\n")
+          print(open("latest.json").read())
+          PY
+
+      - name: latest.json + SHA256SUMS anhängen
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            latest.json
+            SHA256SUMS
