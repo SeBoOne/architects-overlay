@@ -4841,7 +4841,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							     module-overrides.json; Schiffe ohne Eintrag zeigen
 							     GAR NICHTS über Module (kein Hinweistext mehr). -->
 							<div class="hd-mods">
-								<div class="h">Module ({hangarModulesOf(hangarDetail.name).length})</div>
+								<div class="h">{$t('hangar.modules_count', { n: hangarModulesOf(hangarDetail.name).length })}</div>
 								{#each hangarModulesOf(hangarDetail.name) as m (m.id ?? m.name)}
 									<!-- TB (t_78a4a5e5, Punkt 2): Modulzeile zeigt Versicherung
 									     UND Herkunft; Klick auf den Namen öffnet das Edit-Popup. -->
@@ -5186,7 +5186,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											class="chip"
 											class:is-on={cfg.shortcuts_sync_omarchy}
 											onclick={() => void toggleOmarchySync()}
-										>{cfg.shortcuts_sync_omarchy ? '✓' : '○'} Tastenkürzel mit System (Omarchy) synchronisieren</button>
+										>{cfg.shortcuts_sync_omarchy ? '✓' : '○'} {$t('settings.omarchy_sync_toggle')}</button>
 									</div>
 									{#if cfg.shortcuts_sync_omarchy}
 										<div class="cfg-sc-ok" role="status">
@@ -5202,7 +5202,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{:else}
 									<div class="cfg-sc-warn" role="status">
 										{$t('settings.omasettings_missing')}
-										(<span class="src">{$t('settings.arch_toggle_label')}</span>, Anleitung: docs/WAYLAND.md).
+										(<span class="src">{$t('settings.arch_toggle_label')}</span>{$t('settings.omasettings_manual_suffix')}
 										{$t('settings.no_foreign_hyprland')}
 									</div>
 								{/if}
@@ -5210,7 +5210,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<div class="cfg-note" role="status">{trError(cfg.sync_note)}</div>
 								{/if}
 							{:else if cfg && !cfg.global_shortcuts_active}
-								<div class="cfg-sc-warn" role="status">{$t('settings.global_shortcuts')}<b>{$t('settings.not_os_registered')}</b> (reines Wayland ohne Hyprland):
+								<div class="cfg-sc-warn" role="status">{$t('settings.global_shortcuts')}<b>{$t('settings.not_os_registered')}</b>{$t('settings.wayland_no_hyprland_prefix')}
 									{$t('settings.wayland_no_hyprland')}
 
 								</div>
@@ -5242,7 +5242,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{/each}
 						{#if hkCapture}
 							<div class="cfg-sc-help" role="status">
-								F-Taste drücken (F1–F12) für „{modeHotkeyFields.find((f) => f.id === hkCapture)?.label ? $t(modeHotkeyFields.find((f) => f.id === hkCapture)!.label) : ''}“ — Esc bricht ab.
+								{$t('shortcuts.capture_hint', { label: modeHotkeyFields.find((f) => f.id === hkCapture)?.label ? $t(modeHotkeyFields.find((f) => f.id === hkCapture)!.label) : '' })}
 							</div>
 						{/if}
 						{#if hkNote}
@@ -5624,7 +5624,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<div class="mrow trow" style="cursor: default">
 										<div class="m-main">
 											<div class="m-title">{day.key}</div>
-											<div class="m-sub">{day.count} Trade{day.count === 1 ? '' : 's'}</div>
+											<div class="m-sub">{$t(day.count === 1 ? 'trades.day_count_one' : 'trades.day_count_other', { n: day.count })}</div>
 										</div>
 										<div class="m-right">
 											<div class="m-meta">
@@ -5667,7 +5667,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{myTrades.length} Trades · Tages-Aggregat clientseitig (Kauf = Ausgabe, Verkauf = Einnahme) · Quelle UEX /user_trades</span>
+								<span>{$t(myTrades.length === 1 ? 'trades.track_foot_one' : 'trades.track_foot_other', { n: myTrades.length })}</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{/if}
@@ -5865,7 +5865,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											</div>
 										{/if}
 										{#if rBudgetActive}
-										<div class="r-chip r-chip-menge" title={$t('routes.rb2_budget_title')}>Menge {fmtQty(r.quantity)} SCU</div>
+										<div class="r-chip r-chip-menge" title={$t('routes.rb2_budget_title')}>{$t('routes.quantity_chip', { qty: fmtQty(r.quantity) })}</div>
 										{/if}
 									</div>
 									<div class="m-right">
@@ -5943,7 +5943,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								aria-label={$t('trades.send_chat_title')}
 							/>
 							<button type="button" class="btn" disabled={chatBusy || !chatDraft.trim()} onclick={() => void sendChat()}>
-								{chatBusy ? $t('common.sending') : 'Senden'}
+								{chatBusy ? $t('common.sending') : $t('trades.send')}
 							</button>
 							</div>
 							{:else}
@@ -6014,7 +6014,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{dealsSorted.length} Deals · Chat im Overlay · Starten/Beenden/Bewerten nur auf UEX (Deep-Link) · Polling 1/min</span>
+								<span>{$t(dealsSorted.length === 1 ? 'deals.list_foot_one' : 'deals.list_foot_other', { n: dealsSorted.length })}</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{/if}
@@ -6094,7 +6094,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												</div>
 											{/if}
 											<div class="mbar2" style="margin-top: 10px">
-													<span class="m-lbl">Eigene Offers ({myOffers.length}{shopPending.length ? ` + ${shopPending.length} ${$t('shop.pending_short')}` : ''})</span>
+													<span class="m-lbl">{$t('shop.own_offers_prefix')} ({myOffers.length}{shopPending.length ? ` + ${shopPending.length} ${$t('shop.pending_short')}` : ''})</span>
 															<!-- QZ (t_ab10109f): Filter Alle/Aktiv/Wartend ENTFERNT — UEX
 															     kann wartende Listings nicht per API liefern; Wartende
 															     kommen lokal (pending_offers) und sind immer sichtbar. -->
