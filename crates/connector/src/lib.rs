@@ -14,6 +14,6 @@ pub mod manifest;
 pub mod mapping;
 pub mod validate;
 
-pub use manifest::ConnectorManifest;
+pub use manifest::{AuthType, ConnectorManifest, View, ViewType};
 pub use mapping::{DotPathError, dot_path};
 pub use validate::{MAX_MANIFEST_BYTES, Report, validate_manifest};

@@ -435,6 +435,20 @@ struct RawConfig {
     /// UC t_d323be7e: Update-Check-Konfiguration (Default-Repo/Intervall).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     updater: Option<UpdaterSection>,
+    /// C2 (t_91124322): Connector-Zustand (Aktivierung/Auth/Hotkey-Slots).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    connectors: Option<ConnectorsSection>,
+}
+
+/// C2 (t_91124322): Connector-Abschnitt der Config — Maps pro Connector-ID.
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct ConnectorsSection {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    enabled: std::collections::BTreeMap<String, bool>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    auth: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    hotkeys: std::collections::BTreeMap<String, String>,
 }
 
 /// UC t_d323be7e: `[updater]`-Sektion. `base_url`/`repo` sind Config-only
@@ -648,7 +662,7 @@ impl std::error::Error for SettingsError {}
 pub type Result<T> = std::result::Result<T, SettingsError>;
 
 /// The application settings. Load once, mutate, save.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Settings {
     path: PathBuf,
     uex_api_key: Option<String>,
@@ -656,6 +670,14 @@ pub struct Settings {
     uex_secret_key: Option<String>,
     /// M2a-Fix: UEX-Benutzername für `marketplace_listings?username=`-Pull.
     uex_username: Option<String>,
+    /// C2 (t_91124322): Connector-Zustand — Aktivierung pro Connector-ID.
+    connectors_enabled: std::collections::BTreeMap<String, bool>,
+    /// C2: Auth-Werte pro Connector (value_source-Key → Secret). Secrets —
+    /// verlassen das Backend nie (gleiche Auflage wie uex_secret_key).
+    connectors_auth:
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    /// C2: Mode-Hotkey-Slots für `placement.kind=own`-Connectors (ID → F-Key).
+    connectors_hotkeys: std::collections::BTreeMap<String, String>,
     palette: Palette,
     detail_variant: DetailVariant,
     scale: u16,
@@ -687,6 +709,9 @@ impl Default for Settings {
             uex_api_key: None,
             uex_secret_key: None,
             uex_username: None,
+            connectors_enabled: Default::default(),
+            connectors_auth: Default::default(),
+            connectors_hotkeys: Default::default(),
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             scale: SCALE_DEFAULT,
@@ -819,6 +844,21 @@ impl Settings {
                     }
                 })
                 .unwrap_or_else(|| UPDATER_BASE_URL_DEFAULT.to_owned()),
+            connectors_enabled: raw
+                .connectors
+                .as_ref()
+                .map(|c| c.enabled.clone())
+                .unwrap_or_default(),
+            connectors_auth: raw
+                .connectors
+                .as_ref()
+                .map(|c| c.auth.clone())
+                .unwrap_or_default(),
+            connectors_hotkeys: raw
+                .connectors
+                .as_ref()
+                .map(|c| c.hotkeys.clone())
+                .unwrap_or_default(),
         };
         // TF t_0d510f31: migrierte Legacy-Werte zurück in die Datei
         // schreiben, damit der alte Gitea-Eintrag dauerhaft verschwindet.
@@ -845,6 +885,9 @@ impl Settings {
             uex_api_key: None,
             uex_secret_key: None,
             uex_username: None,
+            connectors_enabled: Default::default(),
+            connectors_auth: Default::default(),
+            connectors_hotkeys: Default::default(),
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
             scale: SCALE_DEFAULT,
@@ -890,6 +933,65 @@ impl Settings {
     /// Set the UEX username (persist via [`Settings::save`]).
     pub fn set_uex_username(&mut self, name: Option<String>) {
         self.uex_username = name;
+    }
+
+    // ---- C2 (t_91124322): Connector-Zustand ---------------------------------
+
+    /// Ist der Connector aktiviert? Unbekannte IDs → false (nur importiert +
+    /// aktiviert schaltet das Placement scharf).
+    pub fn connector_enabled(&self, id: &str) -> bool {
+        self.connectors_enabled.get(id).copied().unwrap_or(false)
+    }
+
+    pub fn set_connector_enabled(&mut self, id: &str, on: bool) {
+        self.connectors_enabled.insert(id.to_owned(), on);
+    }
+
+    /// Auth-Secret eines Connectors (value_source-Key). NIE in Snapshot/Logs.
+    pub fn connector_auth_value(&self, id: &str, key: &str) -> Option<&str> {
+        self.connectors_auth.get(id)?.get(key).map(String::as_str)
+    }
+
+    /// Set/entfernt (None) ein Auth-Secret; leere Rest-Maps werden abgeräumt.
+    pub fn set_connector_auth_value(&mut self, id: &str, key: &str, value: Option<String>) {
+        let entry = self.connectors_auth.entry(id.to_owned()).or_default();
+        match value {
+            Some(v) => {
+                entry.insert(key.to_owned(), v);
+            }
+            None => {
+                entry.remove(key);
+                if entry.is_empty() {
+                    self.connectors_auth.remove(id);
+                }
+            }
+        }
+    }
+
+    /// Konfigurierter Hotkey-Slot eines own-Connectors.
+    pub fn connector_hotkey(&self, id: &str) -> Option<&str> {
+        self.connectors_hotkeys.get(id).map(String::as_str)
+    }
+
+    pub fn set_connector_hotkey(&mut self, id: &str, canonical: String) {
+        self.connectors_hotkeys.insert(id.to_owned(), canonical);
+    }
+
+    /// Entfernt den Hotkey-Slot eines Connectors (None/leer im Command).
+    pub fn remove_connector_hotkey(&mut self, id: &str) {
+        self.connectors_hotkeys.remove(id);
+    }
+
+    pub fn connector_hotkeys(&self) -> &std::collections::BTreeMap<String, String> {
+        &self.connectors_hotkeys
+    }
+
+    /// Entfernt ALLE Connector-Reste (Toggle/Remove im Backend — der Manifest-
+    /// Speicher lebt separat im Connector-State).
+    pub fn remove_connector_state(&mut self, id: &str) {
+        self.connectors_enabled.remove(id);
+        self.connectors_auth.remove(id);
+        self.connectors_hotkeys.remove(id);
     }
 
     /// Active colour palette (default: Amber).
@@ -1055,6 +1157,11 @@ impl Settings {
                 interval_hours: Some(self.updater_interval_hours),
                 repo: Some(self.updater_repo.clone()),
                 base_url: Some(self.updater_base_url.clone()),
+            }),
+            connectors: Some(ConnectorsSection {
+                enabled: self.connectors_enabled.clone(),
+                auth: self.connectors_auth.clone(),
+                hotkeys: self.connectors_hotkeys.clone(),
             }),
         };
         let content = toml::to_string_pretty(&raw)
