@@ -5676,7 +5676,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="md-head">
 								<div class="md-t">
 									<h2>{rDetail.commodity} {rDetail.illegal ? $t('market.illegal_chip') : ''}</h2>
-									<span class="tag" style="color: var(--fgdim)">Distanz: {DIST_LABELS[rDetail.distance] ?? rDetail.distance}</span>
+									<span class="tag" style="color: var(--fgdim)">{$t('routes.distance_chip', { d: DIST_LABELS[rDetail.distance] ?? rDetail.distance })}</span>
 								</div>
 								<div class="md-price">
 									<div class="v sell">+{fmtPrice(rDetail.profit_total)}</div>
@@ -5870,14 +5870,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									</div>
 									<div class="m-right">
 										<div class="m-price sell" title={$t('routes.gain_scu_formula_title')}>+{fmtPrice(r.profit_per_scu)}</div>
-										<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title={$t('routes.margin_relative_title')}>Marge {(r.margin * 100).toFixed(0)} %</span></div>
+										<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title={$t('routes.margin_relative_title')}>{$t('routes.margin_pct', { v: (r.margin * 100).toFixed(0) })}</span></div>
 										{#if rBudgetActive && r.quantity <= 0}<div class="r-hint">{$t('routes.budget_too_low')}</div>{/if}
 									</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{$t('routes.count', { n: routes_.length })} · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · Marge = relative % (Gain/SCU ÷ Buy)</span>
+								<span>{$t('routes.count', { n: routes_.length })} · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · {$t('routes.margin_formula_suffix')}</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{:else}
@@ -5950,7 +5950,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<!-- Read-only-Fuß: Verlauf bleibt sichtbar, Senden entfällt.
 							     QY: auch einseitig beendet (nur eine Seite geschlossen). -->
 							<div class="mbar">
-								<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? $t('trades.completed') : $t('trades.ended')} — Verlauf nur lesbar</span>
+								<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? $t('trades.completed') : $t('trades.ended')}{$t('trades.readonly_suffix')}</span>
 								<!-- Q1 (t_535a98fb): unterer zweiter Button ENTFIELT — der obere
 								     „Deal auf UEX öffnen" bleibt immer sichtbar und zielt auf
 								     den Deal (negotiate/hash), nicht auf das Listing. -->
@@ -6358,7 +6358,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												<div class="m-op {p.operation}">{p.operation === 'sell' ? 'WTS' : 'WTB'}</div>
 												<div class="m-main">
 													<div class="m-title">{p.title}</div>
-													<div class="m-sub">{p.location || '—'} · seit {new Date(p.created_at * 1000).toLocaleString('de-DE')}</div>
+													<div class="m-sub">{p.location || '—'} · {$t('shop.listed_since', { date: new Date(p.created_at * 1000).toLocaleString('de-DE') })}</div>
 													<span class="chip warn" title={p.created_at < Date.now() / 1000 - 24 * 3600 ? tr('shop.approval_stale_note') : tr('shop.pending_moderation_title')}>{p.created_at < Date.now() / 1000 - 24 * 3600 ? $t('shop.approval_unconfirmed') : $t('shop.status_pending')}</span>
 												</div>
 												<div class="m-right">
