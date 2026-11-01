@@ -49,7 +49,12 @@
 	const views = $derived(entry.manifest.views ?? []);
 	// SF1: Screen-Flows — eigene Tabs (Muster wie Routen/Trade-Logs), der
 	// Flow-Renderer übernimmt die komplette Kette (generisch, Overlay-Optik).
+	// SF4: Existieren Flows, sind sie die EINZIGEN Top-Level-Tabs (Tab-Leiste =
+	// Flow-Auswahl) — views sind dann nur Screen-Inhalt (<flow>:<screen>-Keys)
+	// und erscheinen nie als eigene Tabs. Nur manifests OHNE flows behalten
+	// das Fallback-Verhalten (views als Tabs, wie gehabt).
 	const flows = $derived(entry.manifest.flows ?? []);
+	const hasFlows = $derived(flows.length > 0);
 	let viewId = $state<string>('');
 	let flowId = $state<string | null>(null);
 	// SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — aktiviert den
@@ -72,6 +77,15 @@
 	// SF1: aktivierter Flow (für den Content-Zweig unterhalb).
 	const activeFlow = $derived<FlowDTO | null>(
 		flowId ? (flows.find((f) => f.id === flowId) ?? null) : null
+	);
+	// SF4-Fix: FlowRenderer bindet startId/screenId nur beim Mount — bei
+	// Flow-Wechsel (SF4-Flow-Tabs) oder Suchleisten-(Re-)Einstieg (anderer
+	// initial-Screen) muss er REMOUNTEN, sonst bleibt der Screen des
+	// vorherigen Flows stehen („Flow is missing its entry screen“).
+	const flowKey = $derived(
+		activeFlow
+			? `${activeFlow.id}:${initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? '') : ''}`
+			: ''
 	);
 	const lang = $derived(currentLang());
 	const title = $derived(labelOf(entry.manifest.name, lang));
@@ -215,6 +229,13 @@
 		// laden (fehlende Pflicht-Parameter zeigen den Eingabe-Prompt). Die
 		// Pin-Loads laufen UNTRACKED — der Effect hängt nur an viewId; die
 		// paramValues-Writes dürfen ihn nicht neu triggern (Loop-Schutz).
+		if (hasFlows) {
+			// SF4: Flow-Modus — kein View-Auto-Select, kein View-Polling; der
+			// FlowRenderer steuert seine eigenen Fetches. Start = erster Flow
+			// (oder initialFlow aus der Suchleiste).
+			if (!flowId && !initialFlow && flows.length) flowId = flows[0].id;
+			return;
+		}
 		if (!viewId && views.length) viewId = views[0].id;
 		const id = viewId;
 		if (id && !paramLoaded) {
@@ -259,17 +280,24 @@
 		</div>
 	{/if}
 
-	{#if views.length > 1 || flows.length > 0}
+	{#if hasFlows}
+		<!-- SF4: Tab-Leiste = Flow-Auswahl (nur Flows). Interne Screens sind
+		     Flow-Zustände (ZURÜCK/Weiter im FlowRenderer) — niemals Tabs. -->
 		<div class="connector-tabs" role="tablist" aria-label={title}>
 			{#each flows as fl (fl.id)}
 				<button
 					type="button"
+					role="tab"
 					class="ctab"
 					class:is-on={flowId === fl.id}
-					aria-pressed={flowId === fl.id}
+					aria-selected={flowId === fl.id}
 					onclick={() => selectFlow(fl.id)}
 				>{labelOf(fl.title, lang)}</button>
 			{/each}
+		</div>
+	{:else if views.length > 1}
+		<!-- Fallback (Manifests ohne flows, z. B. AAWA später): views als Tabs. -->
+		<div class="connector-tabs" role="tablist" aria-label={title}>
 			{#each views as v (v.id)}
 				<button
 					type="button"
@@ -285,7 +313,7 @@
 		</div>
 	{/if}
 
-	{#if view && view.type !== 'form' && (view.params ?? []).length > 0}
+	{#if !hasFlows && view && view.type !== 'form' && (view.params ?? []).length > 0}
 		<!-- C3: View-Parameter (z. B. Session-Code) — Eingabe + Pin im
 		     Connector-Zustand, NICHT global in den Settings. -->
 		<div class="cparams" role="group">
@@ -326,7 +354,7 @@
 		</div>
 	{/if}
 
-	{#if view && view.type !== 'form'}
+	{#if !hasFlows && view && view.type !== 'form'}
 		<div class="connector-tools">
 			{#if res.loading}
 				<span class="cstate">{$t('common.loading')}</span>
@@ -342,8 +370,11 @@
 	{/if}
 
 	{#if activeFlow}
-		<!-- SF1: Flow-Renderer übernimmt die komplette Screen-Kette
-		     (generisch — KEIN connector-spezifisches Wissen hier). -->
+		<!-- SF1/SF4: Flow-Renderer übernimmt die komplette Screen-Kette
+		     (generisch — KEIN connector-spezifisches Wissen hier).
+		     {#key} = Remount bei Flow-Wechsel/initial-Screen-Wechsel
+		     (SF4-Fix: startId ist sonst nur beim ersten Mount gebunden). -->
+		{#key flowKey}
 		<FlowRenderer
 			{entry}
 			flow={activeFlow}
@@ -351,6 +382,7 @@
 			initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null}
 			initialState={initialFlow?.flowId === activeFlow.id ? initialFlowState : null}
 		/>
+		{/key}
 	{:else if res.error}
 		<div class="cerror" role="alert">{res.error}</div>
 	{:else if view?.type === 'form'}
