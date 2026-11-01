@@ -1,0 +1,11 @@
+[package]
+name = "connector"
+version = "0.1.0"
+description = "Manifest-Connector framework — schema, validator, dot-path mapping (C1)"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
