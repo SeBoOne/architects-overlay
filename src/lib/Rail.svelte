@@ -10,7 +10,8 @@
 	// transparente Hintergrund des Spotlight-Fensters bleibt unberührt.
 	// Bei schmaler Shell kollabiert sie auf reine Icons (`compact` vom
 	// Elternteil per bind:clientWidth gemessen).
-	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
+	// C2: 'own' = eigener Bereich eines aktivierten Connectors.
+	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'own';
 	type Entry = {
 		id: Mode;
 		key: string;
@@ -25,12 +26,20 @@
 		onselect,
 		// PB (t_1c9bc240, B1): persistierte Mode-Hotkeys (Snapshot der Settings).
 		// Fehlender/ungültiger Eintrag → Default (Migrationspfad zur neuen Belegung).
-		hotkeys
+		hotkeys,
+		// C2 (t_91124322): eigene Bereiche aktivierter own-Connectors —
+		// dynamische Einträge zwischen Hangar und Settings (Placement-Konzept).
+		ownEntries = [],
+		ownActive = null,
+		onselectOwn
 	}: {
 		mode: Mode;
 		compact?: boolean;
 		onselect: (m: Mode) => void;
 		hotkeys?: Partial<Record<Mode, string>>;
+		ownEntries?: { id: string; key: string; label: string }[];
+		ownActive?: string | null;
+		onselectOwn: (id: string) => void;
 	} = $props();
 
 	// Inventar/Hangar: eigene Karten — hier nur Rail-Eintrag + Platzhalter-View.
@@ -46,7 +55,7 @@
 	// PB (t_1c9bc240, B1): angezeigte Taste = persistierter Wert (Settings-
 	// Snapshot) mit Fallback auf die Defaults — identische Quelle wie der
 	// Keyhandler in +page.svelte (lib/hotkeys.ts).
-	const DEFAULT_KEYS: Record<Mode, string> = {
+	const DEFAULT_KEYS: Record<Exclude<Mode, 'own'>, string> = {
 		search: 'F1',
 		market: 'F2',
 		routes: 'F3',
@@ -56,9 +65,10 @@
 	};
 	function keyFor(id: Mode): string {
 		const k = hotkeys?.[id];
+		const fallback = DEFAULT_KEYS[id as Exclude<Mode, 'own'>];
 		return typeof k === 'string' && /^F([1-9]|1[0-2])$/.test(k.trim().toUpperCase())
 			? k.trim().toUpperCase()
-			: DEFAULT_KEYS[id];
+			: fallback;
 	}
 	function titleFor(en: Entry): string {
 		const label = en.id === 'routes' ? 'nav.routes_full' : en.label;
@@ -117,6 +127,27 @@
 			</span>
 			<span class="rkey">{keyFor(en.id)}</span>
 			<span class="rlbl">{$t(en.label)}</span>
+		</button>
+	{/each}
+	{#each ownEntries as oe (oe.id)}
+		<button
+			type="button"
+			class="rentry"
+			class:is-on={ownActive === oe.id}
+			onclick={() => onselectOwn(oe.id)}
+			title={`${oe.label} (${oe.key})`}
+			aria-label={`${oe.label} (${oe.key})`}
+			aria-current={ownActive === oe.id ? 'true' : undefined}
+		>
+			<span class="ric">
+				<!-- C2: Plug-Icon (Manifest-Connector, eigener Bereich) -->
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-5 5 5 5 0 0 1-5-5V7Z" />
+					<path d="M12 16v5" />
+				</svg>
+			</span>
+			<span class="rkey">{oe.key || '—'}</span>
+			<span class="rlbl">{oe.label}</span>
 		</button>
 	{/each}
 </nav>

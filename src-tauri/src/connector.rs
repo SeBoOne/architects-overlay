@@ -52,7 +52,11 @@ pub struct ConnectorEntry {
 }
 
 impl ConnectorEntry {
-    fn from_parts(id: &str, manifest: &serde_json::Value, s: &settings::Settings) -> ConnectorEntry {
+    fn from_parts(
+        id: &str,
+        manifest: &serde_json::Value,
+        s: &settings::Settings,
+    ) -> ConnectorEntry {
         // Auth-Deklaration aus dem Manifest lesen (value_source-Keys).
         let mut auth_set = BTreeMap::new();
         if let Some(auth) = manifest.get("auth").and_then(|a| a.get("value_source")) {
@@ -176,11 +180,7 @@ pub fn parse_and_validate(
     })?;
     let report = connector::validate_manifest(text.as_bytes());
     if !report.is_ok() {
-        let items: Vec<String> = report
-            .errors
-            .iter()
-            .map(|e| e.to_string())
-            .collect();
+        let items: Vec<String> = report.errors.iter().map(|e| e.to_string()).collect();
         return Err(LocaleError::new(
             "error.connector.validation_failed",
             &[("details", items.join("; "))],
@@ -205,8 +205,8 @@ pub async fn connector_import(
     manifest_json: String,
     ignore_warnings: bool,
 ) -> Result<Vec<ConnectorEntry>, String> {
-    let manifest = parse_and_validate(&manifest_json, ignore_warnings)
-        .map_err(|e| e.to_json_string())?;
+    let manifest =
+        parse_and_validate(&manifest_json, ignore_warnings).map_err(|e| e.to_json_string())?;
     let st = StoredConnector {
         value: serde_json::from_str(&manifest_json).unwrap_or(serde_json::Value::Null),
         raw: manifest_json,
@@ -275,7 +275,7 @@ pub async fn connector_set_enabled(
     {
         let entries = state.entries.lock().expect("connector entries lock");
         if !entries.iter().any(|e| e.manifest.id == id) {
-            return Err(err_key("error.connector.unknown"))
+            return Err(err_key("error.connector.unknown"));
         }
     }
     {
@@ -386,7 +386,7 @@ pub async fn connector_fetch(
     let (manifest, view) = {
         let entries = state.entries.lock().expect("connector entries lock");
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
-            return Err(err_key("error.connector.unknown"))
+            return Err(err_key("error.connector.unknown"));
         };
         let Some(v) = st.manifest.views.iter().find(|v| v.id == view_id) else {
             return Err(err_key("error.connector.view_unknown"));
@@ -427,7 +427,11 @@ pub async fn connector_fetch(
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?
-        .get(format!("{}{}", manifest.base_url.trim_end_matches('/'), view.endpoint));
+        .get(format!(
+            "{}{}",
+            manifest.base_url.trim_end_matches('/'),
+            view.endpoint
+        ));
     if let Some(auth) = &manifest.auth {
         if auth.auth_type == connector::AuthType::Header {
             if let (Some(header), Some(source)) = (&auth.header, &auth.value_source) {
@@ -448,7 +452,10 @@ pub async fn connector_fetch(
         .await
         .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
     let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        err_keyp("error.connector.invalid_json", json!({ "detail": e.to_string() }))
+        err_keyp(
+            "error.connector.invalid_json",
+            json!({ "detail": e.to_string() }),
+        )
     })?;
     let mapped = map_view(&view, &body)?;
     {
@@ -469,6 +476,111 @@ pub async fn connector_fetch(
         cached: false,
         fetched_at_ms: now_ms,
     })
+}
+
+/// Generischer Form-Submit (Formular-View): validiert Pflichtfelder, füllt
+/// `{param}`-Platzhalter in path + body_template, sendet mit Header-Auth.
+/// Antwort: `{ status, body }`. Write nur USER-initiiert (Button) — hier
+/// gibt es kein Polling, kein Hintergrundaufruf.
+#[tauri::command]
+pub async fn connector_form_submit(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    id: String,
+    form_id: String,
+    values: BTreeMap<String, serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let (manifest, form) = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
+            return Err(err_key("error.connector.unknown"));
+        };
+        let Some(v) = st.manifest.views.iter().find(|v| v.id == form_id) else {
+            return Err(err_key("error.connector.view_unknown"));
+        };
+        let Some(f) = &v.form else {
+            return Err(err_key("error.connector.form_not_fetchable"));
+        };
+        (st.manifest.clone(), f.clone())
+    };
+    // Pflichtfelder: leere/fehlende Werte → error_key mit Feld-Key.
+    for field in &form.fields {
+        if field.required {
+            let missing = values
+                .get(&field.key)
+                .map(|v| {
+                    v.as_str()
+                        .map(|s| s.trim().is_empty())
+                        .unwrap_or(v.is_null())
+                })
+                .unwrap_or(true);
+            if missing {
+                return Err(err_keyp(
+                    "error.connector.field_required",
+                    json!({ "key": field.key }),
+                ));
+            }
+        }
+    }
+    let fill = |s: &str| -> String {
+        let mut out = s.to_owned();
+        for (k, v) in &values {
+            // JSON-kodiert einsetzen (Strings kommen gequoted, Zahlen nackt).
+            out = out.replace(&format!("{{{k}}}"), &v.to_string());
+        }
+        out
+    };
+    let path = fill(&form.path);
+    let body_text = fill(&form.body_template.to_string());
+    let body: serde_json::Value =
+        serde_json::from_str(&body_text).unwrap_or(form.body_template.clone());
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?
+        .request(
+            match form.method {
+                connector::manifest::HttpMethod::Get => reqwest::Method::GET,
+                connector::manifest::HttpMethod::Post => reqwest::Method::POST,
+                connector::manifest::HttpMethod::Patch => reqwest::Method::PATCH,
+                connector::manifest::HttpMethod::Put => reqwest::Method::PUT,
+                connector::manifest::HttpMethod::Delete => reqwest::Method::DELETE,
+            },
+            format!("{}{}", manifest.base_url.trim_end_matches('/'), path),
+        );
+    if let Some(auth) = &manifest.auth {
+        if auth.auth_type == connector::AuthType::Header {
+            if let (Some(header), Some(source)) = (&auth.header, &auth.value_source) {
+                let s = settings_state.inner.lock().expect("settings lock");
+                if let Some(v) = s.connector_auth_value(&id, source) {
+                    req = req.header(header.as_str(), v.to_owned());
+                }
+            }
+        }
+    }
+    if !matches!(
+        form.method,
+        connector::manifest::HttpMethod::Get | connector::manifest::HttpMethod::Delete
+    ) {
+        req = req
+            .header("Content-Type", "application/json")
+            .body(body.to_string());
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
+    let status = resp.status().as_u16();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
+    let resp_body: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
+    // Writes invalidieren den Cache des Connectors — die Listen zeigen den
+    // neuen Stand beim nächsten Refresh (Polling/Manual).
+    state.cache.lock().expect("cache lock").clear();
+    Ok(json!({ "status": status, "body": resp_body }))
 }
 
 /// Dot-Path-Mapping gemäß Manifest: `mapping`-Feld → Wert pro Zeile
@@ -528,7 +640,10 @@ mod tests {
         connector::View {
             id: "v".into(),
             view_type: t,
-            title: connector::manifest::LocalizedText { de: "T".into(), en: "T".into() },
+            title: connector::manifest::LocalizedText {
+                de: "T".into(),
+                en: "T".into(),
+            },
             endpoint: "/x".into(),
             mapping: mapping
                 .iter()

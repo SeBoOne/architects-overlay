@@ -674,8 +674,7 @@ pub struct Settings {
     connectors_enabled: std::collections::BTreeMap<String, bool>,
     /// C2: Auth-Werte pro Connector (value_source-Key → Secret). Secrets —
     /// verlassen das Backend nie (gleiche Auflage wie uex_secret_key).
-    connectors_auth:
-        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    connectors_auth: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
     /// C2: Mode-Hotkey-Slots für `placement.kind=own`-Connectors (ID → F-Key).
     connectors_hotkeys: std::collections::BTreeMap<String, String>,
     palette: Palette,

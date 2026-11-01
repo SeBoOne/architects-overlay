@@ -9,9 +9,9 @@
 use std::sync::Arc;
 
 #[cfg(desktop)]
-mod connector;
-#[cfg(desktop)]
 mod app_settings;
+#[cfg(desktop)]
+mod connector;
 mod hangar;
 #[cfg(desktop)]
 mod hyprland_sync;
@@ -136,6 +136,7 @@ pub fn run() {
             connector::connector_set_auth_value,
             connector::connector_set_hotkey,
             connector::connector_fetch,
+            connector::connector_form_submit,
             overlay::overlay_config_closed,
         ]);
     }

@@ -18,18 +18,18 @@
 //!   übernimmt das Selbst-Erstzen); Linux: AppImage atomar ersetzen
 
 mod download;
-mod release_api;
 mod integrity;
 mod latest_json;
 mod plan;
+mod release_api;
 mod version;
 
 pub use download::{MAX_DOWNLOAD_BYTES, download_asset};
-pub use release_api::{Asset, Release, fetch_latest};
 pub use integrity::{CHECKSUMS_ASSET, parse_checksums, sha256_file};
 pub use plan::{
     AppKind, Plan, bare_binary_exe, linux_update_dir, plan_for_release, windows_update_dir,
 };
+pub use release_api::{Asset, Release, fetch_latest};
 pub use version::{is_newer, parse_version};
 
 /// Fehler eines Update-Vorgangs. T2 (t_c5904bcb): Display liefert
