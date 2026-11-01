@@ -86,7 +86,7 @@ and you can add your own language **without touching the code**:
 
 Fallback chain: *your language → English → raw key*. Missing keys never break
 anything; they simply fall back. Built-in languages (`en`, `de`) cannot be
-overwritten by local files. Contributions welcome (Gitea-first): a tested
+overwritten by local files. Contributions welcome (GitHub): a tested
 translation is gladly merged into `resources/locales/` as a new built-in.
 
 ## Development

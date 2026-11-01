@@ -26,8 +26,7 @@ Das Script erkennt die Distro automatisch:
 
 > **Voraussetzung:** Releases müssen öffentlich ladbar sein — der Default
 > (öffentliches GitHub-Mirror-Repo, S5) erfüllt das. Für die private
-> Gitea-Instanz: `RELEASE_BASE=https://git.sebo-home.de REPO_SLUG=sebo/architects-overlay`
-> (und ggf. `GITEA_TOKEN=<token>`) setzen. x86_64 erforderlich.
+> x86_64 erforderlich.
 
 ### Flags
 

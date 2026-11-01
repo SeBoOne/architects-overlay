@@ -22,7 +22,7 @@
 
 use std::path::PathBuf;
 
-use super::gitea::{Asset, Release};
+use super::release_api::{Asset, Release};
 use super::integrity::CHECKSUMS_ASSET;
 use super::integrity::find_checksum;
 

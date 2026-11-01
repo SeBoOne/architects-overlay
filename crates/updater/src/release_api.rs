@@ -2,10 +2,8 @@
 //! `repos/{repo}/releases/latest` — sonst KEIN Netzverkehr
 //! (kein Telemetrie/Phoning, Karte Umsetzung 7).
 //!
-//! Zwei API-Formen (S5 Endpoint-Switch): GitHub (`https://api.github.com`,
-//! Pfad ohne `/api/v1`) und Gitea (`https://git.sebo-home.de`, Pfad mit
-//! `/api/v1`). Die JSON-Form ist identisch (tag_name/body/assets mit
-//! browser_download_url), daher reicht der URL-Builder-Unterschied.
+//! GitHub-API-Form (`https://api.github.com`). Die JSON-Form ist
+//! release-API-kompatibel (tag_name/body/assets mit browser_download_url).
 //!
 //! HTTPS-only (Umsetzung 5): eine Base-URL ohne `https://` wird VOR dem
 //! Request abgelehnt — unabhängig davon, was in der Config steht.

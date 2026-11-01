@@ -52,5 +52,5 @@ Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
   unabhängig von Releases; raw.githubusercontent ist nicht an die
   API-Rate-Limits gebunden.
 - install.sh: `raw.githubusercontent.com/SeBoOne/architects-overlay/main/scripts/install.sh`
-  (öffentlich); Gitea bleibt als `RELEASE_BASE`-Opt-in möglich, ist aber
+  (öffentlich); die Release-Quelle ist ausschließlich GitHub.
   nicht mehr Standard.

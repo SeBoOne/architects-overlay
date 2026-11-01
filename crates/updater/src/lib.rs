@@ -18,14 +18,14 @@
 //!   übernimmt das Selbst-Erstzen); Linux: AppImage atomar ersetzen
 
 mod download;
-mod gitea;
+mod release_api;
 mod integrity;
 mod latest_json;
 mod plan;
 mod version;
 
 pub use download::{MAX_DOWNLOAD_BYTES, download_asset};
-pub use gitea::{Asset, Release, fetch_latest};
+pub use release_api::{Asset, Release, fetch_latest};
 pub use integrity::{CHECKSUMS_ASSET, parse_checksums, sha256_file};
 pub use plan::{
     AppKind, Plan, bare_binary_exe, linux_update_dir, plan_for_release, windows_update_dir,
@@ -178,7 +178,7 @@ pub async fn check(
     let checksums_text = match json_checksums {
         Some(text) => text,
         None => match plan::checksums_asset(&release) {
-            Some(asset) => match gitea::fetch_text(&asset.download_url).await {
+            Some(asset) => match release_api::fetch_text(&asset.download_url).await {
                 Ok(text) => Some(text),
                 // Sidecar nicht erreichbar → Fallback auf Release-Body; erst
                 // der spätere Download-Versuch schlägt ggf. mit NoChecksum fehl.

@@ -628,7 +628,7 @@ mod tests {
         // Ergebnisse für die Probe-Schiffe — inkl. Arrow OHNE Datei-Eintrag.
         let overrides = effective_override_rows(&cache);
         let fixture = serde_json::json!({
-            "_doc": "Erzeugt vom Live-Test live_sync_file_only_and_decision (echte Gitea-Raw/Repo-Baseline + reale modul_for_ship_decision-Logik, S4 Nur-Datei-Regel) — NICHT von Hand editieren.",
+            "_doc": "Erzeugt vom Live-Test live_sync_file_only_and_decision (echte Raw-URL/Repo-Baseline + reale modul_for_ship_decision-Logik, S4 Nur-Datei-Regel) — NICHT von Hand editieren.",
             "for_ship": {
                 "aegis eclipse": modul_for_ship_decision("Aegis Eclipse", &overrides),
                 "aegis retaliator": modul_for_ship_decision("Aegis Retaliator", &overrides),

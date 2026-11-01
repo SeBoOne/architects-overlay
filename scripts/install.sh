@@ -4,8 +4,7 @@
 # Einzeiler (öffentliches GitHub-Mirror-Repo, S5):
 #   curl -fsSL https://raw.githubusercontent.com/SeBoOne/architects-overlay/main/scripts/install.sh | bash
 #
-# Gitea (private Dev-Instanz) bleibt als RELEASE_BASE möglich:
-#   RELEASE_BASE=https://git.sebo-home.de REPO_SLUG=sebo/architects-overlay bash install.sh
+# Release-Quelle ist ausschließlich der öffentliche GitHub-Mirror.
 #
 # Flags:
 #   --version vX.Y.Z   Release pinnen (default: neuestes Release)
@@ -25,14 +24,13 @@
 
 set -euo pipefail
 
-# Release-Quelle (S5): öffentlicher GitHub-Mirror ist Default. RELEASE_BASE
-# (oder kompatibel GITEA_BASE) schaltet auf eine Gitea-Instanz um — der
+# Release-Quelle (S5): öffentlicher GitHub-Mirror (Default).
 # Script-Support erkennt die API-Form am Host (github.com → GitHub-API).
-RELEASE_BASE="${RELEASE_BASE:-${GITEA_BASE:-https://api.github.com}}"
+RELEASE_BASE="${RELEASE_BASE:-https://api.github.com}"
 IS_GITHUB=0
 [[ "$RELEASE_BASE" == *github.com* ]] && IS_GITHUB=1
 REPO_SLUG="${REPO_SLUG:-$( [[ $IS_GITHUB -eq 1 ]] && echo SeBoOne/architects-overlay || echo sebo/architects-overlay )}"
-GITEA_TOKEN="${GITEA_TOKEN:-}"
+
 APP_ID="com.sebo.architects-overlay"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_ID"
 BIN_DIR="${XDG_BIN_DIR:-$HOME/.local/bin}"
@@ -89,7 +87,7 @@ fi
 # ---------------------------------------------------- Releases-API (S5) ------
 
 api_get() {
-  # $1 = API-Pfad ab der Base (GitHub: ohne Prefix, Gitea: mit /api/v1).
+  # $1 = API-Pfad ab der Base (GitHub-Form).
   local base_path="" 
   [[ $IS_GITHUB -eq 0 ]] && base_path="api/v1/"
   local url="$RELEASE_BASE/$base_path$1"

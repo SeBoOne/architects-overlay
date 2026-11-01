@@ -6,14 +6,14 @@
 //!
 //! Fallback: fehlt `latest.json` (alte Releases vor TG), liefert
 //! `fetch_latest_json` `Ok(None)` und der Aufrufer fällt auf die
-//! Releases-API zurück (`gitea::fetch_latest`, mit sauberer
+//! Releases-API zurück (`release_api::fetch_latest`, mit sauberer
 //! „Rate-Limit, später erneut“-Meldung bei 429).
 //!
 //! HTTPS-only wie der Rest des Updaters.
 
 use serde::Deserialize;
 
-use super::{Release, Result, UpdaterError, gitea};
+use super::{Release, Result, UpdaterError, release_api};
 
 // version/released_at sind Teil des Schemas, der Updater nutzt
 // nur tag + assets — bewusst geparst (Validität) aber nicht gelesen.
@@ -101,14 +101,14 @@ pub async fn fetch_latest_json(
         return Err(UpdaterError::Malformed("leerer tag in latest.json".into()));
     }
     let mut checksums = String::new();
-    let assets: Vec<gitea::Asset> = raw
+    let assets: Vec<release_api::Asset> = raw
         .assets
         .into_iter()
         .map(|a| {
             if !a.sha256.trim().is_empty() {
                 checksums.push_str(&format!("{}  {}\n", a.sha256.trim(), a.name));
             }
-            gitea::Asset {
+            release_api::Asset {
                 name: a.name,
                 download_url: a.url,
                 size: None,
