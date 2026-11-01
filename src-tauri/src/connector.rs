@@ -390,10 +390,29 @@ pub async fn connector_fetch(
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
             return Err(err_key("error.connector.unknown"));
         };
-        let Some(v) = st.manifest.views.iter().find(|v| v.id == view_id) else {
-            return Err(err_key("error.connector.view_unknown"));
+        // Views zuerst, dann Flow-Screens (SF1): Screens werden generisch in
+        // die View-Form überführt — Fetch/Mapping bleibt typgleich.
+        let view = match st.manifest.views.iter().find(|v| v.id == view_id) {
+            Some(v) => v.clone(),
+            None => {
+                let Some(s) = st
+                    .manifest
+                    .flows
+                    .iter()
+                    .flatten()
+                    .flat_map(|f| &f.screens)
+                    .find(|s| s.id == view_id)
+                else {
+                    return Err(err_key("error.connector.view_unknown"));
+                };
+                if s.screen_type == connector::flow::ScreenType::Form {
+                    // Form-Screens sind Write-Kontext (C3) — kein GET hier.
+                    return Err(err_key("error.connector.form_not_fetchable"));
+                }
+                screen_as_view(s)
+            }
         };
-        (st.manifest.clone(), v.clone())
+        (st.manifest.clone(), view)
     };
     if view.view_type == connector::ViewType::Form {
         // Form-Views sind Write-Kontext (C3) — kein GET hier.
@@ -476,6 +495,31 @@ fn auth_header_opt(
         .map(|v| (header, v.to_owned()))
 }
 
+/// Flow-Screen → generische View-Form (SF1): Screens teilen die Fetch-Form
+/// mit Views (endpoint/headers/params/mapping/poll_seconds) — der Rest des
+/// Cores (Cache, Mapping, HTTP) bleibt typgleich. Form-Screens werden NICHT
+/// überführt (Write-Kontext); Listen/Ergebnisse → Table, Rest → Detail.
+fn screen_as_view(s: &connector::flow::Screen) -> connector::View {
+    use connector::flow::ScreenType;
+    let view_type = match s.screen_type {
+        ScreenType::List | ScreenType::Results => connector::ViewType::Table,
+        ScreenType::Detail | ScreenType::CodeEntry | ScreenType::Wait | ScreenType::Form => {
+            connector::ViewType::Detail
+        }
+    };
+    connector::View {
+        id: s.id.clone(),
+        view_type,
+        title: s.title.clone(),
+        endpoint: s.endpoint.clone().unwrap_or_default(),
+        mapping: s.mapping.clone(),
+        poll_seconds: s.poll_seconds,
+        form: None,
+        params: s.params.clone(),
+        headers: s.headers.clone(),
+    }
+}
+
 /// Generischer Form-Submit (Formular-View): validiert Pflichtfelder, füllt
 /// `{param}`-Platzhalter in path + body_template, sendet mit Header-Auth.
 /// Antwort: `{ status, body }`. Write nur USER-initiiert (Button) — hier
@@ -493,13 +537,30 @@ pub async fn connector_form_submit(
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
             return Err(err_key("error.connector.unknown"));
         };
-        let Some(v) = st.manifest.views.iter().find(|v| v.id == form_id) else {
-            return Err(err_key("error.connector.view_unknown"));
+        // Views zuerst, dann Flow-Screens mit form-Block (SF1).
+        let f = match st.manifest.views.iter().find(|v| v.id == form_id) {
+            Some(v) => match &v.form {
+                Some(f) => f.clone(),
+                None => return Err(err_key("error.connector.form_not_fetchable")),
+            },
+            None => {
+                let Some(s) = st
+                    .manifest
+                    .flows
+                    .iter()
+                    .flatten()
+                    .flat_map(|f| &f.screens)
+                    .find(|s| s.id == form_id)
+                else {
+                    return Err(err_key("error.connector.view_unknown"));
+                };
+                let Some(f) = &s.form else {
+                    return Err(err_key("error.connector.form_not_fetchable"));
+                };
+                f.clone()
+            }
         };
-        let Some(f) = &v.form else {
-            return Err(err_key("error.connector.form_not_fetchable"));
-        };
-        (st.manifest.clone(), f.clone())
+        (st.manifest.clone(), f)
     };
     let (status, resp_body) =
         form_submit_core(&manifest, &form, values, &settings_state, &id).await?;
