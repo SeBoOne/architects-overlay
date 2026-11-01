@@ -1,0 +1,22 @@
+{
+	"meta": {
+		"code": "en",
+		"name": "English"
+	},
+	"strings": {
+		"settings.language.title": "Language",
+		"settings.language.current": "Active: {name}",
+		"settings.language.add": "Add translation …",
+		"settings.language.add_hint": "Pick a community .json locale file — copy resources/locales/en.json and translate it (see README → Translations).",
+		"settings.language.imported": "Translation added: {name}",
+		"settings.language.import_failed": "Import failed: {msg}",
+		"error.locale.import.too_large": "File too large (max {limit} KB).",
+		"error.locale.import.invalid_json": "Not valid JSON: {detail}",
+		"error.locale.import.missing_meta": "Missing or invalid \"meta\" block (\"code\" + \"name\").",
+		"error.locale.import.missing_strings": "Missing or invalid \"strings\" block (flat map of \"key\" → \"text\").",
+		"error.locale.import.bad_code": "Language code \"{code}\" is not allowed (a-z, 0-9, \"-\"/\"_\", max 32 chars).",
+		"error.locale.import.builtin_conflict": "\"{code}\" is a built-in language and cannot be overwritten.",
+		"error.locale.import.write_failed": "Could not save the locale file: {detail}",
+		"error.locale.import.read_failed": "Could not read the local locale file {file}."
+	}
+}

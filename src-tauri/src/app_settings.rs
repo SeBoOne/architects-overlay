@@ -145,6 +145,8 @@ pub struct SettingsSnapshot {
     /// UC t_d323be7e: Update-Check-Konfiguration (UI-Sicht).
     pub updater_enabled: bool,
     pub updater_interval_hours: u32,
+    /// T1 (t_530e5f59): UI-Sprach-Code (normalisiert via settings::norm_language).
+    pub language: String,
 }
 
 impl SettingsSnapshot {
@@ -170,6 +172,7 @@ impl SettingsSnapshot {
             sync_note: sync_note.to_owned(),
             updater_enabled: s.updater_enabled(),
             updater_interval_hours: s.updater_interval_hours(),
+            language: s.language().to_owned(),
         }
     }
 }
@@ -342,6 +345,30 @@ pub fn settings_get(
         crate::overlay::global_shortcuts_active(&app),
         &sync.take(),
     )
+}
+
+/// T1 (t_530e5f59): UI-Sprache setzen. Der Code wird im settings-Crate
+/// normalisiert (trim/lowercase, Charset, Länge); die Prüfsumme „gibt es die
+/// Sprache überhaupt“ (built-in oder lokal importiert) lebt in der
+/// Settings-UI — ein unbekannter Code schadet nicht (Fallback-Kette → en).
+#[tauri::command]
+pub fn settings_set_language(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    code: String,
+) -> Result<SettingsSnapshot, String> {
+    if code.trim().len() > settings::LANGUAGE_MAX_LEN {
+        return Err(format!("language code too long: {}", code.len()));
+    }
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_language(code);
+    state.persist(&s);
+    Ok(SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    ))
 }
 
 /// Set the colour palette (amber | mfcd | bloom). Persists immediately.

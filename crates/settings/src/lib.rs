@@ -14,6 +14,8 @@
 //! palette = "amber"        # amber | mfcd | bloom
 //! detail_variant = "c"     # c | a
 //! scale = 100              # K2 P12: 50..200 % (Schrötwerte 80/90/100/110/125)
+//! language = "en"          # T1 (t_530e5f59): UI-Sprache, Fallback-Kette
+//!                          # gewählt → en → raw Key im Frontend
 //!
 //! [shortcuts]
 //! toggle = "Ctrl+Shift+U"      # C2a: Overlay-Toggle (kollisionsgeprüft)
@@ -48,6 +50,33 @@ pub const UPDATER_INTERVAL_MAX: u32 = 24;
 /// Öffentliches GitHub-Mirror-Repo (S5): Release-Quelle für den Updater.
 pub const UPDATER_REPO_DEFAULT: &str = "SeBoOne/architects-overlay";
 pub const UPDATER_BASE_URL_DEFAULT: &str = "https://api.github.com";
+
+/// T1 (t_530e5f59): UI-Sprache. Default `en` (weltweite Verfügbarkeit — Sebo-
+/// Beschluss der i18n-Planung), Fallback-Kette `gewählt → en → raw Key` lebt
+/// im Frontend-Store (`src/lib/i18n.ts`). Die Einstellung speichert nur den
+/// Sprach-Code; ob die Sprache tatsächlich installiert (built-in/lokal
+/// importiert) ist, prüft die Settings-UI beim Auflisten der Sprachen — ein
+/// unbekannter Code schadet nicht (Fallback-Kette landet auf `en`).
+pub const LANGUAGE_DEFAULT: &str = "en";
+pub const LANGUAGE_MAX_LEN: usize = 32;
+
+/// Sprach-Code normalisieren (T1 t_530e5f59): trim + lowercase; leer oder
+/// Zeichen außerhalb `a-z0-9_-` → Default. Analog `norm_scale`: ein
+/// hand-editierter Kaputt-Wert darf die UI nicht brechen — der Fallback
+/// fängt ihn ab, statt beim Boot zu rejecten.
+pub fn norm_language(code: Option<&str>) -> String {
+    let trimmed = code.unwrap_or("").trim().to_ascii_lowercase();
+    let valid = !trimmed.is_empty()
+        && trimmed.len() <= LANGUAGE_MAX_LEN
+        && trimmed
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_');
+    if valid {
+        trimmed
+    } else {
+        LANGUAGE_DEFAULT.to_owned()
+    }
+}
 
 /// TF t_0d510f31: Bestandsinstallationen tragen persistierte Updater-Werte aus
 /// der Zeit VOR dem S5-Mirror-Umzug (Gitea git.sebo-home.de — seit der
@@ -567,6 +596,10 @@ struct UiSection {
     /// (Default every_action — jede Aktion bestätigen).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     marketplace_confirm: Option<MarketplaceConfirm>,
+    /// T1 (t_530e5f59): UI-Sprach-Code (fehlend = en — Migrationspfad für
+    /// Bestandsconfigs, identisch zum Mode-Hotkeys-Muster).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    language: Option<String>,
 }
 
 /// Settings I/O failures.
@@ -608,6 +641,9 @@ pub struct Settings {
     scale: u16,
     /// M2b: 2-Schritt-Bestätigung für Marktplatz-Writes.
     marketplace_confirm: MarketplaceConfirm,
+    /// T1 (t_530e5f59): UI-Sprach-Code (normalisiert beim Laden via
+    /// `norm_language`).
+    language: String,
     /// C2a: kanonische Kürzel-Strings (siehe `parse_shortcut_combo`).
     shortcut_toggle: String,
     shortcut_click_through: String,
@@ -635,6 +671,7 @@ impl Default for Settings {
             detail_variant: DetailVariant::default(),
             scale: SCALE_DEFAULT,
             marketplace_confirm: MarketplaceConfirm::default(),
+            language: LANGUAGE_DEFAULT.to_owned(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
@@ -691,6 +728,9 @@ impl Settings {
                 .as_ref()
                 .and_then(|u| u.marketplace_confirm)
                 .unwrap_or_default(),
+            // T1 (t_530e5f59): fehlend/hand-editiert kaputt → Default (en) —
+            // die Fallback-Kette im Frontend fängt es ohnehin ab.
+            language: norm_language(raw.ui.as_ref().and_then(|u| u.language.as_deref())),
             // Erstmigration: fehlende/ungültige Kürzel → Defaults (U/O).
             shortcut_toggle: normalized_or(
                 raw.shortcuts.as_ref().and_then(|s| s.toggle.as_deref()),
@@ -789,6 +829,7 @@ impl Settings {
             detail_variant: DetailVariant::default(),
             scale: SCALE_DEFAULT,
             marketplace_confirm: MarketplaceConfirm::default(),
+            language: LANGUAGE_DEFAULT.to_owned(),
             shortcut_toggle: DEFAULT_TOGGLE_SHORTCUT.to_owned(),
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
@@ -871,6 +912,15 @@ impl Settings {
     /// Set the marketplace confirmation mode in memory (persist via save).
     pub fn set_marketplace_confirm(&mut self, mode: MarketplaceConfirm) {
         self.marketplace_confirm = mode;
+    }
+
+    /// T1 (t_530e5f59): UI-Sprache.
+    pub fn language(&self) -> &str {
+        &self.language
+    }
+
+    pub fn set_language(&mut self, code: String) {
+        self.language = norm_language(Some(&code));
     }
 
     /// Overlay-Toggle-Kürzel (kanonisch, z. B. `Ctrl+Shift+U`).
@@ -972,6 +1022,7 @@ impl Settings {
                 detail_variant: Some(self.detail_variant),
                 scale: Some(self.scale),
                 marketplace_confirm: Some(self.marketplace_confirm),
+                language: Some(self.language.clone()),
             }),
             shortcuts: Some(ShortcutsSection {
                 toggle: Some(self.shortcut_toggle.clone()),
@@ -1623,5 +1674,39 @@ mod tests {
             ..Default::default()
         };
         assert!(hk.validate().unwrap_err().contains("bereits belegt"));
+    }
+
+    // ---- T1 (t_530e5f59): Sprach-Einstellung -------------------------------
+
+    #[test]
+    fn language_defaults_to_en() {
+        let tmp = tempfile::tempdir().unwrap();
+        let s = Settings::load_from(&tmp_path(&tmp, "config.toml")).unwrap();
+        assert_eq!(s.language(), "en");
+    }
+
+    #[test]
+    fn language_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+        let mut s = Settings::with_path(path.clone());
+        s.set_language("de".to_owned());
+        assert_eq!(s.language(), "de");
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.language(), "de");
+    }
+
+    #[test]
+    fn norm_language_falls_back_on_garbage() {
+        assert_eq!(norm_language(Some("  DE ")), "de");
+        assert_eq!(norm_language(Some("pt-BR")), "pt-br");
+        assert_eq!(norm_language(Some("")), "en");
+        assert_eq!(norm_language(Some("   ")), "en");
+        assert_eq!(norm_language(Some("de<script>")), "en");
+        assert_eq!(norm_language(None), "en");
+        // Länge > LANGUAGE_MAX_LEN → Default.
+        let long = "a".repeat(LANGUAGE_MAX_LEN + 1);
+        assert_eq!(norm_language(Some(&long)), "en");
     }
 }

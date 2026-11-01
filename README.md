@@ -61,6 +61,34 @@ and run it — the app ships its own auto-updater afterwards.
 
 *Made by the community.*
 
+## Translations
+
+The overlay speaks English (`en`, default) and German (`de`) out of the box —
+and you can add your own language **without touching the code**:
+
+1. Copy [`resources/locales/en.json`](resources/locales/en.json) and rename
+   the `meta` block:
+
+   ```jsonc
+   {
+     "meta": { "code": "fr", "name": "Français" },   // your language code + native name
+     "strings": { "settings.language.title": "Langue", … }  // flat "key" → "text" map
+   }
+   ```
+
+2. Translate the values of the flat `strings` map (keys stay as they are).
+   A minimal starting point is
+   [`examples/locale.example.json`](examples/locale.example.json).
+3. In the overlay: **Settings → Appearance → Language → Add translation …**
+   and pick your `.json` file. It is validated and stored locally
+   (`<app-data>/locales/<code>.json`) and appears immediately next to the
+   built-in languages — switching is live, no restart needed.
+
+Fallback chain: *your language → English → raw key*. Missing keys never break
+anything; they simply fall back. Built-in languages (`en`, `de`) cannot be
+overwritten by local files. Contributions welcome (Gitea-first): a tested
+translation is gladly merged into `resources/locales/` as a new built-in.
+
 ## Development
 
 This repository is the public mirror; development happens in a private

@@ -19,6 +19,11 @@ mod info;
 mod inventory;
 #[cfg(desktop)]
 mod ipc_socket;
+/// T1 (t_530e5f59): lokale (Community-)Sprachdateien + `locale_import`/
+/// `locale_list`-Commands. Mod-agnostisch nutzbar, aber desktop-only wie die
+/// übrigen UI-Commands (mobile-Bundle baut sie nicht).
+#[cfg(desktop)]
+mod locale;
 #[cfg(desktop)]
 mod overlay;
 #[cfg(desktop)]
@@ -116,6 +121,9 @@ pub fn run() {
             app_settings::settings_set_shortcuts_sync,
             app_settings::settings_set_mode_hotkey,
             app_settings::settings_reset_mode_hotkeys,
+            app_settings::settings_set_language,
+            locale::locale_list,
+            locale::locale_import,
             overlay::overlay_config_closed,
         ]);
     }

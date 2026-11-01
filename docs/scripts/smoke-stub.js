@@ -71,7 +71,13 @@ const stubState = {
 	mode_hotkeys: window.__STUB_MODE_HOTKEYS__ !== undefined ? window.__STUB_MODE_HOTKEYS__ : null,
 	// K2 (t_5fe8eb4c, P12): font/icon scale in % — mirrors Settings.scale in the
 	// Rust backend so the probe can A/B the scale live without a Tauri app.
-	scale: 100
+	scale: 100,
+	// T1 (t_530e5f59): Sprache + lokale (Community-)Locale-Dateien — der Stub
+	// spiegelt settings_set_language wie scale; locale_list/locale_import
+	// bedienen das Array. Die Probe kann __stubState.locales vor dem Open
+	// vorbefüllen (Boot-Pfad locale_list).
+	language: 'en',
+	locales: []
 };
 window.__stubState = stubState;
 function stubSettings() {
@@ -155,6 +161,43 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_set_scale':
 				if (Number.isInteger(a.pct) && a.pct >= 50 && a.pct <= 200) stubState.scale = a.pct;
 				return stubSettings();
+			// T1 (t_530e5f59): Sprache spiegeln (Snapshot-Vertrag wie scale) +
+			// locale_list/locale_import gegen stubState.locales. Der Import
+			// spiegelt die Backend-Regeln ordentlich genug für die Probe:
+			// JSON-Parse, meta.code/meta.name Pflicht, built-in-Codes (en/de)
+			// geschützt, strings muss flaches String-Map sein — Fehler als
+			// {"error_key":…,"params":…}-String (LocaleError-Vertrag).
+			case 'settings_set_language':
+				if (typeof a.code !== 'string' || a.code.trim() === '' || a.code.length > 32)
+					throw new Error('language code invalid: ' + a.code);
+				stubState.language = a.code.trim().toLowerCase();
+				return stubSettings();
+			case 'locale_list':
+				return stubState.locales.map((l) => ({ meta: l.meta, strings: l.strings }));
+			case 'locale_import': {
+				if (typeof a.text !== 'string' || a.text.length > 128 * 1024)
+					throw new Error(JSON.stringify({ error_key: 'error.locale.import.too_large', params: { limit: 128 } }));
+				let doc;
+				try { doc = JSON.parse(a.text); }
+				catch (e) {
+					throw new Error(JSON.stringify({ error_key: 'error.locale.import.invalid_json', params: { detail: String(e).slice(0, 160) } }));
+				}
+				const meta = doc && doc.meta || {};
+				const code = typeof meta.code === 'string' ? meta.code : '';
+				if (!/^[a-z0-9_-]{1,32}$/.test(code))
+					throw new Error(JSON.stringify({ error_key: 'error.locale.import.bad_code', params: { code } }));
+				if (['en', 'de'].includes(code))
+					throw new Error(JSON.stringify({ error_key: 'error.locale.import.builtin_conflict', params: { code } }));
+				if (typeof meta.name !== 'string' || meta.name.trim() === '')
+					throw new Error(JSON.stringify({ error_key: 'error.locale.import.missing_meta', params: {} }));
+				const strings = doc.strings || {};
+				for (const v of Object.values(strings))
+					if (typeof v !== 'string')
+						throw new Error(JSON.stringify({ error_key: 'error.locale.import.missing_strings', params: {} }));
+				stubState.locales = stubState.locales.filter((l) => l.meta.code !== code);
+				stubState.locales.push({ meta: { code, name: meta.name, builtin: false }, strings });
+				return { code, name: meta.name, builtin: false };
+			}
 			case 'settings_set_mode_hotkey': {
 				// PB (t_1c9bc240, B1): Spiegel der Backend-Validierung — nur die
 				// konfigurierbaren Slots, F5 reserviert, keine Doppelbelegung.
