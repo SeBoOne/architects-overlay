@@ -6895,8 +6895,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<img class="info-logo" src={logoUrl} alt="Architects Overlay — Sebos Vector-Logo" draggable="false" />
 							<div class="info-title">Architects Overlay</div>
 							<div class="info-meta">
-								<span>Version v{infoVersion}</span>
-								<span>Build {__BUILD_DATE__}</span>
+								<span>{$t('info.version', { ver: infoVersion ?? '' })}</span>
+								<span>{$t('info.build', { date: __BUILD_DATE__ })}</span>
 							</div>
 						</div>
 						<button
