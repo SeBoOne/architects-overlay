@@ -6,17 +6,16 @@ Schiff ohne Eintrag → gar kein Modul-Feld.
 
 ## Ablauf: neue Zuweisung einpflegen
 
-1. **Gitea (Entwicklung)**: `src-tauri/resources/module-overrides.json` im privaten
-   Repo `git.sebo-home.de/sebo/architects-overlay` auf `main` bearbeiten —
-   Format:
+1. **Dev-Repo (privat)**: `src-tauri/resources/module-overrides.json` auf
+   `main` bearbeiten — Format:
 
    ```json
    { "ships": [ { "ship": "Aegis Eclipse", "modules": ["S10 Bomb Rack Weapon Kit", "..."] } ] }
    ```
 
-2. **Mirror**: Push auf `main` startet den CI-Job `mirror-public`, der
-   `main` nach `github.com/SeBoOne/architects-overlay` spiegelt. Vor dem
-   Merge auf `main` auf grün laufende Gates achten.
+2. **Öffentliches Repo**: nach dem Merge `git push public main` — die Datei
+   liegt damit auf dem `main` von `github.com/SeBoOne/architects-overlay`.
+   Vor dem Merge auf `main` auf grün laufende Gates achten.
 3. **Nutzer ziehen die Änderung automatisch**: Jede Installation ladet die
    Datei stündlich per Remote-Fetch von
 

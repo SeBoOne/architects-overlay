@@ -2,9 +2,9 @@
 
 Plattform-Übersicht. Jede Sektion ist eigenständig; die Overlay-Funktion hinter
 dem Spiel ist unter **Linux/Hyprland primär entwickelt** und dort am besten
-ausgetestet. Windows-Builds entstehen über den GitHub-Actions-Mirror
-(docs/CI-WINDOWS.md), macOS-Builds über denselben Kanal (C4 t_ee85f9d7).
-Öffentliche Release-Quelle ist das GitHub-Mirror-Repo — Flow: docs/RELEASE.md.
+ausgetestet. Linux- und Windows-Builds entstehen via GitHub Actions auf dem
+öffentlichen Repo (bei Tag-Push) — Flow: docs/RELEASE.md; die alte
+Selfhosted-Runner-Doku steht archiviert in docs/CI-WINDOWS.md.
 
 ---
 
@@ -50,9 +50,11 @@ Wayland-Fallback statt globaler Shortcuts, siehe docs/WAYLAND.md).
 
 ## macOS (Apple Silicon / aarch64)
 
-> **Status (C4 t_ee85f9d7):** Der macOS-Build ist über die CI vorbereitet,
-> an v*-Tags entsteht ein `.app` + `.dmg`. Ein **Livetest bei Mitspielern ist
-> noch ausstehend** — die Angaben hier gelten für den Stand der Vorbereitung,
+> **Status: PAUSIERT.** macOS-Builds werden derzeit **nicht gebaut** (der
+> `macos-latest`-Job in `.github/workflows/build.yml` ist deaktiviert und
+> bei Bedarf reaktivierbar — siehe „Was NICHT mehr passiert“ in
+> docs/RELEASE.md). Die folgenden Angaben gelten für den Stand der
+> Vorbereitung; ein **Livetest bei Mitspielern ist noch ausstehend**,
 > erwartete Restrisiken sind unter „Bekannte Einschränkungen“ notiert.
 
 ### Voraussetzungen
@@ -177,3 +179,9 @@ beim Livetest direkt ablesen lässt, was erkannt wurde.
 - deb/AppImage aus der GitHub-Release (https://github.com/SeBoOne/architects-overlay/releases);
   Setup und Hyprland-Einrichtung:
   docs/WAYLAND.md. Primär ausgetestete Plattform.
+- **Updates:** Der Auto-Updater behandelt alle drei Installationsformen:
+  AppImage (atomarer Selbst-Swap + Relaunch), `.deb` (kein Self-Update —
+  apt-Hinweis mit Download-Pfad) und **Bare-Binary** (das Release trägt das
+  rohe Binary als Asset `architects-overlay_<version>_linux64`; Update =
+  atomarer Swap der exe, danach Hinweis zum manuellen Neustart — kein
+  Auto-Restart unter Linux). Details: docs/UPDATER.md.

@@ -7,8 +7,8 @@ Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
 
 | Repo | Sichtbarkeit | Inhalt | Zweck |
 |---|---|---|---|
-| `SeBoOne/architects-overlay-dev` | privat | komplette Historie: main + Feature-Branches + Tags | **Dev-Quelle**: Builder-Bots arbeiten hier (Feature-Branches, Merges) |
-| `SeBoOne/architects-overlay` | **öffentlich** | nur `main` + `v*`-Tags | **Öffentliche Heimat + Release-Quelle** (Updater + install.sh + Mitspieler-Downloads) |
+| `git.sebo-home.de/sebo/architects-overlay` (Gitea, privat) | privat | komplette Historie: main + Feature-Branches + Tags | **Dev-Quelle**: Builder-Bots arbeiten hier (Feature-Branches, Merges) |
+| `SeBoOne/architects-overlay` (GitHub) | **öffentlich** | nur `main` + `v*`-Tags | **Öffentliche Heimat + Release-Quelle** (Updater + install.sh + Mitspieler-Downloads) |
 
 ## Ablauf
 
@@ -17,7 +17,7 @@ Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
 2. Omar merged nach `main` (dev-Repo) und bumped die Version
    (`Cargo.toml` + `tauri.conf.json`) **vor** dem Tag — der Tag-Commit muss
    die Version tragen (Assets heißen sonst falsch).
-3. `git push origin main --tags` auf das **dev-Repo**.
+3. `git push gitea-sebo main --tags` auf das **dev-Repo**.
 4. `git push public main --tags` auf das **öffentliche Repo** — der Push des
    `v*`-Tags triggert die GitHub-Actions (`.github/workflows/build.yml`,
    nur auf Tags).
@@ -52,5 +52,5 @@ Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
   unabhängig von Releases; raw.githubusercontent ist nicht an die
   API-Rate-Limits gebunden.
 - install.sh: `raw.githubusercontent.com/SeBoOne/architects-overlay/main/scripts/install.sh`
-  (öffentlich); die Release-Quelle ist ausschließlich GitHub.
-  nicht mehr Standard.
+  (öffentlich); die Release-Quelle ist ausschließlich GitHub — Details und
+  Flags: [docs/INSTALL.md](INSTALL.md).

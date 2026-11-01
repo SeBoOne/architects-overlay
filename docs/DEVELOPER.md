@@ -18,9 +18,13 @@ src-tauri/                  Tauri-v2-App (Fenster, Lifecycle, Icons, tauri.conf.
 crates/
   provider/                 DataProvider-Trait + gemeinsame DTOs  ← Architektur-Seam
   uex-client/               UEX-API-Client (erste DataProvider-Impl)
+  scwiki-client/            SC-Wiki-API-Client (Shipmatrix etc.)
   cache/                    SQLite-Cache (rusqlite), TTL pro Datentyp
   game-detection/           Star-Citizen-Prozess-Erkennung
   settings/                 Config-Persistenz (App-Config-Dir, API-Key)
+  updater/                  Auto-Updater-Kernlogik (semver, Release-API, SHA256, Pläne)
+  i18n-err/                 {error_key, params}-Nachrichten-Transport (Rust → Frontend)
+  math-eval/                Sandbox-Ausdrucksauswertung (Rechen-Chips)
 src/                        SvelteKit-Frontend (Layout, Dark-Mode-Shell)
 .github/workflows/build.yml GitHub Actions: Linux (deb/AppImage) + Windows
                             (NSIS + MSI), nur bei v*-Tags; Job latest-json
@@ -52,10 +56,13 @@ Release-Bundle lokal: `pnpm tauri build` (deb/AppImage bzw. exe/msi).
 
 ## Release-Flow
 
-Kurzform: Feature-Branches im **dev-Repo** (`SeBoOne/architects-overlay-dev`,
-privat) → Gates → Merge nach `main` → Version-Bump → Tag `v*` → Push auf
-dev + public. GitHub ist die **einzige** Build-/Release-Plattform; Details,
-Updater-Endpoint und Asset-Benennung: **[docs/RELEASE.md](RELEASE.md)**.
+Kurzform: Feature-Branches im **privaten Dev-Repo**
+(`git.sebo-home.de/sebo/architects-overlay`, Gitea-Host, nur DEV-Kontext) →
+Gates → Merge nach `main` → Version-Bump → Tag `v*` → Push auf dev +
+public (`SeBoOne/architects-overlay`). GitHub ist die **einzige**
+Build-/Release-Plattform (GitHub Actions auf dem öffentlichen Repo bauen bei
+Tag-Push); Details, Updater-Endpoint und Asset-Benennung:
+**[docs/RELEASE.md](RELEASE.md)**.
 
 ## Branch- & Worktree-Konvention
 
@@ -71,10 +78,11 @@ jeweiligen Karte. Kein direktes Arbeiten ohne Karte.
 
 ## Brand-Ordner
 
-`brand/logo/` — **`brand/logo/drake/architects-overlay-drake.svg` ist der
-Master.** Farbvarianten + Lockup werden daraus abgeleitet (Hex-Swap via
-`brand/logo/rebuild.py`); Favicon/App-Icons neu generieren nach jeder
-Logo-Änderung (`tauri icon`-Pipeline, siehe TV-Karte / `brand/logo/`).
+`brand/logo/` — **`brand/logo/logo.svg` ist der Master.** Daraus abgeleitet:
+`brand/logo/derived/` (PNG-Exporte, Lockup) und die Tauri-Icons
+(`src-tauri/icons/`, Regeneration via `brand/logo/rebuild-icons.sh` nach
+jeder Logo-Änderung). Es gibt **keine Rebuild-Colorways** mehr — ein Emblem,
+eine Quelle.
 **Wichtig:** `brand/` ist bewusst **nicht** Teil der MIT-Lizenz
 (siehe [LICENSE](../LICENSE), „Brand and Logo Exclusion“) — keine
 Weiterverwendung außerhalb des Projekts.
@@ -82,10 +90,9 @@ Weiterverwendung außerhalb des Projekts.
 ## Secrets
 
 - **Keine Tokens/Keys im Repo** — weder committet noch in CI-Dateien.
-- GitHub-PAT (`GHPAT`, Mirror-Job) und `GITHUBMIRRORTOKEN` leben ausschließlich
-  als Gitea-Secrets in `.gitea/workflows/build.yml` (Mirror auf das
-  öffentliche Repo); Checkout einer anderen Repo-Ref mit Token im Klartext
-  ist tabu.
+- GitHub Actions (`.github/workflows/build.yml`) braucht keine eigenen
+  Secrets — Releases werden mit dem eingebauten `GITHUB_TOKEN` des
+  öffentlichen Repos angehängt.
 - UEX-API-Key des Nutzers liegt nur in der App-Config-Dir (Dateirechte 0600),
   nie im Repo.
 
@@ -109,23 +116,61 @@ Pflege der Datei:
   und cachet sie; Fallback-Kette bei Fehler: Remote-Cache → Repo-Baseline.
   Änderungen an der Datei im Repo greifen damit auch ohne App-Update.
 
-## Shortcuts
+## Connector-System (Planung)
 
-| Taste | Kontext | Aktion |
+Ein eigenes Connector-System (Spieldaten ohne Screen-Scraping) ist
+konzeptioniert, aber **nicht implementiert** — der Entwurf liegt in
+[docs/research/connector-system.md](research/connector-system.md). Status:
+wartet auf die AAWA-API; bis dahin keine Umsetzung.
+
+## i18n-System (T1/T2)
+
+Das Overlay ist vollständig lokalisiert — Default-Sprache **en**, Deutsch
+(`de`) mit dabei, Live-Switch ohne Neustart.
+
+- **Key-Dateien:** `resources/locales/en.json` + `resources/locales/de.json`
+  (flaches `"key" → "text"`-Map unter `strings`, `meta`-Block mit Code/Name;
+  Key-Parität en/de wird per Skript sichergestellt — aktuell 924 Keys).
+- **Fallback-Kette:** gewählte Sprache → `en` → roher Key. Fehlende Keys sind
+  kein Fehler — sie werden im Debug-Log notiert (einmal pro Key).
+- **Implementierung:** eigene Svelte-Store-`t()`-Funktion
+  (`src/lib/i18n.ts`), bewusst OHNE svelte-i18n-Package. Built-in-Sprachen
+  werden statisch importiert (Vite bündelt sie), Interpolation über
+  `{name}`-Platzhalter; Plural per Key-Suffix `_one`/`_other`.
+- **Rust-Seite:** Fehler/Nachrichten an das Frontend gehen als
+  `error_key` + optionale Params (`err_key`/`err_keyp`, gemeinsame Crate
+  `i18n-err`, re-exported via `src-tauri/src/i18n_err.rs`) — das Frontend
+  übersetzt. Lokalisierung erfolgt nie als fertiger String im Rust-Code.
+- **Community-Sprachen:** Nutzer importiert lokale Übersetzungsdateien über
+  Einstellungen → Sprache (Rust validiert + persistiert unter
+  `<app-local-data>/locales/`); Beispiel: `examples/locale.example.json`.
+  Siehe auch README-Abschnitt „Translations“.
+
+## Mode-Hotkeys
+
+Die In-App-Modi wechseln per F-Taste (nur bei sichtbarem/fokussiertem
+Overlay). **F1 (Suche) und F12 (Einstellungen) sind fix**, die anderen Slots
+sind in den Einstellungen änderbar (F1–F12, F5 bleibt für den Resync
+reserviert, keine Doppelbelegung):
+
+| Modus | Default | änderbar |
 |---|---|---|
-| `M` | kein Eingabefeld fokussiert | Market-Pane togglen |
-| `Strg+M` / `Meta+M` | überall, auch bei fokussierter Suchzeile | Market-Pane togglen |
-| `O` | Error-Pane, kein Feld fokussiert | Offline mit Cache fortsetzen |
-| `↑` / `↓` / `↵` / `Esc` | Palette | Navigation / öffnen / ausblenden-leeren |
-| `Tab` | Palette | Suchfilter zyklisch wechseln |
-| `↑` / `↓` / `↵` / `↹` / `→` / `Esc` | Market-Pane | Angebote navigieren / Detail öffnen / zurück |
-| `↵` | Angebots-Detail | Listing auf uexcorp.space im Browser öffnen (Deep-Link) |
+| Suche | `F1` | nein (fix) |
+| Marktplatz | `F2` | ja |
+| Handelsrouten | `F3` | ja |
+| Inventar | `F4` | ja |
+| Hangar | `F11` | ja |
+| Einstellungen | `F12` | nein (fix) |
 
-`M` und `O` sind druckbare Buchstaben: Solange ein Eingabefeld fokussiert ist
-(die Suchzeile ist immer autofokussiert), werden sie als Zeichen getippt und
-lösen **keinen** Shortcut aus — das `m` aus „titanium“ kommt an. Im Suchfeld
-ist der Market-Shortcut deshalb `Strg+M`; ohne fokussiertes Feld schaltet das
-bloße `M` (bzw. `O` im Error-Pane) weiter direkt.
+Kanonische Quelle: `src/lib/hotkeys.ts` (Defaults/Validierung) +
+`crates/settings/src/lib.rs` (Persistenz, `settings_set_mode_hotkey` /
+`settings_reset_mode_hotkeys`). Details: [docs/SHORTCUTS.md](SHORTCUTS.md).
+
+## Tastenkürzel
+
+Die vollständige Tabelle (globale Kürzel, Mode-Hotkeys, In-App-Keys) liegt
+in **[docs/SHORTCUTS.md](SHORTCUTS.md)** — diese Datei ist die kanonische
+Referenz; hier keine Duplikate pflegen.
 
 ## Leistung (Kriterium 4: „messen und dokumentieren“)
 

@@ -43,8 +43,8 @@ Updater lädt/installiert das Update selbst.
 ## UI (Config-View „Aktualisierung“)
 
 - Auto-Check an/aus + Intervall-Chips (2/6/12/24 h).
-- Nach einem Check: Note „Kein Update gefunden — v0.5.13 ist aktuell.“ oder
-  „Update v0.5.14 verfügbar.“ + Button „Jetzt aktualisieren“.
+- Nach einem Check: Note „Kein Update gefunden — v{aktuell} ist aktuell.“
+  oder „Update v{neu} verfügbar.“ + Button „Jetzt aktualisieren“.
 - **On-demand only:** nichts wird geladen, installiert oder neu gestartet
   ohne Klick auf „Jetzt aktualisieren“ (Karte Umsetzung 2).
 - „Jetzt prüfen“ triggert den Check sofort.
@@ -56,17 +56,19 @@ zur Wahl (Karte Umsetzung 3):
 
 1. App beendet sich, Setup startet danach (kein
    nachgelagerter Prozess möglich).
-2. **App startet das Setup als CHILD-PROZESS mit `/S` (silent) und beendet
-   sich dann selbst sauber — DAS IST IMPLEMENTIERT.**
+2. **App startet das Setup als CHILD-PROZESS mit `/S /R` (silent + Auto-
+   Restart nach der Installation) und beendet sich dann selbst sauber —
+   DAS IST IMPLEMENTIERT.**
 
 Ablauf: `setup.exe` herunterladen → SHA256 verifizieren (s. u.) →
-`setup.exe /S` detached starten (detached, kein Konsolenfenster — gleiche
-Mechanik wie der hide_console-Fix t_d323b29e) → App `exit(0)`. Der
-NSIS-Installer übernimmt das Selbst-Erstzen (Tauri-NSIS schließt eine
-eventuell noch laufende Instanz ab und ersetzt die exe). **Kein Auto-Restart
-nach dem Setup** — der Nutzer startet das Overlay selbst neu (Startmenü-
-Eintrag des Setups). Damit ist nach dem Setup KEIN Fenster mehr offen, das
-auf Installer-Exit warten müsste.
+`setup.exe /S /R` detached starten (silent + Reboot-Flag des NSIS-Templates:
+die App wird nach Abschluss der Installation **automatisch neu gestartet**;
+detached, kein Konsolenfenster — gleiche Mechanik wie der hide_console-Fix
+t_d323b29e) → App `exit(0)`. Der NSIS-Installer übernimmt das Selbst-Erstzen
+(Tauri-NSIS schließt eine eventuell noch laufende Instanz ab und ersetzt die
+exe) und startet das Overlay danach selbst wieder — implementiert in
+`src-tauri/src/updater.rs` (`spawn_nsis_silent`, Flags `CREATE_NO_WINDOW |
+DETACHED_PROCESS`).
 
 ## Linux-Update-Pfad
 

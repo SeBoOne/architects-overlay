@@ -59,14 +59,18 @@ Die In-App-Modi wechseln per F-Taste (nur bei sichtbarem/fokussiertem
 Overlay — keine System-Binds). Belegung konfigurierbar in den Settings
 (Abschnitt „Mode-Hotkeys", Capture wie bei den globalen Kürzeln):
 
-| Modus | Default |
-|---|---|
-| Suche | `F1` (fix) |
-| Marktplatz | `F2` (fix) |
-| Handelsrouten | `F3` |
-| Inventar | `F4` |
-| Hangar | `F11` |
-| Einstellungen | `F12` (fix) |
+| Modus | Default | änderbar |
+|---|---|---|
+| Suche | `F1` (fix) | nein |
+| Marktplatz | `F2` | ja |
+| Handelsrouten | `F3` | ja |
+| Inventar | `F4` | ja |
+| Hangar | `F11` | ja |
+| Einstellungen | `F12` (fix) | nein |
+
+Änderbare Slots: `hangar`, `routes`, `inventory`, `market` — geändert wird
+in den Settings per Key-Capture (`settings_set_mode_hotkey`), Zurücksetzen
+über `settings_reset_mode_hotkeys`. F1 und F12 sind fix.
 
 - **F5 ist fest reserviert** für den kontextsensitiven **Resync** und wirkt
   NUR, wo Resync relevant ist: Marktplatz-Angebote (echter Live-Fetch,
