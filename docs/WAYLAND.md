@@ -212,6 +212,13 @@ windowrulev2 = float, class:^(architects-overlay)$
 windowrulev2 = nodecorate, class:^(architects-overlay)$
 # KEIN pin, KEIN stay_focused statisch nötig — die App setzt stay_focused
 # dynamisch nach dem Map (Dialog-Suspend inklusive).
+# ACHTUNG (t_1042447d): stay_focused darf NIE statisch auf die Klasse gesetzt
+# werden. In-Process-GTK-Dialoge (WebKITGTK-Filechooser der Plugin-/Bild-
+# Importe) teilen pid + WM_CLASS mit dem Overlay und erben die Rule bei jedem
+# Map — zwei stay_focused-Fenster duellieren sich um den Fokus bei jedem
+# Klick (Filepicker/Overlay-Flackern). Die App disarmt beim Dialog-Suspend
+# alle Fenster ihrer Klasse, aber die statische Rule bleibt trotzdem
+# kontraproduktiv und wird nicht empfohlen.
 # Optional, wenn das Overlay pauschal klick-durchlässig sein soll:
 # windowrulev2 = noinput, class:^(architects-overlay)$
 ```
@@ -227,6 +234,8 @@ hl.window_rule({
   no_blur = true,
   -- pin entfallen (v2): das Overlay bleibt im Workspace, in dem es geöffnet
   -- wurde. stay_focused setzt die App dynamisch (Brücke + Dialog-Suspend).
+  -- stay_focused hier NICHT setzen (t_1042447d): die Rule matcht auch unsere
+  -- in-process GTK-Filechooser (gleiche Klasse) — Fokus-Duell, siehe oben.
 })
 ```
 
