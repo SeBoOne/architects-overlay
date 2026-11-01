@@ -78,6 +78,15 @@
 	const activeFlow = $derived<FlowDTO | null>(
 		flowId ? (flows.find((f) => f.id === flowId) ?? null) : null
 	);
+	// SF4-Fix: FlowRenderer bindet startId/screenId nur beim Mount — bei
+	// Flow-Wechsel (SF4-Flow-Tabs) oder Suchleisten-(Re-)Einstieg (anderer
+	// initial-Screen) muss er REMOUNTEN, sonst bleibt der Screen des
+	// vorherigen Flows stehen („Flow is missing its entry screen“).
+	const flowKey = $derived(
+		activeFlow
+			? `${activeFlow.id}:${initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? '') : ''}`
+			: ''
+	);
 	const lang = $derived(currentLang());
 	const title = $derived(labelOf(entry.manifest.name, lang));
 	// Zeilen/Detail robust aus dem gemappten Ergebnis (Rust mappt per
@@ -362,7 +371,10 @@
 
 	{#if activeFlow}
 		<!-- SF1/SF4: Flow-Renderer übernimmt die komplette Screen-Kette
-		     (generisch — KEIN connector-spezifisches Wissen hier). -->
+		     (generisch — KEIN connector-spezifisches Wissen hier).
+		     {#key} = Remount bei Flow-Wechsel/initial-Screen-Wechsel
+		     (SF4-Fix: startId ist sonst nur beim ersten Mount gebunden). -->
+		{#key flowKey}
 		<FlowRenderer
 			{entry}
 			flow={activeFlow}
@@ -370,6 +382,7 @@
 			initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null}
 			initialState={initialFlow?.flowId === activeFlow.id ? initialFlowState : null}
 		/>
+		{/key}
 	{:else if res.error}
 		<div class="cerror" role="alert">{res.error}</div>
 	{:else if view?.type === 'form'}
