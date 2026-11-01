@@ -1,5 +1,5 @@
 {
-  "_doc": "Erzeugt vom Live-Test live_sync_file_only_and_decision (echte Gitea-Raw/Repo-Baseline + reale modul_for_ship_decision-Logik, S4 Nur-Datei-Regel) — NICHT von Hand editieren.",
+  "_doc": "Erzeugt vom Live-Test live_sync_file_only_and_decision (echte Repo-Baseline (Historie: Gitea-Raw) + reale modul_for_ship_decision-Logik, S4 Nur-Datei-Regel) — NICHT von Hand editieren.",
   "for_ship": {
     "aegis arrow": {
       "has_ports": false,

@@ -4,7 +4,7 @@
 
 IPC-Grenze gestubbt (smoke-stub.js), echte Svelte-UI. Die Zuordnung kommt
 aus dem Live-Test `live_sync_file_only_and_decision`
-(docs/scripts/s4-modul-fixture.json — echte Gitea-Raw/Repo-Baseline + reale
+(docs/scripts/s4-modul-fixture.json — echte Repo-Baseline (Historie: Gitea-Raw) + reale
 modul_for_ship_decision-Logik), nur umgeschlüsselt auf die ECHTEN
 Hangar-Namen (Live-Dump 2026-10-30: „Galaxy“, „Aurora Mk II“ — OHNE
 Hersteller-Präfix):

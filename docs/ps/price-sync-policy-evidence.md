@@ -1,6 +1,6 @@
 # PS: Preisquellen — Belege (t_c84e545d)
 
-Branch: `feature/price-sync-policy` @ a533fad (Gitea-Push per ls-remote verifiziert)
+Branch: `feature/price-sync-policy` @ a533fad (Historie, Stand 2026-10-29: Gitea-Push per ls-remote verifiziert)
 
 ## 1. WIKI entfernt — vorher/nachher
 

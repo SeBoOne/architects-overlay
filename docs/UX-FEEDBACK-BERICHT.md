@@ -1,7 +1,11 @@
 # UX-Feedback-Fixes (Live-Feedback v0.1.3, Punkte 1/6/7/8) — Bericht
 
+> **Historisch, Stand 2026-10 (Momentaufnahme zum Zeitpunkt des Berichts).**
+> Repo-/CI-Angaben unten beschreiben den damaligen Zustand — heute läuft
+> Build/Release über GitHub Actions (siehe docs/RELEASE.md).
+
 Branch: `feature/ux-feedback` (Basis `main` @ `596ad6b`, v0.1.3)
-Repo: sebo/architects-overlay (Gitea) · Task: t_594c213c
+Repo: sebo/architects-overlay (Gitea, Historie) · Task: t_594c213c
 
 Ergebnisse der parallel laufenden Backend-Karte (Punkte 2/3/4/5, Terminal-Namen,
 Location-Preis-Aggregat, Dedupe, Non-Purchasable) sind hier NICHT enthalten — die

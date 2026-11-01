@@ -1,5 +1,7 @@
 # Abschlussbericht — Arkanis-UX-Rework (Branch feature/arkanis-ux)
 
+> **Historisch, Stand 2026-10 (Momentaufnahme zum Zeitpunkt des Berichts).**
+
 Task: t_1a0b0acb — UX-Rework: Arkanis-ähnliche Bedienung (Esc-Toggle, Präfixe, Inline-Expansion, Alt+Zahl)
 Branch: `feature/arkanis-ux` (von main @ 441ecc7, kein Push auf main — merge durch Omar)
 Commit: `250e4b3` (Feature + Tests + Smoke-Tooling), gepusht nach ssh://100.64.0.3:3222/sebo/architects-overlay.git
