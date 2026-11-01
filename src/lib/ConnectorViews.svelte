@@ -13,6 +13,7 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { t, tr, trError, currentLang } from './i18n';
+	import FlowRenderer from './FlowRenderer.svelte';
 	import {
 		labelOf,
 		formatValue,
@@ -23,23 +24,39 @@
 		savePin,
 		type ConnectorEntry,
 		type FetchResultDTO,
+		type FlowDTO,
 		type ViewDTO
-	} from './connector';
+		} from './connector';
 
 	type Result = { data: FetchResultDTO | null; error: string; loading: boolean };
 
 	let {
 		entry,
 		embedded = false,
-		onexit
+		onexit,
+		initialFlow = null,
+		initialFlowState = null
 	}: {
 		entry: ConnectorEntry;
 		embedded?: boolean;
 		onexit?: () => void;
+		/** SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — Flow + Start-Screen. */
+		initialFlow?: { flowId: string; screenId: string } | null;
+		/** SF2-R1 D1: vorgemergter Flow-Zustand des Suchleisten-Prefetch. */
+		initialFlowState?: Record<string, unknown> | null;
 	} = $props();
 
 	const views = $derived(entry.manifest.views ?? []);
+	// SF1: Screen-Flows — eigene Tabs (Muster wie Routen/Trade-Logs), der
+	// Flow-Renderer übernimmt die komplette Kette (generisch, Overlay-Optik).
+	const flows = $derived(entry.manifest.flows ?? []);
 	let viewId = $state<string>('');
+	let flowId = $state<string | null>(null);
+	// SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — aktiviert den
+	// Ziel-Flow und überspringt bis zum gewünschten Start-Screen.
+	$effect(() => {
+		if (initialFlow) flowId = initialFlow.flowId;
+	});
 	// Erster View als Start-Auswahl (einmalig beim Mount).
 	let res = $state<Result>({ data: null, error: '', loading: false });
 	let formValues = $state<Record<string, string>>({});
@@ -52,6 +69,10 @@
 	let timer: ReturnType<typeof setInterval> | null = null;
 
 	const view = $derived<ViewDTO | undefined>(views.find((v) => v.id === viewId));
+	// SF1: aktivierter Flow (für den Content-Zweig unterhalb).
+	const activeFlow = $derived<FlowDTO | null>(
+		flowId ? (flows.find((f) => f.id === flowId) ?? null) : null
+	);
 	const lang = $derived(currentLang());
 	const title = $derived(labelOf(entry.manifest.name, lang));
 	// Zeilen/Detail robust aus dem gemappten Ergebnis (Rust mappt per
@@ -99,6 +120,7 @@
 	function selectView(id: string) {
 		if (id === viewId) return;
 		viewId = id;
+		flowId = null; // SF1: Tab-Mutual-Exklusivität (Flow deaktivieren)
 		formValues = {};
 		formNote = '';
 		paramValues = {};
@@ -108,6 +130,21 @@
 		schedulePolling();
 		// Der Fetch läuft im $effect (reagiert auf viewId) — hier kein zweiter
 		// Aufruf, sonst Double-Fetch pro Tab-Wechsel.
+	}
+
+	// SF1: Flow-Tab aktivieren — der Flow-Renderer übernimmt die Kette.
+	function selectFlow(id: string) {
+		if (id === flowId) return;
+		flowId = id;
+		formValues = {};
+		formNote = '';
+		paramValues = {};
+		pinnedKeys = {};
+		res = { data: null, error: '', loading: false };
+		if (timer) {
+			clearInterval(timer);
+			timer = null;
+		}
 	}
 
 	// Polling sparsam (Manifest `poll_seconds`, Default 300 s): der
@@ -222,8 +259,17 @@
 		</div>
 	{/if}
 
-	{#if views.length > 1}
+	{#if views.length > 1 || flows.length > 0}
 		<div class="connector-tabs" role="tablist" aria-label={title}>
+			{#each flows as fl (fl.id)}
+				<button
+					type="button"
+					class="ctab"
+					class:is-on={flowId === fl.id}
+					aria-pressed={flowId === fl.id}
+					onclick={() => selectFlow(fl.id)}
+				>{labelOf(fl.title, lang)}</button>
+			{/each}
 			{#each views as v (v.id)}
 				<button
 					type="button"
@@ -295,7 +341,17 @@
 		</div>
 	{/if}
 
-	{#if res.error}
+	{#if activeFlow}
+		<!-- SF1: Flow-Renderer übernimmt die komplette Screen-Kette
+		     (generisch — KEIN connector-spezifisches Wissen hier). -->
+		<FlowRenderer
+			{entry}
+			flow={activeFlow}
+			onexit={onexit}
+			initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null}
+			initialState={initialFlow?.flowId === activeFlow.id ? initialFlowState : null}
+		/>
+	{:else if res.error}
 		<div class="cerror" role="alert">{res.error}</div>
 	{:else if view?.type === 'form'}
 		<form

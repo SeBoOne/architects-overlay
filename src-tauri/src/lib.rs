@@ -137,6 +137,7 @@ pub fn run() {
             connector::connector_set_hotkey,
             connector::connector_fetch,
             connector::connector_form_submit,
+            connector::connector_screen_action,
             overlay::overlay_config_closed,
         ]);
     }

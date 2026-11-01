@@ -38,6 +38,8 @@ export type FormViewDTO = {
 export type ParamDTO = {
 	key: string;
 	label: LocalizedText;
+	/** Pflichtfeld (Action-Eingabefelder, SF2-R1 D3). Default: true. */
+	required?: boolean | null;
 };
 
 export type ViewDTO = {
@@ -66,7 +68,82 @@ export type ConnectorManifestDTO = {
 	} | null;
 	placement: PlacementDTO;
 	views: ViewDTO[];
+	flows?: FlowDTO[] | null;
 	sync?: unknown;
+};
+
+// ---- SF1 (t_c35bc233): Screen-Flow-Schema — deklarative Screen-Ketten ------
+// 1:1 zu crates/connector/src/flow.rs. Alles generisch: KEINE Connector-ID,
+// kein connector-spezifisches Wissen im Renderer.
+
+export type ConditionDTO = {
+	on: string;
+	op: 'equals' | 'not_equals' | 'exists' | 'missing';
+	value?: unknown | null;
+	then?: string | null;
+	otherwise?: string | null;
+};
+
+export type AutocompleteRuleDTO = {
+	field: string;
+	endpoint: string;
+	query_param?: string | null;
+	params?: ParamDTO[] | null;
+	headers?: Record<string, string> | null;
+	fill?: Record<string, string> | null;
+};
+
+/** Multi-Select-Liste (SF2): Confirm führt die Write-Action aus. */
+export type MultiSpecDTO = {
+	max_path?: string | null;
+};
+
+/** Generische Screen-Aktion (SF2): Write (method+path) oder Navigation. */
+export type ScreenActionDTO = {
+	id: string;
+	title: LocalizedText;
+	method?: 'get' | 'post' | 'patch' | 'put' | 'delete' | null;
+	path?: string | null;
+	params?: ParamDTO[] | null;
+	headers?: Record<string, string> | null;
+	body_template?: unknown | null;
+	/** Antwort → Flow-Zustand (`"pcode": "pcode"` pinnt das Antwortfeld). */
+	pins_map?: Record<string, string> | null;
+	/** Eingabefelder der Action (z. B. pcode-Claim beim ersten Wishes-Save). */
+	fields?: ParamDTO[] | null;
+	goto?: string | null;
+};
+
+/** Aktion ohne `method` = reine Navigation (Validator erzwingt goto). */
+export function isNavigationAction(a: ScreenActionDTO): boolean {
+	return !a.method;
+}
+
+export type ScreenDTO = {
+	id: string;
+	type: 'code_entry' | 'list' | 'detail' | 'form' | 'wait' | 'results';
+	title: LocalizedText;
+	endpoint?: string | null;
+	mapping?: Record<string, string> | null;
+	params?: ParamDTO[] | null;
+	headers?: Record<string, string> | null;
+	poll_seconds?: number | null;
+	form?: FormViewDTO | null;
+	pins?: string[] | null;
+	when?: ConditionDTO | null;
+	on_submit?: string | null;
+	on_select?: string | null;
+	exit?: ConditionDTO | null;
+	autocomplete?: AutocompleteRuleDTO[] | null;
+	multi?: MultiSpecDTO | null;
+	actions?: ScreenActionDTO[] | null;
+};
+
+export type FlowDTO = {
+	id: string;
+	title: LocalizedText;
+	entry: string;
+	screens: ScreenDTO[];
 };
 
 export type ConnectorEntry = {
@@ -196,6 +273,114 @@ export function savePin(
 		localStorage.setItem(storeKey, JSON.stringify(pins));
 	} catch {
 		/* Store voll/gesperrt: Pin bleibt nur für diese Sitzung im State. */
+	}
+	return pins;
+}
+
+// ---- SF1 (t_c35bc233): Flow-Engine-Helfer (Spiegel zu crates/connector/flow.rs) --
+
+/** Dot-Path im JS-Zustand auflösen (`.key`, `[i]`, `[]`-Arrays). */
+export function dotPath(state: unknown, path: string): unknown {
+	let cur: unknown = state;
+	for (const seg of path.split('.')) {
+		if (cur === null || cur === undefined) return undefined;
+		const m = /^(.*?)\[(\d*)\]$/.exec(seg);
+		// SF2-Fix: Segmente OHNE []-Suffix (Plain-Keys wie `raffle_done`)
+		// müssen den Key direkt auflösen — sonst liefert der Pfad das ganze
+		// Zustandsobjekt zurück und Bedingungen feuern nie.
+		if (m && m[1]) cur = (cur as Record<string, unknown>)[m[1]];
+		else cur = (cur as Record<string, unknown>)[seg];
+		if (cur === null || cur === undefined) return undefined;
+		if (Array.isArray(cur)) {
+			if (m && m[2] !== '') {
+				cur = cur[Number(m[2])];
+			} else {
+				// Iterate: erster Treffer reicht für Bedingungen.
+				cur = cur.length > 0 ? cur[0] : undefined;
+			}
+		}
+		if (cur === null || cur === undefined) return undefined;
+	}
+	return cur;
+}
+
+/** Bedingung gegen den Flow-Zustand auswerten (tolerant: fehlend = falsch). */
+export function evaluateCondition(c: ConditionDTO, state: Record<string, unknown>): boolean {
+	let v: unknown;
+	try {
+		v = dotPath(state, c.on);
+	} catch {
+		return false;
+	}
+	const isNull = v === null || v === undefined;
+	switch (c.op) {
+		case 'exists':
+			return !isNull;
+		case 'missing':
+			return isNull;
+		case 'equals':
+			// Bool-Toleranz (SF2-Befund Live-Probe): SQLite-Backends liefern
+			// Bools als 0/1-Ints — Boolean-Vergleichswerte matchen auch die
+			// Zahl-Äquivalente (1==true, 0==false).
+			if (typeof c.value === 'boolean' && (typeof v === 'number' || typeof v === 'string')) {
+				return (v === 1 || v === '1') === c.value;
+			}
+			return v === c.value;
+		case 'not_equals':
+			if (typeof c.value === 'boolean' && (typeof v === 'number' || typeof v === 'string')) {
+				return (v === 1 || v === '1') !== c.value;
+			}
+			return v !== c.value;
+	}
+}
+
+/** Branch-Ziel: `then` wenn wahr, sonst `otherwise`. */
+export function branchTarget(c: ConditionDTO, state: Record<string, unknown>): string | null {
+	return evaluateCondition(c, state) ? (c.then ?? null) : (c.otherwise ?? null);
+}
+
+/** Auto-Fill-Mapping: Treffer-Felder → Formular-Werte (fehlt/nul = nicht füllen). */
+export function applyAutofill(item: Record<string, unknown>, rule: AutocompleteRuleDTO): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [field, path] of Object.entries(rule.fill ?? {})) {
+		const v = dotPath(item, path);
+		if (v !== null && v !== undefined) out[field] = String(v);
+	}
+	return out;
+}
+
+/** `{param}`-Platzhalter auflösen; Unbekannte bleiben stehen (kein Still-Schweigen). */
+export function resolvePlaceholders(input: string, bindings: Record<string, string>): string {
+	return input.replace(/\{(\w+)\}/g, (full, key) => (key in bindings ? bindings[key] : full));
+}
+
+/** Flow-Pins pro Connector+Flow (Zustands-Pinning pro Session, nicht global). */
+const FLOW_PIN_PREFIX = 'connector.flow.pin.';
+export function loadFlowPins(connectorId: string, flowId: string): Record<string, string> {
+	if (typeof localStorage === 'undefined') return {};
+	try {
+		const raw = localStorage.getItem(`${FLOW_PIN_PREFIX}${connectorId}.${flowId}`);
+		return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+	} catch {
+		return {};
+	}
+}
+
+export function saveFlowPin(
+	connectorId: string,
+	flowId: string,
+	key: string,
+	value: string | null
+): Record<string, string> {
+	const pins = loadFlowPins(connectorId, flowId);
+	if (value === null || value.trim() === '') delete pins[key];
+	else pins[key] = value.trim();
+	if (typeof localStorage !== 'undefined') {
+		try {
+			localStorage.setItem(`${FLOW_PIN_PREFIX}${connectorId}.${flowId}`, JSON.stringify(pins));
+		} catch {
+			/* Store voll/gesperrt: in-memory reicht für die Session. */
+		}
 	}
 	return pins;
 }
