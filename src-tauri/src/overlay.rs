@@ -1060,6 +1060,45 @@ fn hypr_eval(lua: &str) {
     }
 }
 
+/// Addresses (`0x…`) of ALL windows with our pid + WM class — the main
+/// spotlight (title discriminates) AND every in-process GTK dialog. The
+/// WebKitGTK file chooser spawned by `<input type="file">` shares both with
+/// the overlay, so class-wide Hyprland rules (e.g. a static `stay_focused`
+/// rule in the user's hyprland.lua, card t_1042447d) arm it too.
+#[cfg(target_os = "linux")]
+fn own_class_window_addresses() -> Option<Vec<String>> {
+    own_class_window_addresses_for(std::process::id() as i64)
+}
+
+/// Testable core: pick pid+class matches out of a `hyprctl clients -j` array.
+/// `None` = the hyprctl call failed/timed out — callers must retry, an empty
+/// vec alone is NOT distinguishable from a timeout otherwise.
+#[cfg(target_os = "linux")]
+fn own_class_window_addresses_for(pid: i64) -> Option<Vec<String>> {
+    let out = hyprctl_limited(&["-j", "clients"])?;
+    match serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+        Ok(v) => Some(filter_own_addresses(
+            v.as_array().map(Vec::as_slice).unwrap_or(&[]),
+            pid,
+        )),
+        Err(_) => None,
+    }
+}
+
+/// Pure core of `own_class_window_addresses_for`: pick pid+class matches out of
+/// a `hyprctl clients -j` array (unit-tested against the real client shape).
+#[cfg(target_os = "linux")]
+fn filter_own_addresses(clients: &[serde_json::Value], pid: i64) -> Vec<String> {
+    clients
+        .iter()
+        .filter(|c| {
+            c.get("pid").and_then(|p| p.as_i64()) == Some(pid)
+                && c.get("class").and_then(|k| k.as_str()) == Some(SPOTLIGHT_WM_CLASS)
+        })
+        .filter_map(|c| c.get("address").and_then(|a| a.as_str()).map(str::to_owned))
+        .collect()
+}
+
 /// Address (`0x…`) of the MAIN spotlight window — same pid + class as any
 /// in-process GTK dialog, so the window TITLE is the discriminator.
 #[cfg(target_os = "linux")]
@@ -1092,14 +1131,65 @@ fn arm_focus_ownership() {
 }
 
 /// Suspend the focus bridge while one of our own dialogs (file chooser) needs
-/// focus/stacking. Best-effort: without a main window address nothing happens.
+/// focus/stacking. The static-rule lesson (t_1042447d): a class-wide
+/// `stay_focused` rule in the user's hyprland.lua arms EVERY window of our
+/// WM class — the main overlay AND the dialog — so the two duel over keyboard
+/// focus on every click (the reported filepicker/overlay flapping). The
+/// suspend therefore disarms ALL our-class windows, not just the main one.
+/// Best-effort: without Hyprland nothing happens.
 #[cfg(target_os = "linux")]
-fn suspend_focus_ownership() {
-    let Some(addr) = hyprland_main_window_address() else {
-        return;
+fn suspend_focus_ownership(dialog_addr: &str) {
+    // Hyprland's openwindow event reports the address WITHOUT the `0x` prefix
+    // that `hyprctl clients`/selectors use — normalize or every disarm below
+    // is a silent no-op ("ok", but `window not found`).
+    let dlg = if dialog_addr.starts_with("0x") {
+        dialog_addr.to_owned()
+    } else {
+        format!("0x{dialog_addr}")
     };
-    let sel = format!("address:{addr}");
-    hypr_eval(&stay_focused_lua(&sel, false));
+    disarm_all_own_windows(Some(&dlg));
+    // Second pass (delayed): the static class-wide rule arms the dialog AT
+    // map, and the openwindow event may beat that application — or a hyprctl
+    // budget timeout (t_1adbc017) may swallow the first pass. The delayed
+    // pass repeats the whole disarm; idempotent and cheap.
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(700));
+        disarm_all_own_windows(Some(&dlg));
+    });
+}
+
+/// Disarm `stay_focused` on EVERY window of our pid + WM class (main overlay
+/// AND in-process GTK dialogs) — see the t_1042447d lesson above. The dialog
+/// address from the openwindow event is disarmed FIRST and unconditionally:
+/// it needs no `hyprctl clients` round-trip, which can budget-time out exactly
+/// while the dialog maps. Enumeration failures are retried (None ≠ empty).
+#[cfg(target_os = "linux")]
+fn disarm_all_own_windows(dialog_addr: Option<&str>) {
+    // Enumeration-free disarms FIRST: the dialog address (from the openwindow
+    // event) and the main spotlight (stable title selector). Both avoid the
+    // `hyprctl -j clients` round-trip, which budget-times out exactly while a
+    // dialog/webview spawns — the t_1042447d live runs proved that flake.
+    if let Some(dlg) = dialog_addr {
+        let lua = stay_focused_lua(&format!("address:{dlg}"), false);
+        log::debug!("disarm dialog via address selector");
+        hypr_eval(&lua);
+    }
+    hypr_eval(&stay_focused_lua(
+        &format!("title:{SPOTLIGHT_TITLE}"),
+        false,
+    ));
+    for _ in 0..3 {
+        match own_class_window_addresses() {
+            Some(addrs) => {
+                for addr in addrs {
+                    hypr_eval(&stay_focused_lua(&format!("address:{addr}"), false));
+                }
+                return;
+            }
+            None => std::thread::sleep(Duration::from_millis(250)),
+        }
+    }
+    log::warn!("own-window disarm: hyprctl clients unavailable, title+dialog disarm applied");
 }
 
 /// Restore after the dialog closed. Skips the focus grab when the overlay hid
@@ -1197,8 +1287,8 @@ fn spawn_hyprland_events<R: Runtime>(handle: &AppHandle<R>) {
                                 log::info!(
                                     "own dialog opened ({title:?}) -> suspend focus ownership"
                                 );
+                                suspend_focus_ownership(&_addr);
                                 dialog_addr = Some(_addr);
-                                suspend_focus_ownership();
                             }
                         } else if let Some(addr) = line.strip_prefix("closewindow>>")
                             && dialog_addr.as_deref() == Some(addr.trim())
@@ -1556,6 +1646,39 @@ mod tests {
         assert!(is_in_process_dialog(SPOTLIGHT_WM_CLASS, "Datei auswählen"));
         assert!(!is_in_process_dialog(SPOTLIGHT_WM_CLASS, SPOTLIGHT_TITLE));
         assert!(!is_in_process_dialog("firefox", "Whatever"));
+    }
+
+    /// FP (t_1042447d): the dialog suspend must disarm EVERY own-class window,
+    /// not just the main one — a class-wide static `stay_focused` rule in the
+    /// user's hyprland.lua arms the GTK file chooser at its map (same pid +
+    /// WM class as the overlay), and two stay_focused windows duel over the
+    /// focus on every click (the reported filepicker/overlay flapping).
+    /// Fixture shape mirrors a real `hyprctl clients -j` entry.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn filter_own_addresses_catches_main_and_dialog() {
+        let clients = serde_json::json!([
+            {
+                "address": "0x111", "pid": 4242, "class": "architects-overlay",
+                "title": "SC Architects Spotlight", "floating": true
+            },
+            {
+                "address": "0x222", "pid": 4242, "class": "architects-overlay",
+                "title": "Datei öffnen", "floating": true
+            },
+            {
+                // Other process, same class (a second app instance) — NOT ours.
+                "address": "0x333", "pid": 777, "class": "architects-overlay",
+                "title": "SC Architects Spotlight", "floating": true
+            },
+            {
+                // Our pid, foreign class — NOT ours.
+                "address": "0x444", "pid": 4242, "class": "firefox",
+                "title": "Whatever", "floating": false
+            }
+        ]);
+        let own = filter_own_addresses(clients.as_array().unwrap(), 4242);
+        assert_eq!(own, ["0x111", "0x222"]);
     }
 
     /// Exact dispatcher strings (live-probed on Hyprland 0.56.2): the Lua
