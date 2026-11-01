@@ -188,12 +188,20 @@ fn check_flow(flow: &Flow, report: &mut Report) {
     }
     let ids: std::collections::BTreeSet<&str> =
         flow.screens.iter().map(|s| s.id.as_str()).collect();
+    // Flow-Zustands-Keys (SF2): Pins aller Screens — Formular-Templates
+    // dürfen darauf verweisen (Selektionen/Codes fließen screen-übergreifend).
+    let pin_keys: std::collections::BTreeSet<&str> = flow
+        .screens
+        .iter()
+        .flat_map(|s| s.pins.iter().flatten())
+        .map(|p| p.as_str())
+        .collect();
     let mut seen = std::collections::BTreeSet::new();
     for s in &flow.screens {
         if !seen_insert(&mut seen, &s.id) {
             report.error(format!("flow '{fid}': duplicate screen id '{}'", s.id));
         }
-        check_screen(fid, s, &ids, report);
+        check_screen(fid, s, &ids, &pin_keys, report);
     }
     if flow.entry.trim().is_empty() {
         report.error(format!("flow '{fid}': empty entry"));
@@ -258,19 +266,27 @@ fn check_screen(
     flow_id: &str,
     s: &Screen,
     ids: &std::collections::BTreeSet<&str>,
+    pin_keys: &std::collections::BTreeSet<&str>,
     report: &mut Report,
 ) {
     let sid = &s.id;
     if sid.trim().is_empty() {
         report.error(format!("flow '{flow_id}': screen with empty id"));
     }
-    // Endpunkt-Regeln: form/wait brauchen keinen Endpunkt, alle anderen schon.
+    // Endpunkt-Regeln: form braucht keinen Endpunkt, wait POLLT seinen
+    // Endpunkt (raffle_done-Exit), alle anderen brauchen einen.
     let target = s.endpoint.as_deref().unwrap_or("");
-    if s.screen_type != ScreenType::Form && s.screen_type != ScreenType::Wait {
+    if s.screen_type != ScreenType::Form {
         if target.trim().is_empty() {
-            report.error(format!(
-                "flow '{flow_id}': screen '{sid}' has empty endpoint"
-            ));
+            if s.screen_type == ScreenType::Wait {
+                report.warn(format!(
+                    "flow '{flow_id}': wait screen '{sid}' without endpoint — nothing to poll"
+                ));
+            } else {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}' has empty endpoint"
+                ));
+            }
         } else {
             check_endpoint_target(
                 flow_id,
@@ -334,7 +350,12 @@ fn check_screen(
     }
     match s.screen_type {
         ScreenType::Form => match &s.form {
-            Some(form) => check_form(&format!("flow '{flow_id}' screen '{sid}'"), form, report),
+            Some(form) => check_form(
+                &format!("flow '{flow_id}' screen '{sid}'"),
+                form,
+                pin_keys,
+                report,
+            ),
             None => report.error(format!(
                 "flow '{flow_id}': screen '{sid}' (type form): missing 'form' declaration"
             )),
@@ -545,7 +566,7 @@ fn check_view(v: &View, report: &mut Report) {
     }
     if v.view_type == ViewType::Form {
         match &v.form {
-            Some(form) => check_form(&v.id, form, report),
+            Some(form) => check_form(&v.id, form, &Default::default(), report),
             None => report.error(format!(
                 "view '{}' (type form): missing 'form' declaration",
                 v.id
@@ -568,18 +589,25 @@ fn check_view(v: &View, report: &mut Report) {
     }
 }
 
-fn check_form(view_id: &str, form: &crate::manifest::FormView, report: &mut Report) {
+fn check_form(
+    view_id: &str,
+    form: &crate::manifest::FormView,
+    extra_keys: &std::collections::BTreeSet<&str>,
+    report: &mut Report,
+) {
     if form.fields.is_empty() {
         report.error(format!("view '{view_id}': form has no fields"));
     }
     if form.path.trim().is_empty() {
         report.error(format!("view '{view_id}': form path empty"));
     }
-    // {param}-Platzhalter im Pfad müssen Felder sein
-    let field_keys: std::collections::BTreeSet<&str> =
+    // {param}-Platzhalter im Pfad müssen Felder sein (Flow-Screens: auch
+    // Flow-Zustands-Keys/Pins gelten — Selektionen fließen in den Body).
+    let mut allowed: std::collections::BTreeSet<&str> =
         form.fields.iter().map(|f| f.key.as_str()).collect();
+    allowed.extend(extra_keys.iter().copied());
     for param in extract_params(&form.path) {
-        if !field_keys.contains(param.as_str()) {
+        if !allowed.contains(param.as_str()) {
             report.error(format!(
                 "view '{view_id}': path placeholder '{{{param}}}' has no matching field"
             ));
@@ -592,7 +620,7 @@ fn check_form(view_id: &str, form: &crate::manifest::FormView, report: &mut Repo
             "view '{view_id}': form with GET method — intended for read-only forms"
         ));
     }
-    check_template(&form.body_template, view_id, &field_keys, report);
+    check_template(&form.body_template, view_id, &allowed, report);
     for field in &form.fields {
         check_field(view_id, field, report);
     }
@@ -955,7 +983,7 @@ mod tests {
             "{r:?}"
         );
 
-        let ok = r#"{"id": "w", "type": "wait", "title": {"de": "w", "en": "w"}, "poll_seconds": 10, "exit": {"on": "raffle_done", "op": "equals", "value": true, "then": "res"}, "mapping": {"raffle_done": "raffle_done"}},
+        let ok = r#"{"id": "w", "type": "wait", "title": {"de": "w", "en": "w"}, "endpoint": "/api/wait", "poll_seconds": 10, "exit": {"on": "raffle_done", "op": "equals", "value": true, "then": "res"}, "mapping": {"raffle_done": "raffle_done"}},
             {"id": "res", "type": "results", "title": {"de": "r", "en": "r"}, "endpoint": "/api/res", "mapping": {"n": "n"}}"#;
         let r = validate_manifest(manifest_with_flow(&flow_json("w", ok)).as_bytes());
         assert!(r.is_ok(), "{r:?}");

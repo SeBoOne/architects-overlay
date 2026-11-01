@@ -156,7 +156,11 @@ pub fn evaluate(condition: &Condition, state: &Value) -> bool {
                 return false;
             };
             let eq = first == Some(value);
-            if condition.op == CondOp::Equals { eq } else { !eq }
+            if condition.op == CondOp::Equals {
+                eq
+            } else {
+                !eq
+            }
         }
     }
 }
