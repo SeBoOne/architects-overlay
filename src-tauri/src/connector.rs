@@ -697,6 +697,85 @@ pub(crate) async fn form_submit_core(
     .await
 }
 
+/// Generischer Screen-Action-Submit (SF2-Flow): führt eine `actions`-Action
+/// eines Flow-Screens aus (method+path+body+headers aus der Action-Deklaration,
+/// Werte aus dem Flow-Zustand des Renderers). Antwort: `{ status, body }`.
+/// Write nur USER-initiiert (Button) — kein Polling, kein Hintergrundaufruf.
+#[tauri::command]
+pub async fn connector_screen_action(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    id: String,
+    screen_id: String,
+    action_id: String,
+    values: BTreeMap<String, serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let manifest = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
+            return Err(err_key("error.connector.unknown"));
+        };
+        st.manifest.clone()
+    };
+    let action = {
+        let screen = manifest
+            .flows
+            .iter()
+            .flatten()
+            .flat_map(|f| &f.screens)
+            .find(|s| s.id == screen_id)
+            .ok_or_else(|| err_key("error.connector.view_unknown"))?;
+        screen
+            .actions
+            .iter()
+            .flatten()
+            .find(|a| a.id == action_id)
+            .cloned()
+            .ok_or_else(|| err_key("error.connector.view_unknown"))?
+    };
+    let method = action
+        .method
+        .ok_or_else(|| err_key("error.connector.form_not_fetchable"))?;
+    let path_template = action
+        .path
+        .ok_or_else(|| err_key("error.connector.form_not_fetchable"))?;
+    // Pfad: ROHE Werte einsetzen (wie Formular-Submit).
+    let path = fill_form_path(&path_template, &values)
+        .map_err(|k| err_keyp("error.connector.param_required", json!({ "key": k })))?;
+    // Body: JSON-bewusst einsetzen (Listen bleiben strukturiert), unfüllte
+    // Keys entfernen.
+    let mut body = action.body_template.clone().unwrap_or(json!({}));
+    apply_fill(&mut body, &values);
+    strip_unfilled(&mut body);
+    // Header-Templates der Action: Platzhalter aus den Werten (stringifiziert).
+    let mut string_values: BTreeMap<String, String> = BTreeMap::new();
+    for (k, v) in &values {
+        if let Some(s) = v.as_str() {
+            string_values.insert(k.clone(), s.to_owned());
+        } else if !v.is_null() {
+            string_values.insert(k.clone(), v.to_string());
+        }
+    }
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for (name, template) in action.headers.iter().flatten() {
+        let value = fill_params(template, &string_values)
+            .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
+        headers.push((name.clone(), value));
+    }
+    let (status, resp_body) = submit_form_request(
+        &manifest,
+        method,
+        &path,
+        &body,
+        &headers,
+        auth_header_opt(&manifest, &settings_state, &id),
+    )
+    .await?;
+    // Writes invalidieren den Cache des Connectors.
+    state.cache.lock().expect("cache lock").clear();
+    Ok(json!({ "status": status, "body": resp_body }))
+}
+
 /// `{param}`-Platzhalter in einem String auflösen. Fehlt der Wert → Err(key).
 fn fill_params(template: &str, params: &BTreeMap<String, String>) -> Result<String, String> {
     let mut out = template.to_owned();
@@ -1099,6 +1178,8 @@ mod tests {
                 on_select: None,
                 exit: None,
                 autocomplete: None,
+                multi: None,
+                actions: None,
             })
             .collect();
         connector::ConnectorManifest {

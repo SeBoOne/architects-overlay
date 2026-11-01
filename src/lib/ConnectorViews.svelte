@@ -341,7 +341,12 @@
 	{#if activeFlow}
 		<!-- SF1: Flow-Renderer übernimmt die komplette Screen-Kette
 		     (generisch — KEIN connector-spezifisches Wissen hier). -->
-		<FlowRenderer {entry} flow={activeFlow} initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null} />
+		<FlowRenderer
+			{entry}
+			flow={activeFlow}
+			onexit={onexit}
+			initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null}
+		/>
 	{:else if res.error}
 		<div class="cerror" role="alert">{res.error}</div>
 	{:else if view?.type === 'form'}

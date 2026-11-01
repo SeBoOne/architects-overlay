@@ -10,7 +10,7 @@
 //! Zustand), Operanden: equals/not_equals/exists/missing — bewusst KEINE
 //! Freitext-Logik (Manifest bleibt code-frei, Deny-Unknown schützt).
 
-use crate::manifest::{FormView, LocalizedText, Param};
+use crate::manifest::{FormView, HttpMethod, LocalizedText, Param};
 use crate::mapping::dot_path;
 use serde::Deserialize;
 use serde_json::Value;
@@ -81,6 +81,48 @@ pub struct AutocompleteRule {
     pub fill: BTreeMap<String, String>,
 }
 
+/// Multi-Select-Liste (SF2): Zeilen sind markierbar (Checkboxen), der
+/// Confirm führt die Screen-Action aus. `max_path` ist ein Dot-Path in den
+/// Flow-Zustand mit dem Maximum (z. B. `max_wishes`) — fehlt er, gilt
+/// unbegrenzt.
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MultiSpec {
+    /// Dot-Path in den Flow-Zustand mit dem Maximum.
+    pub max_path: Option<String>,
+}
+
+/// Generische Screen-Aktion (SF2): Button unter Detail-/Listen-/Results-
+/// Screens. Entweder Write (`method` + `path`) oder reine Navigation
+/// (`goto`). SCLM-spezifisches bleibt im Manifest.
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScreenAction {
+    pub id: String,
+    pub title: LocalizedText,
+    /// HTTP-Methode; fehlt sie, ist die Action reine Navigation (`goto`).
+    pub method: Option<HttpMethod>,
+    /// Pfad mit `{param}`-Platzhaltern (Pflicht bei `method`).
+    pub path: Option<String>,
+    /// Deklarierte Platzhalter-Keys (für die Validator-Prüfung).
+    pub params: Option<Vec<Param>>,
+    /// Request-Header-Templates (`{param}`) — z. B. Session-Code.
+    pub headers: Option<BTreeMap<String, String>>,
+    /// Body-Vorlage; `{param}`-Platzhalter werden JSON-bewusst ersetzt.
+    pub body_template: Option<Value>,
+    /// Antwort → Flow-Zustand (`"pcode": "pcode"` pinnt das Antwortfeld
+    /// `pcode` unter dem Zustands-Key `pcode`) — z. B. pcode-Claim.
+    pub pins_map: Option<BTreeMap<String, String>>,
+    /// Ziel-Screen nach der Action (ohne `method`: reine Navigation).
+    pub goto: Option<String>,
+}
+
+impl ScreenAction {
+    pub fn is_navigation(&self) -> bool {
+        self.method.is_none()
+    }
+}
+
 /// Ein Screen im Flow.
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -116,6 +158,10 @@ pub struct Screen {
     pub exit: Option<Condition>,
     /// Autocomplete-Regeln (Item-Suche + Auto-Fill).
     pub autocomplete: Option<Vec<AutocompleteRule>>,
+    /// Multi-Select (nur `list`): Zeilen markierbar, Confirm → Action.
+    pub multi: Option<MultiSpec>,
+    /// Generische Aktionen (Buttons) unter dem Screen-Inhalt.
+    pub actions: Option<Vec<ScreenAction>>,
 }
 
 /// Benannter Flow: Einstieg + Kette von Screens.
@@ -155,7 +201,16 @@ pub fn evaluate(condition: &Condition, state: &Value) -> bool {
             let Some(value) = &condition.value else {
                 return false;
             };
-            let eq = first == Some(value);
+            // Bool-Toleranz (SF2-Befund Live-Probe): SQLite-Backends liefern
+            // Bools als 0/1-Ints — ein Boolean-Vergleichswert matcht deshalb
+            // auch die Zahl-Äquivalente (1==true, 0==false). Sonst feuert
+            // `raffle_done equals true` nie gegen `raffle_done: 1`.
+            let eq = match (value.as_bool(), first) {
+                (Some(b), Some(&Value::Number(ref n))) => {
+                    n.as_f64().map(|f| (f != 0.0) == b).unwrap_or(false)
+                }
+                _ => first == Some(value),
+            };
             if condition.op == CondOp::Equals {
                 eq
             } else {
@@ -246,6 +301,45 @@ mod tests {
     }
 
     #[test]
+    fn equals_bool_tolerates_sqlite_ints() {
+        // SF2-Befund Live-Probe: get_session liefert raffle_done als 0/1-Int
+        // (SQLite-Row) — `equals true` muss trotzdem feuern.
+        let c = Condition {
+            on: "raffle_done".into(),
+            op: CondOp::Equals,
+            value: Some(json!(true)),
+            then: Some("results".into()),
+            otherwise: Some("wait".into()),
+        };
+        assert_eq!(
+            branch_target(&c, &json!({"raffle_done": 1})).as_deref(),
+            Some("results")
+        );
+        assert_eq!(
+            branch_target(&c, &json!({"raffle_done": 0})).as_deref(),
+            Some("wait")
+        );
+        assert_eq!(
+            branch_target(&c, &json!({"raffle_done": true})).as_deref(),
+            Some("results")
+        );
+        assert_eq!(
+            branch_target(&c, &json!({"raffle_done": false})).as_deref(),
+            Some("wait")
+        );
+        // Nicht-Bool-Vergleichswerte bleiben strikt (keine Truthiness-Magie).
+        let n = Condition {
+            on: "count".into(),
+            op: CondOp::Equals,
+            value: Some(json!(1)),
+            then: None,
+            otherwise: None,
+        };
+        assert!(evaluate(&n, &json!({"count": 1})));
+        assert!(!evaluate(&n, &json!({"count": true})));
+    }
+
+    #[test]
     fn equals_not_equals_exists_missing() {
         let state = json!({"raffle_done": true, "name": "x"});
         assert!(evaluate(
@@ -308,6 +402,8 @@ mod tests {
             on_select: None,
             exit: None,
             autocomplete: None,
+            multi: None,
+            actions: None,
         }
     }
 
@@ -431,5 +527,66 @@ mod tests {
         assert_eq!(s.screen_type, ScreenType::Wait);
         assert_eq!(s.poll_seconds, Some(15));
         assert_eq!(s.exit.as_ref().unwrap().then.as_deref(), Some("results"));
+    }
+
+    #[test]
+    fn multi_and_actions_parse_from_json() {
+        let text = r#"{
+            "id": "wishes", "type": "list",
+            "title": {"de": "Wünsche", "en": "Wishes"},
+            "endpoint": "/api/session/{code}",
+            "params": [{"key": "code", "label": {"de": "Code", "en": "Code"}}],
+            "headers": {"X-SCLM-Code": "{code}"},
+            "multi": {"max_path": "max_wishes"},
+            "pins": ["loot_id"],
+            "actions": [
+                {
+                    "id": "confirm",
+                    "title": {"de": "Bestätigen", "en": "Confirm"},
+                    "method": "post",
+                    "path": "/api/session/{sid}/wishes",
+                    "headers": {"X-SCLM-Code": "{code}"},
+                    "body_template": {"loot_ids": "{loot_id}"},
+                    "goto": "wait"
+                },
+                {
+                    "id": "add_self",
+                    "title": {"de": "Selbst hinzufügen", "en": "Add myself"},
+                    "goto": "addme"
+                }
+            ]
+        }"#;
+        let s: Screen = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            s.multi.as_ref().unwrap().max_path.as_deref(),
+            Some("max_wishes")
+        );
+        let actions = s.actions.unwrap();
+        assert_eq!(actions.len(), 2);
+        assert!(!actions[0].is_navigation());
+        assert!(actions[1].is_navigation());
+        assert_eq!(actions[1].goto.as_deref(), Some("addme"));
+        // deny_unknown_fields: Tippfer scheitert
+        let bad: Result<Screen, _> =
+            serde_json::from_str(text.replace("\"max_path\"", "\"max_pat\"").as_str());
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn pins_map_parses_from_json() {
+        let text = r#"{
+            "id": "addme", "type": "form",
+            "title": {"de": "Beitreten", "en": "Join"},
+            "actions": [{
+                "id": "noop", "title": {"de": "x", "en": "x"},
+                "method": "post", "path": "/api/x",
+                "pins_map": {"pcode": "pcode", "participant_id": "id"}
+            }]
+        }"#;
+        let s: Screen = serde_json::from_str(text).unwrap();
+        let actions = s.actions.unwrap();
+        let pm = actions[0].pins_map.as_ref().unwrap();
+        assert_eq!(pm.get("pcode"), Some(&"pcode".to_string()));
+        assert_eq!(pm.get("participant_id"), Some(&"id".to_string()));
     }
 }

@@ -27,6 +27,7 @@
 		branchTarget,
 		applyAutofill,
 		resolvePlaceholders,
+		isNavigationAction,
 		loadFlowPins,
 		saveFlowPin,
 		type ConnectorEntry,
@@ -34,8 +35,9 @@
 		type FlowDTO,
 		type ScreenDTO,
 		type ConditionDTO,
-		type AutocompleteRuleDTO
-	} from './connector';
+		type AutocompleteRuleDTO,
+		type ScreenActionDTO
+		} from './connector';
 
 	type Result = { data: FetchResultDTO | null; error: string; loading: boolean };
 
@@ -79,6 +81,11 @@
 	let acItems: Record<string, { label: string; value: Record<string, unknown> }[]> = $state({});
 	let acOpen: Record<string, boolean> = $state({});
 	let timer: ReturnType<typeof setInterval> | null = null;
+	// SF2: Multi-Select-Markierungen (Index-Keys der sichtbaren Zeilen) und
+	// Action-Zustand (Busy/Note pro Screen).
+	let marked: string[] = $state([]);
+	let actionBusy = $state(false);
+	let actionNote = $state('');
 
 	// Display-Regel: wenn `when` falsch → otherwise-Screen (falls deklariert).
 	function resolvedScreen(): ScreenDTO | null {
@@ -103,6 +110,18 @@
 			? (res.data.mapped as Record<string, unknown>)
 			: null
 	);
+	// SF2: Write-Action eines Multi-Screens = Confirm-Button.
+	const confirmAction = $derived(
+		shown && shown.type === 'list' && shown.multi
+			? (shown.actions ?? []).find((a) => !isNavigationAction(a)) ?? null
+			: null
+	);
+	const screenActions = $derived.by(() => {
+		const s = shown;
+		if (!s) return [];
+		const list = s.actions ?? [];
+		return confirmAction ? list.filter((a) => a.id !== confirmAction.id) : list;
+	});
 
 	// SF2: code_entry-Screens rendern ihre `params` als Eingabefelder
 	// (Session-Code), form-Screens ihre `form.fields`.
@@ -189,9 +208,20 @@
 		screenId = id;
 		formValues = {};
 		formNote = '';
+		marked = [];
+		actionNote = '';
 		autofilled = {};
 		acItems = {};
 		acOpen = {};
+		// SF2: Form-Screens beim Navigieren aus dem Flow-Zustand vorseeden
+		// (Pins + Selektionen) — nur für Template-/Param-Platzhalter und NUR
+		// wenn der User nicht schon getippt hat. Notwendig, weil required-
+		// Felder (code/sid) sonst die HTML5-Validation blocken, bevor das
+		// Submit-Seeding greift.
+		const t = findScreen(id);
+		if (t?.type === 'form' && t.form) {
+			seedFromState(t, formValues);
+		}
 		res = { data: null, error: '', loading: false };
 		untrack(() => void load());
 	}
@@ -239,6 +269,35 @@
 		}
 	}
 
+	/**
+	 * SF2: Seed-Keys eines Form-Screens — Template-/Pfad-Platzhalter +
+	 * Param-Keys + Header-Träger-Felder (z. B. `code` → X-SCLM-Code). Der
+	 * Header-Träger ist sonst in keinem Template sichtbar und bliebe leer —
+	 * required-HTML5-Validation würde den Submit blocken.
+	 */
+	function seedKeys(s: ScreenDTO): Set<string> {
+		const keys = new Set<string>();
+		if (s.form) {
+			templateKeys(s.form.body_template, keys);
+			templateKeys(s.form.path, keys);
+		}
+		for (const p of s.params ?? []) keys.add(p.key);
+		for (const f of s.form?.fields ?? []) {
+			if (f.header && f.header.trim()) keys.add(f.key);
+		}
+		return keys;
+	}
+
+	/** Fehlende Seed-Keys aus dem Flow-Zustand vorseeden (User-Input gewinnt). */
+	function seedFromState(s: ScreenDTO, target: Record<string, string>) {
+		for (const k of seedKeys(s)) {
+			if (k in target) continue;
+			const v = fstate[k];
+			if (typeof v === 'string' && v.trim()) target[k] = v;
+			else if (typeof v === 'number') target[k] = String(v);
+		}
+	}
+
 	// ---- Formular: Submit → Transition -------------------------------------
 	// SF2: Formular-Werte werden vor dem Submit aus dem Flow-Zustand
 	// vorgefüllt — NUR für Platzhalter-Keys des Templates/Pfads und NUR wenn
@@ -267,17 +326,8 @@
 			return;
 		}
 		if (!s.form) return;
-		const keys = new Set<string>();
-		templateKeys(s.form.body_template, keys);
-		templateKeys(s.form.path, keys);
-		for (const p of s.params ?? []) keys.add(p.key);
 		const seeded: Record<string, string> = { ...formValues };
-		for (const k of keys) {
-			if (k in seeded) continue;
-			const v = fstate[k];
-			if (typeof v === 'string' && v.trim()) seeded[k] = v;
-			else if (typeof v === 'number') seeded[k] = String(v);
-		}
+		seedFromState(s, seeded);
 		formBusy = true;
 		try {
 			const out = await invoke<{ status: number; body: unknown }>('connector_form_submit', {
@@ -298,6 +348,15 @@
 				for (const [k, v] of Object.entries(body)) {
 					fstate[k] = v;
 					if ((s.pins ?? []).includes(k) && typeof v === 'string') pin(k, v);
+				}
+				// SF2: Form-Mapping (Zustands-Key → Dot-Path in die Antwort) —
+				// z. B. add_participant: {"participant_id": "id"}.
+				for (const [k, path] of Object.entries(s.mapping ?? {})) {
+					const v = dotGet(body, path);
+					if (typeof v === 'string' || typeof v === 'number') {
+						fstate[k] = v;
+						if ((s.pins ?? []).includes(k)) pin(k, String(v));
+					}
 				}
 			}
 			if (out.status < 400 && s.on_submit) go(s.on_submit);
@@ -320,6 +379,123 @@
 			if (typeof v === 'string' || typeof v === 'number') pin(k, String(v));
 		}
 		if (s.on_select) go(s.on_select);
+	}
+
+	// ---- SF2: Multi-Select-Listen ------------------------------------------
+	// Zeilen sind markierbar (Checkboxen); der Confirm pinnt die Auswahl als
+	// JSON-Array unter den Pin-Key (z. B. loot_id) und führt die Write-Action
+	// des Screens aus. max_path begrenzt die Markierungen (z. B. max_wishes).
+	const multiMax = $derived.by(() => {
+		const mp = shown?.multi?.max_path;
+		if (!mp) return null;
+		const v = fstate[mp];
+		return typeof v === 'number' ? v : typeof v === 'string' ? Number(v) || null : null;
+	});
+
+	function rowKey(i: number): string {
+		return String(i);
+	}
+
+	function isMarked(i: number): boolean {
+		return marked.includes(rowKey(i));
+	}
+
+	function toggleMark(i: number) {
+		const k = rowKey(i);
+		if (marked.includes(k)) {
+			marked = marked.filter((x) => x !== k);
+		} else if (multiMax === null || marked.length < multiMax) {
+			marked = [...marked, k];
+		}
+		actionNote = '';
+	}
+
+	/** Alle primitiven Flow-Zustandswerte als Action-Bindings (Arrays inklusive
+	 *  — Multi-Select-Auswahl bleibt als JSON-Liste strukturiert). */
+	function actionValues(): Record<string, unknown> {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(fstate)) {
+			if (
+				typeof v === 'string' ||
+				typeof v === 'number' ||
+				typeof v === 'boolean' ||
+				Array.isArray(v)
+			)
+				out[k] = v;
+		}
+		for (const [k, v] of Object.entries(formValues)) {
+			if (v.trim()) out[k] = v;
+		}
+		return out;
+	}
+
+	/** Dot-Path in ein Antwortobjekt (pins_map: "pcode" → body.pcode). */
+	function dotGet(obj: unknown, path: string): unknown {
+		let cur: unknown = obj;
+		for (const seg of path.split('.')) {
+			if (cur && typeof cur === 'object') cur = (cur as Record<string, unknown>)[seg];
+			else return undefined;
+		}
+		return cur;
+	}
+
+	async function runAction(a: ScreenActionDTO) {
+		const s = shown;
+		if (!s || actionBusy) return;
+		if (isNavigationAction(a)) {
+			if (a.goto) go(a.goto);
+			return;
+		}
+		actionBusy = true;
+		actionNote = '';
+		try {
+			const out = await invoke<{ status: number; body: unknown }>('connector_screen_action', {
+				id: entry.id,
+				screenId: s.id,
+				actionId: a.id,
+				values: actionValues()
+			});
+			actionNote =
+				out.status < 400
+					? tr('connector.form_ok', { status: String(out.status) })
+					: tr('connector.form_http_error', { status: String(out.status) });
+			if (out.status < 400) {
+				// pins_map: Antwortfelder in den Flow-Zustand pinnen (z. B. pcode).
+				for (const [key, path] of Object.entries(a.pins_map ?? {})) {
+					const v = dotGet(out.body, path);
+					if (typeof v === 'string') pin(key, v);
+					else if (typeof v === 'number') pin(key, String(v));
+				}
+				marked = [];
+				if (a.goto) go(a.goto);
+				else await load(true); // ohne goto: Screen refreshen (Status sichtbar)
+			}
+		} catch (err) {
+			actionNote = trError(err);
+		} finally {
+			actionBusy = false;
+		}
+	}
+
+	/** Multi-Confirm: Auswahl pinnen (JSON-Array) → Write-Action ausführen. */
+	async function confirmMulti() {
+		const s = shown;
+		if (!s) return;
+		const write = (s.actions ?? []).find((a) => !isNavigationAction(a));
+		const selected = rows.filter((_, i) => isMarked(i));
+		if (selected.length === 0) return;
+		if (multiMax !== null && selected.length > multiMax) return;
+		// Pin-Keys erhalten die Auswahl als JSON-Array (apply_fill ersetzt den
+		// Whole-Platzhalter strukturiert — loot_ids bleibt eine Liste).
+		for (const k of s.pins ?? []) {
+			const vals = selected
+				.map((r) => r[k])
+				.filter((v) => typeof v === 'string' || typeof v === 'number')
+				.map((v) => String(v));
+			fstate = { ...fstate, [k]: vals };
+		}
+		if (write) await runAction(write);
+		else if (s.on_select) go(s.on_select);
 	}
 
 	// ---- Autocomplete + Auto-Fill ------------------------------------------
@@ -449,19 +625,42 @@
 					</button>
 					{#if formNote}<p class="fnote">{formNote}</p>{/if}
 				</form>
-			{:else if shown.type === 'list' || shown.type === 'results'}
+			{:else if shown.type === 'list' || (shown.type === 'results' && Array.isArray(res.data?.mapped))}
+				{#if shown.type === 'list' && shown.multi}
+					<p class="fmarkinfo">
+						{tr('connector.flow.marked', {
+							n: String(marked.length),
+							max: String(multiMax ?? '∞')
+						})}
+					</p>
+				{/if}
 				<ul class="flist">
 					{#each rows as row, i (i)}
 						<li>
-							<button
-								class="frow"
-								type="button"
-								onclick={() => select(String(row.id ?? i), row)}
-							>
-								{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
-									<span class="fk">{field}</span><span class="fv">{formatValue(row?.[field])}</span>
-								{/each}
-							</button>
+							{#if shown.type === 'list' && shown.multi}
+								<button
+									class="frow fmark"
+									class:is-marked={isMarked(i)}
+									type="button"
+									aria-pressed={isMarked(i)}
+									onclick={() => toggleMark(i)}
+								>
+									<span class="fcheck">{isMarked(i) ? '☑' : '☐'}</span>
+									{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
+										<span class="fk">{field}</span><span class="fv">{formatValue(row?.[field])}</span>
+									{/each}
+								</button>
+							{:else}
+								<button
+									class="frow"
+									type="button"
+									onclick={() => select(String(row.id ?? i), row)}
+								>
+									{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
+										<span class="fk">{field}</span><span class="fv">{formatValue(row?.[field])}</span>
+									{/each}
+								</button>
+							{/if}
 						</li>
 					{:else}
 						<li class="fempty">{$t('connector.empty')}</li>
@@ -479,6 +678,37 @@
 			{/if}
 			{#if shown.type === 'wait'}
 				<p class="fwait">{tr('connector.flow.wait_poll', { s: String(shown.poll_seconds ?? 15) })}</p>
+			{/if}
+			{#if (confirmAction || screenActions.length > 0)}
+				<div class="factions">
+					{#if confirmAction}
+						<button
+							class="fbtn fsubmit"
+							type="button"
+							disabled={actionBusy || marked.length === 0}
+							onclick={() => void confirmMulti()}
+						>
+							{labelOf(confirmAction.title, lang)}
+						</button>
+					{/if}
+					{#each screenActions as a (a.id)}
+						{#if isNavigationAction(a)}
+							<button class="fbtn" type="button" onclick={() => void runAction(a)}>
+								{labelOf(a.title, lang)}
+							</button>
+						{:else}
+							<button
+								class="fbtn fsubmit"
+								type="button"
+								disabled={actionBusy}
+								onclick={() => void runAction(a)}
+							>
+								{labelOf(a.title, lang)}
+							</button>
+						{/if}
+					{/each}
+				</div>
+				{#if actionNote}<p class="fnote">{actionNote}</p>{/if}
 			{/if}
 		</div>
 	{/if}
@@ -533,4 +763,8 @@
 	.fv { font-size: 12px; }
 	.fdetail { margin: 0; display: flex; flex-direction: column; gap: 4px; }
 	.fdetail-line { display: flex; gap: 8px; align-items: baseline; }
+	.fmarkinfo { font-size: 11px; opacity: 0.75; margin: 0; }
+	.fmark.is-marked { border-color: currentColor; font-weight: 700; }
+	.fcheck { font-size: 13px; }
+	.factions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 </style>

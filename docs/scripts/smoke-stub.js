@@ -281,6 +281,12 @@ window.__TAURI_INTERNALS__ = {
 					status: (window.__STUB_CONNECTOR_FORM_STATUS__ ?? 201),
 					body: (window.__STUB_CONNECTOR_FORM_BODY__ ?? { ok: true })
 				};
+			case 'connector_screen_action':
+				window.__STUB_LAST_ACTION__ = { screenId: a.screenId, actionId: a.actionId, values: a.values ?? null };
+				return {
+					status: (window.__STUB_CONNECTOR_ACTION_STATUS__ ?? 200),
+					body: (window.__STUB_CONNECTOR_ACTION_BODY__ ?? { ok: true })
+				};
 			case 'sync_status':
 				return {
 					provider: 'uex',

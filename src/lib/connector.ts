@@ -91,6 +91,30 @@ export type AutocompleteRuleDTO = {
 	fill?: Record<string, string> | null;
 };
 
+/** Multi-Select-Liste (SF2): Confirm führt die Write-Action aus. */
+export type MultiSpecDTO = {
+	max_path?: string | null;
+};
+
+/** Generische Screen-Aktion (SF2): Write (method+path) oder Navigation. */
+export type ScreenActionDTO = {
+	id: string;
+	title: LocalizedText;
+	method?: 'get' | 'post' | 'patch' | 'put' | 'delete' | null;
+	path?: string | null;
+	params?: ParamDTO[] | null;
+	headers?: Record<string, string> | null;
+	body_template?: unknown | null;
+	/** Antwort → Flow-Zustand (`"pcode": "pcode"` pinnt das Antwortfeld). */
+	pins_map?: Record<string, string> | null;
+	goto?: string | null;
+};
+
+/** Aktion ohne `method` = reine Navigation (Validator erzwingt goto). */
+export function isNavigationAction(a: ScreenActionDTO): boolean {
+	return !a.method;
+}
+
 export type ScreenDTO = {
 	id: string;
 	type: 'code_entry' | 'list' | 'detail' | 'form' | 'wait' | 'results';
@@ -107,6 +131,8 @@ export type ScreenDTO = {
 	on_select?: string | null;
 	exit?: ConditionDTO | null;
 	autocomplete?: AutocompleteRuleDTO[] | null;
+	multi?: MultiSpecDTO | null;
+	actions?: ScreenActionDTO[] | null;
 };
 
 export type FlowDTO = {
@@ -255,7 +281,11 @@ export function dotPath(state: unknown, path: string): unknown {
 	for (const seg of path.split('.')) {
 		if (cur === null || cur === undefined) return undefined;
 		const m = /^(.*?)\[(\d*)\]$/.exec(seg);
+		// SF2-Fix: Segmente OHNE []-Suffix (Plain-Keys wie `raffle_done`)
+		// müssen den Key direkt auflösen — sonst liefert der Pfad das ganze
+		// Zustandsobjekt zurück und Bedingungen feuern nie.
 		if (m && m[1]) cur = (cur as Record<string, unknown>)[m[1]];
+		else cur = (cur as Record<string, unknown>)[seg];
 		if (cur === null || cur === undefined) return undefined;
 		if (Array.isArray(cur)) {
 			if (m && m[2] !== '') {
@@ -285,8 +315,17 @@ export function evaluateCondition(c: ConditionDTO, state: Record<string, unknown
 		case 'missing':
 			return isNull;
 		case 'equals':
+			// Bool-Toleranz (SF2-Befund Live-Probe): SQLite-Backends liefern
+			// Bools als 0/1-Ints — Boolean-Vergleichswerte matchen auch die
+			// Zahl-Äquivalente (1==true, 0==false).
+			if (typeof c.value === 'boolean' && (typeof v === 'number' || typeof v === 'string')) {
+				return (v === 1 || v === '1') === c.value;
+			}
 			return v === c.value;
 		case 'not_equals':
+			if (typeof c.value === 'boolean' && (typeof v === 'number' || typeof v === 'string')) {
+				return (v === 1 || v === '1') !== c.value;
+			}
 			return v !== c.value;
 	}
 }
