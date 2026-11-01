@@ -3,11 +3,12 @@
 //! Streng per `deny_unknown_fields` — ein Manifest mit Tippfern muss beim
 //! Import scheitern, nicht stillschweigend Felder ignorieren.
 
+use crate::flow::Flow;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
 /// Lokalisierter Text (de/en, Fallback en im UI).
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LocalizedText {
     pub de: String,
@@ -17,7 +18,7 @@ pub struct LocalizedText {
 /// Auth-Deklaration. `header` = Header-Auth (z. B. `X-SCLM-Code`), dessen
 /// Wert aus einer Nutzer-Eingabe pro Connector in den Einstellungen kommt
 /// (`value_source` = Settings-Key). Session-Codes sind WERTE, keine Auth.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Auth {
     #[serde(rename = "type")]
@@ -28,7 +29,7 @@ pub struct Auth {
     pub value_source: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthType {
     Header,
@@ -36,7 +37,7 @@ pub enum AuthType {
 }
 
 /// View-Typen: table | cards | detail | calendar | form.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewType {
     Table,
@@ -49,7 +50,7 @@ pub enum ViewType {
 /// Param-Deklaration für Views mit `{param}`-Platzhaltern im Endpoint
 /// (z. B. Session-Detail `GET /api/session/{code}`): Label für die
 /// Code-Eingabe im UI.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Param {
     pub key: String,
@@ -57,7 +58,7 @@ pub struct Param {
 }
 
 /// Ein View im Manifest.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct View {
     pub id: String,
@@ -83,7 +84,7 @@ pub struct View {
 
 /// Formular-View (durch SCLM getrieben): Eingabefelder + method + path
 /// (+ Pfad-Parameter aus der Auswahl) + body_template.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FormView {
     /// Pflicht bei `type: form`.
@@ -95,7 +96,7 @@ pub struct FormView {
     pub body_template: serde_json::Value,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HttpMethod {
     Get,
@@ -106,7 +107,7 @@ pub enum HttpMethod {
 }
 
 /// Eingabefeld im Formular.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FormField {
     /// Schlüssel im Template/Pfad.
@@ -126,7 +127,7 @@ pub struct FormField {
     pub default_source: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FieldType {
     Text,
@@ -135,21 +136,21 @@ pub enum FieldType {
 }
 
 /// L2-Sync (für AAWA später): Master-Richtung + Strategie pro Connector.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sync {
     pub master: SyncMaster,
     pub strategy: SyncStrategy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncMaster {
     Platform,
     Local,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncStrategy {
     Replace,
@@ -158,7 +159,7 @@ pub enum SyncStrategy {
 
 /// Placement-Konzept (Sebo-Korrektur 2026-11-02): KEIN universeller
 /// „Dienste“-Bereich — jedes Manifest deklariert, WO seine Views erscheinen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlacementKind {
     /// Eigener Top-Level-Bereich (wie ein Mode).
@@ -169,7 +170,7 @@ pub enum PlacementKind {
     Embed,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Placement {
     pub kind: PlacementKind,
@@ -183,7 +184,7 @@ pub struct Placement {
 }
 
 /// Root-Manifest.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorManifest {
     pub manifest_version: u32,
@@ -196,6 +197,9 @@ pub struct ConnectorManifest {
     /// WO die Views erscheinen (own | replace | embed).
     pub placement: Placement,
     pub views: Vec<View>,
+    /// Screen-Flows (SF1): benannte Screen-Ketten — z. B. SCLM
+    /// Teilnehmer-/Ersteller-Flow. Optional: Flows sind additiv zu Views.
+    pub flows: Option<Vec<Flow>>,
     pub sync: Option<Sync>,
 }
 
