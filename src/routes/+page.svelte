@@ -6304,8 +6304,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	}}
 																/>
 																{#each advertForm.images as img, i (img + '#' + i)}
-																	<span style="position: relative; display: inline-block; margin: 2px" title="Bild {i + 1}">
-																		<img src={img} alt="Vorschau {i + 1}" style="width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,.2)" />
+																	<span style="position: relative; display: inline-block; margin: 2px" title={$t('shop.image_title_n', { i: i + 1 })}>
+										<img src={img} alt={$t('shop.image_alt_n', { i: i + 1 })} style="width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,.2)" />
 																		<button
 																			type="button"
 																			class="chip warn"
@@ -6892,7 +6892,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="info-modal" role="dialog" aria-modal="true" aria-label={$t('info.title')}>
 					<div class="info-head">
 						<div class="info-hero">
-							<img class="info-logo" src={logoUrl} alt="Architects Overlay — Sebos Vector-Logo" draggable="false" />
+							<img class="info-logo" src={logoUrl} alt={$t('info.logo_alt')} draggable="false" />
 							<div class="info-title">Architects Overlay</div>
 							<div class="info-meta">
 								<span>{$t('info.version', { ver: infoVersion ?? '' })}</span>
@@ -6971,7 +6971,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								     Fandom-FAQ (siehe brand/third-party/README.md). -->
 								<img
 									src="/cig-made-by-the-community.png"
-									alt="Made by the Community"
+									alt={$t('info.cig_badge_alt')}
 									draggable="false"
 								/>
 								<span class="info-cig-src">{$t('info.cig_asset_note')}</span>
