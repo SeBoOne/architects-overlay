@@ -281,6 +281,12 @@ export function savePin(
 
 /** Dot-Path im JS-Zustand auflösen (`.key`, `[i]`, `[]`-Arrays). */
 export function dotPath(state: unknown, path: string): unknown {
+	if (path === '') {
+		// Leerer Pfad = Treffer selbst (Spiegel zu dot_path in Rust) — nötig
+		// für Autocomplete-Endpoints, die reine String-Listen liefern
+		// (Teilnehmer-/Waren-Suche): fill {"name": ""} füllt den String.
+		return state;
+	}
 	let cur: unknown = state;
 	for (const seg of path.split('.')) {
 		if (cur === null || cur === undefined) return undefined;
@@ -344,7 +350,12 @@ export function applyAutofill(item: Record<string, unknown>, rule: AutocompleteR
 	const out: Record<string, string> = {};
 	for (const [field, path] of Object.entries(rule.fill ?? {})) {
 		const v = dotPath(item, path);
-		if (v !== null && v !== undefined) out[field] = String(v);
+		// Nur Primitive füllen (SF3): Objekte/Arrays würden als "[object
+		// Object]" im Eingabefeld landen — fehlende/strukurierte Felder
+		// bleiben unberührt (Nutzer-Eingabe gewinnt).
+		if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+			out[field] = String(v);
+		}
 	}
 	return out;
 }

@@ -3823,7 +3823,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const data = await invoke<FetchResultDTO>('connector_fetch', {
 				id: ownEntry.id,
-				viewId: cf.screen.id,
+				// SF3: Flow-qualifizierte Screen-ID (wie FlowRenderer load()) —
+				// Cache-Key/Resolve braucht die Flow-Qualifikation.
+				viewId: `${cf.flow.id}:${cf.screen.id}`,
 				force: true,
 				params: { [paramKey]: c }
 			});

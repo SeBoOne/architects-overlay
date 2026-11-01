@@ -41,13 +41,13 @@ LOOT = [
 
 def data(raffle_done):
     return {
-        "code": {"mapped": {"sid": "s1", "name": "Weihnachtsverlosung", "created": "01.11.2026",
+        "participant:code": {"mapped": {"sid": "s1", "name": "Weihnachtsverlosung", "created": "01.11.2026",
                              "max_wishes": 3, "locked": False, "raffle_done": raffle_done}},
-        "participants": {"rows": [
+        "participant:participants": {"rows": [
             {"name": "Sebo", "participant_id": "p1"},
             {"name": "Anders", "participant_id": "p2"}]},
-        "wishes": {"rows": LOOT},
-        "results": {"mapped": {"rid": "R1", "won": ["Cutlass Black"],
+        "participant:wishes": {"rows": LOOT},
+        "participant:results": {"mapped": {"rid": "R1", "won": ["Cutlass Black"],
                                 "waived": False, "collected": False}},
     }
 
