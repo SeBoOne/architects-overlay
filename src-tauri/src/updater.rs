@@ -362,9 +362,9 @@ pub async fn updater_install(
             {
                 let target = appimage_path.clone();
                 install_appimage(&new_path, &target)?;
-                state.set_note(format!(
-                    "Update v{} installiert — Overlay wird neu gestartet.",
-                    avail.version
+                state.set_note(err_keyp(
+                    "update.note_appimage_done",
+                    json!({ "version": avail.version }),
                 ));
             }
             #[cfg(not(target_os = "linux"))]

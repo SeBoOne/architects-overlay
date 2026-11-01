@@ -296,7 +296,7 @@ fn sync_all(state: &SettingsState, note: &SyncNote) {
         return;
     }
     let Some(paths) = crate::hyprland_sync::OmarchyPaths::detect() else {
-        note.set("Compositor-Sync: Hyprland läuft, aber das OmaSettings-Plugin wurde nicht gefunden. Manuelles Anlegen der Binds: docs/WAYLAND.md.");
+        note.set(err_key("sync.compositor_plugin_missing"));
         return;
     };
     let (toggle, click, _) = state.shortcut_state();
@@ -590,8 +590,9 @@ pub fn settings_set_mode_hotkey(
         "routes" => hotkeys.routes = key.clone(),
         "inventory" => hotkeys.inventory = key.clone(),
         _ => {
-            return Err(format!(
-                "Modus nicht konfigurierbar: {field} (F1/F2/F12 sind fest belegt)"
+            return Err(err_keyp(
+                "settings.err_fixed_mode",
+                json!({ "field": field_norm }),
             ));
         }
     }

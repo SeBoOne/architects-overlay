@@ -176,9 +176,9 @@ impl WriteGate {
             // Nächster freier Slot = ältester Eintrag + Fensterlänge.
             let oldest = recent.iter().min().copied().unwrap_or(now_secs);
             let wait = oldest + self.window_secs - now_secs;
-            return Err(format!(
-                "Rate-Limit: maximal {MAX} Schreibaktionen pro Minute — bitte {wait} s warten.",
-                MAX = self.max_per_window
+            return Err(err_keyp(
+                "error.trade.rate_limit_max",
+                json!({ "max": self.max_per_window, "wait": wait }),
             ));
         }
         Ok(())
@@ -685,8 +685,7 @@ pub async fn get_prices(
             // One terminal's OWN price table (run: prices of THIS terminal,
             // not the shared location chain aggregate). Resolve the display
             // name by id; the provider caches per-terminal (30 min).
-            let terminal_id =
-                id.ok_or_else(|| "Terminal öffnen: fehlende Terminal-ID".to_string())?;
+            let terminal_id = id.ok_or_else(|| err_key("error.trade.terminal_id_missing"))?;
             let name = terminal_name(&state, terminal_id, &commodity).await?;
             let prices = state
                 .provider
@@ -702,8 +701,7 @@ pub async fn get_prices(
             })
         }
         Some("location") => {
-            let terminal_id =
-                id.ok_or_else(|| "Location öffnen: fehlende Terminal-ID".to_string())?;
+            let terminal_id = id.ok_or_else(|| err_key("error.trade.location_id_missing"))?;
             let location = state
                 .provider
                 .location_prices(terminal_id)
@@ -726,7 +724,7 @@ pub async fn get_prices(
             // UEX `/items_prices` table (weapons, armor, MedPens, etc.).
             // Cached with the LONG patch-driven TTL (TTL_ITEM_PRICES — PS
             // t_c84e545d); `force` renews exactly this item live.
-            let item_id = id.ok_or_else(|| "Item öffnen: fehlende Item-ID".to_string())?;
+            let item_id = id.ok_or_else(|| err_key("error.trade.item_id_missing"))?;
             let item_name = item_name(&state, Some(item_id), &commodity).await?;
             let prices = if force {
                 state
@@ -1175,10 +1173,7 @@ pub async fn send_negotiation_message(
         // `date_closed_client` ≠ 0 bei `date_closed` = 0. Beendet =
         // EINE der beiden Seiten hat abgeschlossen.
         if n.date_closed.is_some() || n.date_closed_client.is_some() {
-            return Err(
-                    "Trade beendet (abgeschlossen bzw. einseitig beendet) — Verhandlungen mit Abschluss-Status sind read-only (nur lesbarer Verlauf)."
-                        .to_string(),
-                );
+            return Err(err_key("error.trade.deal_readonly"));
         }
     }
     let id = state
@@ -3581,7 +3576,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.contains("read-only"),
+            err.contains("error.trade.deal_readonly"),
             "Closed-Deal-Write muss als read-only abgelehnt werden, kam: {err}"
         );
         // Offene Verhandlung (nicht im Snapshot) fällt durch → Provider OK.
@@ -3641,7 +3636,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.contains("read-only") && err.contains("einseitig beendet"),
+            err.contains("error.trade.deal_readonly"),
             "einseitig beendeter Deal muss als read-only abgelehnt werden, kam: {err}"
         );
         let _ = app;
@@ -3746,11 +3741,9 @@ mod tests {
         gate.record_write(now + 1);
         // Dritter Write im selben Fenster → abgelehnt, mit Wartezeit-Meldung.
         let err = gate.try_acquire(now + 5).unwrap_err();
-        assert!(
-            err.contains("Rate-Limit") && err.contains("warten"),
-            "{err}"
-        );
-        assert!(err.contains("Schreibaktionen"), "{err}");
+        assert!(err.contains("error.trade.rate_limit_max"), "{err}");
+        // Keyed-JSON: key + max/wait-Params vorhanden.
+        assert!(err.contains("\"max\"") && err.contains("\"wait\""), "{err}");
         // Nach Ablauf des Fensters (ältester Eintrag + window) wieder frei.
         assert!(gate.try_acquire(now + 61).is_ok());
     }
@@ -3781,7 +3774,10 @@ mod tests {
         gate.record_write(now);
         let err = gate.try_acquire(now + 5).unwrap_err();
         // nächster freier Slot = ältester (now) + window (60) - now(5) = 55s.
-        assert!(err.contains("55 s"), "{err}");
+        assert!(
+            err.contains("\"wait\":55") || err.contains("\"wait\": 55"),
+            "{err}"
+        );
     }
 
     /// Write-Provider-Stub: advertise liefert ein festes Offer, delete Ok —
@@ -3889,7 +3885,7 @@ mod tests {
             "rate-limit-Gate muss den 3. Write blockieren"
         );
         let msg = third.unwrap_err();
-        assert!(msg.contains("Rate-Limit"), "{msg}");
+        assert!(msg.contains("error.trade.rate_limit_max"), "{msg}");
         let _ = app;
     }
 

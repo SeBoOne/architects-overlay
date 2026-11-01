@@ -326,9 +326,9 @@ impl OmarchyPaths {
 
     pub fn store_json(&self) -> Result<String, String> {
         std::fs::read_to_string(&self.store).map_err(|e| {
-            format!(
-                "OmaSettings-Store nicht lesbar ({}): {e}",
-                self.store.display()
+            err_keyp(
+                "sync.store_unreadable",
+                json!({ "path": self.store.display().to_string(), "err": e.to_string() }),
             )
         })
     }
@@ -344,8 +344,12 @@ impl OmarchyPaths {
         if bak.exists() {
             return Ok(Some(bak));
         }
-        std::fs::copy(&self.store, &bak)
-            .map_err(|e| format!("Backup {} fehlgeschlagen: {e}", bak.display()))?;
+        std::fs::copy(&self.store, &bak).map_err(|e| {
+            err_keyp(
+                "sync.backup_failed",
+                json!({ "path": bak.display().to_string(), "err": e.to_string() }),
+            )
+        })?;
         Ok(Some(bak))
     }
 
@@ -395,9 +399,9 @@ impl OmarchyPaths {
         if out.status.success() {
             Ok(())
         } else {
-            Err(format!(
-                "Lua-Syntaxcheck der generierten Bindings fehlgeschlagen: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
+            Err(err_keyp(
+                "sync.err_lua_syntax_check",
+                json!({ "err": String::from_utf8_lossy(&out.stderr).trim() }),
             ))
         }
     }
@@ -645,7 +649,10 @@ pub fn startup_sync_drift(
             Ok(o) => out.push(o),
             Err(e) => out.push(SyncOutcome {
                 changed: false,
-                note: format!("Compositor-Sync {command} fehlgeschlagen: {e}"),
+                note: err_keyp(
+                    "sync.compositor_failed",
+                    json!({ "command": command, "err": e }),
+                ),
             }),
         }
     }
@@ -1007,7 +1014,7 @@ echo '[{"modmask": 5, "key": "U", "description": "Architects Overlay: Palette ei
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            notes.contains("arch-overlay toggle fehlgeschlagen"),
+            notes.contains("sync.compositor_failed") && notes.contains("arch-overlay toggle"),
             "Slot-1-Fehler als Note: {notes}"
         );
         assert!(
