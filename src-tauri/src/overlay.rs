@@ -340,9 +340,12 @@ fn register_combo<R: Runtime>(
         }
     };
     let global_shortcut = app.state::<GlobalShortcut<R>>();
-    global_shortcut
-        .register(shortcut)
-        .map_err(|err| err_keyp("overlay.err_register", json!({ "combo": canonical, "err": err.to_string() })))?;
+    global_shortcut.register(shortcut).map_err(|err| {
+        err_keyp(
+            "overlay.err_register",
+            json!({ "combo": canonical, "err": err.to_string() }),
+        )
+    })?;
     if let Some(bindings) = app.try_state::<ShortcutBindings>() {
         bindings.set(kind, Some(shortcut));
     }

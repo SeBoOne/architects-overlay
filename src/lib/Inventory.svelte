@@ -1,5 +1,5 @@
 <script lang="ts">
-	import {  t, tr trError } from '../lib/i18n';
+	import { t, tr, trError } from '../lib/i18n';
 // A11y-Helfer: Enter/Space aktiviert klickbare Nicht-Button-Elemente (nur bei Eigenfokus).
 function keyActivate(e: KeyboardEvent) {
 	if (e.target !== e.currentTarget) return;
@@ -867,7 +867,7 @@ function keyActivate(e: KeyboardEvent) {
 										class="vgroup"
 										onclick={() => openItem(g.mat)}
 										title={$t('inventory.open_material_detail')}
-										aria-label="Open Material {g.mat}"
+										aria-label={$t('inventory.open_material', { name: g.mat })}
 									>{g.mat} <span class="n">{g.entries.length} {$t('inventory.pos_short')} · {fmtQty(g.total)} {g.entries[0]?.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</span></button>
 									<span class="q q-{qTier(g.avgQ)}">Ø {g.avgQ}</span>
 								</div>
@@ -878,7 +878,7 @@ function keyActivate(e: KeyboardEvent) {
 											class="isub-btn"
 											onclick={() => openLocation(l.loc)}
 											title={$t('inventory.open_location_detail')}
-											aria-label="Open Stand-ort {l.loc}"
+											aria-label={$t('inventory.open_location', { name: l.loc })}
 										>{l.loc}</button>
 										<span class="n">{l.list.length} {$t('inventory.pos_short')} · {fmtQty(l.total)}</span>
 									</div>
@@ -947,8 +947,8 @@ function keyActivate(e: KeyboardEvent) {
 			{/if}
 		</div>
 		<div class="inv-foot">
-			<span>{visRows.length} Positionen · {materialCount} Materialien</span>
-			<span><kbd>↑↓</kbd>{$t('inventory.row')}<kbd>↵</kbd> {view === 'overview' ? 'Material' : 'Bearbeiten'} · <kbd>Entf</kbd>{$t('inventory.delete_row')}<kbd>Esc</kbd>{$t('search.back')}</span>
+			<span>{$t('inventory.count_pos_mat', { n: visRows.length, m: materialCount })}</span>
+			<span><kbd>↑↓</kbd>{$t('inventory.row')}<kbd>↵</kbd> {view === 'overview' ? $t('inventory.view_material') : $t('inventory.view_edit')} · <kbd>{$t('keyboard.key.delete')}</kbd>{$t('inventory.delete_row')}<kbd>Esc</kbd>{$t('search.back')}</span>
 		</div>
 	{/if}
 	{#if toast}

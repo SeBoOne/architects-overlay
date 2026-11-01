@@ -13,7 +13,6 @@
 //! by the app, never touched by the background sync (which only refreshes
 //! reference data).
 
-use i18n_err::err_key;
 use rusqlite::ToSql;
 use rusqlite::types::ToSqlOutput;
 
@@ -134,7 +133,9 @@ fn validate(new: &NewInventoryEntry) -> Result<()> {
         return Err(CacheError::Query(i18n_err::err_key("inventory.err_name")));
     }
     if new.location_name.trim().is_empty() {
-        return Err(CacheError::Query(i18n_err::err_key("inventory.err_location")));
+        return Err(CacheError::Query(i18n_err::err_key(
+            "inventory.err_location",
+        )));
     }
     Ok(())
 }
@@ -191,9 +192,9 @@ impl Cache {
         })?;
         if changed == 0 {
             return Err(CacheError::Query(i18n_err::err_keyp(
-            "inventory.err_position_missing",
-            serde_json::json!({ "id": id }),
-        )));
+                "inventory.err_position_missing",
+                serde_json::json!({ "id": id }),
+            )));
         }
         Ok(())
     }

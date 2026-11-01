@@ -74,6 +74,7 @@ function keyActivate(e: KeyboardEvent) {
 	// T1 (t_530e5f59): i18n — reaktiver t()-Store, Built-ins statisch,
 	// lokale (Community-)Dateien via locale_import/locale_list.
 	import {  t, importLocaleFromText, initI18n, localeList, setLanguage, trError, tr } from '../lib/i18n';
+import { get } from 'svelte/store';
 
 /** T2 (t_c5904bcb): Rust-Fehler (key-JSON oder Klartext) UI-tauglich
  *  übersetzen — zentraler Display-Pfad für alle Catch-Sites. */
@@ -446,20 +447,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let scNote = $state('');
 	let scNoteFor = $state<ShortcutField | null>(null);
 
-	const MOD_LABELS: Record<string, string> = { Ctrl: 'STRG', Alt: 'ALT', Shift: 'UMSCHALT', Super: 'WIN' };
-	const KEY_LABELS: Record<string, string> = {
-		Space: 'LEERTASTE', Enter: 'ENTER', Tab: 'TAB', ArrowUp: '↑', ArrowDown: '↓',
-		ArrowLeft: '←', ArrowRight: '→', PageUp: 'BILD HOC', PageDown: 'BILD RUN',
-		Backspace: 'BACKSPACE', Delete: 'ENTF', Home: 'POS1', End: 'ENDE', Insert: 'EINFG',
-		PrintScreen: 'DRUCK', ScrollLock: 'ROLLEN', CapsLock: 'FESTSTELL', Pause: 'PAUSE',
-		Backquote: '`', Backslash: '\\', BracketLeft: '[', BracketRight: ']', Comma: ',',
-		Equal: '=', Minus: '-', Period: '.', Quote: "'", Semicolon: ';', Slash: '/',
-	};
+	// T2 (t_c5904bcb): Tasten-/Modifikator-Labels über i18n-Keys (keyboard.mod.* /
+	// keyboard.key.*) — Fallback-Kette greift, technische Tokens (Punctuation)
+	// bleiben wie gehabt (tok.toUpperCase()).
 	function canonicalToLabel(canonical: string): string {
 		if (!canonical) return '—';
+		const tFn = get(t);
 		return canonical
 			.split('+')
-			.map((tok) => MOD_LABELS[tok] ?? KEY_LABELS[tok] ?? tok.toUpperCase())
+			.map((tok) => {
+				const key = `keyboard.mod.${tok.toLowerCase()}`;
+				if (tFn(key) !== key) return tFn(key);
+				const kkey = `keyboard.key.${tok.toLowerCase()}`;
+				if (tFn(kkey) !== kkey) return tFn(kkey);
+				return tok.toUpperCase();
+			})
 			.join('+');
 	}
 	// Browser-Event-Code → kanonischer Taste-Token (Backend-Parser akzeptiert
@@ -4663,12 +4665,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									{#if trkConfirm.kind === 'remove'}
 										<div class="sm" style="color: var(--fgdim)">{$t('trades.delete_warning')}</div>
 									{:else}
-										<div class="c-row"><b>{$t('trades.direction')}</b><span>{trkForm.operation === 'sell' ? 'Verkauf' : 'Kauf'}</span></div>
+										<div class="c-row"><b>{$t('trades.direction')}</b><span>{trkForm.operation === 'sell' ? $t('common.sell') : $t('common.buy')}</span></div>
 										<div class="c-row"><b>{$t('common.commodity')}</b><span>{trkForm.commodity || '—'}</span></div>
 										<div class="c-row"><b>{$t('trades.location')}</b><span>{trkForm.terminal || '—'}</span></div>
 										<div class="c-row"><b>{$t('common.quantity')}</b><span>{Math.round(Number(trkForm.scu))} SCU</span></div>
 										<div class="c-row"><b>{$t('common.price')}</b><span>{fmtPrice(Number(trkForm.price))} aUEC/SCU</span></div>
-										<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Trade wird auf uexcorp.space {(trkConfirm.kind === 'edit' ? $t('trades.changed_caps') : 'ANGELEGT')}.</div>
+										<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('trades.uex_confirm', { kind: trkConfirm.kind === 'edit' ? $t('trades.changed_caps') : $t('trades.form.create_caps') })}</div>
 									{/if}
 									<div class="md-actions">
 										<button type="button" class="btn" disabled={trkBusy} onclick={() => { if (trkConfirm) (trkConfirm.kind === 'remove' ? void doTrkRemove() : void doTrkWrite()); }}>
@@ -6473,7 +6475,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder={$t('common.min')} aria-label={$t('shop.min_quality_title')} title={$t('shop.min_quality_title')} bind:value={mqMin} />
 						<span class="qnum-dash">–</span>
 						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder={$t('common.max')} aria-label={$t('shop.max_quality_title')} title={$t('shop.max_quality_title')} bind:value={mqMax} />
-						<button type="button" class="chip" onclick={() => { mqMin = ''; mqMax = ''; }}>Q ×</button>
+						<button type="button" class="chip" onclick={() => { mqMin = ''; mqMax = ''; }}>{$t('market.quality_reset')}</button>
 						<span class="m-lbl">{$t('routes.sort')}</span>
 						<button type="button" class="chip" class:is-on={mSort === 'price_asc'} onclick={() => setSort('price_asc')}>{$t('routes.price_up')}</button>
 						<button type="button" class="chip" class:is-on={mSort === 'price_desc'} onclick={() => setSort('price_desc')}>{$t('routes.price_down')}</button>
@@ -6509,7 +6511,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									</div>
 									<div class="m-right">
 										<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
-										<div class="m-meta">{fmtQty(o.quantity)} Einheiten · {rel(o.updated)}</div>
+										<div class="m-meta">{$t('market.units_asof', { n: fmtQty(o.quantity), when: rel(o.updated) })}</div>
 									</div>
 								</div>
 							{/each}
@@ -6633,14 +6635,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										class="chip"
 										aria-label={$t('routes.update_record_title')}
 										onclick={() => void refreshDetailLive()}
-									>↻ Aktualisieren</button>
+									>↻ {$t('common.refresh')}</button>
 									{#if d.source.includes('uex') && cfg && !cfg.uex_api_key_set}
 										· <span class="warn">{$t('market.no_key_anon')}</span>
 									{/if}
 								</div>
 
 								{#if dFilter}
-									<div class="lock-hint"><span class="dot"></span>{$t('market.filter_active')}<b>{dFilter}</b> · {dRows.length} Zeilen · Feld leeren = alles zeigen</div>
+									<div class="lock-hint"><span class="dot"></span>{$t('market.filter_active')}<b>{dFilter}</b> · {$t('market.filter_rows_hint', { n: dRows.length })}</div>
 								{/if}
 
 								
@@ -6711,7 +6713,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												<div class="vC-kpi margin">
 													<span class="k">{$t('market.margin_scu')}</span>
 													<span class="v">{bb && bs ? fmt(margin) : '—'}</span>
-													{#if bb && bs}<span class="u">aUEC / SCU · {fmt(margin * 100)} je 100 SCU</span>{/if}
+													{#if bb && bs}<span class="u">{$t('market.margin_per100', { v: fmt(margin * 100) })}</span>{/if}
 													<span class="w">{bb && bs ? `${bb.name} → ${bs.name}` : $t('market.one_side_only')}</span>
 												</div>
 											</div>
@@ -6734,7 +6736,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										{:else}
 											{#if buys.length}
 												<div class="ptab">
-													<div class="cap">{$t('common.all')}<b class="buy">{$t('common.buy')}</b>-Preise · {buys.length} {dIsTerminal ? $t('market.n_items') : $t('market.n_terminals')}</div>
+													<div class="cap">{$t('market.all_buy_prices', { what: dIsTerminal ? $t('market.n_items') : $t('market.n_terminals'), n: buys.length })}</div>
 													<div class="ph"><span>{dIsTerminal ? $t('shop.item') : $t('market.n_terminals')}</span><span>{$t('common.price')}</span><span>SCU</span></div>
 													{#each buys as r, bi}
 														<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel}>
@@ -6748,7 +6750,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											{/if}
 											{#if sells.length}
 												<div class="ptab">
-													<div class="cap">{$t('common.all')}<b class="sell">{$t('common.sell')}</b>-Preise · {sells.length} {dIsTerminal ? $t('market.n_items') : $t('market.n_terminals')}</div>
+													<div class="cap">{$t('market.all_sell_prices', { what: dIsTerminal ? $t('market.n_items') : $t('market.n_terminals'), n: sells.length })}</div>
 													<div class="ph"><span>{dIsTerminal ? $t('shop.item') : $t('market.n_terminals')}</span><span>{$t('common.price')}</span><span>SCU</span></div>
 													{#each sells as r, si}
 														<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel}>
@@ -6822,7 +6824,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{/if}
 				{:else if inDetail}
 					{#if dRows.length}
-						<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
+						<span><kbd>↑↓</kbd> {$t('market.row_nav', { cur: dSel + 1, total: dRows.length })}</span>
 						<span><kbd>↵</kbd>{$t('search.trade_commodities')}</span>
 					{/if}
 					<span>{$t('search.field_is_filter')}</span>

@@ -5,7 +5,7 @@
 //! the locale files (selected → en → raw key). Plain-text errors (old style
 //! or internal) pass through unchanged in the frontend — no gettext layer.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Error with params: `err_keyp("error.uex.http", json!({ "status": 500 }))`.
 pub fn err_keyp(key: &str, params: Value) -> String {

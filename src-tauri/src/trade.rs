@@ -34,8 +34,8 @@ use std::sync::{Arc, Mutex};
 
 use cache::{Cache, CacheError};
 use provider::{DataProvider, EntityKind, ProviderError, SearchHit};
-use tauri::{AppHandle, Emitter, State};
 use serde_json::json;
+use tauri::{AppHandle, Emitter, State};
 
 /// Tauri event fired after every background sync sweep run (start or finish)
 /// so the frontend can drop its spinner without polling.
@@ -52,13 +52,13 @@ const GROUPS: &[(&str, &str, &[EntityKind])] = &[
     (
         "commodity",
         "search.group_commodities",
-        &[EntityKind::Commodities]
+        &[EntityKind::Commodities],
     ),
     ("item", "search.group_items", &[EntityKind::Items]),
     (
         "location",
         "search.group_locations",
-        &[EntityKind::Locations, EntityKind::Terminals]
+        &[EntityKind::Locations, EntityKind::Terminals],
     ),
 ];
 
@@ -2049,9 +2049,7 @@ pub(crate) fn friendly(e: ProviderError) -> String {
         ProviderError::Cache(msg) => err_keyp("error.uex.cache", json!({ "msg": msg })),
         ProviderError::Config(msg) => err_keyp("error.uex.config", json!({ "msg": msg })),
         ProviderError::Json(msg) => err_keyp("error.uex.bad_response", json!({ "msg": msg })),
-        ProviderError::Unsupported(msg) => {
-            err_keyp("error.uex.unsupported", json!({ "msg": msg }))
-        }
+        ProviderError::Unsupported(msg) => err_keyp("error.uex.unsupported", json!({ "msg": msg })),
         _ => e.to_string(),
     }
 }
@@ -2162,14 +2160,13 @@ mod tests {
     fn friendly_rate_limit_is_a_key_with_params() {
         // T2 (t_c5904bcb): Rate-Limit kommt als Key + {secs}-Param an.
         let s = friendly(ProviderError::RateLimit {
-            retry_after: Some(34)
+            retry_after: Some(34),
         });
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["error_key"], "error.uex.rate_limit_retry");
         assert_eq!(v["params"]["secs"], 34);
         assert!(
-            friendly(ProviderError::Timeout)
-                .contains("error.uex.timeout"),
+            friendly(ProviderError::Timeout).contains("error.uex.timeout"),
             "timeout maps to a key"
         );
         assert!(
@@ -2215,7 +2212,10 @@ mod tests {
             body: "{\"status\":\"user_not_found\"}".into(),
         });
         let ev: serde_json::Value = serde_json::from_str(&enveloped).unwrap();
-        assert_eq!(ev["error_key"], "error.uex.secret_invalid", "got {enveloped}");
+        assert_eq!(
+            ev["error_key"], "error.uex.secret_invalid",
+            "got {enveloped}"
+        );
     }
 
     /// The grouped search contract: three groups in a fixed order, per-group
@@ -2744,7 +2744,7 @@ mod tests {
         let err = get_marketplace(state.clone(), provider::MarketplaceFilter::default())
             .await
             .unwrap_err();
-                // T2: key-JSON mit Timeout-Key.
+        // T2: key-JSON mit Timeout-Key.
         let v: serde_json::Value = serde_json::from_str(&err).unwrap();
         assert_eq!(v["error_key"], "error.uex.timeout", "got {err}");
 
@@ -3524,7 +3524,7 @@ mod tests {
         let err = send_negotiation_message(state.clone(), 12847, "a3f7c91d".into(), "429".into())
             .await
             .unwrap_err();
-                // T2: key-JSON statt Klartext.
+        // T2: key-JSON statt Klartext.
         let v: serde_json::Value = serde_json::from_str(&err).unwrap();
         assert_eq!(v["error_key"], "error.uex.rate_limit", "got {err}");
         let _ = app;

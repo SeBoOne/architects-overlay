@@ -25,9 +25,9 @@
 //!                              # einmalige Zustimmung in der Settings-UI)
 //! ```
 
-use std::fmt;
 use i18n_err::{err_key, err_keyp};
 use serde_json::json;
+use std::fmt;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -370,7 +370,10 @@ pub fn validate_shortcut_combo(input: &str) -> std::result::Result<String, Strin
     }
     let mods_part = canonical[..canonical.len() - key.len() - 1].to_ascii_uppercase();
     if mods_part.contains("ALT") && key.len() == 1 && key.as_bytes()[0].is_ascii_digit() {
-        return Err(err_keyp("shortcuts.err_reserved_alt_digit", json!({ "key": key })));
+        return Err(err_keyp(
+            "shortcuts.err_reserved_alt_digit",
+            json!({ "key": key }),
+        ));
     }
     Ok(canonical)
 }
@@ -533,7 +536,6 @@ pub fn validate_fkey(raw: &str) -> std::result::Result<String, String> {
     }
     Ok(format!("F{n}"))
 }
-
 
 /// T2 (t_c5904bcb): einer key-JSON-Fehlermeldung den Slot-Key als Param
 /// beilegen (JSON round-trip; ohne JSON → Rohdurchreich).
@@ -724,7 +726,7 @@ impl Settings {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => RawConfig::default(),
             Err(e) => return Err(SettingsError::Io(e.to_string())),
         };
-        let mut settings = Settings {
+        let settings = Settings {
             path: path.to_path_buf(),
             uex_api_key: raw.uex.as_ref().and_then(|u| u.api_key.clone()),
             uex_secret_key: raw.uex.as_ref().and_then(|u| u.secret_key.clone()),
@@ -1523,9 +1525,11 @@ mod tests {
     #[test]
     fn reserved_internal_keys_are_conflicts_with_list() {
         // F-Tasten des Overlays + UI-Grundtasten (Handler prüft keine Mods).
+        // T2 (t_c5904bcb): Fehler sind key-JSON — assertions auf error_key +
+        // Params (Klartext-Übersetzung passiert im Frontend).
         let err = validate_shortcut_combo("Ctrl+F5").unwrap_err();
         assert!(
-            err.contains("F5") && err.contains("Preis"),
+            err.contains("shortcuts.err_reserved") && err.contains("F5"),
             "conflict list: {err}"
         );
         for reserved in [
@@ -1543,10 +1547,13 @@ mod tests {
         }
         // Escape als Kombination ablehnen (Task-Vorgabe).
         let err = validate_shortcut_combo("Ctrl+Shift+Escape").unwrap_err();
-        assert!(err.contains("Escape"), "message names Escape: {err}");
+        assert!(err.contains("shortcuts.err_escape"), "message names Escape: {err}");
         // Alt+Zahl ist intern die Badge-Navigation (ignoriert weitere Mods).
         let err = validate_shortcut_combo("Ctrl+Alt+3").unwrap_err();
-        assert!(err.contains("Alt+3"), "conflict list: {err}");
+        assert!(
+            err.contains("shortcuts.err_reserved_alt_digit") && err.contains("\"3\""),
+            "conflict list: {err}"
+        );
     }
 
     #[test]
@@ -1685,13 +1692,19 @@ mod tests {
             routes: "F5".to_owned(),
             ..Default::default()
         };
-        assert!(hk.validate().unwrap_err().contains("reserviert"));
+        // T2: key-JSON — error_key + Slot-Param, keine Klartext-Assertion.
+        let e_f5 = hk.validate().unwrap_err();
+        assert!(
+            e_f5.contains("hotkeys.err_f5") && e_f5.contains("hotkey.slot_routes"),
+            "F5 rejection: {e_f5}"
+        );
 
         let hk = ModeHotkeys {
             hangar: "F3".to_owned(), // Doppelbelegung mit routes
             ..Default::default()
         };
-        assert!(hk.validate().unwrap_err().contains("bereits belegt"));
+        let e_dup = hk.validate().unwrap_err();
+        assert!(e_dup.contains("hotkeys.err_dup"), "dup rejection: {e_dup}");
     }
 
     // ---- T1 (t_530e5f59): Sprach-Einstellung -------------------------------

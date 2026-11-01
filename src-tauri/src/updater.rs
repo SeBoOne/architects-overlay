@@ -116,11 +116,17 @@ async fn run_check(state: &UpdaterState, settings: &SettingsState) {
                 version: latest_version.clone(),
                 plan,
             });
-            state.set_note(err_keyp("update.note_available", json!({ "version": latest_version })));
+            state.set_note(err_keyp(
+                "update.note_available",
+                json!({ "version": latest_version }),
+            ));
         }
         Ok(None) => {
             *state.available.lock().expect("updater avail lock") = None;
-            state.set_note(err_keyp("update.note_uptodate", json!({ "version": current })));
+            state.set_note(err_keyp(
+                "update.note_uptodate",
+                json!({ "version": current }),
+            ));
         }
         Err(err) => {
             // Fehlerpfad (Umsetzung 6): alter Zustand bleibt intakt — nur die
@@ -313,7 +319,10 @@ pub async fn updater_install(
     let Some(avail) = state.available.lock().expect("updater avail lock").clone() else {
         return Err(err_key("update.err_none_available"));
     };
-    state.set_note(err_keyp("update.note_downloading", json!({ "version": avail.version })));
+    state.set_note(err_keyp(
+        "update.note_downloading",
+        json!({ "version": avail.version }),
+    ));
     if let Plan::DebHint { .. } = &avail.plan {
         // Umsetzung 4: keine root-Aktionen aus der App — UI zeigt den
         // apt-Hint (bereits in der Note); hier nur der Guards-Fehler.

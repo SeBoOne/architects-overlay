@@ -64,45 +64,69 @@ impl std::fmt::Display for UpdaterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InsecureUrl(url) => {
-                write!(f, "{}", i18n_err::err_keyp(
-                    "update.err_insecure_url",
-                    serde_json::json!({ "url": url }),
-                ))
+                write!(
+                    f,
+                    "{}",
+                    i18n_err::err_keyp(
+                        "update.err_insecure_url",
+                        serde_json::json!({ "url": url }),
+                    )
+                )
             }
-            Self::Network(msg) => write!(f, "{}", i18n_err::err_keyp(
-                "update.err_network",
-                serde_json::json!({ "msg": msg }),
-            )),
-            Self::Malformed(msg) => write!(f, "{}", i18n_err::err_keyp(
-                "update.err_malformed",
-                serde_json::json!({ "msg": msg }),
-            )),
-            Self::NoChecksum(asset) => write!(f, "{}", i18n_err::err_keyp(
-                "update.err_no_checksum",
-                serde_json::json!({ "asset": asset }),
-            )),
-            Self::ChecksumMismatch { expected, actual } => write!(f, "{}", i18n_err::err_keyp(
-                "update.err_checksum_mismatch",
-                serde_json::json!({ "expected": expected, "actual": actual }),
-            )),
+            Self::Network(msg) => write!(
+                f,
+                "{}",
+                i18n_err::err_keyp("update.err_network", serde_json::json!({ "msg": msg }),)
+            ),
+            Self::Malformed(msg) => write!(
+                f,
+                "{}",
+                i18n_err::err_keyp("update.err_malformed", serde_json::json!({ "msg": msg }),)
+            ),
+            Self::NoChecksum(asset) => write!(
+                f,
+                "{}",
+                i18n_err::err_keyp(
+                    "update.err_no_checksum",
+                    serde_json::json!({ "asset": asset }),
+                )
+            ),
+            Self::ChecksumMismatch { expected, actual } => write!(
+                f,
+                "{}",
+                i18n_err::err_keyp(
+                    "update.err_checksum_mismatch",
+                    serde_json::json!({ "expected": expected, "actual": actual }),
+                )
+            ),
             Self::TooLarge { limit_bytes } => {
-                write!(f, "{}", i18n_err::err_keyp(
-                    "update.err_too_large",
-                    serde_json::json!({ "limit": limit_bytes }),
-                ))
+                write!(
+                    f,
+                    "{}",
+                    i18n_err::err_keyp(
+                        "update.err_too_large",
+                        serde_json::json!({ "limit": limit_bytes }),
+                    )
+                )
             }
-            Self::Io(msg) => write!(f, "{}", i18n_err::err_keyp(
-                "update.err_io",
-                serde_json::json!({ "msg": msg }),
-            )),
-            Self::NotSupported(msg) => write!(f, "{}", i18n_err::err_keyp(
-                "update.err_not_supported",
-                serde_json::json!({ "reason": msg }),
-            )),
-            Self::NoAsset { tag } => write!(f, "{}", i18n_err::err_keyp(
-                "update.err_no_asset",
-                serde_json::json!({ "tag": tag }),
-            )),
+            Self::Io(msg) => write!(
+                f,
+                "{}",
+                i18n_err::err_keyp("update.err_io", serde_json::json!({ "msg": msg }),)
+            ),
+            Self::NotSupported(msg) => write!(
+                f,
+                "{}",
+                i18n_err::err_keyp(
+                    "update.err_not_supported",
+                    serde_json::json!({ "reason": msg }),
+                )
+            ),
+            Self::NoAsset { tag } => write!(
+                f,
+                "{}",
+                i18n_err::err_keyp("update.err_no_asset", serde_json::json!({ "tag": tag }),)
+            ),
         }
     }
 }
@@ -187,19 +211,32 @@ pub async fn check(
 /// never installs (NotSupported) — the UI shows the apt hint instead.
 pub async fn perform_download(plan: &Plan) -> Result<std::path::PathBuf> {
     match plan {
-        Plan::WindowsNsis { asset_name, asset_url, checksum } => {
-            let path = download_asset(asset_url, &windows_update_dir()?, MAX_DOWNLOAD_BYTES)
-                .await?;
+        Plan::WindowsNsis {
+            asset_name,
+            asset_url,
+            checksum,
+        } => {
+            let path =
+                download_asset(asset_url, &windows_update_dir()?, MAX_DOWNLOAD_BYTES).await?;
             integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
             Ok(path)
         }
-        Plan::LinuxAppImage { asset_name, asset_url, checksum, .. } => {
-            let path = download_asset(asset_url, &linux_update_dir()?, MAX_DOWNLOAD_BYTES)
-                .await?;
+        Plan::LinuxAppImage {
+            asset_name,
+            asset_url,
+            checksum,
+            ..
+        } => {
+            let path = download_asset(asset_url, &linux_update_dir()?, MAX_DOWNLOAD_BYTES).await?;
             integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
             Ok(path)
         }
-        Plan::LinuxBin { asset_name, asset_url, checksum, exe_path } => {
+        Plan::LinuxBin {
+            asset_name,
+            asset_url,
+            checksum,
+            exe_path,
+        } => {
             // TH t_df9646a3: Download ZUSAMMEN mit der exe (gleiche Dateisystem —
             // das atomare Rename über die laufende Datei ist nur garantiert im
             // selben Dateisystem; der eigentliche Swap passiert beim
@@ -212,8 +249,6 @@ pub async fn perform_download(plan: &Plan) -> Result<std::path::PathBuf> {
             integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
             Ok(path)
         }
-        Plan::DebHint { .. } => Err(UpdaterError::NotSupported(
-            "update.reason_deb_apt".into(),
-        )),
+        Plan::DebHint { .. } => Err(UpdaterError::NotSupported("update.reason_deb_apt".into())),
     }
 }

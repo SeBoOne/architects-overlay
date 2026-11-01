@@ -556,7 +556,7 @@ mod tests {
         let rows = build_compat(&vehicles, &items);
         assert_eq!(rows.len(), 3);
         let dm = rows.iter().find(|r| r.module_name.contains("DM")).unwrap();
-        assert_eq!(dm.category, "Modul");
+        assert_eq!(dm.category, "moduletype.module");
         assert_eq!(dm.ships, vec!["Aurora Mk II".to_string()]);
         // Size-3-Modul passt nicht in Size-1-Port.
         let apollo = rows

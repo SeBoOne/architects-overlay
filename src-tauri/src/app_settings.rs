@@ -567,10 +567,17 @@ pub fn settings_set_mode_hotkey(
     let key = settings::validate_fkey(&key)?;
     let field_norm = field.trim().to_lowercase();
     if key == settings::MODE_HOTKEY_RESERVED {
-                // T2: Slot-Key ins error_key einbacken (flat, keine Nested-Keys).
-        let slot_param = ["search", "market", "routes", "inventory", "hangar", "settings"]
-            .contains(&field_norm.as_str())
-            .then(|| format!("hotkey.slot_{field_norm}"));
+        // T2: Slot-Key ins error_key einbacken (flat, keine Nested-Keys).
+        let slot_param = [
+            "search",
+            "market",
+            "routes",
+            "inventory",
+            "hangar",
+            "settings",
+        ]
+        .contains(&field_norm.as_str())
+        .then(|| format!("hotkey.slot_{field_norm}"));
         return Err(match slot_param {
             Some(slot) => err_keyp("hotkeys.err_f5", json!({ "slot": slot })),
             None => err_key("hotkeys.err_f5_noslot"),
@@ -588,9 +595,7 @@ pub fn settings_set_mode_hotkey(
             ));
         }
     }
-    hotkeys
-        .validate()
-        .map_err(|e| e)?; // Suffix "— Belegung unverändert" macht jetzt die UI (settings.mapping_unchanged)
+    hotkeys.validate().map_err(|e| e)?; // Suffix "— Belegung unverändert" macht jetzt die UI (settings.mapping_unchanged)
     s.set_mode_hotkeys(hotkeys);
     state.persist(&s);
     Ok(SettingsSnapshot::from_settings(

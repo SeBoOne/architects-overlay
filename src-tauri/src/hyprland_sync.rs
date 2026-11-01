@@ -498,11 +498,9 @@ pub fn sync_combo(
     // OLD table (observed live t_1adbc017: startup drift aborted because the
     // verification raced the reload). Poll a few short rounds before failing.
     // T2 (t_c5904bcb): Notes als error_key + params — Frontend übersetzt
-    // via trError (Fallback-Kette gewählt → en → raw Key).
-    let mut note = err_keyp(
-        "sync.compositor_ok",
-        json!({ "command": command, "target": target }),
-    );
+    // via trError (Fallback-Kette gewählt → en → raw Key). `note` wird in
+    // jedem Pfad gesetzt (verified / noverify / backup), daher kein Initialwert.
+    let mut note: String;
     let want_mask = modmask(canonical);
     let want_key =
         to_system_combo(canonical).map(|c| c.rsplit(" + ").next().unwrap_or("").to_owned())?;
@@ -627,7 +625,10 @@ pub fn startup_sync_drift(
             Err(e) => {
                 out.push(SyncOutcome {
                     changed: false,
-                    note: err_keyp("sync.compositor_skipped", json!({ "command": command, "err": e })),
+                    note: err_keyp(
+                        "sync.compositor_skipped",
+                        json!({ "command": command, "err": e }),
+                    ),
                 });
                 continue;
             }
@@ -871,8 +872,16 @@ echo '[{"modmask": 12, "key": "K", "description": "Architects Overlay: Palette e
         let note: serde_json::Value = serde_json::from_str(&outcome.note).unwrap();
         assert!(note["error_key"].as_str().unwrap().starts_with("sync."));
         let params = note["params"].as_object().unwrap();
-        assert!(params.values().any(|v| v.as_str().unwrap_or("").contains("CTRL + ALT + K")));
-        assert!(params.values().any(|v| v.as_str().unwrap_or("").contains("bak-")));
+        assert!(
+            params
+                .values()
+                .any(|v| v.as_str().unwrap_or("").contains("CTRL + ALT + K"))
+        );
+        assert!(
+            params
+                .values()
+                .any(|v| v.as_str().unwrap_or("").contains("bak-"))
+        );
 
         let log = std::fs::read_to_string(&calls).unwrap();
         let lines: Vec<&str> = log.lines().collect();

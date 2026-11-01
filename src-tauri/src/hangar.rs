@@ -27,8 +27,8 @@
 //! Kein Org-Tool/API-Anbindung in dieser Karte (out of scope).
 
 use crate::i18n_err::{err_key, err_keyp};
-use serde_json::json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::State;
 
 use crate::trade::TradeState;
@@ -111,8 +111,8 @@ pub struct HangarImportResult {
 /// Hangar XPLORer JSON (Primärformat). Akzeptiert ein JSON-Array; einzelne
 /// Einträge, die weder `name` noch `ship_name` tragen, werden übersprungen.
 pub fn parse_xplorer_json(text: &str) -> Result<(Vec<HangarItem>, usize), String> {
-    let arr: Vec<serde_json::Value> =
-        serde_json::from_str(text.trim()).map_err(|e| err_keyp("hangar.err_xplorer_json", json!({ "err": e.to_string() })))?;
+    let arr: Vec<serde_json::Value> = serde_json::from_str(text.trim())
+        .map_err(|e| err_keyp("hangar.err_xplorer_json", json!({ "err": e.to_string() })))?;
     let mut out = Vec::with_capacity(arr.len());
     let mut skipped = 0usize;
     for v in arr.iter() {
