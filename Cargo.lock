@@ -70,6 +70,7 @@ version = "0.5.29"
 dependencies = [
  "async-trait",
  "cache",
+ "connector",
  "game_detection",
  "gdk-sys",
  "glib",

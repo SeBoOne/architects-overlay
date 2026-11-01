@@ -53,6 +53,17 @@ function keyActivate(e: KeyboardEvent) {
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	// C2 (t_91124322): Manifest-Connectors — generische Views (table/cards/
+	// detail/calendar/form) + Placement (own/replace/embed). KEIN connector-
+	// spezifisches Wissen im Kern; alles lebt in den Manifesten.
+	import ConnectorViews from '../lib/ConnectorViews.svelte';
+	import {
+		labelOf,
+		ownConnectors,
+		replaceFor,
+		embedFor,
+		type ConnectorEntry
+	} from '../lib/connector';
 	// PB (t_1c9bc240, B1): Mode-Hotkeys — Defaults, Validação e Lookup em UM módulo.
 	import {
 		DEFAULT_MODE_HOTKEYS,
@@ -73,7 +84,7 @@ function keyActivate(e: KeyboardEvent) {
 	import { suggestShips, isSnubShip, SHIP_CATALOG } from '../lib/hangar_ships';
 	// T1 (t_530e5f59): i18n — reaktiver t()-Store, Built-ins statisch,
 	// lokale (Community-)Dateien via locale_import/locale_list.
-	import {  t, importLocaleFromText, initI18n, localeList, setLanguage, trError, tr } from '../lib/i18n';
+	import {  t, importLocaleFromText, initI18n, localeList, setLanguage, trError, tr, currentLang } from '../lib/i18n';
 import { get } from 'svelte/store';
 
 /** T2 (t_c5904bcb): Rust-Fehler (key-JSON oder Klartext) UI-tauglich
@@ -638,12 +649,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).
 	// P1 t_a39f6811: Handelsrouten — eigener Mode für die Rail/Keyhandler;
 	// intern bleibt es der Market-Phase mit mTab='routes'.
-	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
+	// C2: 'own' = Manifest-Connector mit placement.kind=own (eigener Bereich).
+	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'own';
 	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
 	let mTab = $state<'offers' | 'routes' | 'shop' | 'trades'>('offers');
-	let railMode = $state<'inventory' | 'hangar' | null>(null);
+	let railMode = $state<'inventory' | 'hangar' | 'own' | null>(null);
 	let mode = $derived<Mode>(
-		railMode ??
+		(railMode === 'own' ? 'own' : railMode) ??
 			(inConfig
 				? 'settings'
 				: phase === 'market'
@@ -3293,6 +3305,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// Persistierte Einstellungen (Palette + Detail-Variante) vor dem
 			// ersten Paint anwenden — verhindert einen Palette-Flash.
 			await loadSettings();
+			void refreshConnectors();
 			if (label === 'spotlight') {
 				isSpotlight = true;
 				overlay = await invoke<OverlayState>('overlay_get_state');
@@ -3774,6 +3787,125 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		void runSearch();
 	}
 
+	// ---- Connectors (C2, t_91124322) -------------------------------------------
+	// Liste der installierten Connectors (Rust: validierte Manifeste) + die
+	// placement-ABLEITUNGEN: own → Rail-Modi, replace/embed → Sektions-Hooks.
+	// Die Toggle-Wirkung = Placement erscheint/verschwindet (Backend-Flag).
+	let connectors = $state<ConnectorEntry[] | null>(null);
+	let ownModeId = $state<string | null>(null);
+	let ownList = $derived(ownConnectors(connectors));
+	let ownEntry = $derived(ownList.find((c) => c.id === ownModeId) ?? ownList[0] ?? null);
+	let hangarReplace = $derived(replaceFor(connectors, 'hangar'));
+	let invEmbed = $derived(embedFor(connectors, 'inventory'));
+	let connectorFileInput = $state<HTMLInputElement | null>(null);
+	let pluginNote = $state<{ raw?: string; key?: string; params?: Record<string, string> } | null>(null);
+	let pluginWarn = $state<{ text: string; msg: string } | null>(null);
+	let authDraft = $state<Record<string, string>>({});
+	let connHkCapture = $state<string | null>(null);
+	let connHkNote = $state('');
+
+	async function refreshConnectors() {
+		if (!isTauri) return;
+		try {
+			connectors = await invoke<ConnectorEntry[]>('connector_list');
+		} catch {
+			/* Ohne Backend (SSR/Probe): keine Connectors — Kern-Views laufen weiter. */
+		}
+	}
+
+	function openOwn(id?: string) {
+		const target = id ?? ownModeId ?? ownList[0]?.id;
+		if (!target) return;
+		ownModeId = target;
+		if (inConfig) closeConfig();
+		else if (phase === 'market') exitMarket();
+		else if (inDetail) closeDetail();
+		railMode = 'own';
+	}
+
+	async function importConnector(text: string, ignoreWarnings: boolean) {
+		pluginNote = null;
+		try {
+			connectors = await invoke<ConnectorEntry[]>('connector_import', {
+				manifestJson: text,
+				ignoreWarnings
+			});
+			pluginWarn = null;
+			pluginNote = { key: 'settings.plugins_imported' };
+		} catch (e) {
+			// Warnungen sind KEIN hartes Scheitern: „Trotzdem importieren“
+			// (ignore_warnings=true — bewusste Nutzer-Verantwortung).
+			let key = '';
+			try {
+				const parsed = JSON.parse(String(e));
+				key = typeof parsed?.error_key === 'string' ? parsed.error_key : '';
+			} catch { /* Klartext */ }
+			if (key === 'error.connector.warnings' && !ignoreWarnings) {
+				pluginWarn = { text, msg: trError(e) };
+			} else {
+				pluginNote = { raw: trError(e) };
+			}
+		}
+	}
+
+	async function onConnectorFilePick(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file) return;
+		void importConnector(await file.text(), false);
+	}
+
+	async function toggleConnector(c: ConnectorEntry, on: boolean) {
+		try {
+			connectors = await invoke<ConnectorEntry[]>('connector_set_enabled', { id: c.id, on });
+		} catch (e) {
+			pluginNote = { raw: trError(e) };
+		}
+	}
+
+	async function removeConnector(c: ConnectorEntry) {
+		try {
+			connectors = await invoke<ConnectorEntry[]>('connector_remove', { id: c.id });
+			pluginNote = { key: 'settings.plugins_removed' };
+		} catch (e) {
+			pluginNote = { raw: trError(e) };
+		}
+	}
+
+	function authDraftKey(c: ConnectorEntry): string {
+		return `${c.id}:${c.manifest.auth?.value_source ?? ''}`;
+	}
+
+	async function saveAuth(c: ConnectorEntry, clear: boolean) {
+		const key = c.manifest.auth?.value_source;
+		if (!key) return;
+		try {
+			connectors = await invoke<ConnectorEntry[]>('connector_set_auth_value', {
+				id: c.id,
+				key,
+				value: clear ? null : (authDraft[authDraftKey(c)] || null)
+			});
+			authDraft = { ...authDraft, [authDraftKey(c)]: '' };
+			pluginNote = { key: clear ? 'settings.plugins_auth_cleared' : 'settings.plugins_auth_saved' };
+		} catch (e) {
+			pluginNote = { raw: trError(e) };
+		}
+	}
+
+	async function submitConnHotkey(k: string) {
+		const id = connHkCapture;
+		if (!id) return;
+		try {
+			connectors = await invoke<ConnectorEntry[]>('connector_set_hotkey', { id, key: k });
+			connHkCapture = null;
+			connHkNote = '';
+		} catch (e) {
+			connHkNote = trError(e);
+			connHkCapture = null;
+		}
+	}
+
 	// ---- Modi-Wechsel (Mode-Hotkeys + Rail-Klicks) ------------------------------
 	// Ein zentraler Einstieg: räumt den jeweiligen Alt-Zustand auf (Market-
 	// Reset, Config schließen, Detail schließen) und behält den Tastaturfokus
@@ -3815,6 +3947,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			railMode = m;
 			if (m === 'hangar') loadHangar();
 			if (debounce) clearTimeout(debounce);
+		} else if (m === 'own') {
+			// C2: eigener Bereich eines aktivierten own-Connectors.
+			openOwn();
 		} else {
 			// settings → bestehender Config-View (Zahnrad-Pfad, settings_set_*-IPC).
 			if (phase === 'market') exitMarket();
@@ -4200,6 +4335,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			return;
 		}
+		// C2: Connector-Hotkey-Capture (Settings/Plugins) — VOR den Modus-
+		// Captures, gleiche Konvention (nur EIN Capture scharf).
+		if (connHkCapture) {
+			if (k === 'Escape') {
+				connHkCapture = null;
+				e.preventDefault();
+				return;
+			}
+			if (/^F([1-9]|1[0-2])$/.test(k)) {
+				void submitConnHotkey(k);
+				e.preventDefault();
+				return;
+			}
+			return;
+		}
 		// PB (t_1c9bc240, B1): Mode-Hotkey-Capture — VOR allen anderen Shortcuts,
 		// damit die gedrückte F-Taste hier landet und keinen Modus auslöst.
 		if (hkCapture) {
@@ -4242,6 +4392,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				e.preventDefault();
 				return;
 			}
+				// C2: Hotkey-Slots aktivierter own-Connectors (Manifest deklariert
+				// hotkey_slot, Einstellungen belegen ihn; Backend lehnt F5/Doppel ab).
+				const ownHit = ownList.find((c) => c.hotkey === k);
+				if (ownHit) {
+					openOwn(ownHit.id);
+					e.preventDefault();
+					return;
+				}
 			// Nicht belegte F-Taste (z. B. F6/F7–F10): fällt durch — kein Modus.
 		}
 		// Platzhalter-Modi (Inventar/Hangar): nur Esc/F-Tasten wirken — keine
@@ -4690,7 +4848,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		     onto .shell); Shell-Box = max(70vw,640px) clamp 94vw ⇒ Palette <520px
 		     only below ~553px viewport → threshold re-based accordingly. -->
 		<!-- PB (t_1c9bc240, B1): Rail zeigt die persistierten Mode-Hotkeys. -->
-		<Rail mode={mode} compact={palW > 0 && palW < 553} onselect={setMode} hotkeys={cfg?.mode_hotkeys ?? undefined} />
+		<Rail
+				mode={mode}
+				compact={palW > 0 && palW < 553}
+				onselect={setMode}
+				hotkeys={cfg?.mode_hotkeys ?? undefined}
+				ownEntries={ownList.map((c) => ({
+					id: c.id,
+					key: c.hotkey ?? '—',
+					label: labelOf(c.manifest.name, currentLang())
+				}))}
+				ownActive={mode === 'own' ? ownModeId : null}
+				onselectOwn={(id) => openOwn(id)}
+			/>
 
 		<div class="shell-main">
 		<!-- Suchzeile -->
@@ -4725,7 +4895,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				spellcheck="false"
 				autocomplete="off"
 			/>
-			<span class="smode">{mode === 'market' ? $t('nav.marketplace') : mode === 'routes' ? $t('nav.routes') : mode === 'inventory' ? $t('nav.inventory') : mode === 'hangar' ? $t('nav.hangar') : mode === 'settings' ? $t('nav.settings') : $t('nav.search')}</span>
+			<span class="smode">{mode === 'market' ? $t('nav.marketplace') : mode === 'routes' ? $t('nav.routes') : mode === 'inventory' ? $t('nav.inventory') : mode === 'hangar' ? $t('nav.hangar') : mode === 'settings' ? $t('nav.settings') : mode === 'own' && ownEntry ? labelOf(ownEntry.manifest.name, currentLang()) : $t('nav.search')}</span>
 			<span class="esc">ESC</span>
 		</div>
 
@@ -4748,6 +4918,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<!-- Inventar-Modus (t_1bab1fea): eigene SPA-Komponente; das HAUPT-
 			     Suchfeld dient als In-Context-Filter (Standort/Material). -->
 			<Inventory onexit={() => setMode('search')} filter={input} />
+				{#if invEmbed}
+					<!-- C2 embed: Manifest-Connector fügt sich als Unter-Sektion
+					     in die Inventar-Sektion ein (generische Views). -->
+					<ConnectorViews entry={invEmbed} embedded />
+				{/if}
+{:else if railMode === 'hangar' && hangarReplace}
+			<!-- C2 replace: Connector-Views ERSETZEN die Hangar-Sektion — lokale
+			     Daten bleiben unangetastet (Deaktivieren holt sie zurück). -->
+			<div class="hangar" role="region" aria-label={labelOf(hangarReplace.manifest.name, currentLang())}>
+				<header class="hangar-head">
+					<button class="hangar-back" onclick={hangarBack} title={$t('common.back_esc')} aria-label={$t('common.back')}>←</button>
+					<span class="hangar-title">{labelOf(hangarReplace.manifest.name, currentLang())}</span>
+					<span class="hangar-note-chip">{$t('settings.plugins_replaces')}</span>
+				</header>
+				<ConnectorViews entry={hangarReplace} embedded />
+			</div>
 {:else if railMode === 'hangar'}
 			<!-- Hangar (Karte t_317f19c5): Schiffe/Fahrzeuge/Module mit Versicherung.
 			     Import: Hangar-XPLORer JSON + CCUgame CSV · Export: eigenes JSON.
@@ -5025,6 +5211,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<button type="button" class="ht-x" title={$t('common.dismiss_note')} aria-label={$t('common.dismiss_note')} onclick={() => hangarNoteSet('')}>✕</button>
 		</div>
 		{/if}
+		{:else if railMode === 'own' && ownEntry}
+			<!-- C2 own: eigener Top-Level-Bereich des Connectors (Placement-
+			     Konzept — KEIN universeller „Dienste“-Bereich). -->
+			<ConnectorViews entry={ownEntry} onexit={() => setMode('search')} />
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").
 			     Esc/zurück-Pfeil → zurück zur Suche; kein neues Fenster. -->
@@ -5135,6 +5325,120 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if localeNote}
 							<div class="cfg-note" role="status">
 								{localeNote.raw ?? $t(localeNote.key, localeNote.params)}
+							</div>
+						{/if}
+					</section>
+<!-- C2 (t_91124322): Plugins — Manifest-Connectors verwalten (Import
+					     lokale Datei, Toggle = Placement erscheint/verschwindet,
+					     Auth-Felder NUR bei Manifest-Deklaration, maskiert wie der
+					     UEX-Secret-Key; Hotkey-Slot für placement.kind=own). -->
+					<section class="cfg-sect cfg-sect-plugins">
+						<div class="h">{$t('settings.plugins')}</div>
+						{#if !connectors?.length}
+							<div class="cfg-note">{$t('settings.plugins_none')}</div>
+						{/if}
+						{#each connectors ?? [] as c (c.id)}
+							<div class="cfg-plugin-row">
+								<div class="cfg-sc-meta">
+									<div class="cfg-sc-lbl">
+										{labelOf(c.manifest.name, currentLang())}
+										<span class="cfg-plugin-id">{c.id}</span>
+									</div>
+									<div class="cfg-note">
+										{$t('settings.plugins_placement')}
+										{#if c.manifest.placement.kind === 'own'}
+											{$t('settings.plugins_placement_own')}{#if c.hotkey}&nbsp;·&nbsp;{$t('settings.plugins_hotkey')} <b>{c.hotkey}</b>{/if}
+										{:else if c.manifest.placement.kind === 'replace'}
+											{$t('settings.plugins_placement_replace', { target: c.manifest.placement.target ?? '' })}
+										{:else}
+											{$t('settings.plugins_placement_embed', { target: c.manifest.placement.target ?? '' })}
+										{/if}
+									</div>
+								</div>
+								<div class="cfg-chips">
+									<button
+										type="button"
+										class="chip"
+										class:is-on={c.enabled}
+										onclick={() => void toggleConnector(c, !c.enabled)}
+									>{$t(c.enabled ? 'settings.plugins_enabled' : 'settings.plugins_disabled')}</button>
+									<button type="button" class="chip" onclick={() => void removeConnector(c)}>
+										{$t('settings.plugins_remove')}
+									</button>
+								</div>
+							</div>
+							{#if c.manifest.auth?.type === 'header' && c.manifest.auth?.value_source}
+								<div class="cfg-key-row">
+									<input
+										type="password"
+										autocomplete="off"
+										placeholder={c.manifest.auth.header ?? c.manifest.auth.value_source}
+										bind:value={authDraft[authDraftKey(c)]}
+									/>
+									<button type="button" class="chip" onclick={() => void saveAuth(c, false)}>
+										{$t('settings.plugins_auth_save')}
+									</button>
+									{#if c.auth_set[c.manifest.auth.value_source]}
+										<button type="button" class="chip" onclick={() => void saveAuth(c, true)}>
+											{$t('settings.plugins_auth_clear')}
+										</button>
+									{/if}
+									<span class="cfg-note">
+										{$t(c.auth_set[c.manifest.auth.value_source] ? 'settings.plugins_auth_set' : 'settings.plugins_auth_not_set')}
+									</span>
+								</div>
+							{/if}
+							{#if c.manifest.placement.kind === 'own'}
+								<div class="cfg-key-row">
+									<button
+										type="button"
+										class="chip"
+										class:is-on={connHkCapture === c.id}
+										onclick={() => {
+											connHkNote = '';
+											connHkCapture = connHkCapture === c.id ? null : c.id;
+										}}
+									>{connHkCapture === c.id ? $t('settings.plugins_hotkey_capture') : `${$t('settings.plugins_hotkey')}: ${c.hotkey ?? '—'}`}</button>
+									{#if connHkCapture === c.id}
+										<span class="cfg-note">{$t('settings.plugins_hotkey_hint')}</span>
+									{/if}
+									{#if connHkNote && connHkCapture === null}
+										<span class="cfg-note" role="status">{connHkNote}</span>
+									{/if}
+								</div>
+							{/if}
+						{/each}
+						<div class="cfg-key-row">
+							<button type="button" class="chip" onclick={() => connectorFileInput?.click()}>
+								{$t('settings.plugins_add')}
+							</button>
+							{#if pluginWarn}
+								<button
+								type="button"
+								class="chip"
+								onclick={() => {
+									const w = pluginWarn;
+									if (w) void importConnector(w.text, true);
+								}}>
+									{$t('settings.plugins_ignore_warn')}
+								</button>
+							{/if}
+							<input
+								bind:this={connectorFileInput}
+								type="file"
+								accept=".json,application/json"
+								class="cfg-locale-file"
+								style="display: none"
+								onchange={onConnectorFilePick}
+							/>
+						</div>
+						<div class="cfg-note">{$t('settings.plugins_hint')}</div>
+						{#if pluginWarn}
+							<div class="cfg-note" role="alert">{pluginWarn.msg}</div>
+						{/if}
+						{#if pluginNote}
+							<div class="cfg-note" role="status">
+								{pluginNote.raw ?? $t(pluginNote.key ?? '', pluginNote.params)}
 							</div>
 						{/if}
 					</section>

@@ -22,9 +22,9 @@
 
 use std::path::PathBuf;
 
-use super::release_api::{Asset, Release};
 use super::integrity::CHECKSUMS_ASSET;
 use super::integrity::find_checksum;
+use super::release_api::{Asset, Release};
 
 /// Welche Installationsart liegt vor (für Plan + UI-Text).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

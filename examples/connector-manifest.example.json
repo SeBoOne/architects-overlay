@@ -1,0 +1,53 @@
+{
+  "manifest_version": 1,
+  "id": "example-service",
+  "name": { "de": "Beispiel-Dienst", "en": "Example Service" },
+  "base_url": "https://api.example.com/v1",
+  "auth": {
+    "type": "header",
+    "header": "X-Example-Key",
+    "value_source": "example_service.key"
+  },
+  "placement": { "kind": "own", "label": { "de": "Beispiel", "en": "Example" }, "hotkey_slot": true },
+  "views": [
+    {
+      "id": "ships",
+      "type": "table",
+      "title": { "de": "Schiffe", "en": "Ships" },
+      "endpoint": "/ships",
+      "mapping": { "name": "data[].ship_name", "owner": "data[].owner" },
+      "poll_seconds": 300
+    },
+    {
+      "id": "events",
+      "type": "calendar",
+      "title": { "de": "Events", "en": "Events" },
+      "endpoint": "/events",
+      "mapping": { "start": "data[].start_at", "title": "data[].title" },
+      "poll_seconds": 600
+    },
+    {
+      "id": "detail",
+      "type": "detail",
+      "title": { "de": "Status", "en": "Status" },
+      "endpoint": "/status",
+      "mapping": { "name": "service.name", "version": "service.version" }
+    },
+    {
+      "id": "create",
+      "type": "form",
+      "title": { "de": "Anlegen", "en": "Create" },
+      "endpoint": "/things",
+      "form": {
+        "fields": [
+          { "key": "name", "label": { "de": "Name", "en": "Name" }, "type": "text", "required": true },
+          { "key": "count", "label": { "de": "Anzahl", "en": "Count" }, "type": "number" },
+          { "key": "kind", "label": { "de": "Art", "en": "Kind" }, "type": "select", "options": [ { "de": "A", "en": "A" }, { "de": "B", "en": "B" } ] }
+        ],
+        "method": "post",
+        "path": "/things",
+        "body_template": { "name": "{name}", "count": "{count}", "kind": "{kind}" }
+      }
+    }
+  ]
+}

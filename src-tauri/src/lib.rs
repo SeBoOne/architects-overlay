@@ -10,6 +10,8 @@ use std::sync::Arc;
 
 #[cfg(desktop)]
 mod app_settings;
+#[cfg(desktop)]
+mod connector;
 mod hangar;
 #[cfg(desktop)]
 mod hyprland_sync;
@@ -127,6 +129,14 @@ pub fn run() {
             app_settings::settings_set_language,
             locale::locale_list,
             locale::locale_import,
+            connector::connector_list,
+            connector::connector_import,
+            connector::connector_remove,
+            connector::connector_set_enabled,
+            connector::connector_set_auth_value,
+            connector::connector_set_hotkey,
+            connector::connector_fetch,
+            connector::connector_form_submit,
             overlay::overlay_config_closed,
         ]);
     }
@@ -167,6 +177,16 @@ pub fn run() {
                 // apply data-palette / data-detail-variant.
                 tauri::Manager::manage(app, app_settings::SettingsState::load());
                 tauri::Manager::manage(app, app_settings::SyncNote::default());
+                // C2 (t_91124322): Connector-State — gespeicherte Manifeste aus
+                // <app-local-data-dir>/connectors/ laden (kaputte Dateien werden
+                // übersprungen, Boot scheitert nie an einem Connector).
+                {
+                    let dir = tauri::Manager::path(app)
+                        .app_local_data_dir()
+                        .map(|d| d.join("connectors"))
+                        .unwrap_or_else(|_| std::path::PathBuf::from("connectors"));
+                    tauri::Manager::manage(app, connector::ConnectorState::load(dir));
+                }
                 // UC t_d323be7e: Update-State + periodischer Check (Start +
                 // alle N Stunden, Karte Umsetzung 1). Eigener Thread, kein
                 // Block des Setups — Fehler landen nur in der Note.

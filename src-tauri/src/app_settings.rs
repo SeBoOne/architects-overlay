@@ -19,7 +19,7 @@ use settings::{DetailVariant, Palette, Settings};
 /// Shared settings handle. Loaded once at setup; every setter mutates and
 /// immediately persists the same instance (single source of truth).
 pub struct SettingsState {
-    inner: Mutex<Settings>,
+    pub(crate) inner: Mutex<Settings>,
 }
 
 impl SettingsState {
@@ -77,9 +77,15 @@ impl SettingsState {
     }
 
     fn persist(&self, settings: &Settings) {
-        if let Err(e) = settings.save() {
-            log::warn!("settings: persist failed: {e}");
-        }
+        persist_settings(settings);
+    }
+}
+
+/// Freie Persist-Hilfe (auch von connector.rs genutzt): speichert sofort,
+/// Fehler nur geloggt (gleiche Politik wie alle Setter — kein Save-Button).
+pub fn persist_settings(settings: &Settings) {
+    if let Err(e) = settings.save() {
+        log::warn!("settings: persist failed: {e}");
     }
 }
 
