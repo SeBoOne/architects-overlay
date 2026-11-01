@@ -1,0 +1,1072 @@
+{
+ "src/routes/+page.svelte": [
+  [
+   4604,
+   "attr:aria-label=\"Bestätigung\""
+  ],
+  [
+   4699,
+   "attr:aria-label=\"Hangar\""
+  ],
+  [
+   4701,
+   "attr:title=\"Zurück (Esc)\""
+  ],
+  [
+   4701,
+   "attr:aria-label=\"Zurück\""
+  ],
+  [
+   4731,
+   "attr:aria-label=\"Hangar-Einträge\""
+  ],
+  [
+   4769,
+   "attr:title=\"Schließen (Esc)\""
+  ],
+  [
+   4769,
+   "attr:aria-label=\"Details schließen\""
+  ],
+  [
+   4813,
+   "attr:placeholder=\"— Herkunft wählen —\""
+  ],
+  [
+   4874,
+   "attr:placeholder=\"— bitte wählen —\""
+  ],
+  [
+   4882,
+   "attr:placeholder=\"— bitte wählen —\""
+  ],
+  [
+   4913,
+   "attr:placeholder=\"Pick from Hangar …\""
+  ],
+  [
+   4932,
+   "attr:aria-label=\"Bestätigung\""
+  ],
+  [
+   4969,
+   "attr:title=\"Meldung schließen\""
+  ],
+  [
+   4969,
+   "attr:aria-label=\"Meldung schließen\""
+  ],
+  [
+   4981,
+   "attr:title=\"Zurück zur Suche (Esc)\""
+  ],
+  [
+   4982,
+   "attr:aria-label=\"Zurück zur Suche\""
+  ],
+  [
+   5183,
+   "attr:placeholder=\"Key einfügen … (maskiert)\""
+  ],
+  [
+   5223,
+   "attr:placeholder=\"Secret-Key einfügen … (maskiert)\""
+  ],
+  [
+   5471,
+   "attr:title=\"Bild vergrößern (Inline-Lightbox im Overlay)\""
+  ],
+  [
+   5497,
+   "attr:title=\"Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)\""
+  ],
+  [
+   5508,
+   "attr:aria-label=\"Bild vergrößert\""
+  ],
+  [
+   5528,
+   "attr:title=\"Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)\""
+  ],
+  [
+   5529,
+   "attr:title=\"Trade Log auf uexcorp.space öffnen (Login im Browser)\""
+  ],
+  [
+   5564,
+   "attr:title=\"Ausgaben (Käufe) an diesem Tag\""
+  ],
+  [
+   5565,
+   "attr:title=\"Einnahmen (Verkäufe) an diesem Tag\""
+  ],
+  [
+   5596,
+   "attr:title=\"Trade löschen\""
+  ],
+  [
+   5648,
+   "attr:title=\"Gain = (Sell−Buy) × Menge · absolute\""
+  ],
+  [
+   5721,
+   "attr:aria-label=\"SCU-Kapazität\""
+  ],
+  [
+   5724,
+   "attr:aria-label=\"Budget (aUEC) — kappt kaufbare Menge\""
+  ],
+  [
+   5735,
+   "attr:title=\"Filter zurücksetzen\""
+  ],
+  [
+   5801,
+   "attr:title=\"RB2: mit diesem Budget kaufbare Menge (min SCHIFF-SCU, floor Budget ÷ Kaufpreis)\""
+  ],
+  [
+   5832,
+   "attr:title=\"Deal auf uexcorp.space öffnen (negotiate/hash)\""
+  ],
+  [
+   5872,
+   "attr:placeholder=\"Nachricht an {tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || 'Käufer') : (tradesDeal.advertiser_username || 'Anbieter')} …\""
+  ],
+  [
+   5896,
+   "attr:title=\"Eigene Trades im UEX-Manager öffnen (Login im Browser)\""
+  ],
+  [
+   5932,
+   "attr:title=\"Deal-Chat öffnen\""
+  ],
+  [
+   6038,
+   "attr:title=\"Eigene Listings im UEX-Manager öffnen (Login im Browser)\""
+  ],
+  [
+   6061,
+   "attr:placeholder=\"— bitte wählen —\""
+  ],
+  [
+   6094,
+   "attr:aria-label=\"Preis (Ganzzahl, Tausender-Punkte werden bei der Eingabe angezeigt)\""
+  ],
+  [
+   6100,
+   "attr:placeholder=\"Währung wählen\""
+  ],
+  [
+   6108,
+   "attr:placeholder=\"Einheit wählen\""
+  ],
+  [
+   6133,
+   "attr:placeholder=\"— bitte wählen —\""
+  ],
+  [
+   6158,
+   "attr:title=\"Item gewählt\""
+  ],
+  [
+   6168,
+   "attr:placeholder=\"Laufzeit wählen\""
+  ],
+  [
+   6291,
+   "attr:title=\"Lokal gespeichert — UEX listet wartende Ads nicht per API; nach der Freigabe erscheint das Listing beim nächsten Pull als aktives Listing.\""
+  ],
+  [
+   6304,
+   "attr:title=\"Lokalen Eintrag entfernen (nötig, falls UEX das Listing abgelehnt hat)\""
+  ],
+  [
+   6315,
+   "attr:title=\"Listung auf uexcorp.space öffnen (nur Lesen)\""
+  ],
+  [
+   6323,
+   "attr:title=\"UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.\""
+  ],
+  [
+   6331,
+   "attr:title=\"Verhandeln startet auf uexcorp.space (API-seitig kein POST /marketplace_negotiations) — Angebotsseite im Browser öffnen\""
+  ],
+  [
+   6332,
+   "attr:title=\"Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)\""
+  ],
+  [
+   6333,
+   "attr:title=\"Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)\""
+  ],
+  [
+   6359,
+   "attr:aria-label=\"Bestätigung\""
+  ],
+  [
+   6410,
+   "attr:aria-label=\"Min-Qualität (0–1000)\""
+  ],
+  [
+   6410,
+   "attr:title=\"Min-Qualität (0–1000)\""
+  ],
+  [
+   6412,
+   "attr:aria-label=\"Max-Qualität (0–1000)\""
+  ],
+  [
+   6412,
+   "attr:title=\"Max-Qualität (0–1000)\""
+  ],
+  [
+   6545,
+   "attr:aria-label=\"zurück zur Liste\""
+  ],
+  [
+   6554,
+   "attr:aria-label=\"Preis-Detail-Darstellung\""
+  ],
+  [
+   6808,
+   "attr:title=\"Info — Architects Overlay\""
+  ],
+  [
+   6809,
+   "attr:aria-label=\"Info öffnen\""
+  ],
+  [
+   6827,
+   "attr:aria-label=\"Info — Architects Overlay\""
+  ],
+  [
+   6840,
+   "attr:title=\"Schließen (Esc)\""
+  ],
+  [
+   6841,
+   "attr:aria-label=\"Info schließen\""
+  ],
+  [
+   6866,
+   "attr:title=\"UEX API-Dokumentation öffnen\""
+  ],
+  [
+   6884,
+   "attr:title=\"Star Citizen Wiki API öffnen — Schiffsdaten\""
+  ],
+  [
+   6920,
+   "attr:title=\"Öffentliches Repository (GitHub)\""
+  ],
+  [
+   256,
+   "text>('loading');\n\tlet input = $state('');\n\t// Vom Präfix-Parser abgeleitete Kategorien (aus `:c :i :l`-Termen).\n\tlet filters = $state"
+  ],
+  [
+   274,
+   "text>(null);\n\t// Stale-Response-Guard: eine spät eintreffende get_prices-Antwort darf eine\n\t// neuer geöffnete Zeile (oder eine geleerte Liste) nicht überschreiben.\n\tlet xpanToken = 0;\n\tlet expanded = $state"
+  ],
+  [
+   280,
+   "text>(null);\n\n\t// Detail-Ansicht (statt Inline-Expansion): blendet die Liste aus, zeigt die\n\t// Preis-Tabelle. Keyboard-Navigation über die `.pr`-Zeilen.\n\tlet inDetail = $state(false);\n\tlet detailHit = $state"
+  ],
+  [
+   380,
+   "text>| undefined;\n\t// PS (t_c84e545d): \"Datenquellen\"-Sektion — Alter der beiden\n\t// Preis-Datentypen (getrennt!) + manuelle Sofort-Aktualisierung.\n\tlet priceSyncAge = $state"
+  ],
+  [
+   618,
+   "text>(null);\n\n\t// ---- Modi (Karte t_315a26cc) --------------------------------------------\n\t// Zentraler Mode-State: Defaults F1 Suche · F2 Marktplatz · F3 Routen ·\n\t// F4 Inventar · F11 Hangar · F12 Einstellungen (konfigurierbar, PB t_1c9bc240). Der bestehende Market-Modus (F2/Rail) ist derselbe\n\t// State — `phase === 'market'` bleibt die Render-Quelle, Config bleibt\n\t// `inConfig`; `railMode` trägt nur die Platzhalter-Modi (eigene Karten).\n\t// P1 t_a39f6811: Handelsrouten — eigener Mode für die Rail/Keyhandler;\n\t// intern bleibt es der Market-Phase mit mTab='routes'.\n\ttype Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';\n\t// M2a: dritter Tab „Mein Shop\" (eigene Offers + letzte Trades, Read-Phase).\n\tlet mTab = $state"
+  ],
+  [
+   869,
+   "text>(hangarBlank());\n\t// TB (t_78a4a5e5, Punkt 3): Hangar-Preise ENTFERNT — kein Preis-Feld mehr\n\t// im Formular, keine Anzeige; die DB-Spalte bleibt, wird nicht mehr befüllt.\n\t// R2 (Punkt 6): Datum im Formular als dd.mm.jjjj (Anzeige/Eingabe) —\n\t// gespeichert wird ISO (Konvertierung in hangarSaveForm).\n\tlet hangarFormDate = $state('');\n\t// R2 (Punkt 5): Versicherung als Select-String ('' = Ohne → null).\n\tlet hangarFormIns = $state('');\n\t// R2 (Punkt 1): 2-Schritt-Bestätigung wie elsewhere (save/delete) —\n\t// modales Popup über dem Formular (confirm-modal im advert-scrim).\n\tlet hangarConfirm = $state"
+  ],
+  [
+   1633,
+   "text>(null);\n\t// MQ (t_d6ff5212): Bild-Lightbox — Inline-Zoom im Overlay. Klick auf ein\n\t// Offer-Foto öffnet das Modal statt den Browser-Deep-Link; Scrim-Klick\n\t// oder Esc schließt. Die externen Links bleiben den Buttons vorbehalten.\n\tlet lightbox = $state"
+  ],
+  [
+   1640,
+   "text>-Ladungen (live belegt: net::ERR_BLOCKED_BY_ORB). Das\n\t// Backend proxied (Base64-Data-URI via `marketplace_photo`); Fehler\n\t// (403/Timeout/kein JPG/PNG) → null → Kachel weggelassen bzw. Leerzustand.\n\tlet offerPhotoUris = $state"
+  ],
+  [
+   1771,
+   "text>([]);\n\t// QZ (t_ab10109f): lokale pending-Listings (cache pending_offers) — im\n\t// Mein Shop zusätzlich zu den API-Listings sichtbar.\n\tlet shopPending = $state"
+  ],
+  [
+   1978,
+   "text>(null);\n\t// 2-Schritt-Bestätigung (Muster confirmAction, aber lokal im Reiter — der\n\t// bestehende Dialog hängt im Angebots-Markup und rendert hier nicht).\n\tlet trkConfirm = $state"
+  ],
+  [
+   2458,
+   "text>([]);\n\tlet advertCatOpen = $state(false);\n\t// Permalink eines frisch angelegten Listings (für den Erfolgs-Deep-Link).\n\tlet shopCreatedUrl = $state"
+  ],
+  [
+   2595,
+   "text>(null);\n\tlet writeBusy = $state(false);\n\t// „Bearbeiten\" gibt es NICHT als eigenen Zweig — das Formular wird beim\n\t// Editieren nur VORBEFÜLLT; der Nutzer meldet die alte Listung separat ab\n\t// und legt neu an (klare UX-Kennzeichnung, M2b-1).\n\tlet editingOffer = $state"
+  ],
+  [
+   2973,
+   "text>('profit_desc');\n\tlet rScu = $state(0);\n\t// RB2 (Karte t_9b42249a): Budget (aUEC) — kappt die kaufbare Menge je\n\t// Route auf min(Schiff-SCU, floor(Budget / Kaufpreis pro SCU)). Leer\n\t// (kein Budget) = Vollkapazität wie heute. Persistiert in localStorage\n\t// (überlebt Neustart).\n\tlet rBudget = $state"
+  ],
+  [
+   3014,
+   "text>(null);\n\n\t/** Ship → SCU via UEX /vehicles (case-insensitive über name/full/slug). */\n\tasync function shipScu(name: string): Promise"
+  ],
+  [
+   4561,
+   "text>Ort"
+  ],
+  [
+   4575,
+   "text>Menge (SCU)"
+  ],
+  [
+   4579,
+   "text>Preis/SCU (aUEC)"
+  ],
+  [
+   4594,
+   "text>Abbrechen (Esc)"
+  ],
+  [
+   4611,
+   "text>Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden."
+  ],
+  [
+   4615,
+   "text>Ort"
+  ],
+  [
+   4616,
+   "text>Menge"
+  ],
+  [
+   4617,
+   "text>Preis"
+  ],
+  [
+   4624,
+   "text>Abbrechen (Esc)"
+  ],
+  [
+   4768,
+   "text>Löschen"
+  ],
+  [
+   4815,
+   "text>Hinzufügen"
+  ],
+  [
+   4918,
+   "text>Speichern"
+  ],
+  [
+   4919,
+   "text>Abbrechen"
+  ],
+  [
+   4940,
+   "text>Der Eintrag wird aus dem Hangar GELÖSCHT."
+  ],
+  [
+   4952,
+   "text>JA, LÖSCHEN"
+  ],
+  [
+   4956,
+   "text>Abbrechen"
+  ],
+  [
+   5028,
+   "text>Preis-Detail-Variante"
+  ],
+  [
+   5049,
+   "text>Tastenkürzel"
+  ],
+  [
+   5099,
+   "text>Hyprland-Binds werden aus den gespeicherten Kürzeln geführt\n\t\t\t\t\t\t\t\t\t\t\t("
+  ],
+  [
+   5102,
+   "text>) — Änderungen wirken sofort."
+  ],
+  [
+   5105,
+   "text>Gespeicherte Kürzel sind die kanonische Quelle, aber die\n\t\t\t\t\t\t\t\t\t\t\tHyprland-Binds werden noch nicht daraus geführt."
+  ],
+  [
+   5113,
+   "text>, Anleitung: docs/WAYLAND.md).\n\t\t\t\t\t\t\t\t\t\tDie App verändert keine fremde Hyprland-Konfiguration."
+  ],
+  [
+   5121,
+   "text>Globale Kürzel"
+  ],
+  [
+   5127,
+   "text>Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart."
+  ],
+  [
+   5161,
+   "text>F5 ist fest für den Resync reserviert (Marktplatz, Mein Shop, Routen-Sweep)\n\t\t\t\t\t\t\tund kann keinem Modus zugewiesen werden. Änderungen gelten sofort."
+  ],
+  [
+   5206,
+   "text>UEX persönlicher Secret-Key"
+  ],
+  [
+   5207,
+   "text>Für den eigenen Shop („Mein Shop“, user-scoped Reads) braucht UEX\n\t\t\t\t\t\t\tzusätzlich deinen persönlichen Secret-Key (40 Zeichen, noch maskierter\n\t\t\t\t\t\t\tals der App-Key). Den Key auf uexcorp.space generieren/kopieren —\n\t\t\t\t\t\t\tden Benutzernamen ermittelt das Overlay automatisch daraus."
+  ],
+  [
+   5260,
+   "text>Schreibbestätigung (2-Schritt):"
+  ],
+  [
+   5263,
+   "text>Nur beim Abmelden/Löschen eines Listings"
+  ],
+  [
+   5267,
+   "text>Bestätigungspflicht beim Anlegen von Listings vs. nur beim Entfernen."
+  ],
+  [
+   5393,
+   "text>Erster Sync läuft"
+  ],
+  [
+   5431,
+   "text>Trades"
+  ],
+  [
+   5450,
+   "text>Menge"
+  ],
+  [
+   5451,
+   "text>Ort"
+  ],
+  [
+   5457,
+   "text>Qualität"
+  ],
+  [
+   5498,
+   "text>AUF UEXCORP.SPACE ÖFFNEN ↗"
+  ],
+  [
+   5499,
+   "text>Zurück"
+  ],
+  [
+   5502,
+   "text>im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter."
+  ],
+  [
+   5527,
+   "text>Aktualisieren"
+  ],
+  [
+   5529,
+   "text>Trade Log auf UEX öffnen ↗"
+  ],
+  [
+   5534,
+   "text>Lade Trades …"
+  ],
+  [
+   5596,
+   "text>Löschen"
+  ],
+  [
+   5645,
+   "text>Menge"
+  ],
+  [
+   5655,
+   "text>Preis ↑"
+  ],
+  [
+   5682,
+   "text>Preis ↓"
+  ],
+  [
+   5714,
+   "text>Zurück (Esc)"
+  ],
+  [
+   5735,
+   "text>Filter ×"
+  ],
+  [
+   5749,
+   "text>Ort"
+  ],
+  [
+   5807,
+   "text>Budget zu niedrig für 1 SCU"
+  ],
+  [
+   5817,
+   "text>Keine Routen für diese Filter."
+  ],
+  [
+   5832,
+   "text>Deal auf UEX öffnen ↗"
+  ],
+  [
+   5861,
+   "text>DEAL AUF UEXCORP.SPACE ÖFFNEN ↗"
+  ],
+  [
+   5895,
+   "text>Aktualisieren"
+  ],
+  [
+   5896,
+   "text>Trades verwalten ↗"
+  ],
+  [
+   5907,
+   "text>Lade Trades …"
+  ],
+  [
+   5912,
+   "text>Trades nicht erreichbar"
+  ],
+  [
+   5915,
+   "text>AUF UEXCORP.SPACE ÖFFNEN ↗"
+  ],
+  [
+   5980,
+   "text>Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer."
+  ],
+  [
+   5981,
+   "text>In den Einstellungen hinterlegen"
+  ],
+  [
+   5991,
+   "text>Secret-Key fehlt oder ist falsch — siehe Einstellungen"
+  ],
+  [
+   5992,
+   "text>User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert."
+  ],
+  [
+   5993,
+   "text>In den Einstellungen hinterlegen"
+  ],
+  [
+   6000,
+   "text>Eigene Offers + Marktplatz-Trades vom UEX-Client."
+  ],
+  [
+   6008,
+   "text>AUF UEXCORP.SPACE ÖFFNEN ↗"
+  ],
+  [
+   6017,
+   "text>AUF UEXCORP.SPACE ÖFFNEN ↗"
+  ],
+  [
+   6027,
+   "text>ANGELEGTES LISTING ÖFFNEN ↗"
+  ],
+  [
+   6084,
+   "text>Preis"
+  ],
+  [
+   6099,
+   "text>Währung"
+  ],
+  [
+   6104,
+   "text>Menge"
+  ],
+  [
+   6110,
+   "text>Ort"
+  ],
+  [
+   6129,
+   "text>Kategorie"
+  ],
+  [
+   6254,
+   "text>UEX überträgt 1 Bild pro Listing (image_data) — ein neu gewähltes Bild ersetzt das alte."
+  ],
+  [
+   6260,
+   "text>Abbrechen"
+  ],
+  [
+   6339,
+   "text>Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen."
+  ],
+  [
+   6367,
+   "text>Preis"
+  ],
+  [
+   6368,
+   "text>Menge"
+  ],
+  [
+   6369,
+   "text>Ort"
+  ],
+  [
+   6374,
+   "text>Preis"
+  ],
+  [
+   6375,
+   "text>Menge"
+  ],
+  [
+   6376,
+   "text>Ort"
+  ],
+  [
+   6383,
+   "text>Abbrechen"
+  ],
+  [
+   6409,
+   "text>Qualität"
+  ],
+  [
+   6415,
+   "text>Preis ↑"
+  ],
+  [
+   6416,
+   "text>Preis ↓"
+  ],
+  [
+   6466,
+   "text>Keine Angebote für diese Filter."
+  ],
+  [
+   6539,
+   "text>Fehler"
+  ],
+  [
+   6573,
+   "text>↻ Aktualisieren"
+  ],
+  [
+   6580,
+   "text>Filter aktiv:"
+  ],
+  [
+   6592,
+   "text>Preis"
+  ],
+  [
+   6618,
+   "text>Kein Terminal/Keine Ware passt zum Filter"
+  ],
+  [
+   6637,
+   "text>Günstigster Kauf"
+  ],
+  [
+   6643,
+   "text>Höchster Verkauf"
+  ],
+  [
+   6669,
+   "text>Keine Preise passen zum Filter"
+  ],
+  [
+   6675,
+   "text>Preis"
+  ],
+  [
+   6689,
+   "text>Preis"
+  ],
+  [
+   6722,
+   "text>Marktplatz ·"
+  ],
+  [
+   6723,
+   "text>Einstellungen"
+  ],
+  [
+   6725,
+   "text>Kategorie"
+  ],
+  [
+   6741,
+   "text>zurück zur Liste"
+  ],
+  [
+   6742,
+   "text>im Browser öffnen"
+  ],
+  [
+   6747,
+   "text>zurück zur Suche"
+  ],
+  [
+   6752,
+   "text>zurück zur Suche"
+  ],
+  [
+   6758,
+   "text>zurück zur Suche"
+  ],
+  [
+   6765,
+   "text>Suchfeld = Filter"
+  ],
+  [
+   6766,
+   "text>zurück"
+  ],
+  [
+   6773,
+   "text>zurück"
+  ],
+  [
+   6778,
+   "text>zurück"
+  ],
+  [
+   6779,
+   "text>Marktplatz"
+  ],
+  [
+   6831,
+   "text>Architects Overlay"
+  ],
+  [
+   6847,
+   "text>Über"
+  ],
+  [
+   6848,
+   "text>Architects Overlay ist ein inoffizielles Community-Projekt für Star Citizen:\n\t\t\t\t\t\t\t\tHandelsrouten, Marktplatz-Preise und Hangar-Verwaltung direkt im Spiel —\n\t\t\t\t\t\t\t\tals Overlay von der Community, für die Community. Non-Commercial, ohne\n\t\t\t\t\t\t\t\tRSI-/CIG-Assets als eigenes Branding."
+  ],
+  [
+   6871,
+   "text>Daten &amp; Marktplatz"
+  ],
+  [
+   6897,
+   "text>Architects Overlay steht in keiner Verbindung zu Cloud Imperium Games (CIG),\n\t\t\t\t\t\t\t\tRoberts Space Industries oder deren Partnern und wird nicht offiziell\n\t\t\t\t\t\t\t\tunterstützt oder gesponsert. Star Citizen, Roberts Space Industries und das\n\t\t\t\t\t\t\t\tRSI-Logo sind Marken von Cloud Imperium Games Corp."
+  ],
+  [
+   6912,
+   "text>Offizielles CIG-Fan-Asset („Made by the Community“), unverändert."
+  ],
+  [
+   245,
+   "str:\"Config öffnen\""
+  ],
+  [
+   358,
+   "str:\"Aktualisierung läuft bereits.\""
+  ],
+  [
+   587,
+   "str:\"Mode-Hotkeys auf Standard-Belegung zurückgesetzt.\""
+  ],
+  [
+   592,
+   "str:\"Tastenkürzel mit System (Omarchy) synchronisieren\""
+  ],
+  [
+   602,
+   "str:\"Compositor-Sync aktiv — Kürzel ändern jetzt auch die Hyprland-Binds.\""
+  ],
+  [
+   954,
+   "str:\"Autocomplete from those already entered in the Hangar\""
+  ],
+  [
+   1085,
+   "str:\"Bitte einen Typ wählen.\""
+  ],
+  [
+   1089,
+   "str:\"Bitte eine Herkunft wählen.\""
+  ],
+  [
+   1163,
+   "str:\"Bitte die Herkunft des Moduls wählen.\""
+  ],
+  [
+   1530,
+   "str:\"Jede schreibende Aktion wird bestätigt (Default).\""
+  ],
+  [
+   1531,
+   "str:\"Nur beim ABMELDEN wird bestätigt — Anlegen läuft direkt.\""
+  ],
+  [
+   1801,
+   "str:\"Username noch nicht ermittelt — Secret-Key in den Einstellungen (F12) prüfen.\""
+  ],
+  [
+   1910,
+   "str:\"Für den Trades-Reiter braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).\""
+  ],
+  [
+   2021,
+   "str:\"Für den Trade Log braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).\""
+  ],
+  [
+   2133,
+   "str:\"Ware wählen (Tippen für Vorschläge).\""
+  ],
+  [
+   2134,
+   "str:\"Ort/Terminal wählen (Tippen für Vorschläge).\""
+  ],
+  [
+   2136,
+   "str:\"Menge (SCU) muss eine positive Ganzzahl sein.\""
+  ],
+  [
+   2138,
+   "str:\"Preis muss positiv sein.\""
+  ],
+  [
+   2193,
+   "str:\"Trade gelöscht.\""
+  ],
+  [
+   2333,
+   "str:\"läuft ab \""
+  ],
+  [
+   2583,
+   "str:\"“ ist größer als 10 MB (UEX-Limit).\""
+  ],
+  [
+   2696,
+   "str:\"Bitte eine Kategorie wählen (Pflicht für Item-/Contract-Listings).\""
+  ],
+  [
+   2700,
+   "str:\"Bitte ein Item wählen (Pflicht für Item-Listings).\""
+  ],
+  [
+   2702,
+   "str:\"Ort ist Pflicht.\""
+  ],
+  [
+   2704,
+   "str:\"Preis muss eine positive Ganzzahl sein.\""
+  ],
+  [
+   2706,
+   "str:\"Menge muss eine positive Ganzzahl sein.\""
+  ],
+  [
+   2708,
+   "str:\"Währung ist Pflicht.\""
+  ],
+  [
+   3244,
+   "str:\"Config öffnen\""
+  ],
+  [
+   3826,
+   "str:\"Mein Shop sync läuft …\""
+  ],
+  [
+   3836,
+   "str:\"Routen-Sweep läuft …\""
+  ],
+  [
+   3848,
+   "str:\"Market-Sync läuft …\""
+  ],
+  [
+   3958,
+   "str:\"Preisdaten unvollständig — der Anbieter lieferte leere Werte. Bitte erneut versuchen.\""
+  ],
+  [
+   3962,
+   "str:\"Keine Preisdaten für diesen Eintrag gefunden.\""
+  ],
+  [
+   3964,
+   "str:\"Zeitüberschreitung beim Laden — bitte erneut versuchen.\""
+  ],
+  [
+   3966,
+   "str:\"Keine Verbindung zum Preisdienst. Bitte Internet prüfen.\""
+  ],
+  [
+   3994,
+   "str:\"SYNC LÄUFT\""
+  ],
+  [
+   3995,
+   "str:\"SYNC LÄUFT\""
+  ]
+ ],
+ "src/lib/Inventory.svelte": [
+  [
+   649,
+   "attr:aria-label=\"Inventar\""
+  ],
+  [
+   654,
+   "attr:aria-label=\"Abbrechen\""
+  ],
+  [
+   725,
+   "attr:placeholder=\"z. B. Heim-Hangar, meine Carrack …\""
+  ],
+  [
+   773,
+   "attr:aria-label=\"zurück zur Übersicht\""
+  ],
+  [
+   802,
+   "attr:aria-label=\"zurück zur Übersicht\""
+  ],
+  [
+   818,
+   "attr:title=\"Material-Detail öffnen\""
+  ],
+  [
+   819,
+   "attr:aria-label=\"Material {m.name} öffnen\""
+  ],
+  [
+   905,
+   "attr:title=\"Standort-Detail öffnen\""
+  ],
+  [
+   906,
+   "attr:aria-label=\"Standort {g.loc} öffnen\""
+  ],
+  [
+   916,
+   "attr:title=\"Material-Detail öffnen\""
+  ],
+  [
+   917,
+   "attr:aria-label=\"Material {m.name} öffnen\""
+  ],
+  [
+   104,
+   "text>| null = null;\n\t// Standort-Vorschläge: bestehende Inventar-Standorte + Location-Entities.\n\tlet locSuggest = $state"
+  ],
+  [
+   703,
+   "text>Qualität"
+  ],
+  [
+   716,
+   "text>Menge"
+  ],
+  [
+   716,
+   "text>SCU bzw. Stück"
+  ],
+  [
+   745,
+   "text>Freitext = eigenes Depot · Treffer wählen = Location-Entity"
+  ],
+  [
+   758,
+   "text>Abbrechen"
+  ],
+  [
+   764,
+   "text>Löschen"
+  ],
+  [
+   778,
+   "text>Ø Qualität"
+  ],
+  [
+   793,
+   "text>Keine Positionen für dieses Material."
+  ],
+  [
+   808,
+   "text>Ø Qualität"
+  ],
+  [
+   844,
+   "text>Menge ↓"
+  ],
+  [
+   845,
+   "text>Qualität ↓"
+  ],
+  [
+   852,
+   "text>Lade Inventar …"
+  ],
+  [
+   950,
+   "text>Löschen ·"
+  ],
+  [
+   950,
+   "text>zurück"
+  ],
+  [
+   344,
+   "str:\"Position gelöscht.\""
+  ],
+  [
+   490,
+   "str:\"Bitte ein Material wählen (Entity-Suche) oder als Freitext übernehmen.\""
+  ],
+  [
+   494,
+   "str:\"Qualität ist Pflicht (0–1000).\""
+  ],
+  [
+   502,
+   "str:\"Bitte eine gültige Menge angeben.\""
+  ],
+  [
+   531,
+   "str:\"Position geändert.\""
+  ]
+ ],
+ "src/lib/Rail.svelte": [
+  [
+   38,
+   "str:\"Marktplatz (F2)\""
+  ],
+  [
+   40,
+   "str:\"Inventar (F4)\""
+  ],
+  [
+   41,
+   "str:\"Hangar (F11)\""
+  ],
+  [
+   42,
+   "str:\"Einstellungen (F12)\""
+  ]
+ ],
+ "src/lib/RoutesTypeahead.svelte": [],
+ "src/lib/SelectCombo.svelte": [],
+ "src/lib/hangar_ships.ts": [],
+ "src/lib/hotkeys.ts": []
+}

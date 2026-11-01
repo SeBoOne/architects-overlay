@@ -1,0 +1,1586 @@
+{
+ "Trade erfassen": {
+  "en": "Record trade",
+  "de": "Trade erfassen"
+ },
+ "z. B. Gold": {
+  "en": "e.g. Gold",
+  "de": "z. B. Gold"
+ },
+ "z. B. Everus Harbor": {
+  "en": "e.g. Everus Harbor",
+  "de": "z. B. Everus Harbor"
+ },
+ "Bestätigung": {
+  "en": "Confirmation",
+  "de": "Bestätigung"
+ },
+ "Hangar": {
+  "en": "Hangar",
+  "de": "Hangar"
+ },
+ "Zurück (Esc)": {
+  "en": "Back (Esc)",
+  "de": "Zurück (Esc)"
+ },
+ "Zurück": {
+  "en": "Back",
+  "de": "Zurück"
+ },
+ "Eintrag manuell anlegen": {
+  "en": "Create entry manually",
+  "de": "Eintrag manuell anlegen"
+ },
+ "Hangar-Einträge": {
+  "en": "Hangar entries",
+  "de": "Hangar-Einträge"
+ },
+ "Schließen (Esc)": {
+  "en": "Close (Esc)",
+  "de": "Schließen (Esc)"
+ },
+ "Details schließen": {
+  "en": "Close details",
+  "de": "Details schließen"
+ },
+ "Modul bearbeiten": {
+  "en": "Edit module",
+  "de": "Modul bearbeiten"
+ },
+ "Modul entfernen": {
+  "en": "Remove module",
+  "de": "Modul entfernen"
+ },
+ "Modul suchen … (z. B. Exploration Module)": {
+  "en": "Search module … (e.g. Exploration Module)",
+  "de": "Modul suchen … (z. B. Exploration Module)"
+ },
+ "— Herkunft wählen —": {
+  "en": "— Choose origin —",
+  "de": "— Herkunft wählen —"
+ },
+ "Ohne": {
+  "en": "None",
+  "de": "Ohne"
+ },
+ "Basisschiff suchen …": {
+  "en": "Search base ship …",
+  "de": "Basisschiff suchen …"
+ },
+ "Modul-Name": {
+  "en": "Module name",
+  "de": "Modul-Name"
+ },
+ "z. B. Cargo/Explorer-Modul": {
+  "en": "e.g. Cargo/Explorer module",
+  "de": "z. B. Cargo/Explorer-Modul"
+ },
+ "z. B. Cutlass Black": {
+  "en": "e.g. Cutlass Black",
+  "de": "z. B. Cutlass Black"
+ },
+ "Typ (Modul)": {
+  "en": "Type (module)",
+  "de": "Typ (Modul)"
+ },
+ "— bitte wählen —": {
+  "en": "— please choose —",
+  "de": "— bitte wählen —"
+ },
+ "Datum (dd.mm.jjjj)": {
+  "en": "Date (dd.mm.yyyy)",
+  "de": "Datum (dd.mm.jjjj)"
+ },
+ "Pick from Hangar …": {
+  "en": "Pick from Hangar …",
+  "de": "Aus dem Hangar wählen …"
+ },
+ "Meldung schließen": {
+  "en": "Dismiss message",
+  "de": "Meldung schließen"
+ },
+ "Konfiguration": {
+  "en": "Configuration",
+  "de": "Konfiguration"
+ },
+ "Zurück zur Suche (Esc)": {
+  "en": "Back to search (Esc)",
+  "de": "Zurück zur Suche (Esc)"
+ },
+ "Zurück zur Suche": {
+  "en": "Back to search",
+  "de": "Zurück zur Suche"
+ },
+ "Key einfügen … (maskiert)": {
+  "en": "Paste key … (masked)",
+  "de": "Key einfügen … (maskiert)"
+ },
+ "API-Keys auf uexcorp.space verwalten (Login im Browser)": {
+  "en": "Manage API keys on uexcorp.space (login in browser)",
+  "de": "API-Keys auf uexcorp.space verwalten (Login im Browser)"
+ },
+ "Secret-Key einfügen … (maskiert)": {
+  "en": "Paste secret key … (masked)",
+  "de": "Secret-Key einfügen … (maskiert)"
+ },
+ "Secret-Key auf uexcorp.space/account neu generieren/kopieren (Login im Browser)": {
+  "en": "Regenerate/copy secret key on uexcorp.space/account (login in browser)",
+  "de": "Secret-Key auf uexcorp.space/account neu generieren/kopieren (Login im Browser)"
+ },
+ "Bild vergrößern (Inline-Lightbox im Overlay)": {
+  "en": "Enlarge image (inline lightbox in overlay)",
+  "de": "Bild vergrößern (Inline-Lightbox im Overlay)"
+ },
+ "Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)": {
+  "en": "Start deal: begin negotiation on uexcorp.space (not possible via API, therefore browser)",
+  "de": "Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)"
+ },
+ "Bild vergrößert": {
+  "en": "Image enlarged",
+  "de": "Bild vergrößert"
+ },
+ "Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)": {
+  "en": "Record trade (buy/sell, quantity, price, location)",
+  "de": "Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)"
+ },
+ "Trade Log auf uexcorp.space öffnen (Login im Browser)": {
+  "en": "Open trade log on uexcorp.space (login in browser)",
+  "de": "Trade Log auf uexcorp.space öffnen (Login im Browser)"
+ },
+ "Ausgaben (Käufe) an diesem Tag": {
+  "en": "Expenses (buys) on this day",
+  "de": "Ausgaben (Käufe) an diesem Tag"
+ },
+ "Einnahmen (Verkäufe) an diesem Tag": {
+  "en": "Income (sales) on this day",
+  "de": "Einnahmen (Verkäufe) an diesem Tag"
+ },
+ "Nettogewinn des Tages (aUEC)": {
+  "en": "Day's net profit (aUEC)",
+  "de": "Nettogewinn des Tages (aUEC)"
+ },
+ "Trade bearbeiten": {
+  "en": "Edit trade",
+  "de": "Trade bearbeiten"
+ },
+ "Trade löschen": {
+  "en": "Delete trade",
+  "de": "Trade löschen"
+ },
+ "Routen-Detail": {
+  "en": "Route detail",
+  "de": "Routen-Detail"
+ },
+ "Gain = (Sell−Buy) × Menge · absolute": {
+  "en": "Gain = (Sell−Buy) × Qty · absolute",
+  "de": "Gain = (Sell−Buy) × Menge · absolute"
+ },
+ "Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)": {
+  "en": "Margin = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)",
+  "de": "Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)"
+ },
+ "Bestand am Terminal": {
+  "en": "Stock at terminal",
+  "de": "Bestand am Terminal"
+ },
+ "Nachfrage (Lager-Level)": {
+  "en": "Demand (inventory level)",
+  "de": "Nachfrage (Lager-Level)"
+ },
+ "z. B. Ironclad": {
+  "en": "e.g. Ironclad",
+  "de": "z. B. Ironclad"
+ },
+ "SCU-Kapazität": {
+  "en": "SCU capacity",
+  "de": "SCU-Kapazität"
+ },
+ "Budget (aUEC) — kappt kaufbare Menge": {
+  "en": "Budget (aUEC) — caps buyable quantity",
+  "de": "Budget (aUEC) — kappt kaufbare Menge"
+ },
+ "Budget in aUEC (formatiert)": {
+  "en": "Budget in aUEC (formatted)",
+  "de": "Budget in aUEC (formatiert)"
+ },
+ "Ware": {
+  "en": "Commodity",
+  "de": "Ware"
+ },
+ "Ware filtern": {
+  "en": "Filter commodity",
+  "de": "Ware filtern"
+ },
+ "Startort": {
+  "en": "Origin",
+  "de": "Startort"
+ },
+ "Zielort": {
+  "en": "Destination",
+  "de": "Zielort"
+ },
+ "Filter zurücksetzen": {
+  "en": "Reset filter",
+  "de": "Filter zurücksetzen"
+ },
+ "Gewinn/SCU umschalten: neutral → absteigend → aufsteigend → neutral": {
+  "en": "Toggle profit/SCU: neutral → descending → ascending → neutral",
+  "de": "Gewinn/SCU umschalten: neutral → absteigend → aufsteigend → neutral"
+ },
+ "UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo, nicht sortierrelevant": {
+  "en": "UEX enrichment (option b): volume/demand/scarcity — extra info only, not sort-relevant",
+  "de": "UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo, nicht sortierrelevant"
+ },
+ "Nachfrage-Level Verkauf (1–7)": {
+  "en": "Demand level sell (1–7)",
+  "de": "Nachfrage-Level Verkauf (1–7)"
+ },
+ "RB2: mit diesem Budget kaufbare Menge (min SCHIFF-SCU, floor Budget ÷ Kaufpreis)": {
+  "en": "RB2: quantity buyable with this budget (min SHIP-SCU, floor Budget ÷ buy price)",
+  "de": "RB2: mit diesem Budget kaufbare Menge (min SCHIFF-SCU, floor Budget ÷ Kaufpreis)"
+ },
+ "Gain/SCU = Sell − Buy · absolute aUEC per SCU": {
+  "en": "Gain/SCU = Sell − Buy · absolute aUEC per SCU",
+  "de": "Gain/SCU = Sell − Buy · absolute aUEC per SCU"
+ },
+ "Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)": {
+  "en": "Margin = relative: Gain/SCU ÷ buy-price difference in % (independent of SCU; not just Gain/SCU rescaled)",
+  "de": "Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)"
+ },
+ "Deal auf uexcorp.space öffnen (negotiate/hash)": {
+  "en": "Open deal on uexcorp.space (negotiate/hash)",
+  "de": "Deal auf uexcorp.space öffnen (negotiate/hash)"
+ },
+ "Chat-Nachricht senden": {
+  "en": "Send chat message",
+  "de": "Chat-Nachricht senden"
+ },
+ "Eigene Trades im UEX-Manager öffnen (Login im Browser)": {
+  "en": "Open own trades in UEX manager (login in browser)",
+  "de": "Eigene Trades im UEX-Manager öffnen (Login im Browser)"
+ },
+ "Deal-Chat öffnen": {
+  "en": "Open deal chat",
+  "de": "Deal-Chat öffnen"
+ },
+ "Neue Interaktion": {
+  "en": "New interaction",
+  "de": "Neue Interaktion"
+ },
+ "Eigene Offers + Deals neu laden": {
+  "en": "Reload own offers + deals",
+  "de": "Eigene Offers + Deals neu laden"
+ },
+ "Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen.": {
+  "en": "Create = post NEW listing (UEX marketplace_advertise). There's no editing — unlist + create anew.",
+  "de": "Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen."
+ },
+ "Eigene Listings im UEX-Manager öffnen (Login im Browser)": {
+  "en": "Open own listings in UEX manager (login in browser)",
+  "de": "Eigene Listings im UEX-Manager öffnen (Login im Browser)"
+ },
+ "Neues Listing anlegen": {
+  "en": "Create new listing",
+  "de": "Neues Listing anlegen"
+ },
+ "Artikelname (alphanumerisch + -)": {
+  "en": "Item name (alphanumeric + -)",
+  "de": "Artikelname (alphanumerisch + -)"
+ },
+ "z. B. 1.500.000.000": {
+  "en": "e.g. 1,500,000,000",
+  "de": "z. B. 1.500.000.000"
+ },
+ "Preis (Ganzzahl, Tausender-Punkte werden bei der Eingabe angezeigt)": {
+  "en": "Price (integer, thousand separators shown as you type)",
+  "de": "Preis (Ganzzahl, Tausender-Punkte werden bei der Eingabe angezeigt)"
+ },
+ "Währung wählen": {
+  "en": "Choose currency",
+  "de": "Währung wählen"
+ },
+ "Einheit wählen": {
+  "en": "Choose unit",
+  "de": "Einheit wählen"
+ },
+ "z. B. Port Tressler": {
+  "en": "e.g. Port Tressler",
+  "de": "z. B. Port Tressler"
+ },
+ "Item suchen (z. B. Custodian SMG)": {
+  "en": "Search item (e.g. Custodian SMG)",
+  "de": "Item suchen (z. B. Custodian SMG)"
+ },
+ "Item gewählt": {
+  "en": "Item selected",
+  "de": "Item gewählt"
+ },
+ "Laufzeit wählen": {
+  "en": "Choose duration",
+  "de": "Laufzeit wählen"
+ },
+ "— (optional) —": {
+  "en": "— (optional) —",
+  "de": "— (optional) —"
+ },
+ "0–1000": {
+  "en": "0–1000",
+  "de": "0–1000"
+ },
+ "Quality 0–1000": {
+  "en": "Quality 0–1000",
+  "de": "Qualität 0–1000"
+ },
+ "Verborgenes Listing erscheint erst nach manuellem UEX-Approval": {
+  "en": "Hidden listing only appears after manual UEX approval",
+  "de": "Verborgenes Listing erscheint erst nach manuellem UEX-Approval"
+ },
+ "Freitext, mehrzeilig (Markdown ok, max. 65.535 Zeichen) — Enter = neue Zeile": {
+  "en": "Free text, multi-line (Markdown ok, max. 65,535 characters) — Enter = new line",
+  "de": "Freitext, mehrzeilig (Markdown ok, max. 65.535 Zeichen) — Enter = neue Zeile"
+ },
+ "Bild entfernen": {
+  "en": "Remove image",
+  "de": "Bild entfernen"
+ },
+ "Lokal gespeichert — UEX listet wartende Ads nicht per API; nach der Freigabe erscheint das Listing beim nächsten Pull als aktives Listing.": {
+  "en": "Saved locally — UEX doesn't list pending ads via API; after approval the listing appears as an active listing on the next pull.",
+  "de": "Lokal gespeichert — UEX listet wartende Ads nicht per API; nach der Freigabe erscheint das Listing beim nächsten Pull als aktives Listing."
+ },
+ "Lokalen Eintrag entfernen (nötig, falls UEX das Listing abgelehnt hat)": {
+  "en": "Remove local entry (needed if UEX rejected the listing)",
+  "de": "Lokalen Eintrag entfernen (nötig, falls UEX das Listing abgelehnt hat)"
+ },
+ "Listung auf uexcorp.space öffnen (nur Lesen)": {
+  "en": "Open listing on uexcorp.space (read-only)",
+  "de": "Listung auf uexcorp.space öffnen (nur Lesen)"
+ },
+ "UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.": {
+  "en": "UEX hasn't approved this listing yet — it only appears publicly after moderation.",
+  "de": "UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation."
+ },
+ "Verhandeln startet auf uexcorp.space (API-seitig kein POST /marketplace_negotiations) — Angebotsseite im Browser öffnen": {
+  "en": "Negotiation starts on uexcorp.space (no POST /marketplace_negotiations on the API side) — open the offer page in the browser",
+  "de": "Verhandeln startet auf uexcorp.space (API-seitig kein POST /marketplace_negotiations) — Angebotsseite im Browser öffnen"
+ },
+ "Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)": {
+  "en": "There's no editing: unlist and create anew (2-step confirms both)",
+  "de": "Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)"
+ },
+ "Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)": {
+  "en": "UNLIST listing on uexcorp.space (2-step confirmation)",
+  "de": "Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)"
+ },
+ "min": {
+  "en": "min",
+  "de": "min"
+ },
+ "Min-Qualität (0–1000)": {
+  "en": "Min quality (0–1000)",
+  "de": "Min-Qualität (0–1000)"
+ },
+ "max": {
+  "en": "max",
+  "de": "max"
+ },
+ "Max-Qualität (0–1000)": {
+  "en": "Max quality (0–1000)",
+  "de": "Max-Qualität (0–1000)"
+ },
+ "Detail": {
+  "en": "Detail",
+  "de": "Detail"
+ },
+ "zurück zur Liste": {
+  "en": "back to list",
+  "de": "zurück zur Liste"
+ },
+ "Preis-Detail-Darstellung": {
+  "en": "Price detail view",
+  "de": "Preis-Detail-Darstellung"
+ },
+ "Variante A — Zeilenboxen": {
+  "en": "Variant A — row boxes",
+  "de": "Variante A — Zeilenboxen"
+ },
+ "Variante C — Trader-Hero (Default)": {
+  "en": "Variant C — trader hero (default)",
+  "de": "Variante C — Trader-Hero (Default)"
+ },
+ "Diesen Datensatz aktualisieren": {
+  "en": "Update this record",
+  "de": "Diesen Datensatz aktualisieren"
+ },
+ "This search": {
+  "en": "This search",
+  "de": "Diese Suche"
+ },
+ "Info — Architects Overlay": {
+  "en": "Info — Architects Overlay",
+  "de": "Info — Architects Overlay"
+ },
+ "Info öffnen": {
+  "en": "Open info",
+  "de": "Info öffnen"
+ },
+ "Info schließen": {
+  "en": "Close info",
+  "de": "Info schließen"
+ },
+ "UEX API-Dokumentation öffnen": {
+  "en": "Open UEX API documentation",
+  "de": "UEX API-Dokumentation öffnen"
+ },
+ "Star Citizen Wiki API öffnen — Schiffsdaten": {
+  "en": "Open Star Citizen Wiki API — ship data",
+  "de": "Star Citizen Wiki API öffnen — Schiffsdaten"
+ },
+ "Öffentliches Repository (GitHub)": {
+  "en": "Public repository (GitHub)",
+  "de": "Öffentliches Repository (GitHub)"
+ },
+ "Release-Seite: Downloads + Changelog": {
+  "en": "Release page: downloads + changelog",
+  "de": "Release-Seite: Downloads + Changelog"
+ },
+ "Richtung": {
+  "en": "Direction",
+  "de": "Richtung"
+ },
+ "Kauf": {
+  "en": "Buy",
+  "de": "Kauf"
+ },
+ "Verkauf": {
+  "en": "Sell",
+  "de": "Verkauf"
+ },
+ "Ort": {
+  "en": "Location",
+  "de": "Ort"
+ },
+ "Menge (SCU)": {
+  "en": "Quantity (SCU)",
+  "de": "Menge (SCU)"
+ },
+ "Preis/SCU (aUEC)": {
+  "en": "Price/SCU (aUEC)",
+  "de": "Preis/SCU (aUEC)"
+ },
+ "Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.": {
+  "en": "Date is set by UEX when recording (today) — the API has no date field.",
+  "de": "Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld."
+ },
+ "Abbrechen (Esc)": {
+  "en": "Cancel (Esc)",
+  "de": "Abbrechen (Esc)"
+ },
+ "Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden.": {
+  "en": "The trade will be DELETED on uexcorp.space — this cannot be undone.",
+  "de": "Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden."
+ },
+ "Menge": {
+  "en": "Quantity",
+  "de": "Menge"
+ },
+ "Preis": {
+  "en": "Price",
+  "de": "Preis"
+ },
+ "HANGAR": {
+  "en": "HANGAR",
+  "de": "HANGAR"
+ },
+ "Import XPLorer": {
+  "en": "Import XPLorer",
+  "de": "Import XPLorer"
+ },
+ "Import CCUgame": {
+  "en": "Import CCUgame",
+  "de": "Import CCUgame"
+ },
+ "Export": {
+  "en": "Export",
+  "de": "Export"
+ },
+ "+ Anlegen": {
+  "en": "+ Create",
+  "de": "+ Anlegen"
+ },
+ "· Modul (unverbunden)": {
+  "en": "· Module (unlinked)",
+  "de": "· Modul (unverbunden)"
+ },
+ "Bearbeiten": {
+  "en": "Edit",
+  "de": "Bearbeiten"
+ },
+ "Löschen": {
+  "en": "Delete",
+  "de": "Löschen"
+ },
+ "Modell": {
+  "en": "Model",
+  "de": "Modell"
+ },
+ "Hersteller": {
+  "en": "Manufacturer",
+  "de": "Hersteller"
+ },
+ "Typ": {
+  "en": "Type",
+  "de": "Typ"
+ },
+ "Custom-Name": {
+  "en": "Custom name",
+  "de": "Custom-Name"
+ },
+ "Datum": {
+  "en": "Date",
+  "de": "Datum"
+ },
+ "Keine Module zugeordnet.": {
+  "en": "No modules assigned.",
+  "de": "Keine Module zugeordnet."
+ },
+ "Hinzufügen": {
+  "en": "Add",
+  "de": "Hinzufügen"
+ },
+ "Modul (unverbunden)": {
+  "en": "Module (unlinked)",
+  "de": "Modul (unverbunden)"
+ },
+ "Dieses Modul ist keinem Schiff zugeordnet.": {
+  "en": "This module isn't assigned to any ship.",
+  "de": "Dieses Modul ist keinem Schiff zugeordnet."
+ },
+ "Zuordnen": {
+  "en": "Assign",
+  "de": "Zuordnen"
+ },
+ "Name": {
+  "en": "Name",
+  "de": "Name"
+ },
+ "Herkunft": {
+  "en": "Origin",
+  "de": "Herkunft"
+ },
+ "Versicherung": {
+  "en": "Insurance",
+  "de": "Versicherung"
+ },
+ "Basisschiff": {
+  "en": "Base ship",
+  "de": "Basisschiff"
+ },
+ "Speichern": {
+  "en": "Save",
+  "de": "Speichern"
+ },
+ "Abbrechen": {
+  "en": "Cancel",
+  "de": "Abbrechen"
+ },
+ "Der Eintrag wird aus dem Hangar GELÖSCHT.": {
+  "en": "The entry will be DELETED from the hangar.",
+  "de": "Der Eintrag wird aus dem Hangar GELÖSCHT."
+ },
+ "Eingaben sind bis zur Entscheidung gesperrt.": {
+  "en": "Inputs are locked until the decision.",
+  "de": "Eingaben sind bis zur Entscheidung gesperrt."
+ },
+ "JA, LÖSCHEN": {
+  "en": "YES, DELETE",
+  "de": "JA, LÖSCHEN"
+ },
+ "JA, SPEICHERN": {
+  "en": "YES, SAVE",
+  "de": "JA, SPEICHERN"
+ },
+ "KONFIGURATION": {
+  "en": "CONFIGURATION",
+  "de": "KONFIGURATION"
+ },
+ "wirkt sofort": {
+  "en": "takes effect immediately",
+  "de": "wirkt sofort"
+ },
+ "Darstellung": {
+  "en": "Appearance",
+  "de": "Darstellung"
+ },
+ "Farbpalette": {
+  "en": "Color palette",
+  "de": "Farbpalette"
+ },
+ "MFCD": {
+  "en": "MFCD",
+  "de": "MFCD"
+ },
+ "Schriftscale": {
+  "en": "Font scale",
+  "de": "Schriftscale"
+ },
+ "Preis-Detail-Variante": {
+  "en": "Price detail variant",
+  "de": "Preis-Detail-Variante"
+ },
+ "C · Standard": {
+  "en": "C · Standard",
+  "de": "C · Standard"
+ },
+ "Bedienung": {
+  "en": "Controls",
+  "de": "Bedienung"
+ },
+ "Tastenkürzel": {
+  "en": "Keyboard shortcuts",
+  "de": "Tastenkürzel"
+ },
+ "Aktiv:": {
+  "en": "Active:",
+  "de": "Aktiv:"
+ },
+ "arch-overlay toggle": {
+  "en": "arch-overlay toggle",
+  "de": "arch-overlay toggle"
+ },
+ ") — Änderungen wirken sofort.": {
+  "en": ") — changes take effect immediately.",
+  "de": ") — Änderungen wirken sofort."
+ },
+ "Globale Kürzel": {
+  "en": "Global shortcuts",
+  "de": "Globale Kürzel"
+ },
+ "nicht OS-seitig registriert": {
+  "en": "not registered OS-side",
+  "de": "nicht OS-seitig registriert"
+ },
+ "Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart.": {
+  "en": "Global shortcuts registered OS-side — changes take effect immediately without restart.",
+  "de": "Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart."
+ },
+ "Mode-Hotkeys": {
+  "en": "Mode hotkeys",
+  "de": "Mode-Hotkeys"
+ },
+ "Standard-Belegung": {
+  "en": "Default mapping",
+  "de": "Standard-Belegung"
+ },
+ "Daten & Dienste": {
+  "en": "Data & services",
+  "de": "Daten & Dienste"
+ },
+ "UEX API-Key": {
+  "en": "UEX API key",
+  "de": "UEX API-Key"
+ },
+ "Status:": {
+  "en": "Status:",
+  "de": "Status:"
+ },
+ "Setzen": {
+  "en": "Set",
+  "de": "Setzen"
+ },
+ "Entfernen": {
+  "en": "Remove",
+  "de": "Entfernen"
+ },
+ "API-Keys auf UEX verwalten ↗": {
+  "en": "Manage API keys on UEX ↗",
+  "de": "API-Keys auf UEX verwalten ↗"
+ },
+ "UEX persönlicher Secret-Key": {
+  "en": "UEX personal secret key",
+  "de": "UEX persönlicher Secret-Key"
+ },
+ "Secret-Key:": {
+  "en": "Secret key:",
+  "de": "Secret-Key:"
+ },
+ "Secret-Key auf UEX verwalten ↗": {
+  "en": "Manage secret key on UEX ↗",
+  "de": "Secret-Key auf UEX verwalten ↗"
+ },
+ "UEX-Username (automatisch ermittelt):": {
+  "en": "UEX username (auto-detected):",
+  "de": "UEX-Username (automatisch ermittelt):"
+ },
+ "Username neu ermitteln": {
+  "en": "Re-detect username",
+  "de": "Username neu ermitteln"
+ },
+ "Schreibbestätigung (2-Schritt):": {
+  "en": "Write confirmation (2-step):",
+  "de": "Schreibbestätigung (2-Schritt):"
+ },
+ "Nach jeder Aktion (empfohlen)": {
+  "en": "After every action (recommended)",
+  "de": "Nach jeder Aktion (empfohlen)"
+ },
+ "Nur beim Abmelden/Löschen eines Listings": {
+  "en": "Only when unlisting/deleting a listing",
+  "de": "Nur beim Abmelden/Löschen eines Listings"
+ },
+ "Bestätigungspflicht beim Anlegen von Listings vs. nur beim Entfernen.": {
+  "en": "Confirmation required when creating listings vs. only when removing.",
+  "de": "Bestätigungspflicht beim Anlegen von Listings vs. nur beim Entfernen."
+ },
+ "Datenquellen": {
+  "en": "Data sources",
+  "de": "Datenquellen"
+ },
+ "Datenquellen: noch keine Preisdaten im Cache.": {
+  "en": "Data sources: no price data in cache yet.",
+  "de": "Datenquellen: noch keine Preisdaten im Cache."
+ },
+ "Modul-Zuweisungen": {
+  "en": "Module assignments",
+  "de": "Modul-Zuweisungen"
+ },
+ "noch kein Sync": {
+  "en": "no sync yet",
+  "de": "noch kein Sync"
+ },
+ "App": {
+  "en": "App",
+  "de": "App"
+ },
+ "Aktualisierung": {
+  "en": "Update",
+  "de": "Aktualisierung"
+ },
+ "Auto-Check an": {
+  "en": "Auto-check on",
+  "de": "Auto-Check an"
+ },
+ "Auto-Check aus": {
+  "en": "Auto-check off",
+  "de": "Auto-Check aus"
+ },
+ "Erster Sync läuft": {
+  "en": "Initial sync running",
+  "de": "Erster Sync läuft"
+ },
+ "Commodities · Terminals · Preise — danach wird sofort lokal gesucht.": {
+  "en": "Commodities · terminals · prices — after that, local search starts immediately.",
+  "de": "Commodities · Terminals · Preise — danach wird sofort lokal gesucht."
+ },
+ "UEX nicht erreichbar": {
+  "en": "UEX unreachable",
+  "de": "UEX nicht erreichbar"
+ },
+ "Erneut versuchen": {
+  "en": "Try again",
+  "de": "Erneut versuchen"
+ },
+ "Offline mit Cache fortsetzen": {
+  "en": "Continue offline with cache",
+  "de": "Offline mit Cache fortsetzen"
+ },
+ "Angebote": {
+  "en": "Offers",
+  "de": "Angebote"
+ },
+ "Mein Shop": {
+  "en": "My shop",
+  "de": "Mein Shop"
+ },
+ "Trades": {
+  "en": "Trades",
+  "de": "Trades"
+ },
+ "Anbieter": {
+  "en": "Seller",
+  "de": "Anbieter"
+ },
+ "Alter": {
+  "en": "Age",
+  "de": "Alter"
+ },
+ "Ende": {
+  "en": "End",
+  "de": "Ende"
+ },
+ "Qualität": {
+  "en": "Quality",
+  "de": "Qualität"
+ },
+ "Kein Bild hinterlegt.": {
+  "en": "No image set.",
+  "de": "Kein Bild hinterlegt."
+ },
+ "Keine Beschreibung.": {
+  "en": "No description.",
+  "de": "Keine Beschreibung."
+ },
+ "VERHANDELN AUF UEX ↗": {
+  "en": "NEGOTIATE ON UEX ↗",
+  "de": "VERHANDELN AUF UEX ↗"
+ },
+ "AUF UEXCORP.SPACE ÖFFNEN ↗": {
+  "en": "OPEN ON UEXCORP.SPACE ↗",
+  "de": "AUF UEXCORP.SPACE ÖFFNEN ↗"
+ },
+ "Verhandeln startet auf": {
+  "en": "Negotiation starts on",
+  "de": "Verhandeln startet auf"
+ },
+ "im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter.": {
+  "en": "in the browser — create, chat and close the deal there. You'll then see both sides in the Trades tab.",
+  "de": "im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter."
+ },
+ "Routen": {
+  "en": "Routes",
+  "de": "Routen"
+ },
+ "Trade Log": {
+  "en": "Trade Log",
+  "de": "Trade Log"
+ },
+ "Aktualisieren": {
+  "en": "Refresh",
+  "de": "Aktualisieren"
+ },
+ "+ Trade erfassen": {
+  "en": "+ Record trade",
+  "de": "+ Trade erfassen"
+ },
+ "Trade Log auf UEX öffnen ↗": {
+  "en": "Open trade log on UEX ↗",
+  "de": "Trade Log auf UEX öffnen ↗"
+ },
+ "Lade Trades …": {
+  "en": "Loading trades …",
+  "de": "Lade Trades …"
+ },
+ "KAUF": {
+  "en": "BUY",
+  "de": "KAUF"
+ },
+ "Autoload": {
+  "en": "Autoload",
+  "de": "Autoload"
+ },
+ "Cargodeck": {
+  "en": "Cargo deck",
+  "de": "Cargodeck"
+ },
+ "Boden": {
+  "en": "Ground",
+  "de": "Boden"
+ },
+ "Space": {
+  "en": "Space",
+  "de": "Space"
+ },
+ "VERKAUF": {
+  "en": "SELL",
+  "de": "VERKAUF"
+ },
+ "Einkauf": {
+  "en": "Purchase",
+  "de": "Einkauf"
+ },
+ "Brutto": {
+  "en": "Gross",
+  "de": "Brutto"
+ },
+ "Netto-Gewinn": {
+  "en": "Net profit",
+  "de": "Netto-Gewinn"
+ },
+ "Marge": {
+  "en": "Margin",
+  "de": "Marge"
+ },
+ "Bestand dort": {
+  "en": "Stock there",
+  "de": "Bestand dort"
+ },
+ "Kauforte": {
+  "en": "Buy locations",
+  "de": "Kauforte"
+ },
+ "Preis ↑": {
+  "en": "Price ↑",
+  "de": "Preis ↑"
+ },
+ "keine Kauforte": {
+  "en": "no buy locations",
+  "de": "keine Kauforte"
+ },
+ "Verkaufsorte": {
+  "en": "Sell locations",
+  "de": "Verkaufsorte"
+ },
+ "Preis ↓": {
+  "en": "Price ↓",
+  "de": "Preis ↓"
+ },
+ "keine Verkaufsorte": {
+  "en": "no sell locations",
+  "de": "keine Verkaufsorte"
+ },
+ "Schiff": {
+  "en": "Ship",
+  "de": "Schiff"
+ },
+ "Budget": {
+  "en": "Budget",
+  "de": "Budget"
+ },
+ "Start": {
+  "en": "Start",
+  "de": "Start"
+ },
+ "Ziel": {
+  "en": "Destination",
+  "de": "Ziel"
+ },
+ "Filter ×": {
+  "en": "Filter ×",
+  "de": "Filter ×"
+ },
+ "Alle": {
+  "en": "All",
+  "de": "Alle"
+ },
+ "Legal": {
+  "en": "Legal",
+  "de": "Legal"
+ },
+ "Illegal": {
+  "en": "Illegal",
+  "de": "Illegal"
+ },
+ "Egal": {
+  "en": "Any",
+  "de": "Egal"
+ },
+ "Ja": {
+  "en": "Yes",
+  "de": "Ja"
+ },
+ "Nein": {
+  "en": "No",
+  "de": "Nein"
+ },
+ "Sort": {
+  "en": "Sort",
+  "de": "Sort"
+ },
+ "Marge ↓": {
+  "en": "Margin ↓",
+  "de": "Marge ↓"
+ },
+ "Distanz ↑": {
+  "en": "Distance ↑",
+  "de": "Distanz ↑"
+ },
+ "Sweepe UEX-Terminals …": {
+  "en": "Sweeping UEX terminals …",
+  "de": "Sweepe UEX-Terminals …"
+ },
+ "Erster Lauf ~1 min, danach aus dem Cache.": {
+  "en": "First run ~1 min, then from cache.",
+  "de": "Erster Lauf ~1 min, danach aus dem Cache."
+ },
+ "Budget zu niedrig für 1 SCU": {
+  "en": "Budget too low for 1 SCU",
+  "de": "Budget zu niedrig für 1 SCU"
+ },
+ "Keine Routen für diese Filter.": {
+  "en": "No routes for these filters.",
+  "de": "Keine Routen für diese Filter."
+ },
+ "← Deals": {
+  "en": "← Deals",
+  "de": "← Deals"
+ },
+ "Deal auf UEX öffnen ↗": {
+  "en": "Open deal on UEX ↗",
+  "de": "Deal auf UEX öffnen ↗"
+ },
+ "Lade Verlauf …": {
+  "en": "Loading history …",
+  "de": "Lade Verlauf …"
+ },
+ "Noch keine Nachrichten in dieser Verhandlung.": {
+  "en": "No messages in this negotiation yet.",
+  "de": "Noch keine Nachrichten in dieser Verhandlung."
+ },
+ "DEAL AUF UEXCORP.SPACE ÖFFNEN ↗": {
+  "en": "OPEN DEAL ON UEXCORP.SPACE ↗",
+  "de": "DEAL AUF UEXCORP.SPACE ÖFFNEN ↗"
+ },
+ "Deals": {
+  "en": "Deals",
+  "de": "Deals"
+ },
+ "Trades verwalten ↗": {
+  "en": "Manage trades ↗",
+  "de": "Trades verwalten ↗"
+ },
+ "Deals entstehen auf": {
+  "en": "Deals are created on",
+  "de": "Deals entstehen auf"
+ },
+ "— Deal auf der Angebotsseite starten („Deal“/„Negotiate“ am Listing), danach hier verhandeln, chatten und beenden.": {
+  "en": "— start the deal on the offer page (\"Deal\"/\"Negotiate\" on the listing), then negotiate, chat and close here.",
+  "de": "— Deal auf der Angebotsseite starten („Deal“/„Negotiate“ am Listing), danach hier verhandeln, chatten und beenden."
+ },
+ "Trades nicht erreichbar": {
+  "en": "Trades unreachable",
+  "de": "Trades nicht erreichbar"
+ },
+ "Laden": {
+  "en": "Loading",
+  "de": "Laden"
+ },
+ "Offline-Snapshot": {
+  "en": "Offline snapshot",
+  "de": "Offline-Snapshot"
+ },
+ "Cache": {
+  "en": "Cache",
+  "de": "Cache"
+ },
+ "UEX API-Key nicht gesetzt": {
+  "en": "UEX API key not set",
+  "de": "UEX API-Key nicht gesetzt"
+ },
+ "Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.": {
+  "en": "Own offers + marketplace trades need your UEX API key — without a key the section stays empty.",
+  "de": "Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer."
+ },
+ "In den Einstellungen hinterlegen": {
+  "en": "Store in settings",
+  "de": "In den Einstellungen hinterlegen"
+ },
+ "Secret-Key fehlt oder ist falsch — siehe Einstellungen": {
+  "en": "Secret key missing or wrong — see settings",
+  "de": "Secret-Key fehlt oder ist falsch — siehe Einstellungen"
+ },
+ "User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.": {
+  "en": "User-scoped reads (own offers, marketplace trades) need the \"UEX personal secret key\" (40 characters) in addition to the app key — exactly as registered on uexcorp.space.",
+  "de": "User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert."
+ },
+ "Lade Mein Shop …": {
+  "en": "Loading my shop …",
+  "de": "Lade Mein Shop …"
+ },
+ "Eigene Offers + Marktplatz-Trades vom UEX-Client.": {
+  "en": "Own offers + marketplace trades from the UEX client.",
+  "de": "Eigene Offers + Marktplatz-Trades vom UEX-Client."
+ },
+ "Mein Shop nicht erreichbar": {
+  "en": "My shop unreachable",
+  "de": "Mein Shop nicht erreichbar"
+ },
+ "ANGELEGTES LISTING ÖFFNEN ↗": {
+  "en": "OPEN CREATED LISTING ↗",
+  "de": "ANGELEGTES LISTING ÖFFNEN ↗"
+ },
+ "Anlegen": {
+  "en": "Create",
+  "de": "Anlegen"
+ },
+ "Listings verwalten ↗": {
+  "en": "Manage listings ↗",
+  "de": "Listings verwalten ↗"
+ },
+ "Art": {
+  "en": "Type",
+  "de": "Art"
+ },
+ "Verkauf (sell)": {
+  "en": "Selling (sell)",
+  "de": "Verkauf (sell)"
+ },
+ "Kauf (buy)": {
+  "en": "Buying (buy)",
+  "de": "Kauf (buy)"
+ },
+ "Listing Type": {
+  "en": "Listing Type",
+  "de": "Listing-Typ"
+ },
+ "Titel": {
+  "en": "Title",
+  "de": "Titel"
+ },
+ "Währung": {
+  "en": "Currency",
+  "de": "Währung"
+ },
+ "Einheit": {
+  "en": "Unit",
+  "de": "Einheit"
+ },
+ "Kategorie": {
+  "en": "Category",
+  "de": "Kategorie"
+ },
+ "Item": {
+  "en": "Item",
+  "de": "Item"
+ },
+ "Laufzeit": {
+  "en": "Duration",
+  "de": "Laufzeit"
+ },
+ "Item Source": {
+  "en": "Item Source",
+  "de": "Item-Quelle"
+ },
+ "Quality": {
+  "en": "Quality",
+  "de": "Qualität"
+ },
+ "Availability": {
+  "en": "Availability",
+  "de": "Verfügbarkeit"
+ },
+ "Hide Listing": {
+  "en": "Hide Listing",
+  "de": "Listing verbergen"
+ },
+ "Beschreibung": {
+  "en": "Description",
+  "de": "Beschreibung"
+ },
+ "Bild (JPG/PNG, 1 erlaubt)": {
+  "en": "Image (JPG/PNG, 1 allowed)",
+  "de": "Bild (JPG/PNG, 1 erlaubt)"
+ },
+ "UEX überträgt 1 Bild pro Listing (image_data) — ein neu gewähltes Bild ersetzt das alte.": {
+  "en": "UEX transfers 1 image per listing (image_data) — a newly chosen image replaces the old one.",
+  "de": "UEX überträgt 1 Bild pro Listing (image_data) — ein neu gewähltes Bild ersetzt das alte."
+ },
+ "Eingaben verwerfen?": {
+  "en": "Discard input?",
+  "de": "Eingaben verwerfen?"
+ },
+ "Es wurden noch keine Daten an UEX gesendet.": {
+  "en": "No data has been sent to UEX yet.",
+  "de": "Es wurden noch keine Daten an UEX gesendet."
+ },
+ "Verwerfen": {
+  "en": "Discard",
+  "de": "Verwerfen"
+ },
+ "Weiter bearbeiten": {
+  "en": "Continue editing",
+  "de": "Weiter bearbeiten"
+ },
+ "wartet auf Freigabe": {
+  "en": "awaiting approval",
+  "de": "wartet auf Freigabe"
+ },
+ "✎ Neu": {
+  "en": "✎ New",
+  "de": "✎ Neu"
+ },
+ "Abmelden": {
+  "en": "Unlist",
+  "de": "Abmelden"
+ },
+ "Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen.": {
+  "en": "Click opens the listing on uexcorp.space — read-only, no changes.",
+  "de": "Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen."
+ },
+ "Das Listing wird auf uexcorp.space ABGEMELDET.": {
+  "en": "The listing will be UNLISTED on uexcorp.space.",
+  "de": "Das Listing wird auf uexcorp.space ABGEMELDET."
+ },
+ "Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt.": {
+  "en": "The offer will be CREATED on uexcorp.space. Inputs are locked until the decision.",
+  "de": "Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt."
+ },
+ "Lade Marketplace …": {
+  "en": "Loading marketplace …",
+  "de": "Lade Marketplace …"
+ },
+ "Marketplace nicht erreichbar": {
+  "en": "Marketplace unreachable",
+  "de": "Marketplace nicht erreichbar"
+ },
+ "Neueste": {
+  "en": "Newest",
+  "de": "Neueste"
+ },
+ "Alle geladen": {
+  "en": "All loaded",
+  "de": "Alle geladen"
+ },
+ "Keine Angebote für diese Filter.": {
+  "en": "No offers for these filters.",
+  "de": "Keine Angebote für diese Filter."
+ },
+ "Found": {
+  "en": "Found",
+  "de": "Gefunden"
+ },
+ "results in": {
+  "en": "results in",
+  "de": "Ergebnisse in"
+ },
+ "Keine Treffer": {
+  "en": "No matches",
+  "de": "Keine Treffer"
+ },
+ "Lade Preise …": {
+  "en": "Loading prices …",
+  "de": "Lade Preise …"
+ },
+ "Fehler": {
+  "en": "Error",
+  "de": "Fehler"
+ },
+ "Best Kauf": {
+  "en": "Best buy",
+  "de": "Bester Kauf"
+ },
+ "Best Verkauf": {
+  "en": "Best sell",
+  "de": "Bester Verkauf"
+ },
+ "kein UEX-API-Key — UEX anonym geladen": {
+  "en": "no UEX API key — UEX loaded anonymously",
+  "de": "kein UEX-API-Key — UEX anonym geladen"
+ },
+ "Filter aktiv:": {
+  "en": "Filter active:",
+  "de": "Filter aktiv:"
+ },
+ "keine Preisdaten": {
+  "en": "no price data",
+  "de": "keine Preisdaten"
+ },
+ "Kein Terminal/Keine Ware passt zum Filter": {
+  "en": "No terminal/no commodity matches the filter",
+  "de": "Kein Terminal/Keine Ware passt zum Filter"
+ },
+ "nicht kaufbar · keine Preisdaten": {
+  "en": "not buyable · no price data",
+  "de": "nicht kaufbar · keine Preisdaten"
+ },
+ "Günstigster Kauf": {
+  "en": "Cheapest buy",
+  "de": "Günstigster Kauf"
+ },
+ "aUEC / SCU": {
+  "en": "aUEC / SCU",
+  "de": "aUEC / SCU"
+ },
+ "Höchster Verkauf": {
+  "en": "Highest sell",
+  "de": "Höchster Verkauf"
+ },
+ "Marge / SCU": {
+  "en": "Margin / SCU",
+  "de": "Marge / SCU"
+ },
+ "Keine Preise passen zum Filter": {
+  "en": "No prices match the filter",
+  "de": "Keine Preise passen zum Filter"
+ },
+ "Zuletzt gesucht": {
+  "en": "Last searched",
+  "de": "Zuletzt gesucht"
+ },
+ "Keine — tippe, um zu suchen": {
+  "en": "None — type to search",
+  "de": "Keine — tippe, um zu suchen"
+ },
+ "Schnellzugriff": {
+  "en": "Quick access",
+  "de": "Schnellzugriff"
+ },
+ "Marktplatz ·": {
+  "en": "Marketplace ·",
+  "de": "Marktplatz ·"
+ },
+ "Einstellungen": {
+  "en": "Settings",
+  "de": "Einstellungen"
+ },
+ "Rechner": {
+  "en": "Calculator",
+  "de": "Rechner"
+ },
+ "· =2*250+15%": {
+  "en": "· =2*250+15%",
+  "de": "· =2*250+15%"
+ },
+ "· :c gold": {
+  "en": "· :c gold",
+  "de": "· :c gold"
+ },
+ "im Browser öffnen": {
+  "en": "open in browser",
+  "de": "im Browser öffnen"
+ },
+ "Mein Shop syncen": {
+  "en": "Sync my shop",
+  "de": "Mein Shop syncen"
+ },
+ "zurück zur Suche": {
+  "en": "back to search",
+  "de": "zurück zur Suche"
+ },
+ "Routen-Sweep": {
+  "en": "Route sweep",
+  "de": "Routen-Sweep"
+ },
+ "Alt+1..0": {
+  "en": "Alt+1..0",
+  "de": "Alt+1..0"
+ },
+ "Offer": {
+  "en": "Offer",
+  "de": "Offer"
+ },
+ "Market syncen": {
+  "en": "Sync market",
+  "de": "Market syncen"
+ },
+ "Trade erfassen (Waren)": {
+  "en": "Record trade (commodities)",
+  "de": "Trade erfassen (Waren)"
+ },
+ "Suchfeld = Filter": {
+  "en": "Search field = filter",
+  "de": "Suchfeld = Filter"
+ },
+ "zurück": {
+  "en": "back",
+  "de": "zurück"
+ },
+ "Nav": {
+  "en": "Nav",
+  "de": "Nav"
+ },
+ "Treffer": {
+  "en": "Matches",
+  "de": "Treffer"
+ },
+ "Marktplatz": {
+  "en": "Marketplace",
+  "de": "Marktplatz"
+ },
+ "Über": {
+  "en": "About",
+  "de": "Über"
+ },
+ "Daten &amp; Marktplatz": {
+  "en": "Data &amp; Marketplace",
+  "de": "Daten &amp; Marktplatz"
+ },
+ "UEX Corp API · api.uexcorp.space": {
+  "en": "UEX Corp API · api.uexcorp.space",
+  "de": "UEX Corp API · api.uexcorp.space"
+ },
+ "SC-WIKI API": {
+  "en": "SC-WIKI API",
+  "de": "SC-WIKI API"
+ },
+ "Schiffsdaten": {
+  "en": "Ship data",
+  "de": "Schiffsdaten"
+ },
+ "Star Citizen Wiki API · api.star-citizen.wiki": {
+  "en": "Star Citizen Wiki API · api.star-citizen.wiki",
+  "de": "Star Citizen Wiki API · api.star-citizen.wiki"
+ },
+ "Rechtliches": {
+  "en": "Legal",
+  "de": "Rechtliches"
+ },
+ "Offizielles CIG-Fan-Asset („Made by the Community“), unverändert.": {
+  "en": "Official CIG fan asset (\"Made by the Community\"), unmodified.",
+  "de": "Offizielles CIG-Fan-Asset („Made by the Community“), unverändert."
+ },
+ "Lizenz: MIT — Lizenztext im Repository (LICENSE).": {
+  "en": "License: MIT — license text in the repository (LICENSE).",
+  "de": "Lizenz: MIT — Lizenztext im Repository (LICENSE)."
+ },
+ "GitHub-Repo ↗": {
+  "en": "GitHub repo ↗",
+  "de": "GitHub-Repo ↗"
+ },
+ "Releases / Changelog ↗": {
+  "en": "Releases / Changelog ↗",
+  "de": "Releases / Changelog ↗"
+ },
+ "Inventar": {
+  "en": "Inventory",
+  "de": "Inventar"
+ },
+ "Position erfassen": {
+  "en": "Record position",
+  "de": "Position erfassen"
+ },
+ "Item / Commodity suchen … oder Freitext": {
+  "en": "Search item / commodity … or free text",
+  "de": "Item / Commodity suchen … oder Freitext"
+ },
+ "Entity-Treffer": {
+  "en": "Entity matches",
+  "de": "Entity-Treffer"
+ },
+ "z. B. 900": {
+  "en": "e.g. 900",
+  "de": "z. B. 900"
+ },
+ "z. B. 12": {
+  "en": "e.g. 12",
+  "de": "z. B. 12"
+ },
+ "z. B. Heim-Hangar, meine Carrack …": {
+  "en": "e.g. home hangar, my Carrack …",
+  "de": "z. B. Heim-Hangar, meine Carrack …"
+ },
+ "Standort-Entities": {
+  "en": "Location entities",
+  "de": "Standort-Entities"
+ },
+ "z. B. 4500": {
+  "en": "e.g. 4500",
+  "de": "z. B. 4500"
+ },
+ "zurück zur Übersicht": {
+  "en": "back to overview",
+  "de": "zurück zur Übersicht"
+ },
+ "Material-Detail öffnen": {
+  "en": "Open material detail",
+  "de": "Material-Detail öffnen"
+ },
+ "Cards-View toggle": {
+  "en": "Toggle cards view",
+  "de": "Cards-View umschalten"
+ },
+ "Open Material-Detail": {
+  "en": "Open material detail",
+  "de": "Material-Detail öffnen"
+ },
+ "Open Stand-ort-Detail": {
+  "en": "Open location detail",
+  "de": "Standort-Detail öffnen"
+ },
+ "Edit": {
+  "en": "Edit",
+  "de": "Bearbeiten"
+ },
+ "Standort-Detail öffnen": {
+  "en": "Open location detail",
+  "de": "Standort-Detail öffnen"
+ },
+ "Material": {
+  "en": "Material",
+  "de": "Material"
+ },
+ "Suche …": {
+  "en": "Search …",
+  "de": "Suche …"
+ },
+ "Material:": {
+  "en": "Material:",
+  "de": "Material:"
+ },
+ "(Freitext)": {
+  "en": "(free text)",
+  "de": "(Freitext)"
+ },
+ "Pflicht · 0–1000": {
+  "en": "Required · 0–1000",
+  "de": "Pflicht · 0–1000"
+ },
+ "SCU bzw. Stück": {
+  "en": "SCU or units",
+  "de": "SCU bzw. Stück"
+ },
+ "Standort": {
+  "en": "Location",
+  "de": "Standort"
+ },
+ "Freitext = eigenes Depot · Treffer wählen = Location-Entity": {
+  "en": "Free text = own depot · picking a match = location entity",
+  "de": "Freitext = eigenes Depot · Treffer wählen = Location-Entity"
+ },
+ "Kaufpreis": {
+  "en": "Buy price",
+  "de": "Kaufpreis"
+ },
+ "optional · aUEC": {
+  "en": "optional · aUEC",
+  "de": "optional · aUEC"
+ },
+ "Gesamt": {
+  "en": "Total",
+  "de": "Gesamt"
+ },
+ "Positionen": {
+  "en": "Positions",
+  "de": "Positionen"
+ },
+ "· Location": {
+  "en": "· Location",
+  "de": "· Standort"
+ },
+ "Keine Positionen für dieses Material.": {
+  "en": "No positions for this material.",
+  "de": "Keine Positionen für dieses Material."
+ },
+ "Materialien": {
+  "en": "Materials",
+  "de": "Materialien"
+ },
+ "Keine Positionen an diesem Standort.": {
+  "en": "No positions at this location.",
+  "de": "Keine Positionen an diesem Standort."
+ },
+ "Menge ↓": {
+  "en": "Qty ↓",
+  "de": "Menge ↓"
+ },
+ "Qualität ↓": {
+  "en": "Quality ↓",
+  "de": "Qualität ↓"
+ },
+ "Cards": {
+  "en": "Cards",
+  "de": "Cards"
+ },
+ "+ Position": {
+  "en": "+ Position",
+  "de": "+ Position"
+ },
+ "Lade Inventar …": {
+  "en": "Loading inventory …",
+  "de": "Lade Inventar …"
+ },
+ "Zeile ·": {
+  "en": "Row ·",
+  "de": "Zeile ·"
+ },
+ "Löschen ·": {
+  "en": "Delete ·",
+  "de": "Löschen ·"
+ },
+ "Modi": {
+  "en": "Modes",
+  "de": "Modi"
+ },
+ "Ausklappen": {
+  "en": "Expand",
+  "de": "Ausklappen"
+ }
+}

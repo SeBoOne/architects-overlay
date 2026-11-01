@@ -90,6 +90,15 @@ export const t = derived([locales, lang], ([$locales, $lang]) => {
 });
 
 /**
+ * Skript-seitige Übersetzung (Event-Handler, Toasts): liest den Store-Stand
+ * im Augenblick des Aufrufs (get(t)) — im Markup `$t(...)` verwenden, dort
+ * ist der Wechsel reaktiv.
+ */
+export function tr(key: string, params?: TranslateParams): string {
+	return get(t)(key, params);
+}
+
+/**
  * Fehlertext aus Rust (T1-Muster: error_key + params): Rust liefert als
  * `Err` den String `{"error_key": "...", "params": {...}}`; Klartext-Fehler
  * (alter Stil, T2 migriert sie schrittweise) fallen als Rohstring durch.

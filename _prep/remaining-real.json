@@ -1,0 +1,1119 @@
+[
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade BEARBEITEN",
+  "lines": [
+   4565
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade ERFASSEN",
+  "lines": [
+   4566
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Ware Type-ahead — Tippen filtert, ↵ übernimmt",
+  "lines": [
+   4576
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Ort/Terminal Type-ahead — Tippen filtert, ↵ übernimmt",
+  "lines": [
+   4586
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Speichern …",
+  "lines": [
+   4614
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Änderung prüfen",
+  "lines": [
+   4615
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade prüfen",
+  "lines": [
+   4615
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade LÖSCHEN?",
+  "lines": [
+   4629
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade ÄNDERN?",
+  "lines": [
+   4630
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade ANLEGEN?",
+  "lines": [
+   4630
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "GEÄNDERT",
+  "lines": [
+   4648
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Senden …",
+  "lines": [
+   4652,
+   5752
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bestätigen",
+  "lines": [
+   4653
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Inventar filtern — Standort oder Material …",
+  "lines": [
+   4663
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Hangar search — Name, Custom-Name, Manufacturer or Base-Ship …",
+  "lines": [
+   4664
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Handelsrouten filtern — Ware, Start- oder Zielort …",
+  "lines": [
+   4666
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …",
+  "lines": [
+   4667
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Commodity, Item oder Terminal suchen …",
+  "lines": [
+   4670
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Modul suchen",
+  "lines": [
+   4791
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Basisschiff zuordnen",
+  "lines": [
+   4809
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Eintrag bearbeiten",
+  "lines": [
+   4815
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Eintrag anlegen",
+  "lines": [
+   4815
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "EINTRAG BEARBEITEN",
+  "lines": [
+   4820
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "EINTRAG ANLEGEN",
+  "lines": [
+   4820
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "EINTRAG LÖSCHEN?",
+  "lines": [
+   4869
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "ÄNDERUNGEN SPEICHERN?",
+  "lines": [
+   4869
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "EINTRAG ANLEGEN?",
+  "lines": [
+   4870
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Abbrechen (Esc)",
+  "lines": [
+   4976,
+   5027
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Ändern",
+  "lines": [
+   4976,
+   5028
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Mod-Taste (Strg/Alt/Shift/Win) + normale Taste drücken",
+  "lines": [
+   4978
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "wird aus dem Secret-Key ermittelt …",
+  "lines": [
+   5133
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Sync läuft …",
+  "lines": [
+   5165,
+   5172
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Commodity-Preise jetzt aktualisieren",
+  "lines": [
+   5165
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Item-Preise jetzt aktualisieren",
+  "lines": [
+   5172
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Aktualisiere …",
+  "lines": [
+   5188
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Modul-Zuweisungen aktualisieren",
+  "lines": [
+   5188
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Prüfe …",
+  "lines": [
+   5222
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Jetzt prüfen",
+  "lines": [
+   5222
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Lade …",
+  "lines": [
+   5225
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Keine Verbindung",
+  "lines": [
+   5246
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bild ",
+  "lines": [
+   5312
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": " von „",
+  "lines": [
+   5313
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Vergrößert: ",
+  "lines": [
+   5335
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade gelöscht.",
+  "lines": [
+   5383,
+   5420,
+   2241
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": " role=",
+  "lines": [
+   5387,
+   5424,
+   5612
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Noch keine Commodity-Trades erfasst — lege deinen ersten Trade an („+ Trade erfassen“) oder führe ihn direkt auf UEX.",
+  "lines": [
+   5388
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "⚠ illegal",
+  "lines": [
+   5475
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Aktueller Kaufort dieser Route",
+  "lines": [
+   5531
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Kaufort im Filter setzen",
+  "lines": [
+   5532
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Aktueller Verkaufsort dieser Route",
+  "lines": [
+   5567
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Verkaufsort im Filter setzen",
+  "lines": [
+   5569
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Schiff Type-ahead — Tippen filtert, ↵ übernimmt",
+  "lines": [
+   5593
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Startort Type-ahead — Tippen filtert, ↵ übernimmt",
+  "lines": [
+   5609
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Zielort Type-ahead — Tippen filtert, ↵ übernimmt",
+  "lines": [
+   5612
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": " : rSort === ",
+  "lines": [
+   5659
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "m-price sell",
+  "lines": [
+   5703
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Käufer",
+  "lines": [
+   5747
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade abgeschlossen",
+  "lines": [
+   5754
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade beendet",
+  "lines": [
+   5755
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Keine Verhandlungen/Abschlüsse zu deinen Listings — starte einen Deal auf uexcorp.space.",
+  "lines": [
+   5778
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Username wird ermittelt …",
+  "lines": [
+   5800
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "NEU ANLEGEN (Bearbeiten = erst Abmelden, dann Neu)",
+  "lines": [
+   5856
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "NEUES LISTING ANLEGEN",
+  "lines": [
+   5857
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Listing Type",
+  "lines": [
+   5872
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Ort Type-ahead — Locations, keine Shops",
+  "lines": [
+   5938
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Item Type-ahead — Pflicht für Item-Listings",
+  "lines": [
+   5965
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Item Source",
+  "lines": [
+   5984
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Wird gesendet …",
+  "lines": [
+   6072
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Anlegen (2-Schritt)",
+  "lines": [
+   6072
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Das Listing taucht seit über 24 h nicht in der UEX-API auf — Freigabe unbestätigt (evtl. abgelehnt). Prüfe es im Listings-Manager.",
+  "lines": [
+   6102
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.",
+  "lines": [
+   6102
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Freigabe unbestätigt",
+  "lines": [
+   6106
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "wartet auf Freigabe",
+  "lines": [
+   6106
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": " + o.region : ",
+  "lines": [
+   6119,
+   6240
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Kein Username ermittelt — Secret-Key in den Einstellungen (F12) prüfen.",
+  "lines": [
+   6142
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Listing ABMELDEN?",
+  "lines": [
+   6148
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Listing ANLEGEN?",
+  "lines": [
+   6148
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "JA, ABMELDEN",
+  "lines": [
+   6174
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "JA, ANLEGEN",
+  "lines": [
+   6174
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "; mqMax = ",
+  "lines": [
+   6211
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "lädt …",
+  "lines": [
+   6250
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "automatisch nachladen …",
+  "lines": [
+   6250
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "kein Kauf-Angebot",
+  "lines": [
+   6366
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "kein Verkauf-Angebot",
+  "lines": [
+   6373
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "nur eine Seite vorhanden — kein Rundlauf möglich",
+  "lines": [
+   6383
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Kein Artikel zum Kauf",
+  "lines": [
+   6408
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Kein Terminal kauft diese Ware",
+  "lines": [
+   6408
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Kein Artikel zum Verkauf",
+  "lines": [
+   6422
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Kein Terminal verkauft diese Ware",
+  "lines": [
+   6422
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Architects Overlay — Sebos Vector-Logo",
+  "lines": [
+   6476
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Powered by UEX",
+  "lines": [
+   6498
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Made by the Community",
+  "lines": [
+   6530
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "POSITION ERFASSEN",
+  "lines": [
+   656
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "POSITION BEARBEITEN",
+  "lines": [
+   656
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Inventar leer — erfasse die erste Position mit <b>N</b>.",
+  "lines": [
+   848
+  ]
+ },
+ {
+  "file": "src/lib/Rail.svelte",
+  "text": "m15.9 9.3 2.1-2.1 2.1 2.1",
+  "lines": [
+   96
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Config öffnen",
+  "lines": [
+   248,
+   3292
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Modul-Zuweisungen aktualisiert (module-overrides.json).",
+  "lines": [
+   362
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Aktualisierung läuft bereits.",
+  "lines": [
+   363
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Zuerst eine Mod-Taste (Strg/Alt/Shift/Win) halten, dann die normale Taste.",
+  "lines": [
+   513
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Mode-Hotkeys auf Standard-Belegung zurückgesetzt.",
+  "lines": [
+   592
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Tastenkürzel mit System (Omarchy) synchronisieren",
+  "lines": [
+   597
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Compositor-Sync aktiv — Kürzel ändern jetzt auch die Hyprland-Binds.",
+  "lines": [
+   607
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Autocomplete from those already entered in the Hangar",
+  "lines": [
+   959
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bitte einen Typ wählen.",
+  "lines": [
+   1090
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bitte eine Herkunft wählen.",
+  "lines": [
+   1094
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bitte die Herkunft des Moduls wählen.",
+  "lines": [
+   1168
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "API-Key gespeichert (lokal, 0600).",
+  "lines": [
+   1501
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Secret-Key gespeichert — wird NIE im Klartext angezeigt.",
+  "lines": [
+   1525
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Jede schreibende Aktion wird bestätigt (Default).",
+  "lines": [
+   1578
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Nur beim ABMELDEN wird bestätigt — Anlegen läuft direkt.",
+  "lines": [
+   1579
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Username noch nicht ermittelt — Secret-Key in den Einstellungen (F12) prüfen.",
+  "lines": [
+   1849
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Keine eigenen aktiven Listings. Wartet ein Listing auf Freigabe, liefert die UEX-API es erst NACH der Freigabe (Endpoint listet nur aktive Ads) — es erscheint dann automatisch hier.",
+  "lines": [
+   1896
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Für den Trades-Reiter braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).",
+  "lines": [
+   1958
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Für den Trade Log braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).",
+  "lines": [
+   2069
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Ware wählen (Tippen für Vorschläge).",
+  "lines": [
+   2181
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Ort/Terminal wählen (Tippen für Vorschläge).",
+  "lines": [
+   2182
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Menge (SCU) muss eine positive Ganzzahl sein.",
+  "lines": [
+   2184
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Preis muss positiv sein.",
+  "lines": [
+   2186
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Trade abgeschlossen — Verlauf nur lesbar.",
+  "lines": [
+   2289
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "läuft ab ",
+  "lines": [
+   2381
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": " = noch nichts gewählt / „bitte wählen",
+  "lines": [
+   2488
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Nur JPG/PNG-Bilder sind erlaubt (UEX-Limit).",
+  "lines": [
+   2627
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "“ ist größer als 10 MB (UEX-Limit).",
+  "lines": [
+   2631
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Listing Type ist Pflicht.",
+  "lines": [
+   2737
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Titel ist Pflicht.",
+  "lines": [
+   2738
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Titel max. 140 Zeichen (Doku).",
+  "lines": [
+   2739
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Beschreibung ist Pflicht.",
+  "lines": [
+   2740
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Beschreibung max. 65.535 Zeichen (Doku).",
+  "lines": [
+   2741
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bitte eine Kategorie wählen (Pflicht für Item-/Contract-Listings).",
+  "lines": [
+   2744
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bitte ein Item wählen (Pflicht für Item-Listings).",
+  "lines": [
+   2748
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Ort ist Pflicht.",
+  "lines": [
+   2750
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Preis muss eine positive Ganzzahl sein.",
+  "lines": [
+   2752
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Menge muss eine positive Ganzzahl sein.",
+  "lines": [
+   2754
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Einheit ist Pflicht.",
+  "lines": [
+   2755
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Währung ist Pflicht.",
+  "lines": [
+   2756
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Quality muss zwischen 0 und 1000 liegen.",
+  "lines": [
+   2759
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Laufzeit ist Pflicht.",
+  "lines": [
+   2761
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Maximal 1 Bild (UEX-Limit).",
+  "lines": [
+   2764
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Bitte die markierten Felder korrigieren.",
+  "lines": [
+   2770
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "zurück",
+  "lines": [
+   3540
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Mein Shop sync läuft …",
+  "lines": [
+   3874
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Routen-Sweep läuft …",
+  "lines": [
+   3884
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Market-Sync läuft …",
+  "lines": [
+   3896
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Unbekanntes Problem beim Laden der Preise.",
+  "lines": [
+   4004
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Preisdaten unvollständig — der Anbieter lieferte leere Werte. Bitte erneut versuchen.",
+  "lines": [
+   4006
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Anfragenlimit erreicht — bitte kurz warten und erneut versuchen.",
+  "lines": [
+   4008
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Keine Preisdaten für diesen Eintrag gefunden.",
+  "lines": [
+   4010
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Zeitüberschreitung beim Laden — bitte erneut versuchen.",
+  "lines": [
+   4012
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "Keine Verbindung zum Preisdienst. Bitte Internet prüfen.",
+  "lines": [
+   4014
+  ]
+ },
+ {
+  "file": "src/routes/+page.svelte",
+  "text": "SYNC LÄUFT",
+  "lines": [
+   4042,
+   4043
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Position gelöscht.",
+  "lines": [
+   345
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Bitte ein Material wählen (Entity-Suche) oder als Freitext übernehmen.",
+  "lines": [
+   491
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Qualität ist Pflicht (0–1000).",
+  "lines": [
+   495
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Bitte einen Standort angeben.",
+  "lines": [
+   499
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Bitte eine gültige Menge angeben.",
+  "lines": [
+   503
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Kaufpreis muss eine Zahl sein (aUEC).",
+  "lines": [
+   509
+  ]
+ },
+ {
+  "file": "src/lib/Inventory.svelte",
+  "text": "Position geändert.",
+  "lines": [
+   532
+  ]
+ }
+]

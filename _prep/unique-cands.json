@@ -1,0 +1,6117 @@
+[
+ {
+  "text": "Trade erfassen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4573
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. Gold",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4596
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. Everus Harbor",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4614
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bestätigung",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4652,
+     4980,
+     6448
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Hangar",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4747
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zurück (Esc)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4749,
+     1256
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zurück",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4749,
+     1041
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eintrag manuell anlegen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4765
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Hangar-Einträge",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4779
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Schließen (Esc)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4817,
+     6929
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Details schließen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4817
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modul bearbeiten",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4842
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modul entfernen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4845
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modul suchen … (z. B. Exploration Module)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4855
+    ]
+   }
+  ]
+ },
+ {
+  "text": "— Herkunft wählen —",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4861
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ohne",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4862,
+     4937
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Basisschiff suchen …",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4874
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modul-Name",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4904
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. Cargo/Explorer-Modul",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4904
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. Cutlass Black",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4906
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Typ (Modul)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4920
+    ]
+   }
+  ]
+ },
+ {
+  "text": "— bitte wählen —",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4922,
+     4930,
+     6150,
+     6222
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Datum (dd.mm.jjjj)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4945
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Pick from Hangar …",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     4961
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Meldung schließen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5017,
+     5017
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Konfiguration",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5023
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zurück zur Suche (Esc)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5029
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zurück zur Suche",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5030
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Key einfügen … (maskiert)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5272
+    ]
+   }
+  ]
+ },
+ {
+  "text": "API-Keys auf uexcorp.space verwalten (Login im Browser)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5287
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Secret-Key einfügen … (maskiert)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5312
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Secret-Key auf uexcorp.space/account neu generieren/kopieren (Login im Browser)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5327
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bild vergrößern (Inline-Lightbox im Overlay)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5560
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5586
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bild vergrößert",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5597
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5617
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trade Log auf uexcorp.space öffnen (Login im Browser)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5618
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ausgaben (Käufe) an diesem Tag",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5653
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Einnahmen (Verkäufe) an diesem Tag",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5654
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Nettogewinn des Tages (aUEC)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5656
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trade bearbeiten",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5684
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trade löschen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5685
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Routen-Detail",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5697
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Gain = (Sell−Buy) × Menge · absolute",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5737
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5738
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bestand am Terminal",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5760,
+     5787
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Nachfrage (Lager-Level)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5761,
+     5788
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. Ironclad",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5809
+    ]
+   }
+  ]
+ },
+ {
+  "text": "SCU-Kapazität",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5810
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Budget (aUEC) — kappt kaufbare Menge",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5813
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Budget in aUEC (formatiert)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5815
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ware",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5819,
+     44,
+     115,
+     1271
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ware filtern",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5819
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Startort",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5821
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zielort",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5823
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Filter zurücksetzen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5824
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Gewinn/SCU umschalten: neutral → absteigend → aufsteigend → neutral",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5850
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo, nicht sortierrelevant",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5882
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Nachfrage-Level Verkauf (1–7)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5885
+    ]
+   }
+  ]
+ },
+ {
+  "text": "RB2: mit diesem Budget kaufbare Menge (min SCHIFF-SCU, floor Budget ÷ Kaufpreis)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5890
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Gain/SCU = Sell − Buy · absolute aUEC per SCU",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5894
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5895
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Deal auf uexcorp.space öffnen (negotiate/hash)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5921
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Chat-Nachricht senden",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5965
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eigene Trades im UEX-Manager öffnen (Login im Browser)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     5985
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Deal-Chat öffnen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6021
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Neue Interaktion",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6035
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eigene Offers + Deals neu laden",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6054
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen.",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6126
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eigene Listings im UEX-Manager öffnen (Login im Browser)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6127
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Neues Listing anlegen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6135
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Artikelname (alphanumerisch + -)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6171
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. 1.500.000.000",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6182
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Preis (Ganzzahl, Tausender-Punkte werden bei der Eingabe angezeigt)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6183
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Währung wählen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6189
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Einheit wählen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6197
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. Port Tressler",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6204
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Item suchen (z. B. Custodian SMG)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6238
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Item gewählt",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6247
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Laufzeit wählen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6257
+    ]
+   }
+  ]
+ },
+ {
+  "text": "— (optional) —",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6265,
+     6280
+    ]
+   }
+  ]
+ },
+ {
+  "text": "0–1000",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6274
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Quality 0–1000",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6274
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Verborgenes Listing erscheint erst nach manuellem UEX-Approval",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6294
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Freitext, mehrzeilig (Markdown ok, max. 65.535 Zeichen) — Enter = neue Zeile",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6308
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bild entfernen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6337
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lokal gespeichert — UEX listet wartende Ads nicht per API; nach der Freigabe erscheint das Listing beim nächsten Pull als aktives Listing.",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6380
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lokalen Eintrag entfernen (nötig, falls UEX das Listing abgelehnt hat)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6393
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Listung auf uexcorp.space öffnen (nur Lesen)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6404
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6412
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Verhandeln startet auf uexcorp.space (API-seitig kein POST /marketplace_negotiations) — Angebotsseite im Browser öffnen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6420
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6421
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6422
+    ]
+   }
+  ]
+ },
+ {
+  "text": "min",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6499
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Min-Qualität (0–1000)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6499,
+     6499
+    ]
+   }
+  ]
+ },
+ {
+  "text": "max",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6501
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Max-Qualität (0–1000)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6501,
+     6501
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Detail",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6621,
+     2292,
+     2298,
+     2314,
+     2319
+    ]
+   }
+  ]
+ },
+ {
+  "text": "zurück zur Liste",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6634,
+     2283
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Preis-Detail-Darstellung",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6643
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Variante A — Zeilenboxen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6644
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Variante C — Trader-Hero (Default)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6645
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Diesen Datensatz aktualisieren",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6660
+    ]
+   }
+  ]
+ },
+ {
+  "text": "This search",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6804
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Info — Architects Overlay",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6897,
+     6916
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Info öffnen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6898
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Info schließen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6930
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX API-Dokumentation öffnen",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6955
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Star Citizen Wiki API öffnen — Schiffsdaten",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     6973
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Öffentliches Repository (GitHub)",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     7009
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Release-Seite: Downloads + Changelog",
+  "kind": "attr",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     7010
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Richtung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     37,
+     114
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Kauf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     39,
+     1947,
+     2137,
+     2197,
+     2216
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Verkauf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     40,
+     1946,
+     2146,
+     2197,
+     2230
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ort",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     62,
+     116,
+     993,
+     1291,
+     1652,
+     1911,
+     1918
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Menge (SCU)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     76
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Preis/SCU (aUEC)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     80
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     83
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Abbrechen (Esc)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     95,
+     125
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     112
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Menge",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte",
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     117,
+     992,
+     1187,
+     1646,
+     1910,
+     1917
+    ]
+   },
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     72
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Preis",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     118,
+     1626,
+     1909,
+     1916,
+     2134,
+     2217,
+     2231
+    ]
+   }
+  ]
+ },
+ {
+  "text": "HANGAR",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     203
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Import XPLorer",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     215
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Import CCUgame",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     216
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Export",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     217
+    ]
+   }
+  ]
+ },
+ {
+  "text": "+ Anlegen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     218
+    ]
+   }
+  ]
+ },
+ {
+  "text": "· Modul (unverbunden)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     243
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bearbeiten",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte",
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     267,
+     1137
+    ]
+   },
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     790,
+     831,
+     929,
+     943
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Löschen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte",
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     269,
+     1138
+    ]
+   },
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     120
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modell",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     277
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Hersteller",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     278,
+     406
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Typ",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     279,
+     367,
+     444
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Custom-Name",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     280,
+     401
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Datum",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     281,
+     397,
+     447
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Module zugeordnet.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     301
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Hinzufügen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     316
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modul (unverbunden)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     324
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Dieses Modul ist keinem Schiff zugeordnet.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     325
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zuordnen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     328
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Name",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     350,
+     440,
+     443
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Herkunft",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     379,
+     445
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Versicherung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     389,
+     446
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Basisschiff",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     413
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Speichern",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     419
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Abbrechen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte",
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     420,
+     457,
+     1802,
+     1925
+    ]
+   },
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     654,
+     114
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Der Eintrag wird aus dem Hangar GELÖSCHT.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     441
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eingaben sind bis zur Entscheidung gesperrt.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     449
+    ]
+   }
+  ]
+ },
+ {
+  "text": "JA, LÖSCHEN",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     453
+    ]
+   }
+  ]
+ },
+ {
+  "text": "JA, SPEICHERN",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     455
+    ]
+   }
+  ]
+ },
+ {
+  "text": "KONFIGURATION",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     485
+    ]
+   }
+  ]
+ },
+ {
+  "text": "wirkt sofort",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     486
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Darstellung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     491
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Farbpalette",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     493
+    ]
+   }
+  ]
+ },
+ {
+  "text": "MFCD",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     506
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Schriftscale",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     516
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Preis-Detail-Variante",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     529
+    ]
+   }
+  ]
+ },
+ {
+  "text": "C · Standard",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     536
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bedienung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     589
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Tastenkürzel",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     591
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Aktiv:",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     598,
+     683
+    ]
+   }
+  ]
+ },
+ {
+  "text": "arch-overlay toggle",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     644,
+     655
+    ]
+   }
+  ]
+ },
+ {
+  "text": ") — Änderungen wirken sofort.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     644
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Globale Kürzel",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     663
+    ]
+   }
+  ]
+ },
+ {
+  "text": "nicht OS-seitig registriert",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     664
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     669
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Mode-Hotkeys",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     678
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Standard-Belegung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     706
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Daten & Dienste",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     712
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX API-Key",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     714
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Status:",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     715
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Setzen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     729,
+     769
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Entfernen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     733,
+     773,
+     1846
+    ]
+   }
+  ]
+ },
+ {
+  "text": "API-Keys auf UEX verwalten ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     742
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX persönlicher Secret-Key",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     748
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Secret-Key:",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     755
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Secret-Key auf UEX verwalten ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     782
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX-Username (automatisch ermittelt):",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     789
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Username neu ermitteln",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     798
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Schreibbestätigung (2-Schritt):",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     802
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Nach jeder Aktion (empfohlen)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     804
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Nur beim Abmelden/Löschen eines Listings",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     805
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bestätigungspflicht beim Anlegen von Listings vs. nur beim Entfernen.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     809
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Datenquellen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     815,
+     2398
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Datenquellen: noch keine Preisdaten im Cache.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     842
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modul-Zuweisungen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     849
+    ]
+   }
+  ]
+ },
+ {
+  "text": "noch kein Sync",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     856
+    ]
+   }
+  ]
+ },
+ {
+  "text": "App",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     871
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Aktualisierung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     877
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Auto-Check an",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     884
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Auto-Check aus",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     890
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Erster Sync läuft",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     935
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Commodities · Terminals · Preise — danach wird sofort lokal gesucht.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     936
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX nicht erreichbar",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     943
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Erneut versuchen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     948,
+     1081,
+     1456,
+     1549,
+     1940
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Offline mit Cache fortsetzen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     950
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Angebote",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     965,
+     2296
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Mein Shop",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     971,
+     1503
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trades",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     973
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Anbieter",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     991
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Alter",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     994
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ende",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     996
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Qualität",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte",
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     999,
+     1951
+    ]
+   },
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     59
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Kein Bild hinterlegt.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1024,
+     1028
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Beschreibung.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1033
+    ]
+   }
+  ]
+ },
+ {
+  "text": "VERHANDELN AUF UEX ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1039
+    ]
+   }
+  ]
+ },
+ {
+  "text": "AUF UEXCORP.SPACE ÖFFNEN ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1040,
+     1457,
+     1550,
+     1559
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Verhandeln startet auf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1043
+    ]
+   }
+  ]
+ },
+ {
+  "text": "im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1044
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Routen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1063,
+     2264,
+     2291
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trade Log",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1064,
+     1068
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Aktualisieren",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1069,
+     1437
+    ]
+   }
+  ]
+ },
+ {
+  "text": "+ Trade erfassen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1070
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trade Log auf UEX öffnen ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1071
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lade Trades …",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1076,
+     1449
+    ]
+   }
+  ]
+ },
+ {
+  "text": "KAUF",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1163
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Autoload",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1168,
+     1180,
+     1215,
+     1242,
+     1283
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Cargodeck",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1169,
+     1181,
+     1287
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Boden",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1170,
+     1182,
+     1293
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Space",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1170,
+     1182,
+     1294
+    ]
+   }
+  ]
+ },
+ {
+  "text": "VERKAUF",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1175
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Einkauf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1188
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Brutto",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1189
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Netto-Gewinn",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1190
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marge",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1191
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bestand dort",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1192
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Kauforte",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1197
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Preis ↑",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1197,
+     1957
+    ]
+   }
+  ]
+ },
+ {
+  "text": "keine Kauforte",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1199
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Verkaufsorte",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1224
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Preis ↓",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1224,
+     1958
+    ]
+   }
+  ]
+ },
+ {
+  "text": "keine Verkaufsorte",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1226
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Schiff",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1261
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Budget",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1264
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Start",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1273
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ziel",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1275
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Filter ×",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1277
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Alle",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1280,
+     1292,
+     1945,
+     2216,
+     2230
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Legal",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1281
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Illegal",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1282
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Egal",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1284,
+     1288
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ja",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1285,
+     1289
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Nein",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1286,
+     1290
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Sort",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1297,
+     1956
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marge ↓",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1305
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Distanz ↑",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1306
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Sweepe UEX-Terminals …",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1314
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Erster Lauf ~1 min, danach aus dem Cache.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1315
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Budget zu niedrig für 1 SCU",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1349
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Routen für diese Filter.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1359
+    ]
+   }
+  ]
+ },
+ {
+  "text": "← Deals",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1370
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Deal auf UEX öffnen ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1374
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lade Verlauf …",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1380
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Noch keine Nachrichten in dieser Verhandlung.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1382
+    ]
+   }
+  ]
+ },
+ {
+  "text": "DEAL AUF UEXCORP.SPACE ÖFFNEN ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1403
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Deals",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1436
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trades verwalten ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1438
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Deals entstehen auf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1443
+    ]
+   }
+  ]
+ },
+ {
+  "text": "— Deal auf der Angebotsseite starten („Deal“/„Negotiate“ am Listing), danach hier verhandeln, chatten und beenden.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1444
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trades nicht erreichbar",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1454
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Laden",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1509
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Offline-Snapshot",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1513,
+     1962
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Cache",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1515,
+     1964
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX API-Key nicht gesetzt",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1521
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1522
+    ]
+   }
+  ]
+ },
+ {
+  "text": "In den Einstellungen hinterlegen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1523,
+     1535
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Secret-Key fehlt oder ist falsch — siehe Einstellungen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1533
+    ]
+   }
+  ]
+ },
+ {
+  "text": "User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1534
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lade Mein Shop …",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1541
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eigene Offers + Marktplatz-Trades vom UEX-Client.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1542
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Mein Shop nicht erreichbar",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1547
+    ]
+   }
+  ]
+ },
+ {
+  "text": "ANGELEGTES LISTING ÖFFNEN ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1569
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Anlegen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1579
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Listings verwalten ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1580
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Art",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1596,
+     1915
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Verkauf (sell)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1597
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Kauf (buy)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1598
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Listing Type",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1599
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Titel",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1621,
+     1908,
+     1914
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Währung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1641
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Einheit",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1649
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Kategorie",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1671,
+     2267
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Item",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1686,
+     2134
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Laufzeit",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1706
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Item Source",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1714
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Quality",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1724
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Availability",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1729
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Hide Listing",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1741
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Beschreibung",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1751
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Bild (JPG/PNG, 1 erlaubt)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1768
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX überträgt 1 Bild pro Listing (image_data) — ein neu gewähltes Bild ersetzt das alte.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1796
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Eingaben verwerfen?",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1811
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Es wurden noch keine Daten an UEX gesendet.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1812
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Verwerfen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1814
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Weiter bearbeiten",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1815
+    ]
+   }
+  ]
+ },
+ {
+  "text": "wartet auf Freigabe",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1865
+    ]
+   }
+  ]
+ },
+ {
+  "text": "✎ Neu",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1874
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Abmelden",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1875
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1881
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Das Listing wird auf uexcorp.space ABGEMELDET.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1912
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1919
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lade Marketplace …",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1933
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marketplace nicht erreichbar",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1938
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Neueste",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     1959
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Alle geladen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2002
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Angebote für diese Filter.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2008
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Found",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2033
+    ]
+   }
+  ]
+ },
+ {
+  "text": "results in",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2033
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Treffer",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2067
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lade Preise …",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2077
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Fehler",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2081
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Best Kauf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2093
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Best Verkauf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2094
+    ]
+   }
+  ]
+ },
+ {
+  "text": "kein UEX-API-Key — UEX anonym geladen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2117
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Filter aktiv:",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2122
+    ]
+   }
+  ]
+ },
+ {
+  "text": "keine Preisdaten",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2155
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Kein Terminal/Keine Ware passt zum Filter",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2160
+    ]
+   }
+  ]
+ },
+ {
+  "text": "nicht kaufbar · keine Preisdaten",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2164
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Günstigster Kauf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2179
+    ]
+   }
+  ]
+ },
+ {
+  "text": "aUEC / SCU",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2181,
+     2187
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Höchster Verkauf",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2185
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marge / SCU",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2191
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Preise passen zum Filter",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2211
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zuletzt gesucht",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2254
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine — tippe, um zu suchen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2259
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Schnellzugriff",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2262
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marktplatz ·",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2264
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Einstellungen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2265
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Rechner",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2266
+    ]
+   }
+  ]
+ },
+ {
+  "text": "· =2*250+15%",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2266
+    ]
+   }
+  ]
+ },
+ {
+  "text": "· :c gold",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2267
+    ]
+   }
+  ]
+ },
+ {
+  "text": "im Browser öffnen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2284
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Mein Shop syncen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2287
+    ]
+   }
+  ]
+ },
+ {
+  "text": "zurück zur Suche",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2289,
+     2294,
+     2300
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Routen-Sweep",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2293
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Alt+1..0",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2297,
+     2318
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Offer",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2297
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Market syncen",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2299
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Trade erfassen (Waren)",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2305
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Suchfeld = Filter",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2307
+    ]
+   }
+  ]
+ },
+ {
+  "text": "zurück",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte",
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2308,
+     2315,
+     2320
+    ]
+   },
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     306
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Nav",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2313,
+     2317
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Treffer",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2318
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Marktplatz",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2321
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Über",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2389
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Daten &amp; Marktplatz",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2413
+    ]
+   }
+  ]
+ },
+ {
+  "text": "UEX Corp API · api.uexcorp.space",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2414
+    ]
+   }
+  ]
+ },
+ {
+  "text": "SC-WIKI API",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2429
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Schiffsdaten",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2431
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Star Citizen Wiki API · api.star-citizen.wiki",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2432
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Rechtliches",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2438
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Offizielles CIG-Fan-Asset („Made by the Community“), unverändert.",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2454
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lizenz: MIT — Lizenztext im Repository (LICENSE).",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2458
+    ]
+   }
+  ]
+ },
+ {
+  "text": "GitHub-Repo ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2462
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Releases / Changelog ↗",
+  "kind": "text",
+  "files": [
+   "src/routes/+page.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/routes/+page.svelte",
+    "lines": [
+     2463
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Inventar",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     649
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Position erfassen",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     652
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Item / Commodity suchen … oder Freitext",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     663
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Entity-Treffer",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     672
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. 900",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     710
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. 12",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     717
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. Heim-Hangar, meine Carrack …",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     725
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Standort-Entities",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     737
+    ]
+   }
+  ]
+ },
+ {
+  "text": "z. B. 4500",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     749
+    ]
+   }
+  ]
+ },
+ {
+  "text": "zurück zur Übersicht",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     773,
+     802
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Material-Detail öffnen",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     818,
+     916
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Cards-View toggle",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     847
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Open Material-Detail",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     868
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Open Stand-ort-Detail",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     879
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Edit",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     892
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Standort-Detail öffnen",
+  "kind": "attr",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     905
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Material",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     15
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Suche …",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     25
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Material:",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     48
+    ]
+   }
+  ]
+ },
+ {
+  "text": "(Freitext)",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     53
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Pflicht · 0–1000",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     59
+    ]
+   }
+  ]
+ },
+ {
+  "text": "SCU bzw. Stück",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     72
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Standort",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     77,
+     199
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Freitext = eigenes Depot · Treffer wählen = Location-Entity",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     101
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Kaufpreis",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     104
+    ]
+   }
+  ]
+ },
+ {
+  "text": "optional · aUEC",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     104
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Gesamt",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     132,
+     161
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Positionen",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     133,
+     162
+    ]
+   }
+  ]
+ },
+ {
+  "text": "· Location",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     142
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Positionen für dieses Material.",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     149
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Materialien",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     163
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Keine Positionen an diesem Standort.",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     190,
+     193
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Menge ↓",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     200
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Qualität ↓",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     201
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Cards",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     203
+    ]
+   }
+  ]
+ },
+ {
+  "text": "+ Position",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     204
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Lade Inventar …",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     208
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Zeile ·",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     306
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Löschen ·",
+  "kind": "text",
+  "files": [
+   "src/lib/Inventory.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Inventory.svelte",
+    "lines": [
+     306
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Modi",
+  "kind": "attr",
+  "files": [
+   "src/lib/Rail.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/Rail.svelte",
+    "lines": [
+     68
+    ]
+   }
+  ]
+ },
+ {
+  "text": "Ausklappen",
+  "kind": "attr",
+  "files": [
+   "src/lib/SelectCombo.svelte"
+  ],
+  "lines": [
+   {
+    "file": "src/lib/SelectCombo.svelte",
+    "lines": [
+     166
+    ]
+   }
+  ]
+ }
+]
