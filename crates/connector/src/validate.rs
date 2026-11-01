@@ -469,6 +469,24 @@ fn check_screen(
                 ));
             }
         }
+        // SF2-R1 D3: Action-Eingabefelder — nicht-leere, gegen `params`
+        // eindeutige Keys (Binding-Kollision wäre unaufgelösbar).
+        let mut field_keys = std::collections::BTreeSet::new();
+        for f in a.fields.iter().flatten() {
+            if f.key.trim().is_empty() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': action '{}': field key empty",
+                    a.id
+                ));
+                continue;
+            }
+            if aparams.contains(f.key.as_str()) || !field_keys.insert(f.key.as_str()) {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': action '{}': duplicate field/param key '{}'",
+                    a.id, f.key
+                ));
+            }
+        }
     }
 }
 
@@ -1193,6 +1211,27 @@ mod tests {
             {"id": "done", "type": "results", "title": {"de": "r", "en": "r"}, "endpoint": "/api/r", "mapping": {"n": "n"}}"#;
         let r = validate_manifest(manifest_with_flow(&flow_json("w", ok)).as_bytes());
         assert!(r.is_ok(), "{r:?}");
+
+        // SF2-R1 D3: Action-Felder — valide pcode-Claim-Deklaration ok,
+        // Kollision Feld/Param → Error, leerer Key → Error.
+        let fields_ok = ok.replace(
+            r#""method": "post", "path": "/api/w", "goto": "done""#,
+            r#""method": "post", "path": "/api/w", "fields": [{"key": "pcode", "label": {"de": "p", "en": "p"}}], "goto": "done""#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &fields_ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+
+        let fields_dup = ok.replace(
+            r#""method": "post", "path": "/api/w", "goto": "done""#,
+            r#""method": "post", "path": "/api/w", "fields": [{"key": "pcode", "label": {"de": "p", "en": "p"}}, {"key": "pcode", "label": {"de": "q", "en": "q"}}], "goto": "done""#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &fields_dup)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("duplicate field/param key")),
+            "{r:?}"
+        );
 
         // goto auf unbekannten Screen → Error
         let bad_goto = ok.replace(r#""goto": "done""#, r#""goto": "ghost""#);

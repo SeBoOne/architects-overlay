@@ -34,13 +34,16 @@
 		entry,
 		embedded = false,
 		onexit,
-		initialFlow = null
+		initialFlow = null,
+		initialFlowState = null
 	}: {
 		entry: ConnectorEntry;
 		embedded?: boolean;
 		onexit?: () => void;
 		/** SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — Flow + Start-Screen. */
 		initialFlow?: { flowId: string; screenId: string } | null;
+		/** SF2-R1 D1: vorgemergter Flow-Zustand des Suchleisten-Prefetch. */
+		initialFlowState?: Record<string, unknown> | null;
 	} = $props();
 
 	const views = $derived(entry.manifest.views ?? []);
@@ -346,6 +349,7 @@
 			flow={activeFlow}
 			onexit={onexit}
 			initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null}
+			initialState={initialFlow?.flowId === activeFlow.id ? initialFlowState : null}
 		/>
 	{:else if res.error}
 		<div class="cerror" role="alert">{res.error}</div>

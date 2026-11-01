@@ -55,6 +55,10 @@ pub enum ViewType {
 pub struct Param {
     pub key: String,
     pub label: LocalizedText,
+    /// Pflichtfeld (nur für Action-Eingabefelder relevant, SF2-R1 D3;
+    /// Default true — gepinnte Werte zählen als erfüllt).
+    #[serde(default)]
+    pub required: Option<bool>,
 }
 
 /// Ein View im Manifest.

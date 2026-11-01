@@ -113,7 +113,8 @@ def main():
         # 8) Abholen: zweite Session, gleicher Zyklus, collected statt waived
         st, s2 = req("POST", "/api/session/create", {"name": "SF2-E2E-2", "max_wishes": 2})
         sid2, jc2, ac2 = s2["id"], s2["join_code"], s2["admin_code"]
-        st, l3 = req("POST", f"/api/session/{sid2}/loot", {"name": "Freelancer", "qty": 1}, code=ac2)
+        st, l3 = req("POST", f"/api/session/{sid2}/loot",
+                     {"name": "Freelancer", "qty": 1, "type": "vehicle", "grade": "C", "size": "M"}, code=ac2)
         st, p2 = req("POST", f"/api/session/{sid2}/participants", {"name": "Sebo"}, code=jc2)
         st, w3 = req("POST", f"/api/session/{sid2}/wishes",
                      {"participant_id": p2["id"], "loot_ids": [l3["id"]], "mode": "wish",
@@ -127,6 +128,32 @@ def main():
         st, res4 = req("GET", f"/api/session/{sid2}/raffle/result_for/{p2['id']}", code=jc2)
         check("collect-visible-in-result", (res4.get("result") or {}).get("collected") in (1, True),
               str(res4)[:160])
+
+        # ---- SF2-R1-Fixes (Review t_bf2374f7 Runde 1) ------------------------
+        # D3: admin-angelegter Teilnehmer hat pcode=null — wishes-POST ohne
+        # pcode → 403; erster Save mit selbst gewähltem Claim-Code bindet (200).
+        st, pa = req("POST", f"/api/session/{sid2}/participants", {"name": "AdminLegtAn"}, code=ac2)
+        check("D3-admin-participant-pcode-null", st == 200 and pa.get("pcode") is None, f"{st} {pa}")
+        st, w403 = req("POST", f"/api/session/{sid2}/wishes",
+                       {"participant_id": pa["id"], "loot_ids": [l3["id"]], "mode": "wish"}, code=jc2)
+        check("D3-select-path-wishes-without-pcode-403", st == 403, f"{st} {w403}")
+        st, wclaim = req("POST", f"/api/session/{sid2}/wishes",
+                         {"participant_id": pa["id"], "loot_ids": [l3["id"]], "mode": "wish",
+                          "pcode": "CLAIM-SELBST"}, code=jc2)
+        check("D3-claim-with-chosen-pcode-binds", st == 200, f"{st} {wclaim}")
+        st, wwrong = req("POST", f"/api/session/{sid2}/wishes",
+                         {"participant_id": pa["id"], "loot_ids": [], "mode": "wish",
+                          "pcode": "FALSCH"}, code=jc2)
+        check("D3-wrong-claim-rejected-after-bind", st == 403, f"{st} {wwrong}")
+        # D2: raffle_done bleibt SQLite-Int 1 — Exit-Bedingung (code-Screen
+        # `raffle_done equals true → results`) wertet serverseitig identisch aus.
+        st, sess3 = req("GET", f"/api/session/{jc2}", code=jc2)
+        check("D2-raffle-done-int-for-exit-cond", sess3.get("raffle_done") in (1, True),
+              str(sess3.get("raffle_done")))
+        # D4: Loot-Zeilen tragen type/grade/size (Chips-Datenquelle).
+        check("D4-loot-rows-carry-type-grade-size",
+              all(k in (sess3.get("loot") or [{}])[0] for k in ("type", "grade", "size")),
+              str((sess3.get("loot") or [{}])[0]))
     finally:
         proc.terminate()
         try: proc.wait(timeout=5)
