@@ -1,0 +1,22 @@
+{
+	"meta": {
+		"code": "de",
+		"name": "Deutsch"
+	},
+	"strings": {
+		"settings.language.title": "Sprache",
+		"settings.language.current": "Aktiv: {name}",
+		"settings.language.add": "Übersetzung hinzufügen …",
+		"settings.language.add_hint": "Community-.json-Datei auswählen — resources/locales/en.json kopieren und übersetzen (siehe README → Übersetzungen).",
+		"settings.language.imported": "Übersetzung hinzugefügt: {name}",
+		"settings.language.import_failed": "Import fehlgeschlagen: {msg}",
+		"error.locale.import.too_large": "Datei zu groß (max. {limit} KB).",
+		"error.locale.import.invalid_json": "Kein gültiges JSON: {detail}",
+		"error.locale.import.missing_meta": "Fehlender oder ungültiger „meta“-Block („code“ + „name“).",
+		"error.locale.import.missing_strings": "Fehlender oder ungültiger „strings“-Block (flache Map „key“ → „Text“).",
+		"error.locale.import.bad_code": "Sprach-Code „{code}“ ist nicht erlaubt (a-z, 0-9, „-“/„_“, max. 32 Zeichen).",
+		"error.locale.import.builtin_conflict": "„{code}“ ist eine eingebaute Sprache und kann nicht überschrieben werden.",
+		"error.locale.import.write_failed": "Sprachdatei konnte nicht gespeichert werden: {detail}",
+		"error.locale.import.read_failed": "Lokale Sprachdatei {file} konnte nicht gelesen werden."
+	}
+}

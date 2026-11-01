@@ -71,6 +71,9 @@ function keyActivate(e: KeyboardEvent) {
 	// Hangar-Autocomplete (P10, Karte t_aa6cc070): static ship/vehicle catalogue
 	// + Snub fixed list (no live ship-list endpoint: UEX 2.0 + Wiki API checked).
 	import { suggestShips, isSnubShip, SHIP_CATALOG } from '../lib/hangar_ships';
+	// T1 (t_530e5f59): i18n — reaktiver t()-Store, Built-ins statisch,
+	// lokale (Community-)Dateien via locale_import/locale_list.
+	import { t, importLocaleFromText, initI18n, localeList, setLanguage, trError } from '../lib/i18n';
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -318,6 +321,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// UC t_d323be7e: Update-Check-Regler (an/aus + Intervall in Stunden).
 		updater_enabled: boolean;
 		updater_interval_hours: number;
+		// T1 (t_530e5f59): UI-Sprach-Code (normalisiert im Backend).
+		language: string;
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -1300,6 +1305,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} catch {
 			// Ohne Tauri (SSR/vite-dev) → Palette bleibt am app.html-Default.
 		}
+		// T1 (t_530e5f59): i18n initialisieren — persistierte Sprache + lokale
+		// Sprachdateien laden. Reihenfolge bewusst NACH applySettings: der
+		// erste Paint nutzt schon die richtige Sprache (kein Flacker-Switch).
+		await initI18n(cfg?.language);
 	}
 
 	// UC t_d323be7e: Auto-Updater — Status-Chip + on-demand Update aus der
@@ -1425,6 +1434,45 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			applySettings(cfg);
 		} catch (e) {
 			apiKeyNote = String(e);
+		}
+	}
+
+	// ---- T1 (t_530e5f59): Sprache — Auswahl, Live-Switch, Import ------------
+	// Live-Switch: setLanguagePersisted() ruft settings_set_language (persistiert
+	// sofort) und schaltet dann den Store — alle $t()-Auftretende ziehen OHNE
+	// Neustart nach (Settings-UI inklusive: die Section rendert selbst über $t).
+	// Chip-Spiegel cfg.language: invoke zuerst, Snapshot-Spiegel danach — wie
+	// chooseScale (nie einen Zustand zeigen, den das Backend nicht bestätigt).
+	type LocaleNote = { key: string; params?: Record<string, string | number>; raw?: string };
+	let localeNote = $state<LocaleNote | null>(null);
+	let localeFileInput: HTMLInputElement | null = $state(null);
+
+	async function chooseLanguage(code: string) {
+		localeNote = null;
+		try {
+			// invoke zuerst (Backend persistiert), Store danach — genau wie
+			// chooseScale/choosePalette: nie einen Zustand zeigen, den das
+			// Backend nicht bestätigt hat.
+			cfg = await invoke<SettingsSnapshot>('settings_set_language', { code });
+			setLanguage(code);
+		} catch (e) {
+			localeNote = { key: '', raw: trError(e) };
+		}
+	}
+
+	async function onLocaleFilePick(e: Event) {
+		const input = e.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		// Gleiche Datei darf erneut gewählt werden → value immer zurücksetzen.
+		input.value = '';
+		if (!file) return;
+		localeNote = null;
+		try {
+			const text = await file.text();
+			const meta = await importLocaleFromText(text);
+			localeNote = { key: 'settings.language.imported', params: { name: meta.name } };
+		} catch (e) {
+			localeNote = { key: '', raw: trError(e) };
 		}
 	}
 
@@ -5040,6 +5088,47 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								onclick={() => chooseVariant('a')}
 							>A</button>
 						</div>
+					</section>
+					<!-- T1 (t_530e5f59): Sprache — LIVE-Switch (Store, kein Neustart),
+					     Persistenz via settings_set_language, lokale (Community-)Datei
+					     per File-Button (locale_import — analog Connector-Plugin-Import).
+					     Chips listet localeList: Built-ins (en/de) + lokale Dateien mit
+					     Anzeigename aus der Datei (meta.name, native Schreibweise). -->
+<section class="cfg-sect cfg-sect-language">
+						<div class="h">{$t('settings.language.title')}</div>
+						<div class="cfg-chips">
+							{#each $localeList.locales as loc (loc.meta.code)}
+								<button
+									type="button"
+									class="chip"
+									class:is-on={cfg?.language === loc.meta.code}
+									onclick={() => void chooseLanguage(loc.meta.code)}
+								>{loc.meta.name}</button>
+							{/each}
+						</div>
+						<div class="cfg-key-row">
+							<button type="button" class="chip" onclick={() => localeFileInput?.click()}>
+								{$t('settings.language.add')}
+							</button>
+							<!-- Versteckter File-Input: die Webview zeigt den nativen
+							     Dialog, onchange liest file.text() und locale_import
+							     validiert+persistiert. Probe steuert denselben Pfad
+							     über DataTransfer-Files. -->
+							<input
+								bind:this={localeFileInput}
+								type="file"
+								accept=".json,application/json"
+								class="cfg-locale-file"
+								style="display: none"
+								onchange={onLocaleFilePick}
+							/>
+						</div>
+						<div class="cfg-note">{$t('settings.language.add_hint')}</div>
+						{#if localeNote}
+							<div class="cfg-note" role="status">
+								{localeNote.raw ?? $t(localeNote.key, localeNote.params)}
+							</div>
+						{/if}
 					</section>
 					</div>
 					<!-- UD (t_a36daafb): thematische Gruppe „Bedienung“ — reine UI-Umordnung -->

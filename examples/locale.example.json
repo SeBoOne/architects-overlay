@@ -1,0 +1,11 @@
+{
+	"meta": {
+		"code": "example",
+		"name": "Example (copy me)"
+	},
+	"strings": {
+		"settings.language.title": "Language",
+		"settings.language.current": "Active: {name}",
+		"settings.language.add": "Add translation …"
+	}
+}
