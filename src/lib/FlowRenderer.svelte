@@ -104,6 +104,19 @@
 			: null
 	);
 
+	// SF2: code_entry-Screens rendern ihre `params` als Eingabefelder
+	// (Session-Code), form-Screens ihre `form.fields`.
+	const formFields = $derived(
+		shown?.type === 'code_entry'
+			? (shown.params ?? []).map((p) => ({
+					key: p.key,
+					label: p.label,
+					type: 'text' as const,
+					required: true
+				}))
+			: (shown?.form?.fields ?? [])
+	);
+
 	// ---- Session-Pins (Zustand pro Session, nicht global) ------------------
 	function ensurePins() {
 		if (pinsLoaded) return;
@@ -215,21 +228,71 @@
 	});
 
 	// ---- Formular: Submit → Transition -------------------------------------
+	/** `{key}`-Platzhalter aus einem Template-Wert extrahieren (SF2). */
+	function templateKeys(v: unknown, out: Set<string>) {
+		if (typeof v === 'string') {
+			for (const m of v.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)) out.add(m[1]);
+		} else if (Array.isArray(v)) {
+			for (const x of v) templateKeys(x, out);
+		} else if (v && typeof v === 'object') {
+			for (const x of Object.values(v as Record<string, unknown>)) templateKeys(x, out);
+		}
+	}
+
+	// ---- Formular: Submit → Transition -------------------------------------
+	// SF2: Formular-Werte werden vor dem Submit aus dem Flow-Zustand
+	// vorgefüllt — NUR für Platzhalter-Keys des Templates/Pfads und NUR wenn
+	// das Feld nicht vom User gefüllt wurde (user input gewinnt). So fließen
+	// gepinnte/Selektions-Werte (code, sid, loot_id) in den Body, ohne dass
+	// das Manifest sie als Formular-Felder deklarieren muss.
 	async function submitForm() {
 		const s = shown;
-		if (!s?.form) return;
+		if (!s) return;
+		// SF2: code_entry — eingegebene Werte in den Flow-Zustand, laden,
+		// bei Erfolg zur on_submit-Transition.
+		if (s.type === 'code_entry') {
+			for (const [k, v] of Object.entries(formValues)) {
+				if (typeof v === 'string' && v.trim()) fstate[k] = v;
+			}
+			await load(true);
+			if (!res.error) {
+				// Erfolgreicher Code-Load: deklarierte Pins sichern (code/sid…).
+				for (const k of s.pins ?? []) {
+					const v = fstate[k];
+					if (typeof v === 'string') pin(k, v);
+					else if (typeof v === 'number') pin(k, String(v));
+				}
+				if (s.on_submit) go(s.on_submit);
+			}
+			return;
+		}
+		if (!s.form) return;
+		const keys = new Set<string>();
+		templateKeys(s.form.body_template, keys);
+		templateKeys(s.form.path, keys);
+		for (const p of s.params ?? []) keys.add(p.key);
+		const seeded: Record<string, string> = { ...formValues };
+		for (const k of keys) {
+			if (k in seeded) continue;
+			const v = fstate[k];
+			if (typeof v === 'string' && v.trim()) seeded[k] = v;
+			else if (typeof v === 'number') seeded[k] = String(v);
+		}
 		formBusy = true;
 		try {
 			const out = await invoke<{ status: number; body: unknown }>('connector_form_submit', {
 				id: entry.id,
 				formId: s.id,
-				values: formValues
+				values: seeded
 			});
 			formNote =
 				out.status < 400
 					? tr('connector.form_ok', { status: String(out.status) })
 					: tr('connector.form_http_error', { status: String(out.status) });
-			// Response-Werte (z. B. neue Codes) in den Zustand + Pins.
+			// Eingereichte Werte + Response-Werte in den Zustand (und Pins).
+			for (const [k, v] of Object.entries(seeded)) {
+				if (!(k in fstate)) fstate[k] = v;
+			}
 			if (out.body && typeof out.body === 'object') {
 				const body = out.body as Record<string, unknown>;
 				for (const [k, v] of Object.entries(body)) {
@@ -346,8 +409,8 @@
 			{:else if res.error}
 				<p class="ferror">{res.error}</p>
 			{:else if shown.type === 'code_entry' || shown.type === 'form'}
-				<form class="fform" onsubmit={(e) => { e.preventDefault(); if (shown.type === 'form') void submitForm(); }}>
-					{#each shown.form?.fields ?? [] as f (f.key)}
+				<form class="fform" onsubmit={(e) => { e.preventDefault(); void submitForm(); }}>
+					{#each formFields as f (f.key)}
 						<label class="ffield">
 							<span class="flabel">{labelOf(f.label, lang)}{f.required ? ' *' : ''}</span>
 							<input

@@ -182,5 +182,103 @@
       },
       "poll_seconds": 600
     }
+  ],
+  "flows": [
+    {
+      "id": "participant",
+      "title": { "de": "Teilnehmer", "en": "Participant" },
+      "entry": "code",
+      "screens": [
+        {
+          "id": "code",
+          "type": "code_entry",
+          "title": { "de": "Beitreten", "en": "Join" },
+          "endpoint": "/api/session/{code}",
+          "params": [
+            { "key": "code", "label": { "de": "Session-Code (admin/join)", "en": "Session code (admin/join)" } }
+          ],
+          "headers": { "X-SCLM-Code": "{code}" },
+          "mapping": {
+            "sid": "id",
+            "name": "name",
+            "created": "created",
+            "max_wishes": "max_wishes",
+            "locked": "locked",
+            "raffle_done": "raffle_done"
+          },
+          "pins": ["code", "sid"],
+          "on_submit": "wishlist"
+        },
+        {
+          "id": "wishlist",
+          "type": "list",
+          "title": { "de": "Loot wählen", "en": "Pick Loot" },
+          "endpoint": "/api/session/{code}",
+          "params": [
+            { "key": "code", "label": { "de": "Session-Code", "en": "Session code" } }
+          ],
+          "headers": { "X-SCLM-Code": "{code}" },
+          "mapping": {
+            "name": "loot[].name",
+            "loot_id": "loot[].id",
+            "qty": "loot[].qty"
+          },
+          "pins": ["loot_id"],
+          "on_select": "wishes"
+        },
+        {
+          "id": "wishes",
+          "type": "form",
+          "title": { "de": "Wünsche festlegen", "en": "Set Wishes" },
+          "form": {
+            "fields": [
+              { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" }, "type": "text", "required": true },
+              { "key": "code", "label": { "de": "Join-Code", "en": "Join code" }, "type": "text", "required": true, "header": "X-SCLM-Code" },
+              { "key": "participant_id", "label": { "de": "Teilnehmer-ID", "en": "Participant ID" }, "type": "text", "required": true },
+              { "key": "name", "label": { "de": "Name (leer = Standard)", "en": "Name (empty = default)" }, "type": "text", "default_source": "uex_username" }
+            ],
+            "method": "post",
+            "path": "/api/session/{sid}/wishes",
+            "body_template": {
+              "name": "{name}",
+              "loot_ids": "[\"{loot_id}\"]",
+              "pcode": "{pcode}",
+              "mode": "wish"
+            }
+          },
+          "pins": ["pcode"],
+          "on_submit": "wait"
+        },
+        {
+          "id": "wait",
+          "type": "wait",
+          "title": { "de": "Warten auf Ziehung", "en": "Awaiting raffle" },
+          "endpoint": "/api/session/{code}",
+          "params": [
+            { "key": "code", "label": { "de": "Session-Code", "en": "Session code" } }
+          ],
+          "headers": { "X-SCLM-Code": "{code}" },
+          "mapping": { "raffle_done": "raffle_done", "name": "name" },
+          "poll_seconds": 15,
+          "exit": { "on": "raffle_done", "op": "equals", "value": true, "then": "results" }
+        },
+        {
+          "id": "results",
+          "type": "detail",
+          "title": { "de": "Mein Gewinn", "en": "My Win" },
+          "endpoint": "/api/session/{code}",
+          "params": [
+            { "key": "code", "label": { "de": "Session-Code", "en": "Session code" } }
+          ],
+          "headers": { "X-SCLM-Code": "{code}" },
+          "mapping": {
+            "participant": "results[].participant_name",
+            "won": "results[].won[]",
+            "waived": "results[].waived",
+            "collected": "results[].collected"
+          }
+        }
+      ]
+    }
   ]
 }

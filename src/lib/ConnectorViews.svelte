@@ -255,7 +255,7 @@
 					type="button"
 					class="ctab"
 					class:is-on={flowId === fl.id}
-					aria-selected={flowId === fl.id}
+					aria-pressed={flowId === fl.id}
 					onclick={() => selectFlow(fl.id)}
 				>{labelOf(fl.title, lang)}</button>
 			{/each}
