@@ -102,9 +102,9 @@ fn parse_path(path: &str) -> Result<Vec<Token>, DotPathError> {
         }
     }
     flush(&mut key, &mut tokens);
-    if tokens.is_empty() {
-        return Err(DotPathError("empty path".into()));
-    }
+    // Leerer Pfad = „Treffer selbst" (SF3): String-Listen-Endpoints (SCLM
+    // Teilnehmer-/Waren-Suche) füllen per fill {"name": ""} das Eingabefeld
+    // direkt aus dem String-Treffer.
     Ok(tokens)
 }
 
@@ -161,6 +161,7 @@ mod tests {
         assert!(dot_path(&data, "data[]").is_err());
         assert!(dot_path(&data, "data[].x").is_err());
         assert!(dot_path(&data, "x[.y").is_err());
-        assert!(dot_path(&data, "").is_err());
+        // Leerer Pfad = „Treffer selbst" (SF3, String-Listen-Autocomplete)
+        assert_eq!(dot_path(&data, "").unwrap()[0], &data);
     }
 }
