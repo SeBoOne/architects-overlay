@@ -995,7 +995,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		hangarNameSuggest().map((s) => ({
 			value: s.name,
 			label: s.manufacturer ? `${s.name} · ${s.manufacturer}` : s.name,
-			badge: s.concept ? 'Konzept' : undefined
+			badge: s.concept ? $t('hangar.concept_badge') : undefined
 		}))
 	);
 	const hangarBaseOpts = $derived(
@@ -4724,7 +4724,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				spellcheck="false"
 				autocomplete="off"
 			/>
-			<span class="smode">{mode === 'market' ? 'MARKETPLACE' : mode === 'routes' ? 'HANDELSROUTEN' : mode === 'inventory' ? 'INVENTAR' : mode === 'hangar' ? 'HANGAR' : mode === 'settings' ? 'EINSTELLUNGEN' : 'SUCHE'}</span>
+			<span class="smode">{mode === 'market' ? $t('nav.marketplace') : mode === 'routes' ? $t('nav.routes') : mode === 'inventory' ? $t('nav.inventory') : mode === 'hangar' ? $t('nav.hangar') : mode === 'settings' ? $t('nav.settings') : $t('nav.search')}</span>
 			<span class="esc">ESC</span>
 		</div>
 
@@ -4995,8 +4995,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('hangar.delete_warning')}</div>
 			{:else}
 				<div class="c-row"><b>{$t('common.name')}</b><span>{hangarForm.name}</span></div>
-				<div class="c-row"><b>{$t('hangar.type')}</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : hangarForm.entity_type === 'module' ? 'Modul' : hangarForm.entity_type ? 'Schiff' : '—'}</span></div>
-				<div class="c-row"><b>{$t('hangar.origin')}</b><span>{hangarForm.origin === 'pledge' ? 'Pledged' : hangarForm.origin === 'ingame' ? 'In-Game' : '—'}</span></div>
+				<div class="c-row"><b>{$t('hangar.type')}</b><span>{hangarForm.entity_type === 'vehicle' ? $t('common.vehicle') : hangarForm.entity_type === 'module' ? $t('common.module') : hangarForm.entity_type ? $t('common.ship') : '—'}</span></div>
+				<div class="c-row"><b>{$t('hangar.origin')}</b><span>{hangarForm.origin === 'pledge' ? $t('hangar.origin_pledged') : hangarForm.origin === 'ingame' ? $t('hangar.origin_ingame') : '—'}</span></div>
 				<div class="c-row"><b>{$t('hangar.insurance')}</b><span>{hangarFormIns || $t('common.none')}</span></div>
 				<div class="c-row"><b>{$t('hangar.date')}</b><span>{hangarFormDate || '—'}</span></div>
 				<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile im Confirm entfernt. -->
@@ -5645,7 +5645,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="mlist">
 								{#each trkSorted as trk (trk.id)}
 									<div class="mrow trow" style="cursor: default">
-										<div class="m-op {trk.operation === 'sell' ? 'sell' : 'buy'}">{trk.operation === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-op {trk.operation === 'sell' ? 'sell' : 'buy'}">{trk.operation === 'sell' ? $t('common.sell') : $t('common.buy')}</div>
 										<div class="m-main">
 											<div class="m-title">{trk.commodity}</div>
 											<div class="m-sub">{trk.terminal} · {fmt(trk.scu)} SCU @ {fmtPrice(trk.price)} aUEC</div>
@@ -5936,7 +5936,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<div class="chat-input">
 							<input
 								class="rtext"
-								placeholder="Nachricht an {tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || $t('trades.buyer')) : (tradesDeal.advertiser_username || 'Anbieter')} …"
+								placeholder={$t('trades.chat_placeholder', { who: tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || $t('trades.buyer')) : (tradesDeal.advertiser_username || $t('trades.advertiser')) })}
 								bind:value={chatDraft}
 								onkeydown={chatKey}
 								maxlength={65535}
@@ -5997,7 +5997,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										title={$t('trades.open_deal_chat_title')}
 										onclick={() => void selectDeal(n)}
 									>
-										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? $t('common.sell') : $t('common.buy')}</div>
 										<div class="m-main">
 											<div class="m-title">{n.listing_title}</div>
 											<div class="m-sub">
@@ -6430,7 +6430,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	{#if confirmAction.kind === 'delete'}
 																		<div class="c-row"><b>{$t('common.title')}</b><span>{confirmAction.offer.title}</span></div>
 																		<div class="c-row"><b>{$t('common.price')}</b><span>{fmtPrice(confirmAction.offer.price)} {confirmAction.offer.currency}</span></div>
-																		<div class="c-row"><b>{$t('common.quantity')}</b><span>{fmtQty(confirmAction.offer.quantity)} {confirmAction.offer.unit || 'unit'}</span></div>
+																		<div class="c-row"><b>{$t('common.quantity')}</b><span>{fmtQty(confirmAction.offer.quantity)} {confirmAction.offer.unit || $t('shop.unit')}</span></div>
 																		<div class="c-row"><b>{$t('trades.location')}</b><span>{confirmAction.offer.location || '—'}</span></div>
 																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('shop.unlist_note')}</div>
 																	{:else}

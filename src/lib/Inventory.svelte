@@ -824,7 +824,7 @@ function keyActivate(e: KeyboardEvent) {
 						<div role="button" tabindex="0" onkeydown={keyActivate} class="inv-row" class:is-sel={sel === locRows.indexOf(r)} onclick={() => (sel = locRows.indexOf(r))} ondblclick={() => openEdit(r)}>
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div class="main">
-								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? 'Item' : 'Commodity'}</span>{/if}</div>
+								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? $t('common.item') : $t('common.commodity')}</span>{/if}</div>
 								<div class="sub">{#if r.price}{$t('common.buy')} {fmtPrice(r.price)} aUEC{:else}{$t('inventory.no_purchase_price')}{/if}</div>
 							</div>
 							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
