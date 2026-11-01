@@ -558,6 +558,11 @@ pub(crate) async fn form_submit_core(
             }
         }
     }
+    // Leere optionale Felder verwerfen, BEVOR der Body gefüllt wird: der
+    // Platzhalter bleibt unaufgelöst und `strip_unfilled` entfernt den
+    // Schlüssel — „leer = unverändert" gilt so auch für Teil-Updates und
+    // Server-Defaults (ein leeres `""` würde sonst als Wert ankommen).
+    drop_empty_optional_values(&form.fields, &mut values);
     // Pfad: ROHE Werte einsetzen (kein JSON-Quoting — ein Session-Code im
     // Pfad darf nicht als `"abc"` landen).
     let path = fill_form_path(&form.path, &values)?;
@@ -628,6 +633,28 @@ fn canonical_params(params: &BTreeMap<String, String>) -> String {
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join("&")
+}
+
+/// Leere Werte für nicht-required Felder verwerfen, bevor der Body gefüllt
+/// wird: der Platzhalter bleibt unaufgelöst und `strip_unfilled` entfernt
+/// den Schlüssel — „leer = unverändert" (Teil-Updates, Server-Defaults).
+fn drop_empty_optional_values(
+    fields: &[connector::manifest::FormField],
+    values: &mut BTreeMap<String, serde_json::Value>,
+) {
+    for field in fields.iter().filter(|f| !f.required) {
+        let empty = values
+            .get(&field.key)
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.trim().is_empty(),
+                serde_json::Value::Null => true,
+                _ => false,
+            })
+            .unwrap_or(false);
+        if empty {
+            values.remove(&field.key);
+        }
+    }
 }
 
 /// JSON-bewusster Template-Fill: Ein String, der EXAKT aus einem Platzhalter
@@ -992,6 +1019,47 @@ mod tests {
         assert!(out.get("empty_opt").is_none());
         assert!(out["nested"].get("drop").is_none());
         assert_eq!(out["nested"]["keep"], json!("Sabre"));
+    }
+
+    #[test]
+    fn empty_optional_value_is_dropped_not_sent() {
+        // Realer UI-Pfad (Review t_d5ca9277 Runde 2): Svelte-Bindungen liefern
+        // für leere Felder "" (bzw. null), NICHT einen fehlenden Key — ein
+        // leeres optionales Feld darf trotzdem nicht als "" in den Body.
+        let ff = |key: &str, required: bool| -> connector::manifest::FormField {
+            serde_json::from_value(json!({
+                "key": key,
+                "label": { "en": key, "de": key },
+                "type": "text",
+                "required": required
+            }))
+            .unwrap()
+        };
+        let fields = vec![
+            ff("name", true),
+            ff("max_wishes", false),
+            ff("waived", false),
+        ];
+        let mut values = BTreeMap::new();
+        values.insert("name".to_owned(), serde_json::Value::String("X".into()));
+        values.insert(
+            "max_wishes".to_owned(),
+            serde_json::Value::String(String::new()),
+        );
+        values.insert("waived".to_owned(), serde_json::Value::Null);
+        drop_empty_optional_values(&fields, &mut values);
+        assert!(!values.contains_key("max_wishes"));
+        assert!(!values.contains_key("waived"));
+        assert!(values.contains_key("name"));
+        // Fill + Strip: Key ist danach weg (statt `""` an die API zu senden).
+        let mut body = json!({
+            "name": "{name}",
+            "max_wishes": "{max_wishes}",
+            "waived": "{waived}"
+        });
+        apply_fill(&mut body, &values);
+        strip_unfilled(&mut body);
+        assert_eq!(body, json!({ "name": "X" }));
     }
 
     #[test]
