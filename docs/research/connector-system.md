@@ -79,7 +79,11 @@ Seriell, wie gehabt — jede Karte mit Review-Child:
 5. **C5 Mock-Connector** — zeigt alle View-Typen gegen einen statischen Test-Endpoint (z. B. GitHub-Raw oder lokaler Fixtures-Server); E2E-Verifizierung.
 6. **C6 AAWA-Connector** — erst wenn Platform-API + Keys existieren; Mapping auf die realen Endpoints (Hangar, Resourcenlager-L1-Sicht, Markt-L1, Events, Operation Center).
 
-## 5. Bewusst out of scope (v1)
+## 5. Pilot: SCLM (Update 2026-11-02)
+
+SCLM (sclm.site, Sebos Verlosungs-Tool) wird der **erste echte Connector** statt des Mocks — als Manifest-Erweiterung im „Dienste"-Bereich, NICHT als Kernfunktion/Modul (Sebo-Beschluss). Durch SCLM nötige Schema-Erweiterungen: **Formular-Views** (Eingabefelder im Manifest → generisches Formular → Write-Endpoint) und **Header-Auth** (X-SCLM-Code). Keine Admin-Funktionen. Details: Kanban-Karten C1–C3 (Spec: /tmp/kb-connector-sclm-spec.md). AAWA-Connector folgt später mit derselben Infrastruktur.
+
+## 6. Bewusst out of scope (v1)
 
 - L3-Funktionen (Anfragen, Chat, Lieferketten)
 - Zentrale Plugin-Distribution (Remote-Repo-Pull wie module-overrides)
