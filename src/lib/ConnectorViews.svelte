@@ -33,11 +33,14 @@
 	let {
 		entry,
 		embedded = false,
-		onexit
+		onexit,
+		initialFlow = null
 	}: {
 		entry: ConnectorEntry;
 		embedded?: boolean;
 		onexit?: () => void;
+		/** SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — Flow + Start-Screen. */
+		initialFlow?: { flowId: string; screenId: string } | null;
 	} = $props();
 
 	const views = $derived(entry.manifest.views ?? []);
@@ -46,6 +49,11 @@
 	const flows = $derived(entry.manifest.flows ?? []);
 	let viewId = $state<string>('');
 	let flowId = $state<string | null>(null);
+	// SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — aktiviert den
+	// Ziel-Flow und überspringt bis zum gewünschten Start-Screen.
+	$effect(() => {
+		if (initialFlow) flowId = initialFlow.flowId;
+	});
 	// Erster View als Start-Auswahl (einmalig beim Mount).
 	let res = $state<Result>({ data: null, error: '', loading: false });
 	let formValues = $state<Record<string, string>>({});
@@ -333,7 +341,7 @@
 	{#if activeFlow}
 		<!-- SF1: Flow-Renderer übernimmt die komplette Screen-Kette
 		     (generisch — KEIN connector-spezifisches Wissen hier). -->
-		<FlowRenderer {entry} flow={activeFlow} />
+		<FlowRenderer {entry} flow={activeFlow} initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null} />
 	{:else if res.error}
 		<div class="cerror" role="alert">{res.error}</div>
 	{:else if view?.type === 'form'}

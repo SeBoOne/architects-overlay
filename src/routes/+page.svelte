@@ -62,7 +62,9 @@ function keyActivate(e: KeyboardEvent) {
 		ownConnectors,
 		replaceFor,
 		embedFor,
-		type ConnectorEntry
+		saveFlowPin,
+		type ConnectorEntry,
+		type FetchResultDTO
 	} from '../lib/connector';
 	// PB (t_1c9bc240, B1): Mode-Hotkeys — Defaults, Validação e Lookup em UM módulo.
 	import {
@@ -3795,6 +3797,48 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let ownModeId = $state<string | null>(null);
 	let ownList = $derived(ownConnectors(connectors));
 	let ownEntry = $derived(ownList.find((c) => c.id === ownModeId) ?? ownList[0] ?? null);
+	// SF2 (t_bf2374f7): Flow mit code_entry-Einstieg des aktiven own-Connectors —
+	// die Suchleiste wird im own-Modus zum Code-Eingabefeld (Suche pausiert).
+	const ownCodeFlow = $derived.by(() => {
+		for (const fl of ownEntry?.manifest.flows ?? []) {
+			const s = fl.screens.find((x) => x.id === fl.entry);
+			if (s?.type === 'code_entry') return { flow: fl, screen: s };
+		}
+		return null;
+	});
+	let ownFlowStart = $state<{ flowId: string; screenId: string } | null>(null);
+
+	/** Suchleisten-Enter im own-Modus: Code → Session öffnen (Flow-Start). */
+	async function startOwnFlow(code: string) {
+		const cf = ownCodeFlow;
+		if (!cf || !ownEntry || !isTauri) return;
+		const c = code.trim();
+		if (!c) return;
+		const paramKey = cf.screen.params?.[0]?.key ?? 'code';
+		try {
+			const data = await invoke<FetchResultDTO>('connector_fetch', {
+				id: ownEntry.id,
+				viewId: cf.screen.id,
+				force: true,
+				params: { [paramKey]: c }
+			});
+			// Session-Pins (code + gemappte Pins wie sid) — pro Connector+Flow,
+			// nicht global; der FlowRenderer lädt sie via loadFlowPins.
+			const mapped = (data.mapped ?? {}) as Record<string, unknown>;
+			saveFlowPin(ownEntry.id, cf.flow.id, paramKey, c);
+			for (const k of cf.screen.pins ?? []) {
+				if (k === paramKey) continue;
+				const v = mapped[k];
+				if (typeof v === 'string') saveFlowPin(ownEntry.id, cf.flow.id, k, v);
+			}
+			ownFlowStart = { flowId: cf.flow.id, screenId: cf.screen.on_submit ?? cf.flow.entry };
+			input = '';
+		} catch {
+			// Fehler sichtbar: Flow am code_entry-Screen öffnen — der Renderer
+			// zeigt den param_required/Fetch-Fehler inline.
+			ownFlowStart = { flowId: cf.flow.id, screenId: cf.flow.entry };
+		}
+	}
 	let hangarReplace = $derived(replaceFor(connectors, 'hangar'));
 	let invEmbed = $derived(embedFor(connectors, 'inventory'));
 	let connectorFileInput = $state<HTMLInputElement | null>(null);
@@ -4879,7 +4923,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				bind:this={searchEl}
 				bind:value={input}
 				oninput={onInput}
-				placeholder={railMode === 'inventory'
+				onkeydown={(e) => {
+					// SF2: own-Connector mit code_entry-Flow — Enter tipp't den Code
+					// in die Session (Suchleiste ist im own-Modus das Code-Feld).
+					if (e.key === 'Enter' && railMode === 'own' && ownCodeFlow) {
+						e.preventDefault();
+						e.stopPropagation();
+						void startOwnFlow(String(input ?? ''));
+					}
+				}}
+				placeholder={railMode === 'own' && ownCodeFlow && !ownFlowStart
+				? $t('connector.flow.code_ph')
+				: railMode === 'inventory'
 				? $t('search.ph_inventory')
 				: railMode === 'hangar'
 					? $t('search.ph_hangar')
@@ -5213,8 +5268,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{/if}
 		{:else if railMode === 'own' && ownEntry}
 			<!-- C2 own: eigener Top-Level-Bereich des Connectors (Placement-
-			     Konzept — KEIN universeller „Dienste“-Bereich). -->
-			<ConnectorViews entry={ownEntry} onexit={() => setMode('search')} />
+			     Konzept — KEIN universeller „Dienste“-Bereich). SF2: Flow-Start
+			     via Suchleisten-Code (initialFlow) + Reset beim Verlassen. -->
+			<ConnectorViews
+				entry={ownEntry}
+				onexit={() => {
+					ownFlowStart = null;
+					setMode('search');
+				}}
+				initialFlow={ownFlowStart}
+			/>
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").
 			     Esc/zurück-Pfeil → zurück zur Suche; kein neues Fenster. -->
