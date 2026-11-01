@@ -1,0 +1,186 @@
+{
+  "manifest_version": 1,
+  "id": "sclm",
+  "name": { "de": "SCLM-Verlosungen", "en": "SCLM Raffles" },
+  "base_url": "https://sclm.site",
+  "auth": {
+    "type": "none"
+  },
+  "placement": { "kind": "own", "label": { "de": "SCLM", "en": "SCLM" }, "hotkey_slot": true },
+  "views": [
+    {
+      "id": "sessions",
+      "type": "table",
+      "title": { "de": "Verlosungen", "en": "Raffles" },
+      "endpoint": "/api/sessions",
+      "mapping": {
+        "name": "[].name",
+        "created": "[].created",
+        "participants": "[].participant_count",
+        "loot": "[].loot_count",
+        "join_code": "[].join_code",
+        "raffle_done": "[].raffle_done"
+      },
+      "poll_seconds": 300
+    },
+    {
+      "id": "session_detail",
+      "type": "detail",
+      "title": { "de": "Session-Detail", "en": "Session Detail" },
+      "endpoint": "/api/session/{code}",
+      "params": [
+        { "key": "code", "label": { "de": "Session-Code (admin/join)", "en": "Session code (admin/join)" } }
+      ],
+      "headers": { "X-SCLM-Code": "{code}" },
+      "mapping": {
+        "name": "name",
+        "created": "created",
+        "max_wishes": "max_wishes",
+        "locked": "locked",
+        "raffle_done": "raffle_done",
+        "raffle_mode": "raffle_mode",
+        "participants": "participants[].name",
+        "loot": "loot[].name",
+        "winners": "results[].participant_name"
+      },
+      "poll_seconds": 300
+    },
+    {
+      "id": "create_session",
+      "type": "form",
+      "title": { "de": "Event erstellen", "en": "Create Event" },
+      "endpoint": "",
+      "form": {
+        "fields": [
+          { "key": "name", "label": { "de": "Event-Name", "en": "Event name" }, "type": "text", "required": true },
+          { "key": "max_wishes", "label": { "de": "Max. Wünsche (1–10)", "en": "Max wishes (1–10)" }, "type": "number" }
+        ],
+        "method": "post",
+        "path": "/api/session/create",
+        "body_template": { "name": "{name}", "max_wishes": "{max_wishes}" }
+      }
+    },
+    {
+      "id": "session_settings",
+      "type": "form",
+      "title": { "de": "Event-Einstellungen", "en": "Event Settings" },
+      "endpoint": "",
+      "form": {
+        "fields": [
+          { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" }, "type": "text", "required": true },
+          { "key": "code", "label": { "de": "Admin-Code", "en": "Admin code" }, "type": "text", "required": true, "header": "X-SCLM-Code" },
+          { "key": "name", "label": { "de": "Neuer Name (leer = unverändert)", "en": "New name (empty = keep)" }, "type": "text" },
+          { "key": "max_wishes", "label": { "de": "Max. Wünsche (1–10)", "en": "Max wishes (1–10)" }, "type": "number" },
+          { "key": "total_revenue", "label": { "de": "Gesamtumsatz", "en": "Total revenue" }, "type": "number" }
+        ],
+        "method": "patch",
+        "path": "/api/session/{sid}/settings",
+        "body_template": { "name": "{name}", "max_wishes": "{max_wishes}", "total_revenue": "{total_revenue}" }
+      }
+    },
+    {
+      "id": "add_participant",
+      "type": "form",
+      "title": { "de": "Teilnehmer hinzufügen", "en": "Add Participant" },
+      "endpoint": "",
+      "form": {
+        "fields": [
+          { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" }, "type": "text", "required": true },
+          { "key": "code", "label": { "de": "Admin-Code", "en": "Admin code" }, "type": "text", "required": true, "header": "X-SCLM-Code" },
+          { "key": "name", "label": { "de": "Teilnehmer-Name", "en": "Participant name" }, "type": "text", "required": true }
+        ],
+        "method": "post",
+        "path": "/api/session/{sid}/participants",
+        "body_template": { "name": "{name}" }
+      }
+    },
+    {
+      "id": "join_session",
+      "type": "form",
+      "title": { "de": "Beitreten", "en": "Join" },
+      "endpoint": "",
+      "form": {
+        "fields": [
+          { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" }, "type": "text", "required": true },
+          { "key": "code", "label": { "de": "Join-Code", "en": "Join code" }, "type": "text", "required": true, "header": "X-SCLM-Code" },
+          { "key": "name", "label": { "de": "Name (leer = Standard-Benutzername)", "en": "Name (empty = default username)" }, "type": "text", "default_source": "uex_username" }
+        ],
+        "method": "post",
+        "path": "/api/session/{sid}/participants",
+        "body_template": { "name": "{name}" }
+      }
+    },
+    {
+      "id": "set_wishes",
+      "type": "form",
+      "title": { "de": "Wünsche festlegen", "en": "Set Wishes" },
+      "endpoint": "",
+      "form": {
+        "fields": [
+          { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" }, "type": "text", "required": true },
+          { "key": "code", "label": { "de": "Join- oder Admin-Code", "en": "Join or admin code" }, "type": "text", "required": true, "header": "X-SCLM-Code" },
+          { "key": "participant_id", "label": { "de": "Teilnehmer-ID", "en": "Participant ID" }, "type": "text", "required": true },
+          { "key": "loot_ids", "label": { "de": "Loot-IDs als JSON-Liste, z. B. [\"a1b2\"]", "en": "Loot IDs as JSON list, e.g. [\"a1b2\"]" }, "type": "text", "required": true },
+          { "key": "pcode", "label": { "de": "Pcode (Teilnehmer-Eigentum)", "en": "Pcode (participant ownership)" }, "type": "text" }
+        ],
+        "method": "post",
+        "path": "/api/session/{sid}/wishes",
+        "body_template": { "participant_id": "{participant_id}", "loot_ids": "{loot_ids}", "pcode": "{pcode}", "mode": "wish" }
+      }
+    },
+    {
+      "id": "raffle_mark",
+      "type": "form",
+      "title": { "de": "Gewinn markieren", "en": "Mark Win" },
+      "endpoint": "",
+      "form": {
+        "fields": [
+          { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" }, "type": "text", "required": true },
+          { "key": "rid", "label": { "de": "Ergebnis-ID", "en": "Result ID" }, "type": "text", "required": true },
+          { "key": "code", "label": { "de": "Join-Code (oder Admin-Code)", "en": "Join code (or admin code)" }, "type": "text", "required": true, "header": "X-SCLM-Code" },
+          { "key": "pcode", "label": { "de": "Pcode (Teilnehmer-Eigentum)", "en": "Pcode (participant ownership)" }, "type": "text" },
+          { "key": "waived", "label": { "de": "Verzicht (true/false)", "en": "Waived (true/false)" }, "type": "text" },
+          { "key": "collected", "label": { "de": "Abgeholt (true/false)", "en": "Collected (true/false)" }, "type": "text" }
+        ],
+        "method": "patch",
+        "path": "/api/session/{sid}/raffle/{rid}",
+        "body_template": { "pcode": "{pcode}", "waived": "{waived}", "collected": "{collected}" }
+      }
+    },
+    {
+      "id": "raffle_start",
+      "type": "form",
+      "title": { "de": "Ziehung starten", "en": "Start Raffle" },
+      "endpoint": "",
+      "form": {
+        "fields": [
+          { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" }, "type": "text", "required": true },
+          { "key": "code", "label": { "de": "Admin-Code (nur Ersteller)", "en": "Admin code (creator only)" }, "type": "text", "required": true, "header": "X-SCLM-Code" }
+        ],
+        "method": "post",
+        "path": "/api/session/{sid}/raffle",
+        "body_template": {}
+      }
+    },
+    {
+      "id": "raffle_result",
+      "type": "detail",
+      "title": { "de": "Mein Gewinn", "en": "My Win" },
+      "endpoint": "/api/session/{sid}/raffle/result_for/{pid}",
+      "params": [
+        { "key": "sid", "label": { "de": "Session-ID", "en": "Session ID" } },
+        { "key": "pid", "label": { "de": "Teilnehmer-ID", "en": "Participant ID" } },
+        { "key": "code", "label": { "de": "Join- oder Admin-Code", "en": "Join or admin code" } }
+      ],
+      "headers": { "X-SCLM-Code": "{code}" },
+      "mapping": {
+        "participant": "result.participant_name",
+        "won": "result.won[].name",
+        "by_wish": "result.won_by_wish",
+        "waived": "result.waived",
+        "collected": "result.collected"
+      },
+      "poll_seconds": 600
+    }
+  ]
+}

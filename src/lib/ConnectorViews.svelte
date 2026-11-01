@@ -10,7 +10,7 @@
 	// Polling: `poll_seconds` aus dem Manifest (Default 300 — sparsam,
 	// sclm.site ist LIVE), Manual-Button = force:true (umgeht den Cache),
 	// Cached-Alter wird angezeigt.
-	import { onDestroy } from 'svelte';
+	import { onDestroy, untrack } from 'svelte';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { t, tr, trError, currentLang } from './i18n';
 	import {
@@ -19,6 +19,8 @@
 		tableColumns,
 		calendarDay,
 		formValue,
+		loadPins,
+		savePin,
 		type ConnectorEntry,
 		type FetchResultDTO,
 		type ViewDTO
@@ -43,6 +45,10 @@
 	let formValues = $state<Record<string, string>>({});
 	let formNote = $state('');
 	let formBusy = $state(false);
+	// C3: View-Parameter (Session-Codes) + Pin-Speicher pro Connector/View.
+	let paramValues = $state<Record<string, string>>({});
+	let paramLoaded = $state(false);
+	let pinnedKeys = $state<Record<string, boolean>>({});
 	let timer: ReturnType<typeof setInterval> | null = null;
 
 	const view = $derived<ViewDTO | undefined>(views.find((v) => v.id === viewId));
@@ -65,12 +71,24 @@
 
 	async function load(force = false) {
 		if (!isTauri || !view || view.type === 'form') return;
+		// Pflicht-Parameter: fehlt einer → gar nicht erst fetchen (Backend
+		// würde dieselbe Meldung liefern; hier sparen wir den Request).
+		const missing = (view.params ?? []).find((p) => !(paramValues[p.key] ?? '').trim());
+		if (missing) {
+			res = {
+				data: null,
+				error: tr('error.connector.param_required', { key: labelOf(missing.label, lang) }),
+				loading: false
+			};
+			return;
+		}
 		res = { data: null, error: '', loading: true };
 		try {
 			const data = await invoke<FetchResultDTO>('connector_fetch', {
 				id: entry.id,
 				viewId: view.id,
-				force
+				force,
+				params: { ...paramValues }
 			});
 			res = { data, error: '', loading: false };
 		} catch (err) {
@@ -83,6 +101,9 @@
 		viewId = id;
 		formValues = {};
 		formNote = '';
+		paramValues = {};
+		pinnedKeys = {};
+		paramLoaded = false;
 		res = { data: null, error: '', loading: false };
 		schedulePolling();
 		// Der Fetch läuft im $effect (reagiert auf viewId) — hier kein zweiter
@@ -117,23 +138,35 @@
 		try {
 			const values: Record<string, string | number> = {};
 			for (const f of v.form.fields) {
-				const raw = formValues[f.key] ?? '';
-				if (f.required && raw.trim() === '') {
+				const raw = formValue(formValues[f.key] ?? '', f.type);
+				if (f.required && String(raw).trim() === '') {
 					formNote = tr('error.connector.field_required', { key: labelOf(f.label, lang) });
 					formBusy = false;
 					return;
 				}
-				values[f.key] = formValue(raw, f.type);
+				values[f.key] = raw;
 			}
 			const out = await invoke<{ status: number; body: unknown }>('connector_form_submit', {
 				id: entry.id,
 				formId: v.id,
 				values
 			});
-			formNote =
+			let note =
 				out.status < 400
 					? tr('connector.form_ok', { status: String(out.status) })
 					: tr('connector.form_http_error', { status: String(out.status) });
+			// Antwort-Körper kompakt mit anzeigen (generisch): SCLM liefert z. B.
+			// bei „Event erstellen“ die frischen admin/join-Codes zurück.
+			let bodyText = '';
+			try {
+				bodyText = JSON.stringify(out.body);
+			} catch {
+				/* nicht serialisierbar → ohne Körper */
+			}
+			if (bodyText && bodyText !== 'null') {
+				note += ` — ${bodyText.length > 220 ? `${bodyText.slice(0, 220)}…` : bodyText}`;
+			}
+			formNote = note;
 		} catch (err) {
 			formNote = trError(err);
 		}
@@ -141,15 +174,40 @@
 	}
 
 	$effect(() => {
-		// Bei View-/Entry-Wechsel: Polling neu aufsetzen + initial laden.
+		// Bei View-/Entry-Wechsel: Pins laden, Polling neu aufsetzen, initial
+		// laden (fehlende Pflicht-Parameter zeigen den Eingabe-Prompt). Die
+		// Pin-Loads laufen UNTRACKED — der Effect hängt nur an viewId; die
+		// paramValues-Writes dürfen ihn nicht neu triggern (Loop-Schutz).
 		if (!viewId && views.length) viewId = views[0].id;
-		void viewId;
+		const id = viewId;
+		if (id && !paramLoaded) {
+			paramLoaded = true;
+			untrack(() => {
+				const pins = loadPins(entry.id, id);
+				paramValues = { ...pins };
+				pinnedKeys = Object.fromEntries(Object.keys(pins).map((k) => [k, true]));
+			});
+		}
 		schedulePolling();
 		void load(false);
 	});
 	onDestroy(() => {
 		if (timer) clearInterval(timer);
 	});
+
+	function pinParam(key: string) {
+		const v = (paramValues[key] ?? '').trim();
+		if (!v || !viewId) return;
+		savePin(entry.id, viewId, key, v);
+		pinnedKeys = { ...pinnedKeys, [key]: true };
+		void load(true);
+	}
+
+	function unpinParam(key: string) {
+		if (!viewId) return;
+		savePin(entry.id, viewId, key, null);
+		pinnedKeys = { ...pinnedKeys, [key]: false };
+	}
 </script>
 
 <section
@@ -177,6 +235,47 @@
 				>
 					{labelOf(v.title, lang)}
 				</button>
+			{/each}
+		</div>
+	{/if}
+
+	{#if view && view.type !== 'form' && (view.params ?? []).length > 0}
+		<!-- C3: View-Parameter (z. B. Session-Code) — Eingabe + Pin im
+		     Connector-Zustand, NICHT global in den Settings. -->
+		<div class="cparams" role="group">
+			{#each view.params ?? [] as p (p.key)}
+				<label class="cparam">
+					<span class="cfield-label"
+						>{labelOf(p.label, lang)}{pinnedKeys[p.key]
+							? ` · ${$t('connector.pinned')}`
+							: ''}</span
+					>
+					<span class="cparam-row">
+						<input
+							type="text"
+							bind:value={paramValues[p.key]}
+							onchange={() => void load(true)}
+						/>
+						{#if pinnedKeys[p.key]}
+							<button
+								type="button"
+								class="btn-ghost"
+								title={$t('connector.unpin')}
+								onclick={() => unpinParam(p.key)}
+							>✕</button
+							>
+						{:else}
+							<button
+								type="button"
+								class="btn-ghost"
+								title={$t('connector.pin')}
+								disabled={!(paramValues[p.key] ?? '').trim()}
+								onclick={() => pinParam(p.key)}
+							>📌</button
+							>
+						{/if}
+					</span>
+				</label>
 			{/each}
 		</div>
 	{/if}
@@ -468,5 +567,31 @@
 	.cform-note {
 		font-size: 12px;
 		opacity: 0.9;
+	}
+	.cparams {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		max-width: 420px;
+	}
+	.cparam {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		font-size: 12px;
+	}
+	.cparam-row {
+		display: flex;
+		gap: 4px;
+		align-items: center;
+	}
+	.cparam-row input {
+		flex: 1;
+		background: transparent;
+		border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+		color: inherit;
+		border-radius: 6px;
+		padding: 5px 8px;
+		font: inherit;
 	}
 </style>
