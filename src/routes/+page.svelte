@@ -4732,13 +4732,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		     (Navigation, Filter, Refresh) lebt in der dynamischen Fußzeile (P6). -->
 		{#if phase !== 'market' && !inDetail && !railMode}
 			<div class="helper">
-				<span><kbd>:c</kbd> commodities</span>
+				<span><kbd>:c</kbd>{$t('search.group_commodities')}</span>
 				<span class="sep">·</span>
-				<span><kbd>:i</kbd> items</span>
+				<span><kbd>:i</kbd>{$t('search.group_items')}</span>
 				<span class="sep">·</span>
-				<span><kbd>:l</kbd> locations</span>
+				<span><kbd>:l</kbd>{$t('search.group_locations')}</span>
 				<span class="sep">·</span>
-				<span><kbd>=</kbd> math</span>
+				<span><kbd>=</kbd>{$t('search.group_math')}</span>
 			</div>
 		{/if}
 
@@ -4796,7 +4796,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									{#if it.custom_name && it.custom_name !== it.name}<span class="hmodel">· {it.name}</span>{/if}
 									{#if it.entity_type === 'module' && !it.base_ship}<span class="hmodel">{$t('hangar.unlinked_module_prefix')}</span>{/if}
 								</span>
-								<span class="hchip o-{it.origin}">{it.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+								<span class="hchip o-{it.origin}">{it.origin === 'pledge' ? $t('hangar.origin_pledged') : $t('hangar.origin_ingame')}</span>
 								<span class="hchip ins">{it.insurance ?? '—'}</span>
 								<!-- TB (t_78a4a5e5, Punkt 3): Preis-Anzeige entfernt. -->
 							</button>
@@ -4815,7 +4815,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<div class="hdetail-modal" role="dialog" aria-modal="true" aria-label={tr('hangar.details_named', { name: hangarDisplayName(hangarDetail) })}>
 							<div class="hd-head">
 								<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
-								<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+								<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? $t('hangar.origin_pledged') : $t('hangar.origin_ingame')}</span>
 								<span class="hchip ins">{hangarDetail.insurance ?? '—'}</span>
 								{#if !hangarEdit}
 									<button class="hbtn" disabled={hangarBusy} onclick={() => hangarStartEdit(hangarDetail!)}>{$t('common.edit')}</button>
@@ -4847,7 +4847,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									     UND Herkunft; Klick auf den Namen öffnet das Edit-Popup. -->
 									<div class="hmod">
 										<button type="button" class="hmod-name" title={$t('hangar.module_edit')} aria-label={tr('hangar.module_edit_named', { name: hangarDisplayName(m) })} onclick={() => hangarStartEdit(m)}>{hangarDisplayName(m)}</button>
-										<span class="hchip o-{m.origin}">{m.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+										<span class="hchip o-{m.origin}">{m.origin === 'pledge' ? $t('hangar.origin_pledged') : $t('hangar.origin_ingame')}</span>
 										<span class="hchip ins">{m.insurance ?? '—'}</span>
 										<button type="button" class="hmod-x" title={$t('hangar.module_remove')} aria-label={tr('hangar.module_remove_named', { name: hangarDisplayName(m) })} disabled={hangarBusy} onclick={() => hangarModuleRemove(m)}>✕</button>
 									</div>
@@ -6863,7 +6863,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="spot-status">
 					<span class="dot" class:live={overlay?.game_running}></span>
 					<button onclick={toggleClickThrough}>
-						{overlay?.click_through ? 'KLICK' : 'FOKUS'}
+						{overlay?.click_through ? $t('overlay.click_mode') : $t('overlay.focus_mode')}
 					</button>
 					<!-- TW (t_f178b084): Info-Chip RECHTS neben dem Fokus/Klick-Button
 					     — öffnet das Info-Popup (modales Muster, kein View-Wechsel). -->
