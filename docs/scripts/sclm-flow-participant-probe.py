@@ -39,18 +39,18 @@ def check(name, ok, detail=""):
 
 SCLM = {"id": "sclm", "enabled": True, "auth_set": {}, "hotkey": "F7", "manifest": MANIFEST}
 DATA = {
-    "code": {"mapped": {"sid": "s1", "name": "Weihnachtsverlosung", "created": "01.11.2026",
+    "participant:code": {"mapped": {"sid": "s1", "name": "Weihnachtsverlosung", "created": "01.11.2026",
                          "max_wishes": 3, "locked": False, "raffle_done": 0}},
-    "participants": {"rows": [
+    "participant:participants": {"rows": [
         {"name": "Sebo", "participant_id": "p1"},
         {"name": "Anders", "participant_id": "p2"}]},
     "addme": {"mapped": {}},
-    "wishes": {"rows": [
+    "participant:wishes": {"rows": [
         {"name": "Cutlass Black", "loot_id": "L1", "qty": 1},
         {"name": "Caterpillar", "loot_id": "L2", "qty": 1},
         {"name": "Freelancer", "loot_id": "L3", "qty": 1}]},
-    "wait": {"mapped": {"raffle_done": 0, "name": "Weihnachtsverlosung"}},
-    "results": {"mapped": {"rid": "R1", "won": ["Cutlass Black"],
+    "participant:wait": {"mapped": {"raffle_done": 0, "name": "Weihnachtsverlosung"}},
+    "participant:results": {"mapped": {"rid": "R1", "won": ["Cutlass Black"],
                             "waived": False, "collected": False}},
 }
 
@@ -209,7 +209,7 @@ async def main():
             await js("document.querySelector('.factions .fsubmit')?.click()")
             await asyncio.sleep(0.7)
             action = await js("window.__STUB_LAST_ACTION__ ? JSON.stringify(window.__STUB_LAST_ACTION__) : null")
-            ok_action = action is not None and "'wishes'" in str(action).replace('"', "'") and "'confirm'" in str(action).replace('"', "'") \
+            ok_action = action is not None and "'participant:wishes'" in str(action).replace('"', "'") and "'confirm'" in str(action).replace('"', "'") \
                 and ('"loot_id":["L1","L2"]' in str(action).replace(' ', '')) \
                 and ('"participant_id":"p1"' in str(action).replace(' ', ''))
             check("wishes-confirm-posts-loot-array", ok_action, str(action))
@@ -221,7 +221,7 @@ async def main():
             await shot("06-flow-wait.png")
 
             # ---- 5) Ziehung vorbei: raffle_done 1 (SQLite-Int) → results
-            await js("window.__STUB_CONNECTOR_DATA__.wait.mapped.raffle_done = 1;")
+            await js('window.__STUB_CONNECTOR_DATA__["participant:wait"].mapped.raffle_done = 1;')
             # Erst zurück (wait → wishes), dann wieder vor — go() auf denselben
             # Screen lädt nicht neu; der Wait-Poll (15s) wäre zu langsam.
             await js("[...document.querySelectorAll('.fbtn')].find(b=>/^(zurück|back)/i.test(b.innerText.trim()))?.click()")
@@ -242,7 +242,7 @@ async def main():
             await js("[...document.querySelectorAll('.factions .fbtn')].find(b=>/abgeholt|collected/i.test(b.innerText))?.click()")
             await asyncio.sleep(0.6)
             action2 = await js("window.__STUB_LAST_ACTION__ ? JSON.stringify(window.__STUB_LAST_ACTION__) : null")
-            ok2 = action2 is not None and "'collect'" in str(action2).replace('"', "'") and '"rid":"R1"' in str(action2).replace(' ', '')
+            ok2 = action2 is not None and "'participant:results'" in str(action2).replace('"', "'") and "'collect'" in str(action2).replace('"', "'") and '"rid":"R1"' in str(action2).replace(' ', '')
             check("results-collect-action-posts-rid", ok2, str(action2))
             await shot("07-flow-results.png")
     finally:
