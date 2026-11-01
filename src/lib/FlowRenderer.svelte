@@ -96,6 +96,20 @@
 	// SF2-R1 D3: Action-Eingabefelder (z. B. pcode-Claim beim ersten
 	// Wishes-Save) — Werte fließen als {key}-Binding in die Action.
 	let actionInputs: Record<string, string> = $state({});
+	// SF3: Copy-Hinweis pro Detail-Zeile (Codes einsehen/kopieren — generisch
+	// für alle Detail-Screens, keine Connector-Logik).
+	let copiedKey: string | null = $state(null);
+	async function copyValue(key: string, v: unknown) {
+		try {
+			await navigator.clipboard.writeText(formatValue(v) ?? '');
+			copiedKey = key;
+			setTimeout(() => {
+				if (copiedKey === key) copiedKey = null;
+			}, 1500);
+		} catch {
+			/* Clipboard verweigert — stillschweigend, Button ist Best-Effort */
+		}
+	}
 
 	// Display-Regel: wenn `when` falsch → otherwise-Screen (falls deklariert).
 	function resolvedScreen(): ScreenDTO | null {
@@ -199,7 +213,10 @@
 		try {
 			const data = await invoke<FetchResultDTO>('connector_fetch', {
 				id: entry.id,
-				viewId: s.id,
+				// SF3: Flow-qualifizierte Screen-ID (`<flow>:<screen>`) —
+				// Screen-IDs dürfen sich zwischen Flows wiederholen, der
+				// Cache-Key/Resolve braucht die Flow-Qualifikation.
+				viewId: `${flow.id}:${s.id}`,
 				force,
 				params: bindings(s)
 			});
@@ -351,7 +368,12 @@
 			}
 			const before = screenId;
 			await load(true);
-			if (!res.error) {
+			if (res.error) {
+				// SF3: Fehlgeschlagener Code-Load (404/403/fehlender Param) als
+				// Note unterm Formular — der Fehler-Branch rendert bei code_entry
+				// nicht (Formular bleibt bedienbar).
+				formNote = res.error;
+			} else {
 				// Erfolgreicher Code-Load: deklarierte Pins sichern (code/sid…).
 				for (const k of s.pins ?? []) {
 					const v = fstate[k];
@@ -372,7 +394,7 @@
 		try {
 			const out = await invoke<{ status: number; body: unknown }>('connector_form_submit', {
 				id: entry.id,
-				formId: s.id,
+				formId: `${flow.id}:${s.id}`,
 				values: seeded
 			});
 			formNote =
@@ -506,7 +528,7 @@
 		try {
 			const out = await invoke<{ status: number; body: unknown }>('connector_screen_action', {
 				id: entry.id,
-				screenId: s.id,
+				screenId: `${flow.id}:${s.id}`,
 				actionId: a.id,
 				values: actionValues()
 			});
@@ -651,11 +673,13 @@
 		</nav>
 
 		<div class="fbody">
-			{#if res.loading}
+			{#if res.loading && shown.type !== 'code_entry' && shown.type !== 'form'}
 				<p class="fempty">…</p>
-			{:else if res.error}
-				<p class="ferror">{res.error}</p>
 			{:else if shown.type === 'code_entry' || shown.type === 'form'}
+				<!-- SF3: Form/Code-Entry zeigen ihr Formular IMMER — auch wenn ein
+				     vorheriger Fetch fehlschlug (fehlender Param). Sonst wäre der
+				     Code-Screen über den Tab-Einstieg unbenutzbar (nur Fehltext,
+				     kein Eingabefeld). -->
 				<form class="fform" onsubmit={(e) => { e.preventDefault(); void submitForm(); }}>
 					{#each formFields as f (f.key)}
 						<label class="ffield">
@@ -696,6 +720,8 @@
 					</button>
 					{#if formNote}<p class="fnote">{formNote}</p>{/if}
 				</form>
+			{:else if res.error}
+				<p class="ferror">{res.error}</p>
 			{:else if shown.type === 'list' || (shown.type === 'results' && Array.isArray(res.data?.mapped))}
 				{#if shown.type === 'list' && shown.multi}
 					<p class="fmarkinfo">
@@ -742,7 +768,15 @@
 					{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
 						<div class="fdetail-line">
 							<dt class="fk">{field}</dt>
-							<dd class="fv">{formatValue(detailRow?.[field])}</dd>
+							<dd class="fv">
+								{formatValue(detailRow?.[field])}
+								<button
+									class="fcopy"
+									type="button"
+									title={copiedKey === field ? tr('connector.flow.copied') : tr('connector.flow.copy')}
+									onclick={() => void copyValue(field, detailRow?.[field])}>⧉</button
+								>
+							</dd>
 						</div>
 					{/each}
 				</dl>
@@ -851,4 +885,13 @@
 	.fcheck { font-size: 13px; }
 	.factions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 	.factions .fafield { flex: 0 1 220px; }
+	.fcopy {
+		margin-left: 6px;
+		padding: 0 5px;
+		font-size: 11px;
+		line-height: 1.4;
+		cursor: pointer;
+		opacity: 0.7;
+	}
+	.fcopy:hover { opacity: 1; }
 </style>

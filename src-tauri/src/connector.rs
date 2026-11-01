@@ -490,13 +490,7 @@ pub(crate) fn resolve_fetch_view(
     if let Some(v) = manifest.views.iter().find(|v| v.id == view_id) {
         return Ok(v.clone());
     }
-    if let Some(s) = manifest
-        .flows
-        .iter()
-        .flatten()
-        .flat_map(|f| &f.screens)
-        .find(|s| s.id == view_id)
-    {
+    if let Some(s) = find_flow_screen(manifest, view_id) {
         if s.screen_type == connector::flow::ScreenType::Form {
             // Form-Screens sind Write-Kontext (C3) — kein GET hier.
             return Err(err_key("error.connector.form_not_fetchable"));
@@ -581,14 +575,7 @@ pub async fn connector_form_submit(
                 None => return Err(err_key("error.connector.form_not_fetchable")),
             },
             None => {
-                let Some(s) = st
-                    .manifest
-                    .flows
-                    .iter()
-                    .flatten()
-                    .flat_map(|f| &f.screens)
-                    .find(|s| s.id == form_id)
-                else {
+                let Some(s) = find_flow_screen(&st.manifest, &form_id) else {
                     return Err(err_key("error.connector.view_unknown"));
                 };
                 let Some(f) = &s.form else {
@@ -697,6 +684,31 @@ pub(crate) async fn form_submit_core(
     .await
 }
 
+/// Flow-Screen-Auflösung (SF3): Screen-IDs können sich zwischen Flows
+/// wiederholen (`participants` im Teilnehmer- UND Ersteller-Flow) — der
+/// Cache-Key ist die view_id, deshalb qualifiziert der FlowRenderer als
+/// `<flow>:<screen>`. Unqualifizierte IDs bleiben kompatibel (erster
+/// Treffer, SF1/SF2-Verhalten).
+pub(crate) fn find_flow_screen<'m>(
+    manifest: &'m connector::ConnectorManifest,
+    screen_id: &str,
+) -> Option<&'m connector::flow::Screen> {
+    if let Some((flow_id, sid)) = screen_id.split_once(':') {
+        return manifest
+            .flows
+            .iter()
+            .flatten()
+            .find(|f| f.id == flow_id)
+            .and_then(|f| f.screens.iter().find(|s| s.id == sid));
+    }
+    manifest
+        .flows
+        .iter()
+        .flatten()
+        .flat_map(|f| &f.screens)
+        .find(|s| s.id == screen_id)
+}
+
 /// Generischer Screen-Action-Submit (SF2-Flow): führt eine `actions`-Action
 /// eines Flow-Screens aus (method+path+body+headers aus der Action-Deklaration,
 /// Werte aus dem Flow-Zustand des Renderers). Antwort: `{ status, body }`.
@@ -718,12 +730,7 @@ pub async fn connector_screen_action(
         st.manifest.clone()
     };
     let action = {
-        let screen = manifest
-            .flows
-            .iter()
-            .flatten()
-            .flat_map(|f| &f.screens)
-            .find(|s| s.id == screen_id)
+        let screen = find_flow_screen(&manifest, &screen_id)
             .ok_or_else(|| err_key("error.connector.view_unknown"))?;
         screen
             .actions
@@ -1241,6 +1248,37 @@ mod tests {
         let m = flow_manifest(&["sessions"], &["code"]);
         let v = resolve_fetch_view(&m, "code", &BTreeMap::new()).unwrap();
         assert_eq!(v.endpoint, "/api/session/{code}");
+    }
+
+    /// SF3: Flow-qualifizierte Screen-IDs — zwei Flows mit gleichem
+    /// Screen-ID-Namen resolven auf den RICHTIGEN Screen (Cache-Key ist
+    /// die view_id, Kollisionen wären sonst stillschweigend falsch).
+    #[test]
+    fn flow_qualified_screen_id_resolves_right_flow() {
+        let mut m = flow_manifest(&["sessions"], &["code"]);
+        let mut second = connector::flow::Flow {
+            id: "creator".into(),
+            title: m.flows.as_ref().unwrap()[0].title.clone(),
+            entry: "code".into(),
+            screens: vec![{
+                let mut s = m.flows.as_ref().unwrap()[0].screens[0].clone();
+                s.endpoint = Some("/api/other/{code}".into());
+                s
+            }],
+        };
+        m.flows.as_mut().unwrap().push(second);
+        // qualified → creator-Screen
+        let v = resolve_fetch_view(&m, "creator:code", &BTreeMap::new()).unwrap();
+        assert_eq!(v.endpoint, "/api/other/{code}");
+        // qualified → participant-Screen
+        let v = resolve_fetch_view(&m, "participant:code", &BTreeMap::new()).unwrap();
+        assert_eq!(v.endpoint, "/api/session/{code}");
+        // unqualifiziert → erster Treffer (Fallback, SF1/SF2-Kompatibilität)
+        let v = resolve_fetch_view(&m, "code", &BTreeMap::new()).unwrap();
+        assert_eq!(v.endpoint, "/api/session/{code}");
+        // unbekannter Flow → view_unknown
+        let err = resolve_fetch_view(&m, "ghost:code", &BTreeMap::new()).unwrap_err();
+        assert!(err.contains("view_unknown"), "{err}");
     }
 
     #[test]
