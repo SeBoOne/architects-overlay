@@ -266,6 +266,7 @@ window.__TAURI_INTERNALS__ = {
 			}
 			case 'connector_fetch': {
 				const data = (window.__STUB_CONNECTOR_DATA__ || {})[a.viewId] || { rows: [] };
+				window.__STUB_LAST_FETCH__ = { viewId: a.viewId, params: a.params ?? null };
 				return {
 					status: 200,
 					body: data.body ?? { data: [] },
@@ -275,7 +276,11 @@ window.__TAURI_INTERNALS__ = {
 				};
 			}
 			case 'connector_form_submit':
-				return { status: (window.__STUB_CONNECTOR_FORM_STATUS__ ?? 201), body: { ok: true } };
+				window.__STUB_LAST_SUBMIT__ = { formId: a.formId, values: a.values ?? null };
+				return {
+					status: (window.__STUB_CONNECTOR_FORM_STATUS__ ?? 201),
+					body: (window.__STUB_CONNECTOR_FORM_BODY__ ?? { ok: true })
+				};
 			case 'sync_status':
 				return {
 					provider: 'uex',

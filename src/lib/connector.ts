@@ -22,6 +22,10 @@ export type FormFieldDTO = {
 	type: 'text' | 'number' | 'select';
 	required?: boolean;
 	options?: LocalizedText[] | null;
+	/** Optional: Feldwert zusätzlich als Request-Header senden. */
+	header?: string | null;
+	/** Optional: Voreinstellung aus der Settings-Whitelist (Backend). */
+	default_source?: string | null;
 };
 
 export type FormViewDTO = {
@@ -29,6 +33,11 @@ export type FormViewDTO = {
 	method: 'get' | 'post' | 'patch' | 'put' | 'delete';
 	path: string;
 	body_template: unknown;
+};
+
+export type ParamDTO = {
+	key: string;
+	label: LocalizedText;
 };
 
 export type ViewDTO = {
@@ -39,6 +48,10 @@ export type ViewDTO = {
 	mapping?: Record<string, string> | null;
 	poll_seconds?: number | null;
 	form?: FormViewDTO | null;
+	/** Endpoint-`{param}`-Platzhalter (z. B. Session-Code im Detail-Pfad). */
+	params?: ParamDTO[] | null;
+	/** Request-Header-Templates (`{param}`) — z. B. X-SCLM-Code pro Aufruf. */
+	headers?: Record<string, string> | null;
 };
 
 export type ConnectorManifestDTO = {
@@ -111,7 +124,13 @@ export function embedFor(list: ConnectorEntry[] | null, target: string): Connect
 export function formatValue(v: unknown): string {
 	if (v === null || v === undefined) return '—';
 	if (typeof v === 'boolean') return v ? '✓' : '✗';
-	if (Array.isArray(v)) return v.length === 1 ? formatValue(v[0]) : `[${v.length}]`;
+	if (Array.isArray(v)) {
+		// Kurze Listen (Namen/IDs) lesbar auflösen — lange als Anzahl.
+		if (v.length <= 4 && v.every((x) => typeof x === 'string' || typeof x === 'number')) {
+			return v.map((x) => formatValue(x)).join(', ');
+		}
+		return `[${v.length}]`;
+	}
 	if (typeof v === 'object') {
 		const o = v as Record<string, unknown>;
 		if (typeof o.name === 'string') return o.name;
@@ -134,6 +153,49 @@ export function calendarDay(v: unknown): string {
 }
 
 /** Zahlenfelder → Number, Text → String (für form_submit-Werte). */
-export function formValue(raw: string, type: FormFieldDTO['type']): string | number {
-	return type === 'number' && raw.trim() !== '' ? Number(raw) : raw;
+export function formValue(raw: unknown, type: FormFieldDTO['type']): string | number {
+	// number-Inputs binden als number|null (Svelte-Konvention) — String-Felder
+	// als string. Beide Formen landen hier; trim darf niemals auf Number knallen.
+	const s = typeof raw === 'string' ? raw : String(raw ?? '');
+	return type === 'number' && s.trim() !== '' ? Number(s) : s;
+}
+
+// ---- C3 (t_d5ca9277): Pin-Speicher für View-Parameter -----------------------
+//
+// Session-Codes (admin/join/pcode) sind KEINE Auth im Settings-Sinne — sie
+// werden pro Connector/View im UI gepinnt. Bewusst NICHT in den Settings
+// (Sebo-Regel: Session-Codes sind Werte im Connector-Kontext). Speicher:
+// localStorage (`connector.pin.<connector>.<view>.<key>`), in-Memory-Spiegel
+// für reaktives Rendern.
+
+const PIN_PREFIX = 'connector.pin.';
+
+export function loadPins(connectorId: string, viewId: string): Record<string, string> {
+	if (typeof localStorage === 'undefined') return {};
+	try {
+		const raw = localStorage.getItem(`${PIN_PREFIX}${connectorId}.${viewId}`);
+		return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+	} catch {
+		return {};
+	}
+}
+
+export function savePin(
+	connectorId: string,
+	viewId: string,
+	key: string,
+	value: string | null
+): Record<string, string> {
+	if (typeof localStorage === 'undefined') return {};
+	const storeKey = `${PIN_PREFIX}${connectorId}.${viewId}`;
+	let pins: Record<string, string> = {};
+	try {
+		pins = loadPins(connectorId, viewId);
+		if (value === null || value.trim() === '') delete pins[key];
+		else pins[key] = value.trim();
+		localStorage.setItem(storeKey, JSON.stringify(pins));
+	} catch {
+		/* Store voll/gesperrt: Pin bleibt nur für diese Sitzung im State. */
+	}
+	return pins;
 }
