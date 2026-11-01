@@ -45,12 +45,17 @@
 		entry,
 		flow,
 		initial = null,
+		/** Vorgemergter Flow-Zustand (SF2-R1 D1: gemappte code_entry-Daten des
+		 *  Suchleisten-Prefetch — max_wishes/raffle_done landen im fstate,
+		 *  ohne sie persistieren zu müssen). */
+		initialState = null,
 		onexit
 	}: {
 		entry: ConnectorEntry;
 		flow: FlowDTO;
 		/** Start-Screen-ID (z. B. Wiedereinstieg direkt beim Ergebnis-Screen). */
 		initial?: string | null;
+		initialState?: Record<string, unknown> | null;
 		onexit?: () => void;
 	} = $props();
 
@@ -70,7 +75,9 @@
 	let screenId: string = $state(startId);
 	let current: ScreenDTO | null = $derived(findScreen(screenId) ?? null);
 	let path: string[] = $state([]); // Historie für Zurück-Navigation
-	let fstate: Record<string, unknown> = $state({}); // gemappte Daten + Pins
+	let fstate: Record<string, unknown> = $state({
+		...(untrack(() => initialState) ?? {})
+	}); // gemappte Daten + Pins (initialState bewusst nur beim Mount)
 	let pins: Record<string, string> = $state({});
 	let pinsLoaded = $state(false);
 	let res: Result = $state({ data: null, error: '', loading: false });
@@ -86,6 +93,9 @@
 	let marked: string[] = $state([]);
 	let actionBusy = $state(false);
 	let actionNote = $state('');
+	// SF2-R1 D3: Action-Eingabefelder (z. B. pcode-Claim beim ersten
+	// Wishes-Save) — Werte fließen als {key}-Binding in die Action.
+	let actionInputs: Record<string, string> = $state({});
 
 	// Display-Regel: wenn `when` falsch → otherwise-Screen (falls deklariert).
 	function resolvedScreen(): ScreenDTO | null {
@@ -154,6 +164,24 @@
 		else fstate[key] = value;
 	}
 
+	// Action-Felder aus dem Flow-Zustand vorseeden (gepinnter pcode etc.) —
+	// User-Input gewinnt (nur leere Felder werden gefüllt).
+	$effect(() => {
+		const s = shown;
+		if (!s) return;
+		const seed: Record<string, string> = {};
+		for (const a of s.actions ?? []) {
+			for (const f of a.fields ?? []) {
+				const k = `${a.id}.${f.key}`;
+				if (actionInputs[k] !== undefined) continue;
+				const v = fstate[f.key];
+				if (typeof v === 'string' && v.trim()) seed[k] = v;
+				else if (typeof v === 'number') seed[k] = String(v);
+			}
+		}
+		if (Object.keys(seed).length > 0) actionInputs = { ...actionInputs, ...seed };
+	});
+
 	// ---- Daten laden (generisch: Fetch + Mapping via Backend) --------------
 	async function load(force = false) {
 		const s = shown;
@@ -180,10 +208,16 @@
 			if (data.mapped && typeof data.mapped === 'object') {
 				fstate = { ...fstate, ...(data.mapped as Record<string, unknown>) };
 			}
-			// Wait-Screens: Exit-Bedingung prüfen → Transition.
-			if (s.type === 'wait') {
-				const target = s.exit ? branchTarget(s.exit, fstate) : null;
-				if (target) go(target);
+			// Exit-/Branch-Bedingung (SF2-R1 D2, generisch): Jeder Screen mit
+			// `exit` verzweigt nach dem Load — wait pollt bis raffle_done,
+			// code_entry leitet bei bereits durchgezogener Verlosung direkt
+			// zu results (Wiedereinstieg → direkt Gewinne).
+			if (s.exit) {
+				const target = branchTarget(s.exit, fstate);
+				if (target && target !== s.id) {
+					go(target);
+					return;
+				}
 			}
 		} catch (err) {
 			res = { data: null, error: trError(err), loading: false };
@@ -210,6 +244,7 @@
 		formNote = '';
 		marked = [];
 		actionNote = '';
+		actionInputs = {};
 		autofilled = {};
 		acItems = {};
 		acOpen = {};
@@ -232,6 +267,7 @@
 		path = path.slice(0, -1);
 		screenId = prev;
 		formValues = {};
+		actionInputs = {};
 		res = { data: null, error: '', loading: false };
 		untrack(() => void load());
 	}
@@ -313,6 +349,7 @@
 			for (const [k, v] of Object.entries(formValues)) {
 				if (typeof v === 'string' && v.trim()) fstate[k] = v;
 			}
+			const before = screenId;
 			await load(true);
 			if (!res.error) {
 				// Erfolgreicher Code-Load: deklarierte Pins sichern (code/sid…).
@@ -321,7 +358,10 @@
 					if (typeof v === 'string') pin(k, v);
 					else if (typeof v === 'number') pin(k, String(v));
 				}
-				if (s.on_submit) go(s.on_submit);
+				// SF2-R1 D2: load() hat bei erfüllter exit-Bedingung (z. B.
+				// raffle_done → results) bereits transitioniert — dann nicht
+				// mit on_submit überschreiben.
+				if (screenId === before && s.on_submit) go(s.on_submit);
 			}
 			return;
 		}
@@ -426,6 +466,11 @@
 		for (const [k, v] of Object.entries(formValues)) {
 			if (v.trim()) out[k] = v;
 		}
+		// SF2-R1 D3: Action-Eingabefelder (User-Input gewinnt über fstate).
+		for (const [k, v] of Object.entries(actionInputs)) {
+			const key = k.slice(k.indexOf('.') + 1);
+			if (v.trim()) out[key] = v;
+		}
 		return out;
 	}
 
@@ -446,6 +491,16 @@
 			if (a.goto) go(a.goto);
 			return;
 		}
+		// SF2-R1 D3: Pflicht-Action-Felder (z. B. pcode-Claim) vor dem Write
+		// prüfen — fehlende Werte laufen sonst als 403/400 beim Server an.
+		for (const f of a.fields ?? []) {
+			if (f.required === false) continue;
+			const v = String(actionValues()[f.key] ?? '').trim();
+			if (!v) {
+				actionNote = tr('error.connector.param_required', { key: labelOf(f.label, lang) });
+				return;
+			}
+		}
 		actionBusy = true;
 		actionNote = '';
 		try {
@@ -465,6 +520,13 @@
 					const v = dotGet(out.body, path);
 					if (typeof v === 'string') pin(key, v);
 					else if (typeof v === 'number') pin(key, String(v));
+				}
+				// SF2-R1 D3: eingegebene Action-Felder sind Session-Pins (z. B.
+				// pcode-Claim — der erste Save bindet den Code, spätere Saves/
+				// results brauchen ihn nicht mehr einzutippen).
+				for (const f of a.fields ?? []) {
+					const v = String(actionValues()[f.key] ?? '').trim();
+					if (v) pin(f.key, v);
 				}
 				marked = [];
 				if (a.goto) go(a.goto);
@@ -538,6 +600,15 @@
 		for (const k of Object.keys(filled)) autofilled[k] = true;
 		acOpen = { ...acOpen, [rule.field]: false };
 	}
+
+	// SF2-R1 D3: Actions mit Eingabefeldern (z. B. pcode-Claim) — Felder
+	// über den Buttons rendern (Template-ausgelagert: Typ-Prädikate sind
+	// im Markup nicht parsebar).
+	const fieldActions = $derived.by(() => {
+		const s = shown;
+		if (!s) return [];
+		return (s.actions ?? []).filter((a) => (a.fields?.length ?? 0) > 0);
+	});
 
 	onDestroy(() => {
 		if (timer) clearInterval(timer);
@@ -681,6 +752,18 @@
 			{/if}
 			{#if (confirmAction || screenActions.length > 0)}
 				<div class="factions">
+					{#each fieldActions as a (a.id)}
+						{#each a.fields ?? [] as f (f.key)}
+							<label class="ffield fafield">
+								<span class="flabel">{labelOf(f.label, lang)}{f.required !== false ? ' *' : ''}</span>
+								<input
+									class="finput"
+									type="text"
+									bind:value={actionInputs[`${a.id}.${f.key}`]}
+								/>
+							</label>
+						{/each}
+					{/each}
 					{#if confirmAction}
 						<button
 							class="fbtn fsubmit"
@@ -767,4 +850,5 @@
 	.fmark.is-marked { border-color: currentColor; font-weight: 700; }
 	.fcheck { font-size: 13px; }
 	.factions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+	.factions .fafield { flex: 0 1 220px; }
 </style>

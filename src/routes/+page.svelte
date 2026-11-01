@@ -63,6 +63,7 @@ function keyActivate(e: KeyboardEvent) {
 		replaceFor,
 		embedFor,
 		saveFlowPin,
+		branchTarget,
 		type ConnectorEntry,
 		type FetchResultDTO
 	} from '../lib/connector';
@@ -3806,7 +3807,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 		return null;
 	});
-	let ownFlowStart = $state<{ flowId: string; screenId: string } | null>(null);
+	let ownFlowStart = $state<{
+		flowId: string;
+		screenId: string;
+		state: Record<string, unknown> | null;
+	} | null>(null);
 
 	/** Suchleisten-Enter im own-Modus: Code → Session öffnen (Flow-Start). */
 	async function startOwnFlow(code: string) {
@@ -3822,7 +3827,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				force: true,
 				params: { [paramKey]: c }
 			});
-			// Session-Pins (code + gemappte Pins wie sid) — pro Connector+Flow,
+			// Session-Pins (code + gemapte Pins wie sid) — pro Connector+Flow,
 			// nicht global; der FlowRenderer lädt sie via loadFlowPins.
 			const mapped = (data.mapped ?? {}) as Record<string, unknown>;
 			saveFlowPin(ownEntry.id, cf.flow.id, paramKey, c);
@@ -3831,12 +3836,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				const v = mapped[k];
 				if (typeof v === 'string') saveFlowPin(ownEntry.id, cf.flow.id, k, v);
 			}
-			ownFlowStart = { flowId: cf.flow.id, screenId: cf.screen.on_submit ?? cf.flow.entry };
+			// SF2-R1 D1/D2: Ziel-Screen deklarativ über die exit-Bedingung des
+			// code-Screens (raffle_done → results: Wiedereinstieg direkt
+			// Gewinne), sonst on_submit. Der gemappte Zustand (max_wishes,
+			// raffle_done, …) wird unverändert in den Flow-Zustand gemergt —
+			// Multi-Limits und Conditions funktionieren im Suchleisten-Pfad.
+			const exitTarget = cf.screen.exit ? branchTarget(cf.screen.exit, mapped) : null;
+			ownFlowStart = {
+				flowId: cf.flow.id,
+				screenId: exitTarget ?? cf.screen.on_submit ?? cf.flow.entry,
+				state: mapped
+			};
 			input = '';
 		} catch {
 			// Fehler sichtbar: Flow am code_entry-Screen öffnen — der Renderer
 			// zeigt den param_required/Fetch-Fehler inline.
-			ownFlowStart = { flowId: cf.flow.id, screenId: cf.flow.entry };
+			ownFlowStart = { flowId: cf.flow.id, screenId: cf.flow.entry, state: null };
 		}
 	}
 	let hangarReplace = $derived(replaceFor(connectors, 'hangar'));
@@ -5277,6 +5292,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					setMode('search');
 				}}
 				initialFlow={ownFlowStart}
+				initialFlowState={ownFlowStart?.state ?? null}
 			/>
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").

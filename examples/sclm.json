@@ -518,6 +518,12 @@
       "code",
       "sid"
      ],
+     "exit": {
+      "on": "raffle_done",
+      "op": "equals",
+      "value": true,
+      "then": "results"
+     },
      "on_submit": "participants"
     },
     {
@@ -636,7 +642,10 @@
      "mapping": {
       "name": "loot[].name",
       "loot_id": "loot[].id",
-      "qty": "loot[].qty"
+      "qty": "loot[].qty",
+      "type": "loot[].type",
+      "grade": "loot[].grade",
+      "size": "loot[].size"
      },
      "multi": {
       "max_path": "max_wishes"
@@ -671,6 +680,15 @@
         "mode": "wish",
         "pcode": "{pcode}"
        },
+       "fields": [
+        {
+         "key": "pcode",
+         "label": {
+          "de": "Dein Claim-Code (erste Bestätigung bindet ihn dauerhaft)",
+          "en": "Your claim code (first confirm binds it permanently)"
+         }
+        }
+       ],
        "goto": "wait"
       }
      ]

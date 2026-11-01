@@ -38,6 +38,8 @@ export type FormViewDTO = {
 export type ParamDTO = {
 	key: string;
 	label: LocalizedText;
+	/** Pflichtfeld (Action-Eingabefelder, SF2-R1 D3). Default: true. */
+	required?: boolean | null;
 };
 
 export type ViewDTO = {
@@ -107,6 +109,8 @@ export type ScreenActionDTO = {
 	body_template?: unknown | null;
 	/** Antwort → Flow-Zustand (`"pcode": "pcode"` pinnt das Antwortfeld). */
 	pins_map?: Record<string, string> | null;
+	/** Eingabefelder der Action (z. B. pcode-Claim beim ersten Wishes-Save). */
+	fields?: ParamDTO[] | null;
 	goto?: string | null;
 };
 

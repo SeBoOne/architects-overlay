@@ -113,6 +113,11 @@ pub struct ScreenAction {
     /// Antwort → Flow-Zustand (`"pcode": "pcode"` pinnt das Antwortfeld
     /// `pcode` unter dem Zustands-Key `pcode`) — z. B. pcode-Claim.
     pub pins_map: Option<BTreeMap<String, String>>,
+    /// Eingabefelder der Action (SF2-R1 D3, generisch): z. B. pcode-Claim
+    /// beim ersten Wishes-Save — der Nutzer tippt seinen Claim-Code, der
+    /// Wert fließt als `{key}`-Binding in Body/Path/Headers. Bereits
+    /// gepinnte Werte werden vorgeseedet (User-Input gewinnt).
+    pub fields: Option<Vec<Param>>,
     /// Ziel-Screen nach der Action (ohne `method`: reine Navigation).
     pub goto: Option<String>,
 }

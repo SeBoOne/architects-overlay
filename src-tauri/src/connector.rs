@@ -1168,6 +1168,7 @@ mod tests {
                         de: "c".into(),
                         en: "c".into(),
                     },
+                    required: None,
                 }]),
                 headers: None,
                 poll_seconds: None,
