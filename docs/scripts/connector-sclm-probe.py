@@ -112,7 +112,8 @@ async def main():
             await call("Page.enable"); await call("Runtime.enable")
             await call("Emulation.setDeviceMetricsOverride",
                        {"width": 1920, "height": 1080, "deviceScaleFactor": 2, "mobile": False})
-            boot = (STUB
+            boot = ("try { localStorage.removeItem('connector.pin.sclm.session_detail'); } catch (e) {}\n"
+                    + STUB
                     + "\nwindow.__STUB_CONNECTORS__ = " + json.dumps([SCLM]) + ";"
                     + "\nwindow.__STUB_CONNECTOR_DATA__ = " + json.dumps(DATA) + ";"
                     + "\nwindow.__STUB_CONNECTOR_FORM_BODY__ = "
