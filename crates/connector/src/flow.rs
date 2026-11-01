@@ -493,6 +493,24 @@ mod tests {
         assert!(autofill(&json!({}), &rule).is_err());
     }
 
+    /// SF3: Leerer Fill-Pfad = „Treffer selbst" — String-Listen-Endpoints
+    /// (SCLM Teilnehmer-/Waren-Suche) füllen so das Eingabefeld direkt.
+    #[test]
+    fn autofill_empty_path_fills_item_itself() {
+        let rule = AutocompleteRule {
+            field: "name".into(),
+            endpoint: "/api/commodities/search".into(),
+            query_param: Some("q".into()),
+            params: None,
+            headers: None,
+            fill: [("name".into(), "".into())].into_iter().collect(),
+        };
+        let filled = autofill(&json!("Titanium"), &rule).unwrap();
+        assert_eq!(filled.get("name"), Some(&json!("Titanium")));
+        // null/leer füllt nicht
+        assert!(autofill(&json!(null), &rule).unwrap().is_empty());
+    }
+
     #[test]
     fn placeholders_resolve_from_bindings_only() {
         let b: BTreeMap<String, String> = [("code".into(), "ABC-1".into())].into_iter().collect();

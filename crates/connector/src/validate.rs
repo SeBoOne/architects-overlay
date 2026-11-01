@@ -164,10 +164,26 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
 /// form-Block, sonst Endpunkte), Autocomplete-Regeln wohlgeformt.
 fn check_flows(m: &ConnectorManifest, report: &mut Report) {
     let mut flow_ids = std::collections::BTreeSet::new();
+    // SF3: Screen-IDs über Flows hinweg beobachten — Duplikate sind mit
+    // `<flow>:<screen>`-Qualifikation im Renderer erlaubt, aber der
+    // unqualifizierte Fallback (erster Treffer) macht sie zur Falle für
+    // externe Manifest-Autoren → Warnung.
+    let mut screen_owners: std::collections::BTreeMap<&str, &str> =
+        std::collections::BTreeMap::new();
     for flow in m.flows.iter().flatten() {
         if !seen_insert(&mut flow_ids, &flow.id) {
             report.error(format!("duplicate flow id '{}'", flow.id));
             continue;
+        }
+        for s in &flow.screens {
+            if let Some(prev) = screen_owners.insert(s.id.as_str(), flow.id.as_str()) {
+                if prev != flow.id.as_str() {
+                    report.warn(format!(
+                        "screen id '{}' reused across flows ('{}' and '{}') — renderer resolves qualified '<flow>:<screen>'",
+                        s.id, prev, flow.id
+                    ));
+                }
+            }
         }
         check_flow(flow, report);
     }
@@ -555,8 +571,14 @@ fn check_autocomplete(
         report.warn(format!("{ctx}: no 'fill' mapping — no auto-fill"));
     }
     for (field, path) in &ac.fill {
-        if field.trim().is_empty() || path.trim().is_empty() {
-            report.error(format!("{ctx}: empty fill field or path"));
+        if field.trim().is_empty() {
+            report.error(format!("{ctx}: empty fill field"));
+        } else if path.trim().is_empty() {
+            // Leerer Pfad ist DEKLARATIV GÜLTIG (SF3): „Treffer selbst" —
+            // Such-Endpoints mit reinen String-Listen (SCLM Teilnehmer-/
+            // Waren-Suche) füllen so das Eingabefeld direkt. dot_path/
+            // autofill (Rust + TS) resolven "" auf das Item selbst. Bewusst
+            // KEINE Warnung: gültiges Idiom.
         }
     }
 }

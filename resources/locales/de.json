@@ -69,6 +69,8 @@
     "connector.flow.code_enter": "Session öffnen",
     "connector.flow.code_entry": "Code eingeben",
     "connector.flow.code_ph": "Code eingeben …",
+    "connector.flow.copy": "Wert kopieren",
+    "connector.flow.copied": "Kopiert",
     "connector.flow.marked": "{n} von {max} markiert",
     "connector.flow.mark_collected": "Als abgeholt markieren",
     "connector.flow.refresh": "Aktualisieren",

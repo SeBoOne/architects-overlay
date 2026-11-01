@@ -819,6 +819,1184 @@
      ]
     }
    ]
+  },
+  {
+   "id": "creator",
+   "title": {
+    "de": "Ersteller",
+    "en": "Creator"
+   },
+   "entry": "create",
+   "screens": [
+    {
+     "id": "create",
+     "type": "form",
+     "title": {
+      "de": "Verlosung erstellen",
+      "en": "Create raffle"
+     },
+     "form": {
+      "fields": [
+       {
+        "key": "name",
+        "label": {
+         "de": "Event-Name",
+         "en": "Event name"
+        },
+        "type": "text",
+        "required": true
+       },
+       {
+        "key": "max_wishes",
+        "label": {
+         "de": "Max. Wünsche (1–10, leer = 3)",
+         "en": "Max wishes (1–10, empty = 3)"
+        },
+        "type": "number"
+       }
+      ],
+      "method": "post",
+      "path": "/api/session/create",
+      "body_template": {
+       "name": "{name}",
+       "max_wishes": "{max_wishes}"
+      }
+     },
+     "mapping": {
+      "sid": "id",
+      "code": "admin_code",
+      "admin_code": "admin_code",
+      "join_code": "join_code"
+     },
+     "pins": [
+      "sid",
+      "code",
+      "admin_code",
+      "join_code"
+     ],
+     "on_submit": "manage"
+    },
+    {
+     "id": "open",
+     "type": "code_entry",
+     "title": {
+      "de": "Session öffnen",
+      "en": "Open session"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Admin-Code",
+        "en": "Admin code"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "sid": "id",
+      "name": "name",
+      "max_wishes": "max_wishes",
+      "locked": "locked",
+      "raffle_done": "raffle_done",
+      "admin_code": "admin_code",
+      "join_code": "join_code"
+     },
+     "pins": [
+      "code",
+      "sid",
+      "admin_code",
+      "join_code"
+     ],
+     "exit": {
+      "on": "raffle_done",
+      "op": "equals",
+      "value": true,
+      "then": "c_results"
+     },
+     "on_submit": "manage"
+    },
+    {
+     "id": "manage",
+     "type": "detail",
+     "title": {
+      "de": "Übersicht",
+      "en": "Overview"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Session-Code",
+        "en": "Session code"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "name": "name",
+      "max_wishes": "max_wishes",
+      "admin_code": "admin_code",
+      "join_code": "join_code",
+      "locked": "locked",
+      "raffle_done": "raffle_done"
+     },
+     "actions": [
+      {
+       "id": "to_participants",
+       "title": {
+        "de": "Teilnehmer",
+        "en": "Participants"
+       },
+       "goto": "c_participants"
+      },
+      {
+       "id": "to_settings",
+       "title": {
+        "de": "Einstellungen",
+        "en": "Settings"
+       },
+       "goto": "settings"
+      },
+      {
+       "id": "to_loot",
+       "title": {
+        "de": "Loot",
+        "en": "Loot"
+       },
+       "goto": "loot"
+      },
+      {
+       "id": "to_commodities",
+       "title": {
+        "de": "Waren",
+        "en": "Commodities"
+       },
+       "goto": "commodities"
+      },
+      {
+       "id": "start_raffle",
+       "title": {
+        "de": "Ziehung starten",
+        "en": "Start raffle"
+       },
+       "method": "post",
+       "path": "/api/session/{sid}/raffle",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Admin-Code",
+          "en": "Admin code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {},
+       "goto": "c_results"
+      }
+     ]
+    },
+    {
+     "id": "settings",
+     "type": "form",
+     "title": {
+      "de": "Einstellungen",
+      "en": "Settings"
+     },
+     "form": {
+      "fields": [
+       {
+        "key": "sid",
+        "label": {
+         "de": "Session-ID",
+         "en": "Session ID"
+        },
+        "type": "text",
+        "required": true
+       },
+       {
+        "key": "code",
+        "label": {
+         "de": "Admin-Code",
+         "en": "Admin code"
+        },
+        "type": "text",
+        "required": true,
+        "header": "X-SCLM-Code"
+       },
+       {
+        "key": "max_wishes",
+        "label": {
+         "de": "Max. Wünsche (1–10)",
+         "en": "Max wishes (1–10)"
+        },
+        "type": "number"
+       }
+      ],
+      "method": "patch",
+      "path": "/api/session/{sid}/settings",
+      "body_template": {
+       "max_wishes": "{max_wishes}"
+      }
+     },
+     "on_submit": "manage"
+    },
+    {
+     "id": "c_participants",
+     "type": "list",
+     "title": {
+      "de": "Teilnehmerliste",
+      "en": "Participants"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Session-Code",
+        "en": "Session code"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "name": "participants[].name",
+      "participant_id": "participants[].id",
+      "pcode": "participants[].pcode"
+     },
+     "pins": [
+      "participant_id"
+     ],
+     "actions": [
+      {
+       "id": "add",
+       "title": {
+        "de": "Teilnehmer hinzufügen",
+        "en": "Add participant"
+       },
+       "goto": "add_participant"
+      },
+      {
+       "id": "wishes",
+       "title": {
+        "de": "Wünsche des gewählten Teilnehmers pflegen",
+        "en": "Edit wishes of selected participant"
+       },
+       "goto": "wishes_for"
+      },
+      {
+       "id": "rename",
+       "title": {
+        "de": "Gewählten Teilnehmer umbenennen",
+        "en": "Rename selected participant"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/participants/{participant_id}",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "participant_id",
+         "label": {
+          "de": "Teilnehmer-ID",
+          "en": "Participant ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "name": "{name}"
+       },
+       "fields": [
+        {
+         "key": "name",
+         "label": {
+          "de": "Neuer Name",
+          "en": "New name"
+         },
+         "required": false
+        }
+       ]
+      },
+      {
+       "id": "remove",
+       "title": {
+        "de": "Gewählten Teilnehmer entfernen",
+        "en": "Remove selected participant"
+       },
+       "method": "delete",
+       "path": "/api/session/{sid}/participants/{participant_id}",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "participant_id",
+         "label": {
+          "de": "Teilnehmer-ID",
+          "en": "Participant ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "add_participant",
+     "type": "form",
+     "title": {
+      "de": "Teilnehmer hinzufügen",
+      "en": "Add participant"
+     },
+     "form": {
+      "fields": [
+       {
+        "key": "sid",
+        "label": {
+         "de": "Session-ID",
+         "en": "Session ID"
+        },
+        "type": "text",
+        "required": true
+       },
+       {
+        "key": "code",
+        "label": {
+         "de": "Admin-Code",
+         "en": "Admin code"
+        },
+        "type": "text",
+        "required": true,
+        "header": "X-SCLM-Code"
+       },
+       {
+        "key": "name",
+        "label": {
+         "de": "Name (Autocomplete über Teilnehmer-Suche)",
+         "en": "Name (autocomplete via participant search)"
+        },
+        "type": "text",
+        "required": true
+       }
+      ],
+      "method": "post",
+      "path": "/api/session/{sid}/participants",
+      "body_template": {
+       "name": "{name}"
+      }
+     },
+     "autocomplete": [
+      {
+       "field": "name",
+       "endpoint": "/api/participants/search",
+       "query_param": "q",
+       "fill": {
+        "name": ""
+       }
+      }
+     ],
+     "on_submit": "c_participants"
+    },
+    {
+     "id": "wishes_for",
+     "type": "list",
+     "title": {
+      "de": "Wünsche (Teilnehmer)",
+      "en": "Wishes (participant)"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Session-Code",
+        "en": "Session code"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "name": "loot[].name",
+      "loot_id": "loot[].id",
+      "qty": "loot[].qty",
+      "type": "loot[].type",
+      "grade": "loot[].grade",
+      "size": "loot[].size",
+      "wish_count": "loot[].wish_count"
+     },
+     "multi": {},
+     "pins": [
+      "loot_id"
+     ],
+     "actions": [
+      {
+       "id": "confirm",
+       "title": {
+        "de": "Wünsche für gewählten Teilnehmer setzen",
+        "en": "Set wishes for selected participant"
+       },
+       "method": "post",
+       "path": "/api/session/{sid}/wishes",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "participant_id": "{participant_id}",
+        "loot_ids": "{loot_id}",
+        "mode": "wish"
+       },
+       "goto": "c_participants"
+      }
+     ]
+    },
+    {
+     "id": "loot",
+     "type": "list",
+     "title": {
+      "de": "Loot",
+      "en": "Loot"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Session-Code",
+        "en": "Session code"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "name": "loot[].name",
+      "loot_id": "loot[].id",
+      "qty": "loot[].qty",
+      "type": "loot[].type",
+      "grade": "loot[].grade",
+      "size": "loot[].size",
+      "wish_count": "loot[].wish_count",
+      "for_sale": "loot[].for_sale",
+      "sale_revenue": "loot[].sale_revenue"
+     },
+     "pins": [
+      "loot_id"
+     ],
+     "actions": [
+      {
+       "id": "add",
+       "title": {
+        "de": "Gegenstand eintragen",
+        "en": "Add item"
+       },
+       "goto": "add_loot"
+      },
+      {
+       "id": "qty",
+       "title": {
+        "de": "Menge des gewählten Gegenstands ändern (Delta)",
+        "en": "Change quantity of selected item (delta)"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/loot/{loot_id}/qty",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "loot_id",
+         "label": {
+          "de": "Loot-ID",
+          "en": "Loot ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "delta": "{delta}"
+       },
+       "fields": [
+        {
+         "key": "delta",
+         "label": {
+          "de": "Delta (z. B. 1 oder -1)",
+          "en": "Delta (e.g. 1 or -1)"
+         }
+        }
+       ]
+      },
+      {
+       "id": "sale_on",
+       "title": {
+        "de": "Gewählten Gegenstand zum Verkauf markieren",
+        "en": "Mark selected item for sale"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/loot/{loot_id}/sale",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "loot_id",
+         "label": {
+          "de": "Loot-ID",
+          "en": "Loot ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "for_sale": true
+       }
+      },
+      {
+       "id": "sale_off",
+       "title": {
+        "de": "Verkauf-Markierung aufheben",
+        "en": "Unmark sale"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/loot/{loot_id}/sale",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "loot_id",
+         "label": {
+          "de": "Loot-ID",
+          "en": "Loot ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "for_sale": false
+       }
+      },
+      {
+       "id": "revenue",
+       "title": {
+        "de": "Verkaufserlös des gewählten Gegenstands setzen",
+        "en": "Set sale revenue of selected item"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/loot/{loot_id}/sale",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "loot_id",
+         "label": {
+          "de": "Loot-ID",
+          "en": "Loot ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "sale_revenue": "{sale_revenue}"
+       },
+       "fields": [
+        {
+         "key": "sale_revenue",
+         "label": {
+          "de": "Erlös",
+          "en": "Revenue"
+         }
+        }
+       ]
+      },
+      {
+       "id": "remove",
+       "title": {
+        "de": "Gewählten Gegenstand entfernen",
+        "en": "Remove selected item"
+       },
+       "method": "delete",
+       "path": "/api/session/{sid}/loot/{loot_id}",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "loot_id",
+         "label": {
+          "de": "Loot-ID",
+          "en": "Loot ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "add_loot",
+     "type": "form",
+     "title": {
+      "de": "Gegenstand eintragen",
+      "en": "Add item"
+     },
+     "form": {
+      "fields": [
+       {
+        "key": "sid",
+        "label": {
+         "de": "Session-ID",
+         "en": "Session ID"
+        },
+        "type": "text",
+        "required": true
+       },
+       {
+        "key": "code",
+        "label": {
+         "de": "Admin-Code",
+         "en": "Admin code"
+        },
+        "type": "text",
+        "required": true,
+        "header": "X-SCLM-Code"
+       },
+       {
+        "key": "name",
+        "label": {
+         "de": "Name (Autocomplete füllt Typ/Grade/Größe — überschreibbar)",
+         "en": "Name (autocomplete fills type/grade/size — overridable)"
+        },
+        "type": "text",
+        "required": true
+       },
+       {
+        "key": "qty",
+        "label": {
+         "de": "Menge (leer = 1)",
+         "en": "Quantity (empty = 1)"
+        },
+        "type": "number"
+       },
+       {
+        "key": "type",
+        "label": {
+         "de": "Typ/Klasse",
+         "en": "Type/class"
+        },
+        "type": "text"
+       },
+       {
+        "key": "grade",
+        "label": {
+         "de": "Grade",
+         "en": "Grade"
+        },
+        "type": "text"
+       },
+       {
+        "key": "size",
+        "label": {
+         "de": "Größe",
+         "en": "Size"
+        },
+        "type": "text"
+       }
+      ],
+      "method": "post",
+      "path": "/api/session/{sid}/loot",
+      "body_template": {
+       "name": "{name}",
+       "qty": "{qty}",
+       "type": "{type}",
+       "grade": "{grade}",
+       "size": "{size}"
+      }
+     },
+     "autocomplete": [
+      {
+       "field": "name",
+       "endpoint": "/api/items/search",
+       "query_param": "q",
+       "fill": {
+        "type": "type",
+        "grade": "grade",
+        "size": "size"
+       }
+      }
+     ],
+     "on_submit": "loot"
+    },
+    {
+     "id": "commodities",
+     "type": "list",
+     "title": {
+      "de": "Waren",
+      "en": "Commodities"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Session-Code",
+        "en": "Session code"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "name": "commodities[].name",
+      "cid": "commodities[].id",
+      "scu": "commodities[].scu"
+     },
+     "pins": [
+      "cid"
+     ],
+     "actions": [
+      {
+       "id": "add",
+       "title": {
+        "de": "Ware eintragen",
+        "en": "Add commodity"
+       },
+       "goto": "add_commodity"
+      },
+      {
+       "id": "scu",
+       "title": {
+        "de": "SCU der gewählten Ware setzen",
+        "en": "Set SCU of selected commodity"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/commodities/{cid}",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "cid",
+         "label": {
+          "de": "Commodity-ID",
+          "en": "Commodity ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "scu": "{scu}"
+       },
+       "fields": [
+        {
+         "key": "scu",
+         "label": {
+          "de": "SCU",
+          "en": "SCU"
+         }
+        }
+       ]
+      },
+      {
+       "id": "remove",
+       "title": {
+        "de": "Gewählte Ware entfernen",
+        "en": "Remove selected commodity"
+       },
+       "method": "delete",
+       "path": "/api/session/{sid}/commodities/{cid}",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "cid",
+         "label": {
+          "de": "Commodity-ID",
+          "en": "Commodity ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       }
+      }
+     ]
+    },
+    {
+     "id": "add_commodity",
+     "type": "form",
+     "title": {
+      "de": "Ware eintragen",
+      "en": "Add commodity"
+     },
+     "form": {
+      "fields": [
+       {
+        "key": "sid",
+        "label": {
+         "de": "Session-ID",
+         "en": "Session ID"
+        },
+        "type": "text",
+        "required": true
+       },
+       {
+        "key": "code",
+        "label": {
+         "de": "Admin-Code",
+         "en": "Admin code"
+        },
+        "type": "text",
+        "required": true,
+        "header": "X-SCLM-Code"
+       },
+       {
+        "key": "name",
+        "label": {
+         "de": "Name (Autocomplete über Waren-Suche)",
+         "en": "Name (autocomplete via commodity search)"
+        },
+        "type": "text",
+        "required": true
+       },
+       {
+        "key": "scu",
+        "label": {
+         "de": "SCU",
+         "en": "SCU"
+        },
+        "type": "number"
+       }
+      ],
+      "method": "post",
+      "path": "/api/session/{sid}/commodities",
+      "body_template": {
+       "name": "{name}",
+       "scu": "{scu}"
+      }
+     },
+     "autocomplete": [
+      {
+       "field": "name",
+       "endpoint": "/api/commodities/search",
+       "query_param": "q",
+       "fill": {
+        "name": ""
+       }
+      }
+     ],
+     "on_submit": "commodities"
+    },
+    {
+     "id": "c_results",
+     "type": "results",
+     "title": {
+      "de": "Ergebnisse",
+      "en": "Results"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Session-Code",
+        "en": "Session code"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "participant": "results[].participant_name",
+      "rid": "results[].id",
+      "participant_id": "results[].participant_id",
+      "won": "results[].won",
+      "waived": "results[].waived",
+      "collected": "results[].collected"
+     },
+     "pins": [
+      "rid",
+      "participant_id"
+     ],
+     "on_select": "result"
+    },
+    {
+     "id": "result",
+     "type": "results",
+     "title": {
+      "de": "Ergebnis",
+      "en": "Result"
+     },
+     "endpoint": "/api/session/{sid}/raffle/result_for/{participant_id}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "Session-Code",
+        "en": "Session code"
+       }
+      },
+      {
+       "key": "participant_id",
+       "label": {
+        "de": "Teilnehmer-ID",
+        "en": "Participant ID"
+       }
+      },
+      {
+       "key": "sid",
+       "label": {
+        "de": "Session-ID",
+        "en": "Session ID"
+       }
+      }
+     ],
+     "headers": {
+      "X-SCLM-Code": "{code}"
+     },
+     "mapping": {
+      "rid": "result.id",
+      "won": "result.won",
+      "waived": "result.waived",
+      "collected": "result.collected"
+     },
+     "actions": [
+      {
+       "id": "collect",
+       "title": {
+        "de": "Als abgeholt markieren",
+        "en": "Mark collected"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/raffle/{rid}",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "rid",
+         "label": {
+          "de": "Ergebnis-ID",
+          "en": "Result ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "collected": true
+       }
+      },
+      {
+       "id": "waive",
+       "title": {
+        "de": "Verzichten",
+        "en": "Waive"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/raffle/{rid}",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "Session-Code",
+          "en": "Session code"
+         }
+        },
+        {
+         "key": "sid",
+         "label": {
+          "de": "Session-ID",
+          "en": "Session ID"
+         }
+        },
+        {
+         "key": "rid",
+         "label": {
+          "de": "Ergebnis-ID",
+          "en": "Result ID"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "waived": true
+       }
+      }
+     ]
+    }
+   ]
   }
  ]
 }
