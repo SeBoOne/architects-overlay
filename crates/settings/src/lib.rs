@@ -929,6 +929,16 @@ impl Settings {
         self.uex_username.as_deref()
     }
 
+    /// Whitelist-Lookup für Connector-`default_source`-Keys (C3): Formular-
+    /// Felder dürfen NICHT beliebige Settings lesen — nur deklarierte,
+    /// nicht-sensible Werte (aktuell: der UEX-Standard-Benutzername).
+    pub fn whitelisted_setting(&self, key: &str) -> Option<String> {
+        match key {
+            "uex_username" => self.uex_username.clone().filter(|v| !v.trim().is_empty()),
+            _ => None,
+        }
+    }
+
     /// Set the UEX username (persist via [`Settings::save`]).
     pub fn set_uex_username(&mut self, name: Option<String>) {
         self.uex_username = name;

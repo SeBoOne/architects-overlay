@@ -382,7 +382,9 @@ pub async fn connector_fetch(
     id: String,
     view_id: String,
     force: bool,
+    params: Option<BTreeMap<String, String>>,
 ) -> Result<FetchResult, String> {
+    let params = params.unwrap_or_default();
     let (manifest, view) = {
         let entries = state.entries.lock().expect("connector entries lock");
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
@@ -398,15 +400,21 @@ pub async fn connector_fetch(
         return Err(err_key("error.connector.form_not_fetchable"));
     }
 
-    // TTL-Cache: fetch nur bei Ablauf oder force (F5/Manual-Button).
+    // TTL-Cache: fetch nur bei Ablauf oder force (F5/Manual-Button). Der
+    // Cache-Schlüssel schließt die Parameter ein — zwei Sessions kollidieren
+    // nicht im Cache.
     let poll_secs = view.poll_seconds.unwrap_or(DEFAULT_POLL_SECONDS).max(1);
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+    let cache_key = (
+        id.clone(),
+        format!("{view_id}?{}", canonical_params(&params)),
+    );
     if !force {
         let cache = state.cache.lock().expect("cache lock");
-        if let Some(c) = cache.get(&(id.clone(), view_id.clone())) {
+        if let Some(c) = cache.get(&cache_key) {
             if now_ms.saturating_sub(c.fetched_at_ms) < poll_secs * 1000 {
                 let mapped = map_view(&view, &c.body)?;
                 return Ok(FetchResult {
@@ -420,48 +428,20 @@ pub async fn connector_fetch(
         }
     }
 
-    // Auth-Header (Header-Auth-Mechanik): Wert aus den Settings, Settings-Key
-    // = Manifest-`value_source`. Fehlender Wert → fetch trotzdem (offene APIs
-    // wie SCLM-Reads), die Antwort entscheidet.
-    let mut req = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?
-        .get(format!(
-            "{}{}",
-            manifest.base_url.trim_end_matches('/'),
-            view.endpoint
-        ));
-    if let Some(auth) = &manifest.auth {
-        if auth.auth_type == connector::AuthType::Header {
-            if let (Some(header), Some(source)) = (&auth.header, &auth.value_source) {
-                let s = settings_state.inner.lock().expect("settings lock");
-                if let Some(v) = s.connector_auth_value(&id, source) {
-                    req = req.header(header.as_str(), v.to_owned());
-                }
-            }
-        }
-    }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
-    let status = resp.status().as_u16();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
-    let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-        err_keyp(
-            "error.connector.invalid_json",
-            json!({ "detail": e.to_string() }),
-        )
-    })?;
+    // HTTP-Core: Endpoint-Platzhalter + Param-Header + Settings-Auth-Header.
+    let (status, body) = fetch_request(
+        &manifest,
+        &view.endpoint,
+        &view.headers.clone().unwrap_or_default(),
+        &params,
+        auth_header_opt(&manifest, &settings_state, &id),
+    )
+    .await?;
     let mapped = map_view(&view, &body)?;
     {
         let mut cache = state.cache.lock().expect("cache lock");
         cache.insert(
-            (id, view_id),
+            cache_key,
             CachedFetch {
                 fetched_at_ms: now_ms,
                 status,
@@ -476,6 +456,24 @@ pub async fn connector_fetch(
         cached: false,
         fetched_at_ms: now_ms,
     })
+}
+
+/// Header-Auth-Header aus den Settings (Wert verlässt das Backend nie bis
+/// zum HTTP-Request) — None, wenn nicht deklariert/nicht gesetzt.
+fn auth_header_opt(
+    manifest: &connector::ConnectorManifest,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+) -> Option<(String, String)> {
+    let auth = manifest.auth.as_ref()?;
+    if auth.auth_type != connector::AuthType::Header {
+        return None;
+    }
+    let header = auth.header.clone()?;
+    let source = auth.value_source.clone()?;
+    let s = settings_state.inner.lock().expect("settings lock");
+    s.connector_auth_value(id, &source)
+        .map(|v| (header, v.to_owned()))
 }
 
 /// Generischer Form-Submit (Formular-View): validiert Pflichtfelder, füllt
@@ -503,7 +501,45 @@ pub async fn connector_form_submit(
         };
         (st.manifest.clone(), f.clone())
     };
-    // Pflichtfelder: leere/fehlende Werte → error_key mit Feld-Key.
+    let (status, resp_body) =
+        form_submit_core(&manifest, &form, values, &settings_state, &id).await?;
+    // Writes invalidieren den Cache des Connectors — die Listen zeigen den
+    // neuen Stand beim nächsten Refresh (Polling/Manual).
+    state.cache.lock().expect("cache lock").clear();
+    Ok(json!({ "status": status, "body": resp_body }))
+}
+
+/// Kern des Form-Submits (tauri-frei, auch für E2E-Tests nutzbar):
+/// Default-Quelle, Pflichtfelder, Pfad-/Body-Fill, Feld-Header, HTTP.
+pub(crate) async fn form_submit_core(
+    manifest: &connector::ConnectorManifest,
+    form: &connector::manifest::FormView,
+    mut values: BTreeMap<String, serde_json::Value>,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+) -> Result<(u16, serde_json::Value), String> {
+    // `default_source`-Felder werden VOR der Pflichtprüfung aus der
+    // Settings-Whitelist gefüllt (z. B. Beitreten mit dem Standard-
+    // Benutzername) — leeres Feld ist also KEIN Fehler, wenn die Quelle
+    // einen Wert hat.
+    for field in &form.fields {
+        if let Some(source) = field.default_source.as_deref().map(str::trim) {
+            let empty = values
+                .get(&field.key)
+                .map(|v| {
+                    v.as_str()
+                        .map(|s| s.trim().is_empty())
+                        .unwrap_or(v.is_null())
+                })
+                .unwrap_or(true);
+            if empty {
+                let s = settings_state.inner.lock().expect("settings lock");
+                if let Some(v) = s.whitelisted_setting(source) {
+                    values.insert(field.key.clone(), serde_json::Value::String(v));
+                }
+            }
+        }
+    }
     for field in &form.fields {
         if field.required {
             let missing = values
@@ -522,24 +558,239 @@ pub async fn connector_form_submit(
             }
         }
     }
-    let fill = |s: &str| -> String {
-        let mut out = s.to_owned();
-        for (k, v) in &values {
-            // JSON-kodiert einsetzen (Strings kommen gequoted, Zahlen nackt).
-            out = out.replace(&format!("{{{k}}}"), &v.to_string());
+    // Pfad: ROHE Werte einsetzen (kein JSON-Quoting — ein Session-Code im
+    // Pfad darf nicht als `"abc"` landen).
+    let path = fill_form_path(&form.path, &values)?;
+    // Body: JSON-bewusst einsetzen — parsebare Werte (true/false/Zahlen/
+    // Listen wie ["id"]) bleiben strukturiert, Text wird gequoted. Werte, die
+    // nicht gefüllt sind, entfernen wir aus dem Objekt (leere optionale
+    // Felder schicken keine `{platzhalter}`-Müll-Strings an die API).
+    let mut body = form.body_template.clone();
+    apply_fill(&mut body, &values);
+    strip_unfilled(&mut body);
+    // Header aus Feldern mit `header`-Deklaration (z. B. Session-Code als
+    // X-SCLM-Code — pro Formular, nicht global).
+    let mut field_headers: Vec<(String, String)> = Vec::new();
+    for field in &form.fields {
+        if let Some(name) = field
+            .header
+            .as_deref()
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+        {
+            if let Some(v) = values.get(&field.key).and_then(|v| v.as_str()) {
+                field_headers.push((name.to_owned(), v.to_owned()));
+            }
         }
-        out
-    };
-    let path = fill(&form.path);
-    let body_text = fill(&form.body_template.to_string());
-    let body: serde_json::Value =
-        serde_json::from_str(&body_text).unwrap_or(form.body_template.clone());
+    }
+    submit_form_request(
+        manifest,
+        form.method,
+        &path,
+        &body,
+        &field_headers,
+        auth_header_opt(manifest, settings_state, id),
+    )
+    .await
+}
+
+/// `{param}`-Platzhalter in einem String auflösen. Fehlt der Wert → Err(key).
+fn fill_params(template: &str, params: &BTreeMap<String, String>) -> Result<String, String> {
+    let mut out = template.to_owned();
+    let mut rest = template;
+    loop {
+        let Some(start) = rest.find('{') else { break };
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('}') else { break };
+        let key = &after[..end];
+        let value = params.get(key).map(|s| s.as_str()).unwrap_or("");
+        if value.is_empty() {
+            return Err(key.to_owned());
+        }
+        out = out.replace(&format!("{{{key}}}"), value);
+        rest = &after[end + 1..];
+    }
+    Ok(out)
+}
+
+/// Erster unaufgelöster `{platzhalter}` (für Pfad-Fills im Formular).
+fn find_unfilled(s: &str) -> Option<String> {
+    let start = s.find('{')?;
+    let after = &s[start + 1..];
+    let end = after.find('}')?;
+    Some(after[..end].to_owned())
+}
+
+/// Stabile Cache-Schlüssel-Ordnung (BTreeMap ist bereits sortiert).
+fn canonical_params(params: &BTreeMap<String, String>) -> String {
+    params
+        .iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// JSON-bewusster Template-Fill: Ein String, der EXAKT aus einem Platzhalter
+/// besteht, ERSETZT den Knoten durch den (ggf. geparsten) Wert — Listen/
+/// Objekte/Booleans/Zahlen bleiben strukturiert. Text mit eingebetteten
+/// Platzhaltern wird serialisiert interpoliert; reiner Text wird gequoted.
+fn apply_fill(target: &mut serde_json::Value, values: &BTreeMap<String, serde_json::Value>) {
+    match target {
+        serde_json::Value::String(s) => {
+            let whole = s.strip_prefix('{').and_then(|r| r.strip_suffix('}'));
+            if let Some(key) = whole {
+                if key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                    if let Some(v) = values.get(key) {
+                        let parsed = match v {
+                            serde_json::Value::String(raw) => {
+                                serde_json::from_str::<serde_json::Value>(raw)
+                                    .unwrap_or(serde_json::Value::String(raw.to_owned()))
+                            }
+                            other => other.clone(),
+                        };
+                        *target = parsed;
+                        return;
+                    }
+                }
+            }
+            let mut out = s.clone();
+            for (k, v) in values {
+                if let Some(raw) = v.as_str() {
+                    let parsed = serde_json::from_str::<serde_json::Value>(raw)
+                        .unwrap_or(serde_json::Value::String(raw.to_owned()));
+                    out = out.replace(&format!("{{{k}}}"), &parsed.to_string());
+                } else {
+                    out = out.replace(&format!("{{{k}}}"), &v.to_string());
+                }
+            }
+            *s = out;
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                apply_fill(item, values);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (_, val) in map.iter_mut() {
+                apply_fill(val, values);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Nicht gefüllte `{platzhalter}`-Werte aus einem gefüllten Body entfernen
+/// (leere optionale Felder schicken keine Müll-Strings an die API). Erst
+/// rekursiv abwärts räumen, DANN auf eigener Ebene reten — sonst fliegt ein
+/// ganzes Unterobjekt raus, obwohl nur EIN Feld darin unaufgelöst war.
+fn strip_unfilled(target: &mut serde_json::Value) {
+    match target {
+        serde_json::Value::Object(map) => {
+            for (_, v) in map.iter_mut() {
+                strip_unfilled(v);
+            }
+            map.retain(|_, v| !string_has_unfilled(v));
+        }
+        serde_json::Value::Array(items) => {
+            for v in items.iter_mut() {
+                strip_unfilled(v);
+            }
+            items.retain(|v| !string_has_unfilled(v));
+        }
+        _ => {}
+    }
+}
+
+fn string_has_unfilled(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::String(s) => {
+            s.contains('{') && s.contains('}') && find_unfilled(s).is_some()
+        }
+        serde_json::Value::Array(items) => items.iter().any(string_has_unfilled),
+        serde_json::Value::Object(map) => map.values().any(string_has_unfilled),
+        _ => false,
+    }
+}
+
+/// Formular-Pfad: ROHE Werte einsetzen (kein JSON-Quoting — ein Session-Code
+/// im Pfad darf nicht als `"abc"` landen). Unaufgelöster Platzhalter → Err.
+fn fill_form_path(
+    path: &str,
+    values: &BTreeMap<String, serde_json::Value>,
+) -> Result<String, String> {
+    let mut out = path.to_owned();
+    for (k, v) in values {
+        out = out.replace(&format!("{{{k}}}"), v.as_str().unwrap_or(&v.to_string()));
+    }
+    if let Some(p) = find_unfilled(&out) {
+        return Err(p);
+    }
+    Ok(out)
+}
+
+/// HTTP-Get-Core des Fetch (getestbar außerhalb Tauri): Endpoint-Platzhalter
+/// + Param-Header + Settings-Auth-Header. Liefert (status, body-json).
+pub(crate) async fn fetch_request(
+    manifest: &connector::ConnectorManifest,
+    endpoint: &str,
+    header_templates: &BTreeMap<String, String>,
+    params: &BTreeMap<String, String>,
+    auth_header: Option<(String, String)>,
+) -> Result<(u16, serde_json::Value), String> {
+    let endpoint = fill_params(endpoint, params)
+        .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
+    let mut req = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?
+        .get(format!(
+            "{}{}",
+            manifest.base_url.trim_end_matches('/'),
+            endpoint
+        ));
+    if let Some((header, value)) = auth_header {
+        req = req.header(header.as_str(), value);
+    }
+    for (name, template) in header_templates {
+        let value = fill_params(template, params)
+            .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
+        req = req.header(name.as_str(), value);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
+    let status = resp.status().as_u16();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
+    let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        err_keyp(
+            "error.connector.invalid_json",
+            json!({ "detail": e.to_string() }),
+        )
+    })?;
+    Ok((status, body))
+}
+
+/// HTTP-Core des Form-Submit (getestbar außerhalb Tauri): Pfad-Fill
+/// (roh), JSON-Body-Fill, Feld-Header + Settings-Auth-Header.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn submit_form_request(
+    manifest: &connector::ConnectorManifest,
+    method: connector::manifest::HttpMethod,
+    path: &str,
+    body: &serde_json::Value,
+    field_headers: &[(String, String)],
+    auth_header: Option<(String, String)>,
+) -> Result<(u16, serde_json::Value), String> {
     let mut req = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?
         .request(
-            match form.method {
+            match method {
                 connector::manifest::HttpMethod::Get => reqwest::Method::GET,
                 connector::manifest::HttpMethod::Post => reqwest::Method::POST,
                 connector::manifest::HttpMethod::Patch => reqwest::Method::PATCH,
@@ -548,18 +799,14 @@ pub async fn connector_form_submit(
             },
             format!("{}{}", manifest.base_url.trim_end_matches('/'), path),
         );
-    if let Some(auth) = &manifest.auth {
-        if auth.auth_type == connector::AuthType::Header {
-            if let (Some(header), Some(source)) = (&auth.header, &auth.value_source) {
-                let s = settings_state.inner.lock().expect("settings lock");
-                if let Some(v) = s.connector_auth_value(&id, source) {
-                    req = req.header(header.as_str(), v.to_owned());
-                }
-            }
-        }
+    if let Some((header, value)) = auth_header {
+        req = req.header(header.as_str(), value);
+    }
+    for (name, value) in field_headers {
+        req = req.header(name.as_str(), value);
     }
     if !matches!(
-        form.method,
+        method,
         connector::manifest::HttpMethod::Get | connector::manifest::HttpMethod::Delete
     ) {
         req = req
@@ -577,10 +824,7 @@ pub async fn connector_form_submit(
         .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
     let resp_body: serde_json::Value =
         serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
-    // Writes invalidieren den Cache des Connectors — die Listen zeigen den
-    // neuen Stand beim nächsten Refresh (Polling/Manual).
-    state.cache.lock().expect("cache lock").clear();
-    Ok(json!({ "status": status, "body": resp_body }))
+    Ok((status, resp_body))
 }
 
 /// Dot-Path-Mapping gemäß Manifest: `mapping`-Feld → Wert pro Zeile
@@ -599,8 +843,19 @@ fn map_view(view: &connector::View, body: &serde_json::Value) -> Result<serde_js
             for (field, path) in &view.mapping {
                 let hits = connector::dot_path(body, path)
                     .map_err(|e| err_keyp("error.connector.mapping", json!({ "detail": e.0 })))?;
-                if let Some(v) = hits.first() {
-                    out.insert(field.clone(), (*v).clone());
+                match hits.len() {
+                    0 => {}
+                    // Mehrere Treffer (z. B. `participants[].name`) → Array
+                    // ins Detail (SCLM: Teilnehmer-/Loot-Listen).
+                    1 => {
+                        out.insert(field.clone(), hits[0].clone());
+                    }
+                    _ => {
+                        out.insert(
+                            field.clone(),
+                            serde_json::Value::Array(hits.into_iter().cloned().collect()),
+                        );
+                    }
                 }
             }
             Ok(serde_json::Value::Object(out))
@@ -651,6 +906,8 @@ mod tests {
                 .collect(),
             poll_seconds: None,
             form: None,
+            params: None,
+            headers: None,
         }
     }
 
@@ -679,8 +936,80 @@ mod tests {
     }
 
     #[test]
+    fn detail_multi_hit_becomes_array() {
+        let v = view(
+            connector::ViewType::Detail,
+            &[("participants", "participants[].name")],
+        );
+        let body = json!({ "participants": [ { "name": "A" }, { "name": "B" } ] });
+        let out = map_view(&v, &body).unwrap();
+        assert_eq!(out["participants"], json!(["A", "B"]));
+    }
+
+    #[test]
     fn parse_and_validate_size_and_errors() {
         assert!(parse_and_validate("{\"x\":1}", false).is_err());
         assert!(parse_and_validate("not json", false).is_err());
+    }
+
+    #[test]
+    fn fill_params_resolves_and_requires_values() {
+        let mut p = BTreeMap::new();
+        p.insert("code".to_owned(), "AB12CD".to_owned());
+        assert_eq!(
+            fill_params("/api/session/{code}", &p).unwrap(),
+            "/api/session/AB12CD"
+        );
+        assert_eq!(fill_params("/plain", &p).unwrap(), "/plain");
+        assert_eq!(
+            fill_params("/api/session/{missing}", &p).unwrap_err(),
+            "missing"
+        );
+    }
+
+    #[test]
+    fn body_fill_keeps_json_structure_and_strips_unfilled() {
+        let mut values = BTreeMap::new();
+        values.insert(
+            "loot_ids".to_owned(),
+            serde_json::Value::String("[\"a1\",\"b2\"]".to_owned()),
+        );
+        values.insert("name".to_owned(), serde_json::Value::String("Sabre".into()));
+        values.insert("qty".to_owned(), serde_json::json!(3));
+        let tpl = json!({
+            "loot_ids": "{loot_ids}",
+            "name": "{name}",
+            "qty": "{qty}",
+            "empty_opt": "{missing}",
+            "nested": { "keep": "{name}", "drop": "{missing}" }
+        });
+        let mut out = tpl;
+        apply_fill(&mut out, &values);
+        strip_unfilled(&mut out);
+        assert_eq!(out["loot_ids"], json!(["a1", "b2"]));
+        assert_eq!(out["name"], json!("Sabre"));
+        assert_eq!(out["qty"], json!(3));
+        assert!(out.get("empty_opt").is_none());
+        assert!(out["nested"].get("drop").is_none());
+        assert_eq!(out["nested"]["keep"], json!("Sabre"));
+    }
+
+    #[test]
+    fn form_path_fill_is_raw_not_json_quoted() {
+        // Form-Pfad-Fill: roher Wert (Regression: `"abc"` im Pfad wäre tot);
+        // unaufgelöster Platzhalter ist ein Fehler.
+        let mut values = BTreeMap::new();
+        values.insert(
+            "sid".to_owned(),
+            serde_json::Value::String("abc123".to_owned()),
+        );
+        assert_eq!(
+            fill_form_path("/api/session/{sid}/raffle", &values).unwrap(),
+            "/api/session/abc123/raffle"
+        );
+        assert_eq!(
+            fill_form_path("/api/session/{rid}", &values).unwrap_err(),
+            "rid"
+        );
     }
 }

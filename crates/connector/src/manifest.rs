@@ -46,6 +46,16 @@ pub enum ViewType {
     Form,
 }
 
+/// Param-Deklaration für Views mit `{param}`-Platzhaltern im Endpoint
+/// (z. B. Session-Detail `GET /api/session/{code}`): Label für die
+/// Code-Eingabe im UI.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Param {
+    pub key: String,
+    pub label: LocalizedText,
+}
+
 /// Ein View im Manifest.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,7 +64,8 @@ pub struct View {
     #[serde(rename = "type")]
     pub view_type: ViewType,
     pub title: LocalizedText,
-    /// API-Endpunkt (relativ zu `base_url`).
+    /// API-Endpunkt (relativ zu `base_url`). Darf `{param}`-Platzhalter
+    /// enthalten — jeder muss in `params` deklariert sein.
     pub endpoint: String,
     /// Feld → Dot-Path in der Antwort (`"data[].ship_name"`).
     #[serde(default)]
@@ -64,6 +75,10 @@ pub struct View {
     pub poll_seconds: Option<u64>,
     /// Nur bei `type: form`: Formular-Deklaration.
     pub form: Option<FormView>,
+    /// Platzhalter-Parameter des Endpoints (Pflicht bei `{param}` darin).
+    pub params: Option<Vec<Param>>,
+    /// Request-Header als `{param}`-Templates (z. B. Session-Code-Auth).
+    pub headers: Option<BTreeMap<String, String>>,
 }
 
 /// Formular-View (durch SCLM getrieben): Eingabefelder + method + path
@@ -103,6 +118,12 @@ pub struct FormField {
     pub required: bool,
     /// Nur bei `type: select`.
     pub options: Option<Vec<LocalizedText>>,
+    /// Optional: zusätzlich als Request-Header senden (Wert des Feldes),
+    /// z. B. ein Session-Code als `X-SCLM-Code`.
+    pub header: Option<String>,
+    /// Optional: Voreinstellung aus einem Settings-Wert (Whitelist),
+    /// wenn das Feld leer bleibt — z. B. Standard-Benutzername.
+    pub default_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
