@@ -24,12 +24,9 @@
 
 set -euo pipefail
 
-# Release-Quelle (S5): öffentlicher GitHub-Mirror (Default).
-# Script-Support erkennt die API-Form am Host (github.com → GitHub-API).
+# Release-Quelle (S5): öffentlicher GitHub-Mirror (exklusiv).
 RELEASE_BASE="${RELEASE_BASE:-https://api.github.com}"
-IS_GITHUB=0
-[[ "$RELEASE_BASE" == *github.com* ]] && IS_GITHUB=1
-REPO_SLUG="${REPO_SLUG:-$( [[ $IS_GITHUB -eq 1 ]] && echo SeBoOne/architects-overlay || echo sebo/architects-overlay )}"
+REPO_SLUG="${REPO_SLUG:-SeBoOne/architects-overlay}"
 
 APP_ID="com.sebo.architects-overlay"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_ID"
@@ -88,12 +85,7 @@ fi
 
 api_get() {
   # $1 = API-Pfad ab der Base (GitHub-Form).
-  local base_path="" 
-  [[ $IS_GITHUB -eq 0 ]] && base_path="api/v1/"
-  local url="$RELEASE_BASE/$base_path$1"
-  local args=(-fsS -H "Accept: application/json")
-  [[ -n "$GITEA_TOKEN" ]] && args+=(-H "Authorization: token $GITEA_TOKEN")
-  curl "${args[@]}" "$url" || return 1
+  curl -fsS -H "Accept: application/json" "$RELEASE_BASE/$1" || return 1
 }
 
 RELEASE_JSON=""
@@ -105,10 +97,8 @@ get_release_json() {
   if [[ -n "$PINNED_VERSION" ]]; then
     local tag="${PINNED_VERSION#v}"
     path="repos/$REPO_SLUG/releases/tags/v$tag"
-  elif [[ $IS_GITHUB -eq 1 ]]; then
-    path="repos/$REPO_SLUG/releases/latest"
   else
-    path="repos/$REPO_SLUG/releases?limit=1"
+    path="repos/$REPO_SLUG/releases/latest"
   fi
   body="$(api_get "$path")" \
     || die "Releases-API nicht erreichbar ($RELEASE_BASE) — Netzverbindung prüfen."
@@ -127,15 +117,12 @@ data = json.load(sys.stdin)
 data = data[0] if isinstance(data, list) else data
 for a in data["assets"]:
     if a["name"] == name:
-        print(a["uuid"]); break
+        print(a["browser_download_url"]); break
 else:
     sys.exit(3)
 ')" || die "Asset '$name' fehlt im Release (oder API-Antwort unlesbar)."
 
-  local args=(-fsSL -o "$out" --connect-timeout 15 --retry 2)
-  [[ -n "$GITEA_TOKEN" ]] && args+=(-H "Authorization: token $GITEA_TOKEN")
-  curl "${args[@]}" "$GITEA_BASE/attachments/$dl_url" \
-    || die "Download des Assets '$name' fehlgeschlagen."
+  curl -fsSL -o "$out" --connect-timeout 15 --retry 2 "$dl_url"
   [[ -s "$out" ]] || die "Download von '$name' ist leer."
 }
 
