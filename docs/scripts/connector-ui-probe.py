@@ -14,7 +14,8 @@ Die echte Svelte-UI läuft unverändert; die IPC-Grenze ist gestubbt. Verifizier
   4. replace: aktivierter Hangar-Connector ersetzt die Hangar-Sektion (Chip),
      Deaktivieren holt die lokale Liste zurück (Zeilen > 0).
   5. embed: Connector-Views erscheinen als Unter-Sektion im Inventar.
-Screenshots: 01-own-table, 02-own-detail, 03-own-form, 04-plugins,
+Screenshots: 01-own-table, 02-own-detail, 03-own-form, 03b-own-calendar
+(Deklariertes Mapping — Review-R1-Regression), 04-plugins,
 05-replace-hangar, 06-embed-inventory.
 """
 import asyncio, base64, json, os, pathlib
@@ -50,7 +51,10 @@ OWN = {
              "endpoint": "/things",
              "form": {"fields": [
                  {"key": "name", "label": {"de": "Name", "en": "Name"}, "type": "text", "required": True}],
-                 "method": "post", "path": "/things", "body_template": {"name": "{name}"}}}
+                 "method": "post", "path": "/things", "body_template": {"name": "{name}"}}},
+            {"id": "events", "type": "calendar", "title": {"de": "Events", "en": "Events"},
+             "endpoint": "/events",
+             "mapping": {"start": "data[].start_at", "title": "data[].title"}}
         ]
     }
 }
@@ -80,6 +84,9 @@ DATA = {
         {"name": "Kraken", "owner": "Sebo"}]},
     "status": {"mapped": {"name": "example-service", "version": "1.2.3"}},
     "create": {"rows": []},
+    "events": {"rows": [
+        {"start": "2026-11-05T18:00:00Z", "title": "Event A"},
+        {"start": "2026-11-09T20:00:00Z", "title": "Event B"}]},
     "fleet": {"rows": [{"name": "Ext-Ship-1"}, {"name": "Ext-Ship-2"}]},
     "boxes": {"rows": [{"name": "Titanium", "count": 12}, {"name": "Agricium", "count": 3}]}
 }
@@ -185,7 +192,7 @@ async def main():
             smode = (await js("document.querySelector('.smode') ? document.querySelector('.smode').innerText : 'NONE'")).strip()
             check("f7-opens-own", "EXAMPLE SERVICE" in smode.upper(), smode)
             tabs = await js("[...document.querySelectorAll('.connector .ctab')].map(e=>e.innerText)")
-            check("own-view-tabs", tabs and len(tabs) == 3, str(tabs))
+            check("own-view-tabs", tabs and len(tabs) == 4, str(tabs))
             rows = int(await js("document.querySelectorAll('.connector .ctable tbody tr').length"))
             check("table-rows", rows == 2, "rows=" + str(rows))
             await shot("01-own-table.png")
@@ -213,6 +220,17 @@ async def main():
             note2 = (await js("document.querySelector('.cform-note') ? document.querySelector('.cform-note').innerText : ''")).strip()
             check("form-submit-ok", "201" in note2 or "Saved" in note2 or "Gespeichert" in note2, note2)
             await shot("03-own-form.png")
+
+            # Kalender-Tab mit deklariertem Mapping (Doku-Variante): Zeilen aus
+            # Mapping-Keys, kein "—" (Regression Review Runde 1)
+            await js("[...document.querySelectorAll('.connector .ctab')].find(b=>b.innerText.trim()==='Events').click()")
+            await asyncio.sleep(0.4)
+            cal_days = await js("[...document.querySelectorAll('.connector .ccal .ccal-day')].map(e=>e.innerText)")
+            cal_titles = await js("[...document.querySelectorAll('.connector .ccal .ccal-title')].map(e=>e.innerText)")
+            check("calendar-rows-rendered", len(cal_days) == 2, str(cal_days))
+            check("calendar-days-not-dash", all(d and d.strip() != "—" for d in cal_days), str(cal_days))
+            check("calendar-titles-mapped", "Event A" in " ".join(cal_titles) and "Event B" in " ".join(cal_titles), str(cal_titles))
+            await shot("03b-own-calendar.png")
 
             # ---- 3) F12 → Plugins-Sektion
             await key("F12"); await asyncio.sleep(0.6)

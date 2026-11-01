@@ -85,7 +85,8 @@
 		formNote = '';
 		res = { data: null, error: '', loading: false };
 		schedulePolling();
-		void load(false);
+		// Der Fetch läuft im $effect (reagiert auf viewId) — hier kein zweiter
+		// Aufruf, sonst Double-Fetch pro Tab-Wechsel.
 	}
 
 	// Polling sparsam (Manifest `poll_seconds`, Default 300 s): der
@@ -285,11 +286,13 @@
 	{:else if view?.type === 'calendar'}
 		<div class="ccal">
 			{#each rows as row, i (i)}
-				{@const day = calendarDay(row?.[view.mapping?.start ?? 'start'])}
+				<!-- Mapping-Keys sind die Feldnamen der gemappten Zeilen (map_view
+					erzeugt `row.insert(key, ...)`) - Kalender-Schema: start/title. -->
+				{@const day = calendarDay(row?.start)}
 				<div class="ccal-row">
 					<span class="ccal-day">{day}</span>
 					<span class="ccal-title"
-						>{formatValue(row?.[view.mapping?.title ?? 'title'])}</span
+						>{formatValue(row?.title)}</span
 					>
 				</div>
 			{:else}
