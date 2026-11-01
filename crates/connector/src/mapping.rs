@@ -27,13 +27,14 @@ pub fn dot_path<'a>(value: &'a Value, path: &str) -> Result<Vec<&'a Value>, DotP
         let mut next = Vec::new();
         for node in current {
             match token {
-                Token::Key(key) => match node {
-                    Value::Object(map) => match map.get(key.as_str()) {
-                        Some(v) => next.push(v),
+                Token::Key(ref key) => match node {
+                    Value::Object(map) => {
+                        if let Some(v) = map.get(key.as_str()) {
+                            next.push(v);
+                        }
                         // Fehlender Schlüssel = fehlendes Feld → leerer Treffer,
                         // kein Fehler (tolerante DTOs, Serde-Null-Regel).
-                        None => {}
-                    },
+                    }
                     Value::Null => {}
                     _ => return Err(DotPathError(format!("expected object at '{key}'"))),
                 },
@@ -44,7 +45,7 @@ pub fn dot_path<'a>(value: &'a Value, path: &str) -> Result<Vec<&'a Value>, DotP
                 },
                 Token::Index(i) => match node {
                     Value::Array(items) => {
-                        if let Some(v) = items.get(*i) {
+                        if let Some(v) = items.get(i) {
                             next.push(v)
                         }
                     }
@@ -127,7 +128,10 @@ mod tests {
     fn plain_key_and_index() {
         let data = json!({"data": [{"n": 1}, {"n": 2}, {"n": 3}]});
         assert_eq!(dot_path(&data, "data[1].n").unwrap()[0], &json!(2));
-        assert_eq!(dot_path(&data, "data").unwrap()[0], data.get("data").unwrap());
+        assert_eq!(
+            dot_path(&data, "data").unwrap()[0],
+            data.get("data").unwrap()
+        );
     }
 
     #[test]

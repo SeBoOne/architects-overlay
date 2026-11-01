@@ -135,6 +135,32 @@ pub enum SyncStrategy {
     Merge,
 }
 
+/// Placement-Konzept (Sebo-Korrektur 2026-11-02): KEIN universeller
+/// „Dienste“-Bereich — jedes Manifest deklariert, WO seine Views erscheinen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementKind {
+    /// Eigener Top-Level-Bereich (wie ein Mode).
+    Own,
+    /// Views ERSETZEN eine bestehende Sektion (lokale Daten bleiben erhalten).
+    Replace,
+    /// Views fügen sich in einen bestehenden Bereich ein (Unter-Sektion/Tab).
+    Embed,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Placement {
+    pub kind: PlacementKind,
+    /// Pflicht bei `own`: Label des Top-Level-Bereichs.
+    pub label: Option<LocalizedText>,
+    /// Nur bei `own`: bekommt einen eigenen konfigurierbaren Mode-Hotkey-Slot.
+    #[serde(default)]
+    pub hotkey_slot: bool,
+    /// Pflicht bei `replace`/`embed`: Ziel-Sektion (z. B. `hangar`, `inventory`).
+    pub target: Option<String>,
+}
+
 /// Root-Manifest.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -146,6 +172,8 @@ pub struct ConnectorManifest {
     /// Muss https:// sein (Validator).
     pub base_url: String,
     pub auth: Option<Auth>,
+    /// WO die Views erscheinen (own | replace | embed).
+    pub placement: Placement,
     pub views: Vec<View>,
     pub sync: Option<Sync>,
 }

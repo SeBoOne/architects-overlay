@@ -5,7 +5,8 @@
 //! **Errors** blockieren Import immer.
 
 use crate::manifest::{
-    Auth, AuthType, ConnectorManifest, FieldType, FormField, HttpMethod, View, ViewType,
+    AuthType, ConnectorManifest, FieldType, FormField, HttpMethod, Placement, PlacementKind, View,
+    ViewType,
 };
 use serde_json::Value;
 
@@ -95,7 +96,8 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
     if !base.starts_with("https://") {
         report.error(format!("base_url must be https:// (got '{base}')"));
     }
-    if base.contains("file://") || base.contains("localhost.invalid") && !base.starts_with("https://")
+    if base.contains("file://")
+        || base.contains("localhost.invalid") && !base.starts_with("https://")
     {
         report.error(format!("file:// or non-https path in base_url: '{base}'"));
     }
@@ -110,7 +112,13 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
     if let Some(auth) = &m.auth {
         match auth.auth_type {
             AuthType::Header => {
-                if auth.header.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                if auth
+                    .header
+                    .as_deref()
+                    .map(str::trim)
+                    .unwrap_or("")
+                    .is_empty()
+                {
                     report.error("auth.type=header requires non-empty 'header' name");
                 }
                 if auth
@@ -131,6 +139,8 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
         }
     }
 
+    check_placement(&m.placement, report);
+
     // Views: eindeutige IDs, Endpunkte https-relativ, form-Regeln
     let mut seen = std::collections::BTreeSet::new();
     for view in &m.views {
@@ -141,38 +151,84 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
     }
 
     if m.views.is_empty() {
-        report.warn("manifest declares no views".into());
+        report.warn("manifest declares no views");
+    }
+}
+
+/// Placement-Regeln (Sebo-Korrektur 2026-11-02): `own` braucht ein Label,
+/// `replace`/`embed` brauchen ein Ziel. `hotkey_slot` ist nur bei `own`
+/// sinnvoll (Warnung sonst). Das Ziel selbst verifiziert C2 gegen die
+/// bekannten Sektionen — hier reicht die Strukturprüfung (generischer Core).
+fn check_placement(p: &Placement, report: &mut Report) {
+    match p.kind {
+        PlacementKind::Own => {
+            if p.label.is_none() {
+                report.error("placement.kind=own requires a 'label' (de/en)");
+            }
+            if p.target.is_some() {
+                report.warn("placement.kind=own ignores 'target'");
+            }
+        }
+        PlacementKind::Replace | PlacementKind::Embed => {
+            let target = p.target.as_deref().map(str::trim).unwrap_or("");
+            if target.is_empty() {
+                report.error(format!(
+                    "placement.kind={} requires a non-empty 'target' section",
+                    if p.kind == PlacementKind::Replace {
+                        "replace"
+                    } else {
+                        "embed"
+                    }
+                ));
+            }
+            if p.label.is_some() {
+                report.warn(format!(
+                    "placement.kind={} ignores 'label'",
+                    if p.kind == PlacementKind::Replace {
+                        "replace"
+                    } else {
+                        "embed"
+                    }
+                ));
+            }
+            if p.hotkey_slot {
+                report.warn("hotkey_slot only applies to placement.kind=own");
+            }
+        }
     }
 }
 
 fn check_view(v: &View, report: &mut Report) {
     let _ = ViewType::Calendar;
-    if v.endpoint.trim().is_empty() {
+    // Formular-Views adressieren über form.path statt endpoint.
+    let target: &str = if v.view_type == ViewType::Form {
+        v.form.as_ref().map(|f| f.path.as_str()).unwrap_or("")
+    } else {
+        v.endpoint.as_str()
+    };
+    if v.view_type != ViewType::Form && target.trim().is_empty() {
         report.error(format!("view '{}': empty endpoint", v.id));
         return;
     }
     // Endpunkte sind relativ zu base_url; absolute URLs und file:// sind Error.
-    if v.endpoint.contains("file://") {
+    if target.contains("file://") {
         report.error(format!("view '{}': file:// not allowed in endpoint", v.id));
     }
-    if v.endpoint.starts_with("http://") {
+    if target.starts_with("http://") {
         report.error(format!(
             "view '{}': http:// not allowed (base_url is https)",
             v.id
         ));
     }
-    if v.endpoint.starts_with("https://") {
+    if target.starts_with("https://") {
         report.warn(format!(
             "view '{}': absolute endpoint overrides base_url — verify deliberately",
             v.id
         ));
     }
-    if let Some(p) = v.poll_seconds {
-        if p == 0 {
-            report.warn(format!("view '{}': poll_seconds=0 — floody polling", v.id));
-        }
+    if v.poll_seconds == Some(0) {
+        report.warn(format!("view '{}': poll_seconds=0 — floody polling", v.id));
     }
-
     if v.view_type == ViewType::Form {
         match &v.form {
             Some(form) => check_form(&v.id, form, report),
@@ -297,6 +353,7 @@ mod tests {
         "name": {"de": "SCLM", "en": "SCLM"},
         "base_url": "https://sclm.site",
         "auth": {"type": "header", "header": "X-SCLM-Code", "value_source": "connector.sclm.code"},
+        "placement": {"kind": "own", "label": {"de": "SCLM", "en": "SCLM"}, "hotkey_slot": true},
         "views": [
             {
                 "id": "sessions", "type": "table",
@@ -355,10 +412,8 @@ mod tests {
 
     #[test]
     fn header_auth_requires_header_and_source() {
-        let no_source = VALID.replace(
-            r#""value_source": "connector.sclm.code""#,
-            "",
-        );
+        // Leere value_source → Error (kein trailing-comma-Artefakt).
+        let no_source = VALID.replace("connector.sclm.code", "");
         let r = validate_manifest(no_source.as_bytes());
         assert!(!r.is_ok());
         assert!(r.errors.iter().any(|e| e.contains("value_source")));
@@ -366,12 +421,20 @@ mod tests {
 
     #[test]
     fn form_view_requires_form_block_and_matching_params() {
-        let missing_form = VALID.replace(r#""form": {"#, r#""form_disabled": {"#);
-        let r = validate_manifest(missing_form.as_bytes());
-        assert!(!r.is_ok());
+        // type=form ohne form-Block: Inline-Manifest statt String-Replace.
+        let m = concat!(
+            r#"{"manifest_version":1,"id":"x","name":{"de":"x","en":"x"},"#,
+            r#""base_url":"https://x.example","placement":{"kind":"own","label":{"de":"x","en":"x"}},"#,
+            r#""views":[{"id":"f","type":"form","title":{"de":"f","en":"f"},"endpoint":""}]}"#
+        );
+        let r = validate_manifest(m.as_bytes());
+        assert!(!r.is_ok(), "{r:?}");
         assert!(r.errors.iter().any(|e| e.contains("missing 'form'")));
 
-        let bad_param = VALID.replace("/api/session/{code}/participants", "/api/session/{kode}/participants");
+        let bad_param = VALID.replace(
+            "/api/session/{code}/participants",
+            "/api/session/{kode}/participants",
+        );
         let r = validate_manifest(bad_param.as_bytes());
         assert!(!r.is_ok());
         assert!(r.errors.iter().any(|e| e.contains("path placeholder")));
@@ -384,6 +447,52 @@ mod tests {
         let r = validate_manifest(abs.as_bytes());
         assert!(r.is_ok());
         assert!(r.warnings.iter().any(|w| w.contains("absolute endpoint")));
+    }
+
+    #[test]
+    fn placement_rules() {
+        // own ohne Label = Error
+        let no_label = VALID.replace(r#""label": {"de": "SCLM", "en": "SCLM"}, "#, "");
+        let r = validate_manifest(no_label.as_bytes());
+        assert!(!r.is_ok(), "{r:?}");
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("own requires a 'label'"))
+        );
+
+        // replace ohne target = Error; mit label = Warnung
+        let replace = VALID.replace(
+            r#""placement": {"kind": "own", "label": {"de": "SCLM", "en": "SCLM"}, "hotkey_slot": true}"#,
+            r#""placement": {"kind": "replace", "target": "", "label": {"de": "x", "en": "x"}, "hotkey_slot": true}"#,
+        );
+        let r = validate_manifest(replace.as_bytes());
+        assert!(!r.is_ok(), "{r:?}");
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("replace requires a non-empty 'target'"))
+        );
+
+        let replace_ok = VALID.replace(
+            r#""placement": {"kind": "own", "label": {"de": "SCLM", "en": "SCLM"}, "hotkey_slot": true}"#,
+            r#""placement": {"kind": "embed", "target": "inventory"}"#,
+        );
+        let r = validate_manifest(replace_ok.as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+
+        // embed mit hotkey_slot = Warnung (ignorierbar)
+        let embed_warn = VALID.replace(
+            r#""placement": {"kind": "own", "label": {"de": "SCLM", "en": "SCLM"}, "hotkey_slot": true}"#,
+            r#""placement": {"kind": "embed", "target": "inventory", "hotkey_slot": true}"#,
+        );
+        let r = validate_manifest(embed_warn.as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        assert!(r.warnings.iter().any(|w| w.contains("hotkey_slot")));
+
+        // placement fehlt komplett = Schema-Error (Pflichtfeld)
+        let missing = VALID.replace(r#""placement": {"kind": "own", "label": {"de": "SCLM", "en": "SCLM"}, "hotkey_slot": true},"#, "");
+        assert!(!validate_manifest(missing.as_bytes()).is_ok());
     }
 
     #[test]
