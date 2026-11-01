@@ -229,6 +229,39 @@ fn check_view(v: &View, report: &mut Report) {
     if v.poll_seconds == Some(0) {
         report.warn(format!("view '{}': poll_seconds=0 — floody polling", v.id));
     }
+    // Endpoint-Platzhalter: jeder `{param}` muss deklariert sein (Error —
+    // sonst bricht der Fetch zur Laufzeit).
+    let param_keys: std::collections::BTreeSet<&str> =
+        v.params.iter().flatten().map(|p| p.key.as_str()).collect();
+    if v.view_type != ViewType::Form {
+        for param in extract_params(&v.endpoint) {
+            if !param_keys.contains(param.as_str()) {
+                report.error(format!(
+                    "view '{}': endpoint placeholder '{{{param}}}' is not declared in 'params'",
+                    v.id
+                ));
+            }
+        }
+        for p in v.params.iter().flatten() {
+            if p.key.trim().is_empty() {
+                report.error(format!("view '{}': param key empty", v.id));
+            }
+        }
+        // Header-Templates: Platzhalter ebenfalls gegen `params` prüfen.
+        for (name, template) in v.headers.iter().flatten() {
+            if name.trim().is_empty() {
+                report.error(format!("view '{}': empty header name", v.id));
+            }
+            for param in extract_params(template) {
+                if !param_keys.contains(param.as_str()) {
+                    report.error(format!(
+                        "view '{}': header template '{{{param}}}' is not declared in 'params'",
+                        v.id
+                    ));
+                }
+            }
+        }
+    }
     if v.view_type == ViewType::Form {
         match &v.form {
             Some(form) => check_form(&v.id, form, report),
@@ -307,6 +340,26 @@ fn check_field(view_id: &str, f: &FormField, report: &mut Report) {
     if f.field_type == FieldType::Select && f.options.as_deref().unwrap_or(&[]).is_empty() {
         report.error(format!(
             "view '{view_id}': select field '{}' has no options",
+            f.key
+        ));
+    }
+    if f.header
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|h| h.is_empty())
+    {
+        report.error(format!(
+            "view '{view_id}': field '{}' declares an empty 'header'",
+            f.key
+        ));
+    }
+    if f.default_source
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|s| s.is_empty())
+    {
+        report.error(format!(
+            "view '{view_id}': field '{}' declares an empty 'default_source'",
             f.key
         ));
     }
@@ -496,10 +549,83 @@ mod tests {
     }
 
     #[test]
+    fn shipped_sclm_manifest_validates() {
+        // Das mitgelieferte SCLM-Pilot-Manifest (C3) muss sauber durch den
+        // Validator laufen — genau so, wie ein Nutzer es importieren würde.
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sclm.json");
+        let text = std::fs::read_to_string(&path).expect("examples/sclm.json exists");
+        let r = validate_manifest(text.as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        assert!(r.warnings.is_empty(), "{r:?}");
+    }
+
+    #[test]
     fn duplicate_view_ids_error() {
         let dup = VALID.replace(r#""id": "join""#, r#""id": "sessions""#);
         let r = validate_manifest(dup.as_bytes());
         assert!(!r.is_ok());
         assert!(r.errors.iter().any(|e| e.contains("duplicate view id")));
+    }
+
+    #[test]
+    fn endpoint_placeholder_requires_declared_param() {
+        // Detail-View mit {code} aber ohne params → Error.
+        let base = VALID.replace(
+            r#""endpoint": "/api/sessions""#,
+            r#""endpoint": "/api/session/{code}", "headers": {"X-SCLM-Code": "{code}"}"#,
+        );
+        let r = validate_manifest(base.as_bytes());
+        assert!(!r.is_ok(), "{r:?}");
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("endpoint placeholder") && e.contains("{code}")),
+            "{r:?}"
+        );
+
+        // Mit deklariertem param ist beides sauber.
+        let declared = base.replace(
+            r#""mapping": {"name": "data[].name"},"#,
+            r#""mapping": {"name": "data[].name"}, "params": [{"key": "code", "label": {"de": "Code", "en": "Code"}}],"#,
+        );
+        let r = validate_manifest(declared.as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+
+        // Header-Template mit undeklariertem Platzhalter → Error.
+        let bad_header = declared.replace(
+            r#""headers": {"X-SCLM-Code": "{code}"}"#,
+            r#""headers": {"X-SCLM-Code": "{kode}"}"#,
+        );
+        let r = validate_manifest(bad_header.as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("header template")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn field_header_and_default_source_empty_are_errors() {
+        let bad_header = VALID.replace(
+            r#"{"key": "name", "label": {"de": "Name", "en": "Name"}, "type": "text", "required": true}"#,
+            r#"{"key": "name", "label": {"de": "Name", "en": "Name"}, "type": "text", "required": true, "header": "  "}"#,
+        );
+        let r = validate_manifest(bad_header.as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("empty 'header'")),
+            "{r:?}"
+        );
+
+        let bad_src = VALID.replace(
+            r#"{"key": "name", "label": {"de": "Name", "en": "Name"}, "type": "text", "required": true}"#,
+            r#"{"key": "name", "label": {"de": "Name", "en": "Name"}, "type": "text", "default_source": ""}"#,
+        );
+        let r = validate_manifest(bad_src.as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("empty 'default_source'")),
+            "{r:?}"
+        );
     }
 }
