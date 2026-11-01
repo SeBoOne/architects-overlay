@@ -32,8 +32,10 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::i18n_err::{err_key, err_keyp};
 use cache::{Cache, CacheError};
 use provider::{DataProvider, EntityKind, ProviderError, SearchHit};
+use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 
 /// Tauri event fired after every background sync sweep run (start or finish)
@@ -46,11 +48,17 @@ pub const SYNC_EVENT: &str = "trade-sync";
 /// (EntityKind::Locations, PS t_c84e545d) and the UEX terminal dataset.
 /// Commodities stay on the UEX id space.
 const GROUPS: &[(&str, &str, &[EntityKind])] = &[
-    ("commodity", "Commodities", &[EntityKind::Commodities]),
-    ("item", "Items", &[EntityKind::Items]),
+    // T2 (t_c5904bcb): label ist ein i18n-KEY — das Frontend übersetzt
+    // via $t(label); Fallback-Kette liefert en bei fehlender Sprache.
+    (
+        "commodity",
+        "search.group_commodities",
+        &[EntityKind::Commodities],
+    ),
+    ("item", "search.group_items", &[EntityKind::Items]),
     (
         "location",
-        "Locations",
+        "search.group_locations",
         &[EntityKind::Locations, EntityKind::Terminals],
     ),
 ];
@@ -168,9 +176,9 @@ impl WriteGate {
             // Nächster freier Slot = ältester Eintrag + Fensterlänge.
             let oldest = recent.iter().min().copied().unwrap_or(now_secs);
             let wait = oldest + self.window_secs - now_secs;
-            return Err(format!(
-                "Rate-Limit: maximal {MAX} Schreibaktionen pro Minute — bitte {wait} s warten.",
-                MAX = self.max_per_window
+            return Err(err_keyp(
+                "error.trade.rate_limit_max",
+                json!({ "max": self.max_per_window, "wait": wait }),
             ));
         }
         Ok(())
@@ -356,7 +364,7 @@ pub fn search(
         let mut hits = state
             .cache
             .search_sourced(entity_kind, sources, query, name_only, PER_GROUP_LIMIT)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?;
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
         // Location-Gruppe (Kriterium 2 / QA-Auflage A): die Standort-ENTITY
         // selbst ist kein eigenes Dataset — `/terminals` liefert nur Terminal-
         // Reihen (EntityKind::Terminals). Damit der Standort-Klick das Aggregat
@@ -367,8 +375,8 @@ pub fn search(
         // Kriterium 1). Ohne diese Zeile wäre `kind='location'` im Frontend
         // toter Code (Reviewer t_9608f33c, Auflage 1).
         if *kind == "location" {
-            hits =
-                with_location_rows(&state.cache, hits).map_err(|e| format!("Cache-Fehler: {e}"))?;
+            hits = with_location_rows(&state.cache, hits)
+                .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
         }
         total += hits.len();
         groups.push(GroupHits {
@@ -600,10 +608,30 @@ fn is_money_terminal(name: &str) -> bool {
 #[tauri::command]
 pub fn math_eval(expr: String) -> Result<String, String> {
     let expr = expr.trim_start_matches('=').trim();
+    // T2 (t_c5904bcb): math-eval bleibt bewusst dependency-frei — die
+    // deutschen Klartext-Fehler werden hier an der Seam auf error_key +
+    // params gemappt; unbekannte Muster fallen als Rohstring durch.
+    fn map_eval_err(e: String) -> String {
+        if let Some(rest) = e.strip_prefix("Unerwartetes Zeichen '") {
+            if let Some(ch) = rest.strip_suffix("'") {
+                return crate::i18n_err::err_keyp(
+                    "calc.err_unexpected_char",
+                    serde_json::json!({ "ch": ch }),
+                );
+            }
+        }
+        match e.as_str() {
+            "Leerer Ausdruck" => crate::i18n_err::err_key("calc.err_empty"),
+            "Ausdruck unvollständig (z. B. Operator am Ende)" => {
+                crate::i18n_err::err_key("calc.err_incomplete")
+            }
+            _ => e,
+        }
+    }
     match math_eval::evaluate(expr) {
         Ok(v) if v.is_finite() => Ok(fmt_number(v)),
-        Ok(_) => Err("Ergebnis ist nicht endlich (Division durch 0?)".to_string()),
-        Err(e) => Err(e),
+        Ok(_) => Err(crate::i18n_err::err_key("calc.err_not_finite")),
+        Err(e) => Err(map_eval_err(e)),
     }
 }
 
@@ -657,8 +685,7 @@ pub async fn get_prices(
             // One terminal's OWN price table (run: prices of THIS terminal,
             // not the shared location chain aggregate). Resolve the display
             // name by id; the provider caches per-terminal (30 min).
-            let terminal_id =
-                id.ok_or_else(|| "Terminal öffnen: fehlende Terminal-ID".to_string())?;
+            let terminal_id = id.ok_or_else(|| err_key("error.trade.terminal_id_missing"))?;
             let name = terminal_name(&state, terminal_id, &commodity).await?;
             let prices = state
                 .provider
@@ -674,8 +701,7 @@ pub async fn get_prices(
             })
         }
         Some("location") => {
-            let terminal_id =
-                id.ok_or_else(|| "Location öffnen: fehlende Terminal-ID".to_string())?;
+            let terminal_id = id.ok_or_else(|| err_key("error.trade.location_id_missing"))?;
             let location = state
                 .provider
                 .location_prices(terminal_id)
@@ -698,7 +724,7 @@ pub async fn get_prices(
             // UEX `/items_prices` table (weapons, armor, MedPens, etc.).
             // Cached with the LONG patch-driven TTL (TTL_ITEM_PRICES — PS
             // t_c84e545d); `force` renews exactly this item live.
-            let item_id = id.ok_or_else(|| "Item öffnen: fehlende Item-ID".to_string())?;
+            let item_id = id.ok_or_else(|| err_key("error.trade.item_id_missing"))?;
             let item_name = item_name(&state, Some(item_id), &commodity).await?;
             let prices = if force {
                 state
@@ -772,7 +798,7 @@ async fn item_name(state: &TradeState, id: Option<u64>, raw: &str) -> Result<Str
     let entities = state
         .cache
         .entities_of(EntityKind::Items)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(entities
         .iter()
         .find(|e| e.id == item_id)
@@ -785,7 +811,7 @@ async fn terminal_name(state: &TradeState, id: u64, raw: &str) -> Result<String,
     let entities = state
         .cache
         .entities_of(EntityKind::Terminals)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(entities
         .iter()
         .find(|e| e.id == id)
@@ -835,13 +861,13 @@ pub async fn refresh_item_prices_now(
     let entities = state
         .cache
         .entities_of(EntityKind::Items)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     for e in entities {
         match state.provider.refresh_item_prices(e.id).await {
             Ok(_) => continue,
             Err(provider::ProviderError::NotFound(_)) => continue,
             Err(provider::ProviderError::RateLimit { .. }) => {
-                return Err("Rate-Limit erreicht — bitte in Kürze erneut versuchen".into());
+                return Err(err_key("error.uex.rate_limit"));
             }
             Err(err) => return Err(friendly(err)),
         }
@@ -849,7 +875,7 @@ pub async fn refresh_item_prices_now(
     state
         .cache
         .price_sync_ages()
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// PS (t_c84e545d): Settings "Commodity-Preise jetzt aktualisieren" — same
@@ -862,7 +888,7 @@ pub async fn refresh_commodity_prices_now(
     state
         .cache
         .price_sync_ages()
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// PS (t_c84e545d): age overview for the two price datatypes (Settings
@@ -872,7 +898,7 @@ pub fn prices_sync_ages(state: State<'_, TradeState>) -> Result<cache::PriceSync
     state
         .cache
         .price_sync_ages()
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// Marketplace offers, filtered client-side (q/location/region/sort) by the
@@ -1147,10 +1173,7 @@ pub async fn send_negotiation_message(
         // `date_closed_client` ≠ 0 bei `date_closed` = 0. Beendet =
         // EINE der beiden Seiten hat abgeschlossen.
         if n.date_closed.is_some() || n.date_closed_client.is_some() {
-            return Err(
-                    "Trade beendet (abgeschlossen bzw. einseitig beendet) — Verhandlungen mit Abschluss-Status sind read-only (nur lesbarer Verlauf)."
-                        .to_string(),
-                );
+            return Err(err_key("error.trade.deal_readonly"));
         }
     }
     let id = state
@@ -1172,7 +1195,7 @@ pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
     let url = marketplace_manager_url().to_string();
     let _ = &app;
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1183,7 +1206,7 @@ pub fn open_marketplace_trades_home(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/marketplace/manage/tab/home/";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1194,7 +1217,7 @@ pub fn open_uex_api_apps(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/api/apps";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1205,7 +1228,7 @@ pub fn open_uex_trade_log(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/trade/home";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1215,7 +1238,7 @@ pub fn open_uex_account(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/account";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1249,7 +1272,7 @@ pub fn open_marketplace_listing(app: AppHandle, slug: String) -> Result<String, 
     // not from user/remote input). Opens in the system default browser.
     let _ = &app; // AppHandle kept for signature symmetry with sibling commands
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1273,12 +1296,12 @@ fn listing_deep_link(slug: &str) -> String {
 pub fn open_negotiation_deal(app: AppHandle, hash: String) -> Result<String, String> {
     let hash = hash.trim().to_string();
     if hash.is_empty() {
-        return Err("Kein Deal-Hash vorhanden — Deal kann nicht geöffnet werden.".into());
+        return Err(err_key("error.trade.no_deal_hash"));
     }
     let url = format!("https://uexcorp.space/marketplace/negotiate/hash/{hash}");
     let _ = &app; // AppHandle kept for signature symmetry with sibling commands
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1291,10 +1314,10 @@ pub fn open_negotiation_deal(app: AppHandle, hash: String) -> Result<String, Str
 pub fn open_created_listing(_app: AppHandle, url: String) -> Result<String, String> {
     let url = url.trim().to_string();
     if !url.starts_with("https://uexcorp.space/") {
-        return Err("Nur uexcorp.space-Links werden geöffnet.".into());
+        return Err(err_key("error.trade.uex_links_only"));
     }
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1355,7 +1378,7 @@ pub fn pending_offers_remove(state: State<'_, TradeState>, id: u64) -> Result<()
     state
         .cache
         .pending_offers_remove(id)
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// Tauri-Command: Anlegen (M2b). Validierung der Pflichtfelder liegt im
@@ -1399,7 +1422,7 @@ pub async fn trade_add(
     state
         .cache
         .own_trades_invalidate()
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(id)
 }
 
@@ -1423,7 +1446,7 @@ pub async fn trade_edit(
     state
         .cache
         .own_trades_invalidate()
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(id)
 }
 
@@ -1438,7 +1461,7 @@ pub async fn trade_remove(state: State<'_, TradeState>, id: u64) -> Result<(), S
     state
         .cache
         .own_trades_invalidate()
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(())
 }
 
@@ -1485,7 +1508,7 @@ pub fn item_suggest(
     let entities = state
         .cache
         .entities_of(EntityKind::Items)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     let mut starts: Vec<provider::ItemSuggestion> = Vec::new();
     let mut contains: Vec<provider::ItemSuggestion> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -1535,12 +1558,12 @@ fn entity_suggest(
         state
             .cache
             .entities_of_sourced(kind, Some(cache::SOURCE_UEX))
-            .map_err(|e| format!("Cache-Fehler: {e}"))?
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?
     } else {
         state
             .cache
             .entities_of(kind)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?
     };
     let mut starts: Vec<provider::ItemSuggestion> = Vec::new();
     let mut contains: Vec<provider::ItemSuggestion> = Vec::new();
@@ -1609,7 +1632,7 @@ pub fn trade_location_suggest(
     let rows = state
         .cache
         .trade_locations_for_commodity(id_commodity, &operation, &query)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     if rows.is_empty() {
         return entity_suggest(&state, EntityKind::Terminals, query);
     }
@@ -1646,7 +1669,7 @@ pub fn trade_commodity_suggest(
     let rows = state
         .cache
         .trade_commodities_for_terminal(id_terminal, &operation, &query)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     // Q1: Fallback + ZUSAMMENFÜHRUNG — der volle Commodity-Suggest bleibt
     // immer Teil der Liste (priorisiert: ort-gefilterte Treffer zuerst).
     let full = entity_suggest(&state, EntityKind::Commodities, query)?;
@@ -1809,13 +1832,13 @@ async fn refresh_commodity_price_tables(
 ) -> Result<usize, String> {
     let entities = cache
         .entities_of(EntityKind::Commodities)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     let uex = composite.uex();
     let mut renewed = 0;
     for e in entities {
         let fresh = cache
             .prices_fresh(e.id)
-            .map_err(|err| format!("Cache-Fehler: {err}"))?;
+            .map_err(|err| err_keyp("error.uex.cache", json!({ "msg": err.to_string() })))?;
         if fresh {
             continue;
         }
@@ -1864,7 +1887,7 @@ async fn sweep(
         for entity_kind in *entity_kinds {
             let fresh = cache
                 .is_fresh(*entity_kind)
-                .map_err(|e| format!("Cache-Fehler: {e}"))?;
+                .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
             if fresh {
                 continue;
             }
@@ -1880,11 +1903,11 @@ async fn sweep(
             if *entity_kind == EntityKind::Locations {
                 cache
                     .delete_entities_sourced(EntityKind::Locations, cache::SOURCE_WIKI)
-                    .map_err(|e| format!("Cache-Fehler: {e}"))?;
+                    .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
             }
             cache
                 .store_entities_sourced(*entity_kind, cache::SOURCE_UEX, &entities)
-                .map_err(|e| format!("Cache-Fehler: {e}"))?;
+                .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
             log::info!("sync: {label} stored ({} entries)", entities.len());
         }
     }
@@ -1897,7 +1920,7 @@ async fn sweep(
             .map_err(friendly)?;
         cache
             .store_entities(EntityKind::Commodities, &entities)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?;
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     }
     Ok(())
 }
@@ -1976,51 +1999,54 @@ fn build_status(
     }
 }
 
-/// Map a seam error to a German, user-facing message (design contract).
+/// Map a seam error to an error_key+params JSON message (T2 t_c5904bcb:
+/// the frontend translates; the fallback chain resolves en, then raw key).
 pub(crate) fn friendly(e: ProviderError) -> String {
+    // T2 (t_c5904bcb): Fehler als error_key + params — das Frontend
+    // übersetzt via trError (Fallback-Kette gewählt → en → raw Key).
+    use crate::i18n_err::{err_key, err_keyp};
     match e {
         ProviderError::RateLimit { retry_after } => match retry_after {
-            Some(secs) => format!("HTTP 429 · Rate-Limit (Retry in {secs} s)"),
-            None => "HTTP 429 · Rate-Limit erreicht".to_string(),
+            Some(secs) => err_keyp("error.uex.rate_limit_retry", json!({ "secs": secs })),
+            None => err_key("error.uex.rate_limit"),
         },
         ProviderError::Http { status, body }
             if (status == 400 || status == 403)
                 && (body.contains("user_not_found") || body.contains("invalid_secret_key")) =>
         {
             // M2a-Fix (t_2f197d1c): UEX-Auth-Codes der User-scoped Reads —
-            // deutscher Hinweis statt Rohfehler-Status/Text.
-            "Secret-Key fehlt oder ist falsch — siehe Einstellungen („UEX persönlicher Secret-Key“)."
-                .to_string()
+            // übersetzbarer Hinweis statt Rohfehler-Status/Text.
+            err_key("error.uex.secret_invalid")
         }
         // R1 (t_9caac387): Delete-spezifische Doku-Codes von
-        // DELETE /user_trades_remove — deutsch, Code bleibt sichtbar.
-        // `"missing_id"` in Anführungszeichen, damit `missing_id_category`
-        // (Trades-Add) NICHT in diesen Arm läuft.
+        // DELETE /user_trades_remove — Key + Doku-Code-Text, Code bleibt
+        // im Schlüsseltext sichtbar. `"missing_id"` in Anführungszeichen,
+        // damit `missing_id_category` (Trades-Add) NICHT in diesen Arm läuft.
         ProviderError::Http { status, body }
             if (status == 400 || status == 403) && body.contains("\"trade_not_found\"") =>
         {
-            "Der Trade existiert nicht (trade_not_found) — vermutlich bereits gelöscht oder fremde ID."
-                .to_string()
+            err_key("error.uex.trade_not_found")
         }
         ProviderError::Http { status, body }
             if (status == 400 || status == 403) && body.contains("\"missing_secret_key\"") =>
         {
-            "Secret-Key fehlt — siehe Einstellungen („UEX persönlicher Secret-Key“).".to_string()
+            err_key("error.uex.secret_missing")
         }
         ProviderError::Http { status, body }
             if (status == 400 || status == 403) && body.contains("\"missing_id\"") =>
         {
-            "Trade-ID fehlt (missing_id).".to_string()
+            err_key("error.uex.missing_id")
         }
         ProviderError::Http { status, .. } => {
-            format!("HTTP {status} · UEX nicht erreichbar")
+            err_keyp("error.uex.http", json!({ "status": status }))
         }
-        ProviderError::Timeout => "Zeitüberschreitung · UEX nicht erreichbar".to_string(),
-        ProviderError::NotFound(what) => format!("Nicht gefunden: {what}"),
-        ProviderError::Cache(msg) => format!("Cache-Fehler: {msg}"),
-        ProviderError::Config(msg) => format!("Konfigurationsfehler: {msg}"),
-        ProviderError::Json(msg) => format!("Ungültige Antwort: {msg}"),
-        ProviderError::Unsupported(msg) => format!("Nicht unterstützt: {msg}"),
+        ProviderError::Timeout => err_key("error.uex.timeout"),
+        ProviderError::NotFound(what) => err_keyp("error.uex.not_found", json!({ "what": what })),
+        ProviderError::Cache(msg) => err_keyp("error.uex.cache", json!({ "msg": msg })),
+        ProviderError::Keyed { key, params } => err_keyp(&key, params),
+        ProviderError::Config(msg) => err_keyp("error.uex.config", json!({ "msg": msg })),
+        ProviderError::Json(msg) => err_keyp("error.uex.bad_response", json!({ "msg": msg })),
+        ProviderError::Unsupported(msg) => err_keyp("error.uex.unsupported", json!({ "msg": msg })),
         _ => e.to_string(),
     }
 }
@@ -2066,35 +2092,41 @@ mod tests {
     // bleibt sichtbar; `missing_id_category` darf NICHT als `missing_id`
     // durchgehen.
     #[test]
-    fn friendly_maps_delete_doku_codes_to_german() {
+    fn friendly_maps_delete_doku_codes_to_keys() {
+        // T2 (t_c5904bcb): Doku-Codes kommen als error_key + params an; der
+        // Code bleibt im Schlüsseltext sichtbar (Key-Text nennt ihn).
         let err = |body: &str| ProviderError::Http {
             status: 400,
             body: body.to_string(),
         };
+        let key_of = |s: String| {
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            v["error_key"].as_str().unwrap().to_string()
+        };
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"trade_not_found","http_code":400,"data":null}"#
-            )),
-            "Der Trade existiert nicht (trade_not_found) — vermutlich bereits gelöscht oder fremde ID."
+            ))),
+            "error.uex.trade_not_found"
         );
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"missing_secret_key","http_code":400,"data":null}"#
-            )),
-            "Secret-Key fehlt — siehe Einstellungen („UEX persönlicher Secret-Key“)."
+            ))),
+            "error.uex.secret_missing"
         );
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"missing_id","http_code":400,"data":null}"#
-            )),
-            "Trade-ID fehlt (missing_id)."
+            ))),
+            "error.uex.missing_id"
         );
         // Kein Fehl-Mapping: missing_id_category (Trades-Add) bleibt generisch.
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"missing_id_category","http_code":400,"data":[]}"#
-            )),
-            "HTTP 400 · UEX nicht erreichbar"
+            ))),
+            "error.uex.http"
         );
     }
 
@@ -2122,20 +2154,25 @@ mod tests {
     }
 
     #[test]
-    fn friendly_rate_limit_is_german_and_actionable() {
-        assert_eq!(
-            friendly(ProviderError::RateLimit {
-                retry_after: Some(34)
-            }),
-            "HTTP 429 · Rate-Limit (Retry in 34 s)"
+    fn friendly_rate_limit_is_a_key_with_params() {
+        // T2 (t_c5904bcb): Rate-Limit kommt als Key + {secs}-Param an.
+        let s = friendly(ProviderError::RateLimit {
+            retry_after: Some(34),
+        });
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["error_key"], "error.uex.rate_limit_retry");
+        assert_eq!(v["params"]["secs"], 34);
+        assert!(
+            friendly(ProviderError::Timeout).contains("error.uex.timeout"),
+            "timeout maps to a key"
         );
-        assert!(friendly(ProviderError::Timeout).contains("UEX"));
         assert!(
             friendly(ProviderError::Http {
                 status: 500,
                 body: "x".into()
             })
-            .contains("500")
+            .contains("500"),
+            "http status rides as a param"
         );
     }
 
@@ -2153,24 +2190,29 @@ mod tests {
             body: "invalid_secret_key".into(),
         });
         for m in [&msg_400, &msg_403] {
-            assert!(
-                m.contains("Secret-Key fehlt oder ist falsch") && m.contains("Einstellungen"),
-                "unexpected friendly(): {m}"
-            );
-            assert!(!m.contains("HTTP"), "raw status leaked: {m}");
+            // T2: key-JSON statt deutschem Klartext.
+            let v: serde_json::Value = serde_json::from_str(m).unwrap();
+            assert_eq!(v["error_key"], "error.uex.secret_invalid", "got {m}");
         }
         // Andere 400/403 ohne Auth-Code bleiben beim bisherigen Mapping.
         let plain = friendly(ProviderError::Http {
             status: 403,
             body: "forbidden".into(),
         });
-        assert!(plain.contains("HTTP 403"));
+        // T2: Key-JSON mit Status-Param.
+        let pv: serde_json::Value = serde_json::from_str(&plain).unwrap();
+        assert_eq!(pv["error_key"], "error.uex.http", "got {plain}");
+        assert_eq!(pv["params"]["status"], 403);
         // UEX kapselt die Codes auch als envelope.status (body == status).
         let enveloped = friendly(ProviderError::Http {
             status: 400,
             body: "{\"status\":\"user_not_found\"}".into(),
         });
-        assert!(enveloped.contains("Secret-Key fehlt oder ist falsch"));
+        let ev: serde_json::Value = serde_json::from_str(&enveloped).unwrap();
+        assert_eq!(
+            ev["error_key"], "error.uex.secret_invalid",
+            "got {enveloped}"
+        );
     }
 
     /// The grouped search contract: three groups in a fixed order, per-group
@@ -2178,9 +2220,9 @@ mod tests {
     /// terminal dataset.
     #[test]
     fn group_contract_is_stable() {
-        assert_eq!(GROUPS[0].1, "Commodities");
-        assert_eq!(GROUPS[1].1, "Items");
-        assert_eq!(GROUPS[2].1, "Locations");
+        assert_eq!(GROUPS[0].1, "search.group_commodities");
+        assert_eq!(GROUPS[1].1, "search.group_items");
+        assert_eq!(GROUPS[2].1, "search.group_locations");
         // The location group serves BOTH datasets: wiki locations (rich
         // hierarchy) first, then the UEX terminal dataset.
         assert_eq!(GROUPS[2].2, &[EntityKind::Locations, EntityKind::Terminals]);
@@ -2699,7 +2741,9 @@ mod tests {
         let err = get_marketplace(state.clone(), provider::MarketplaceFilter::default())
             .await
             .unwrap_err();
-        assert!(err.contains("Zeitüberschreitung"), "got {err}");
+        // T2: key-JSON mit Timeout-Key.
+        let v: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(v["error_key"], "error.uex.timeout", "got {err}");
 
         // with a snapshot → offline fallback with note
         state
@@ -3477,7 +3521,9 @@ mod tests {
         let err = send_negotiation_message(state.clone(), 12847, "a3f7c91d".into(), "429".into())
             .await
             .unwrap_err();
-        assert_eq!(err, "HTTP 429 · Rate-Limit erreicht");
+        // T2: key-JSON statt Klartext.
+        let v: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(v["error_key"], "error.uex.rate_limit", "got {err}");
         let _ = app;
     }
 
@@ -3530,7 +3576,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.contains("read-only"),
+            err.contains("error.trade.deal_readonly"),
             "Closed-Deal-Write muss als read-only abgelehnt werden, kam: {err}"
         );
         // Offene Verhandlung (nicht im Snapshot) fällt durch → Provider OK.
@@ -3590,7 +3636,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.contains("read-only") && err.contains("einseitig beendet"),
+            err.contains("error.trade.deal_readonly"),
             "einseitig beendeter Deal muss als read-only abgelehnt werden, kam: {err}"
         );
         let _ = app;
@@ -3695,11 +3741,9 @@ mod tests {
         gate.record_write(now + 1);
         // Dritter Write im selben Fenster → abgelehnt, mit Wartezeit-Meldung.
         let err = gate.try_acquire(now + 5).unwrap_err();
-        assert!(
-            err.contains("Rate-Limit") && err.contains("warten"),
-            "{err}"
-        );
-        assert!(err.contains("Schreibaktionen"), "{err}");
+        assert!(err.contains("error.trade.rate_limit_max"), "{err}");
+        // Keyed-JSON: key + max/wait-Params vorhanden.
+        assert!(err.contains("\"max\"") && err.contains("\"wait\""), "{err}");
         // Nach Ablauf des Fensters (ältester Eintrag + window) wieder frei.
         assert!(gate.try_acquire(now + 61).is_ok());
     }
@@ -3730,7 +3774,10 @@ mod tests {
         gate.record_write(now);
         let err = gate.try_acquire(now + 5).unwrap_err();
         // nächster freier Slot = ältester (now) + window (60) - now(5) = 55s.
-        assert!(err.contains("55 s"), "{err}");
+        assert!(
+            err.contains("\"wait\":55") || err.contains("\"wait\": 55"),
+            "{err}"
+        );
     }
 
     /// Write-Provider-Stub: advertise liefert ein festes Offer, delete Ok —
@@ -3838,7 +3885,7 @@ mod tests {
             "rate-limit-Gate muss den 3. Write blockieren"
         );
         let msg = third.unwrap_err();
-        assert!(msg.contains("Rate-Limit"), "{msg}");
+        assert!(msg.contains("error.trade.rate_limit_max"), "{msg}");
         let _ = app;
     }
 

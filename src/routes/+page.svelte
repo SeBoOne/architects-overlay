@@ -73,7 +73,14 @@ function keyActivate(e: KeyboardEvent) {
 	import { suggestShips, isSnubShip, SHIP_CATALOG } from '../lib/hangar_ships';
 	// T1 (t_530e5f59): i18n — reaktiver t()-Store, Built-ins statisch,
 	// lokale (Community-)Dateien via locale_import/locale_list.
-	import { t, importLocaleFromText, initI18n, localeList, setLanguage, trError } from '../lib/i18n';
+	import {  t, importLocaleFromText, initI18n, localeList, setLanguage, trError, tr } from '../lib/i18n';
+import { get } from 'svelte/store';
+
+/** T2 (t_c5904bcb): Rust-Fehler (key-JSON oder Klartext) UI-tauglich
+ *  übersetzen — zentraler Display-Pfad für alle Catch-Sites. */
+function errText(e: unknown): string {
+	return trError(e);
+}
 
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
@@ -245,7 +252,7 @@ type SearchHit = { id: string; name: string; kind: string; subtitle: string; cod
 	type MessageSendResponse = { id_message: number };
 
 	const OVERLAY_STATE_EVENT = 'overlay-state-changed';
-	// Tray "Config öffnen" → Backend-Event (siehe overlay::TRAY_OPEN_CONFIG_EVENT).
+	// Tray tr('common.open_config') → Backend-Event (siehe overlay::TRAY_OPEN_CONFIG_EVENT).
 	const overlayTrayOpenConfig = 'tray-open-config';
 	const SYNC_EVENT = 'trade-sync';
 	const M_PAGE = 15; // Min. 15 Offers pro Seite (statt 1)
@@ -359,24 +366,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const r = await invoke<string>('modul_compat_refresh');
 			modulNote =
 				r === 'synced'
-					? 'Modul-Zuweisungen aktualisiert (module-overrides.json).'
-					: 'Aktualisierung läuft bereits.';
+					? tr('settings.modules_updated_note')
+					: tr('settings.update_already_running');
 			await modulLoadStatus();
 		} catch (e) {
-			modulNote = String(e);
+			modulNote = errText(e);
 		} finally {
 			modulBusy = false;
 		}
 	}
 	function modulAgeText(): string {
 		const s = modulStatus?.age_seconds;
-		if (s == null) return 'Alter unbekannt';
-		if (s < 120) return `vor ${s} s`;
+		if (s == null) return tr('common.age_unknown');
+		if (s < 120) return tr('rel.sec_ago', { n: s });
 		const m = Math.round(s / 60);
-		if (m < 120) return `vor ${m} min`;
+		if (m < 120) return tr('rel.min_ago', { n: m });
 		const h = Math.round(m / 60);
-		if (h < 48) return `vor ${h} h`;
-		return `vor ${Math.round(h / 24)} Tagen`;
+		if (h < 48) return tr('rel.hour_ago', { n: h });
+		return tr('rel.day_ago', { n: Math.round(h / 24) });
 	}
 	// K6 (t_9b385831, P2): kurze Confirm-Zeile im Config-View nach Aktionen
 	// (Preisquelle umstellen) — analog K3 Notif-Timeout: verschwindet nach 3 s
@@ -401,9 +408,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		priceSyncing = true;
 		try {
 			priceSyncAge = await invoke<NonNullable<typeof priceSyncAge>>('refresh_commodity_prices_now');
-			cfgConfirm('Commodity-Preise aktualisiert.');
+			cfgConfirm(tr('settings.prices_commodity_ok'));
 		} catch (e) {
-			cfgConfirm(`Commodity-Preise: ${String(e)}`);
+			cfgConfirm(tr('settings.prices_commodity_err', { err: errText(e) }));
 		}
 		priceSyncing = false;
 	}
@@ -412,9 +419,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		priceSyncing = true;
 		try {
 			priceSyncAge = await invoke<NonNullable<typeof priceSyncAge>>('refresh_item_prices_now');
-			cfgConfirm('Item-Preise aktualisiert.');
+			cfgConfirm(tr('settings.prices_item_ok'));
 		} catch (e) {
-			cfgConfirm(`Item-Preise: ${String(e)}`);
+			cfgConfirm(tr('settings.prices_item_err', { err: errText(e) }));
 		}
 		priceSyncing = false;
 	}
@@ -440,20 +447,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let scNote = $state('');
 	let scNoteFor = $state<ShortcutField | null>(null);
 
-	const MOD_LABELS: Record<string, string> = { Ctrl: 'STRG', Alt: 'ALT', Shift: 'UMSCHALT', Super: 'WIN' };
-	const KEY_LABELS: Record<string, string> = {
-		Space: 'LEERTASTE', Enter: 'ENTER', Tab: 'TAB', ArrowUp: '↑', ArrowDown: '↓',
-		ArrowLeft: '←', ArrowRight: '→', PageUp: 'BILD HOC', PageDown: 'BILD RUN',
-		Backspace: 'BACKSPACE', Delete: 'ENTF', Home: 'POS1', End: 'ENDE', Insert: 'EINFG',
-		PrintScreen: 'DRUCK', ScrollLock: 'ROLLEN', CapsLock: 'FESTSTELL', Pause: 'PAUSE',
-		Backquote: '`', Backslash: '\\', BracketLeft: '[', BracketRight: ']', Comma: ',',
-		Equal: '=', Minus: '-', Period: '.', Quote: "'", Semicolon: ';', Slash: '/',
-	};
+	// T2 (t_c5904bcb): Tasten-/Modifikator-Labels über i18n-Keys (keyboard.mod.* /
+	// keyboard.key.*) — Fallback-Kette greift, technische Tokens (Punctuation)
+	// bleiben wie gehabt (tok.toUpperCase()).
 	function canonicalToLabel(canonical: string): string {
 		if (!canonical) return '—';
+		const tFn = get(t);
 		return canonical
 			.split('+')
-			.map((tok) => MOD_LABELS[tok] ?? KEY_LABELS[tok] ?? tok.toUpperCase())
+			.map((tok) => {
+				const key = `keyboard.mod.${tok.toLowerCase()}`;
+				if (tFn(key) !== key) return tFn(key);
+				const kkey = `keyboard.key.${tok.toLowerCase()}`;
+				if (tFn(kkey) !== kkey) return tFn(kkey);
+				return tok.toUpperCase();
+			})
 			.join('+');
 	}
 	// Browser-Event-Code → kanonischer Taste-Token (Backend-Parser akzeptiert
@@ -500,7 +508,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const token = codeToToken(e.code);
 		if (!token) {
 			scNoteFor = field;
-			scNote = `Taste ${e.key} nicht unterstützt — Buchstabe, Ziffer, F1–F24 oder Sonderzeichen der Haupttastatur nutzen.`;
+			scNote = tr('settings.key_unsupported', { key: e.key });
 			return;
 		}
 		const mods: string[] = [];
@@ -510,7 +518,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (e.metaKey) mods.push('Super');
 		if (!mods.length) {
 			scNoteFor = field;
-			scNote = 'Zuerst eine Mod-Taste (Strg/Alt/Shift/Win) halten, dann die normale Taste.';
+			scNote = tr('settings.hotkey_needs_mod');
 			return;
 		}
 		// kanonische Mod-Reihenfolge Ctrl→Alt→Shift→Super = Backend-Kanonik
@@ -528,7 +536,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			scPreview = '';
 			scNote = '';
 			scNoteFor = null;
-			cfgConfirm(`Tastenkürzel übernommen: ${canonicalToLabel(applied ?? '')} — gilt ab sofort.`);
+			cfgConfirm(tr('settings.shortcut_applied', { k: canonicalToLabel(applied ?? '') }));
 			scheduleSyncNoteRefresh();
 		} catch (err) {
 			// Nichts persistiert, OS-Registration unverändert (Backend hat den
@@ -555,9 +563,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Validierung Backend-seitig (nur F1–F12, F5 reserviert Resync,
 	// Doppelbelegung abgelehnt), Snapshot kommt inkl. sync_note zurück.
 	const modeHotkeyFields: { id: ModeHotkeyField; label: string }[] = [
-		{ id: 'hangar', label: 'Hangar' },
-		{ id: 'routes', label: 'Handelsrouten' },
-		{ id: 'inventory', label: 'Inventar' }
+		{ id: 'hangar', label: 'nav.hangar' },
+		{ id: 'routes', label: 'nav.routes_full' },
+		{ id: 'inventory', label: 'nav.inventory' }
 	];
 	let hkCapture: ModeHotkeyField | null = $state(null);
 	let hkNote = $state('');
@@ -577,7 +585,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const applied = cfg?.mode_hotkeys?.[field] ?? '';
 			hkCapture = null;
 			hkNote = '';
-			cfgConfirm(`Mode-Hotkey übernommen: ${applied} — gilt ab sofort.`);
+			cfgConfirm(tr('settings.mode_hotkey_applied', { k: applied }));
 		} catch (err) {
 			hkNote = String(err);
 			hkCapture = null;
@@ -589,12 +597,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			applySettings(cfg);
 			hkCapture = null;
 			hkNote = '';
-			cfgConfirm('Mode-Hotkeys auf Standard-Belegung zurückgesetzt.');
+			cfgConfirm(tr('settings.hotkeys_reset'));
 		} catch (err) {
 			hkNote = String(err);
 		}
 	}
-	// C2b: Consent-Chip "Tastenkürzel mit System (Omarchy) synchronisieren".
+	// C2b: Consent-Chip tr('settings.sync_shortcuts_system').
 	// Erstanlass persistiert die Zustimmung; erst ab true führt die App die
 	// zwei arch-overlay-Binds im OmaSettings-Store (Backup vor erstem
 	// Schreibvorgang, Verifikation per hyprctl binds + Lua-Check im Backend).
@@ -604,16 +612,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_shortcuts_sync', { on });
 			applySettings(cfg);
 			cfgConfirm(cfg.sync_note || (on
-				? 'Compositor-Sync aktiv — Kürzel ändern jetzt auch die Hyprland-Binds.'
-				: 'Compositor-Sync deaktiviert.'));
+				? tr('settings.compositor_sync_on')
+				: tr('settings.compositor_sync_off')));
 		scheduleSyncNoteRefresh();
 		} catch (err) {
-			cfgConfirm(`Compositor-Sync: ${String(err)}`);
+			cfgConfirm(tr('settings.compositor_sync_err', { msg: trError(err) }));
 		}
 	}
 	let shortcutFields = $derived([
-		{ id: 'toggle' as ShortcutField, label: 'Overlay-Toggle', fallback: 'Ctrl+Shift+U', value: cfg?.shortcut_toggle },
-		{ id: 'click' as ShortcutField, label: 'Click-through', fallback: 'Ctrl+Shift+O', value: cfg?.shortcut_click_through },
+		{ id: 'toggle' as ShortcutField, label: 'settings.shortcut_toggle', fallback: 'Ctrl+Shift+U', value: cfg?.shortcut_toggle },
+		{ id: 'click' as ShortcutField, label: 'settings.shortcut_click', fallback: 'Ctrl+Shift+O', value: cfg?.shortcut_click_through },
 		// Ohne Backend (SSR/Probe): die kanonischen Defaults anzeigen.
 	].map((f) => ({ ...f, display: canonicalToLabel(f.value || f.fallback) })));
 
@@ -742,7 +750,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			hangarItems = await invoke<HangarItem[]>('hangar_list');
 			hangarLoaded = true;
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -786,13 +794,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// R2 (Punkt 5): Versicherung als Select/Autocomplete statt Freitext.
 	const INSURANCE_CHOICES = [
-		{ value: '', label: 'Ohne' },
-		{ value: '3 Monate', label: '3 Monate' },
-		{ value: '6 Monate', label: '6 Monate' },
-		{ value: '12 Monate', label: '12 Monate' },
-		{ value: '24 Monate', label: '24 Monate' },
-		{ value: '120 Monate', label: '120 Monate' },
-		{ value: 'LTI', label: 'LTI' }
+		{ value: '', label: 'common.none' },
+		{ value: '3 Monate', label: 'hangar.ins_3m' },
+		{ value: '6 Monate', label: 'hangar.ins_6m' },
+		{ value: '12 Monate', label: 'hangar.ins_12m' },
+		{ value: '24 Monate', label: 'hangar.ins_24m' },
+		{ value: '120 Monate', label: 'hangar.ins_120m' },
+		{ value: 'LTI', label: 'hangar.ins_lti' }
 	];
 
 	async function hangarImportFile(format: 'xplorer' | 'ccugame', file: File) {
@@ -801,10 +809,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const text = await file.text();
 			const res = await invoke<HangarImportResult>('hangar_import', { format, text });
-			hangarNoteSet(`Import (${res.format}): ${res.imported} neu · ${res.updated} aktualisiert · ${res.skipped} übersprungen`);
+			hangarNoteSet(tr('hangar.import_result', { format: res.format, added: res.imported, updated: res.updated, skipped: res.skipped }));
 			await loadHangar(true);
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -831,9 +839,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			a.download = 'architects-overlay-hangar.json';
 			a.click();
 			URL.revokeObjectURL(a.href);
-			hangarNoteSet('Export: architects-overlay-hangar.json');
+			hangarNoteSet(`${tr('hangar.export')}: architects-overlay-hangar.json`);
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -956,7 +964,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	const hangarBaseOpen = $derived(hangarForm.entity_type === 'module' || isSnubShip(hangarForm.name));
 	function hangarBaseSuggest() {
 		// Base-Ship-Autocomplete from the ALREADY REGISTERED Hangar entries
-		// (Card: "Autocomplete from those already entered in the Hangar").
+		// (Card: tr('hangar.autocomplete_note')).
 		// Review-Fix (R2-D2): Wert = MODELLNAME (s.name) — hangarModulesOf
 		// matcht base_ship gegen i.name; Display-Namen nur als Suchtext.
 		const q = hangarForm.base_ship.trim().toLowerCase();
@@ -987,7 +995,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		hangarNameSuggest().map((s) => ({
 			value: s.name,
 			label: s.manufacturer ? `${s.name} · ${s.manufacturer}` : s.name,
-			badge: s.concept ? 'Konzept' : undefined
+			badge: s.concept ? $t('hangar.concept_badge') : undefined
 		}))
 	);
 	const hangarBaseOpts = $derived(
@@ -1081,17 +1089,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Listing-/Trade-Formulare) — erst Zusammenfassung, dann Write.
 	function requestHangarSave() {
 		if (!hangarForm.name.trim()) {
-			hangarNoteSet('Name fehlt');
+			hangarNoteSet(tr('hangar.err_name_missing'));
 			return;
 		}
 		// TB (t_78a4a5e5, Punkt 1): Typ/Herkunft starten leer — Pflichtwahl
 		// erst beim Speichern (Meldung statt Vorauswahl im Formular).
 		if (!hangarForm.entity_type) {
-			hangarNoteSet('Bitte einen Typ wählen.');
+			hangarNoteSet(tr('hangar.err_choose_type'));
 			return;
 		}
 		if (!hangarForm.origin) {
-			hangarNoteSet('Bitte eine Herkunft wählen.');
+			hangarNoteSet(tr('hangar.err_choose_origin'));
 			return;
 		}
 		hangarConfirm = { kind: 'save' };
@@ -1102,7 +1110,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		hangarNoteSet('');
 		try {
 			const name = hangarForm.name.trim();
-			if (!name) throw new Error('Name fehlt');
+			if (!name) throw new Error(tr('hangar.err_name_missing'));
 			const item: HangarItem = {
 				...hangarForm,
 				name,
@@ -1115,10 +1123,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			let msg;
 			if (item.id != null) {
 				await invoke<HangarItem>('hangar_update', { item });
-				msg = `Aktualisiert: ${name}`;
+				msg = tr('hangar.updated_named', { name });
 			} else {
 				const saved = await invoke<HangarItem>('hangar_add', { item });
-				msg = `Angelegt: ${hangarDisplayName(saved)}`;
+				msg = tr('hangar.created_named', { name: hangarDisplayName(saved) });
 			}
 			hangarFormOpen = false;
 			hangarEdit = false;
@@ -1132,7 +1140,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			hangarNoteSet(msg);
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1145,13 +1153,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await invoke('hangar_delete', { id: item.id });
 			hangarConfirm = null;
 			await loadHangar(true);
-			hangarNoteSet(`Gelöscht: ${hangarDisplayName(item)}`);
+			hangarNoteSet(tr('hangar.deleted_named', { name: hangarDisplayName(item) }));
 			// TC (t_f269f5b7): Löschung erfolgte aus dem Detail-Popup — Popup
 			// schließt sich, Liste dahinter aktualisiert sich via loadHangar.
 			hangarDetail = null;
 			hangarWikiMods = null;
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1165,7 +1173,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const modName = hangarModPick.trim();
 		if (!ship || !modName) return;
 		if (!hangarModOrigin) {
-			hangarNoteSet('Bitte die Herkunft des Moduls wählen.');
+			hangarNoteSet(tr('hangar.err_choose_module_origin'));
 			return;
 		}
 		hangarBusy = true;
@@ -1187,9 +1195,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await loadHangar(true);
 			const fresh = hangarItems.find((i) => i.id === ship.id);
 			if (fresh) hangarDetail = fresh;
-			hangarNoteSet(`Modul hinzugefügt: ${modName}`);
+			hangarNoteSet(tr('hangar.module_added', { name: modName }));
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1206,9 +1214,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				const fresh = hangarItems.find((i) => i.id === hangarDetail!.id);
 				if (fresh) hangarDetail = fresh;
 			}
-			hangarNoteSet(`Modul entfernt: ${hangarDisplayName(m)}`);
+			hangarNoteSet(tr('hangar.module_removed', { name: hangarDisplayName(m) }));
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1228,9 +1236,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// das zugeordnete Modul verschwindet aus der Liste (verlinkt).
 			hangarDetail = null;
 			hangarWikiMods = null;
-			hangarNoteSet(`Zugeordnet: ${hangarDisplayName(m)} → ${base}`);
+			hangarNoteSet(tr('hangar.assigned_named', { name: hangarDisplayName(m), base }));
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1337,7 +1345,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			upStatus = await invoke<UpdaterStatus>('updater_check_now');
 		} catch (e) {
-			upStatus = upStatus ? { ...upStatus, note: String(e) } : upStatus;
+			upStatus = upStatus ? { ...upStatus, note: errText(e) } : upStatus;
 		}
 		upBusy = false;
 	}
@@ -1351,7 +1359,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// den Neustart-Hinweis — die Antwort ist Best-Effort-Status.
 			upStatus = await invoke<UpdaterStatus>('updater_install');
 		} catch (e) {
-			upStatus = upStatus ? { ...upStatus, note: String(e) } : upStatus;
+			upStatus = upStatus ? { ...upStatus, note: errText(e) } : upStatus;
 		}
 		upBusy = false;
 	}
@@ -1424,7 +1432,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_palette', { name });
 			applySettings(cfg);
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1433,7 +1441,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_detail_variant', { name });
 			applySettings(cfg);
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1485,7 +1493,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_scale', { pct });
 			applySettings(cfg);
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 			if (typeof document !== 'undefined')
 				document.documentElement.style.setProperty(
 					'--ui-scale', String(pct / 100));
@@ -1498,9 +1506,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_uex_api_key', { key });
 			apiKeyInput = '';
-			apiKeyNote = 'API-Key gespeichert (lokal, 0600).';
+			apiKeyNote = tr('settings.apikey_saved');
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1508,9 +1516,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_uex_api_key', { key: null });
 			apiKeyInput = '';
-			apiKeyNote = 'API-Key entfernt.';
+			apiKeyNote = tr('settings.apikey_removed');
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1522,12 +1530,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key });
 			secretKeyInput = '';
-			secretKeyNote = 'Secret-Key gespeichert — wird NIE im Klartext angezeigt.';
+			secretKeyNote = tr('settings.secret_saved');
 			// PW-1: Username wird jetzt automatisch aus dem Secret-Key ermittelt.
 			usernameNote = '';
 			void resolveUsername();
 		} catch (e) {
-			secretKeyNote = String(e);
+			secretKeyNote = errText(e);
 		}
 	}
 
@@ -1535,9 +1543,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key: null });
 			secretKeyInput = '';
-			secretKeyNote = 'Secret-Key entfernt.';
+			secretKeyNote = tr('settings.secretkey_removed');
 		} catch (e) {
-			secretKeyNote = String(e);
+			secretKeyNote = errText(e);
 		}
 	}
 
@@ -1549,7 +1557,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke(cmd);
 		} catch (e) {
-			secretKeyNote = String(e);
+			secretKeyNote = errText(e);
 		}
 	}
 
@@ -1559,11 +1567,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_resolve_uex_username');
 			if (!bg) {
 				usernameNote = cfg?.uex_username?.trim()
-					? `UEX-Username automatisch ermittelt: ${cfg.uex_username.trim()}`
+					? tr('settings.username_detected', { user: cfg.uex_username.trim() })
 					: '';
 			}
 		} catch (e) {
-			usernameNote = `Username konnte nicht ermittelt werden: ${String(e)}`;
+			usernameNote = tr('settings.username_detect_failed', { msg: trError(e) });
 		}
 	}
 
@@ -1575,10 +1583,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_marketplace_confirm', { mode });
 			mktConfirmNote = mode === 'every_action'
-				? 'Jede schreibende Aktion wird bestätigt (Default).'
-				: 'Nur beim ABMELDEN wird bestätigt — Anlegen läuft direkt.';
+				? tr('settings.confirm_mode_every')
+				: tr('settings.confirm_mode_unlist');
 		} catch (e) {
-			mktConfirmNote = String(e);
+			mktConfirmNote = errText(e);
 		}
 	}
 
@@ -1668,8 +1676,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Meldung", nicht „0 SCU" — deshalb Klartext statt eines Strichs.
 	function stockTxt(p: PricePoint, kind: 'buy' | 'sell'): string {
 		const n = Math.round(kind === 'buy' ? p.buy_stock : p.sell_stock);
-		if (kind === 'buy') return n > 0 ? `Bestand ${fmt(n)} SCU` : 'kein Bestand gemeldet';
-		return n > 0 ? `Nachfrage ${fmt(n)} SCU` : 'keine Nachfrage gemeldet';
+		if (kind === 'buy') return n > 0 ? tr('market.stock_scu', { n: fmt(n) }) : tr('market.no_stock_reported');
+		return n > 0 ? tr('market.demand_scu', { n: fmt(n) }) : tr('market.no_demand_reported');
 	}
 
 	// ---- Market-State (Phase 2) --------------------------------------------
@@ -1846,7 +1854,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await resolveUsername(true);
 			shopLoading = false;
 			if (!shopUser.trim()) {
-				shopNote = 'Username noch nicht ermittelt — Secret-Key in den Einstellungen (F12) prüfen.';
+				shopNote = tr('settings.username_missing');
 				myOffers = [];
 				return;
 			}
@@ -1893,7 +1901,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// entfernt den Eintrag, sobald UEX das Listing listet.
 			if (!myOffers.length && !shopPending.length && !shopNote) {
 				shopNote =
-					'Keine eigenen aktiven Listings. Wartet ein Listing auf Freigabe, liefert die UEX-API es erst NACH der Freigabe (Endpoint listet nur aktive Ads) — es erscheint dann automatisch hier.';
+					tr('shop.no_active_listings');
 			}
 		} else {
 			myOffers = [];
@@ -1955,7 +1963,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (cfg && !cfg.uex_secret_key_set) {
 			tradesLoading = false;
 			tradesErr = null;
-			tradesNote = 'Für den Trades-Reiter braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).';
+			tradesNote = tr('trades.need_secret_note');
 			myNegotiations = [];
 			return;
 		}
@@ -1967,7 +1975,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			myNegotiations = r.negotiations;
 			if (r.note) tradesNote = r.note;
 		} catch (e) {
-			tradesErr = String(e);
+			tradesErr = errText(e);
 		}
 		tradesLoading = false;
 	}
@@ -1985,7 +1993,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			chatMsgs = r.messages;
 			if (r.note) chatErr = r.note;
 		} catch (e) {
-			chatErr = String(e);
+			chatErr = errText(e);
 		}
 		chatLoading = false;
 		// Verlauf ans Ende scrollen (neueste unten).
@@ -2066,7 +2074,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			trkLoading = false;
 			trkErr = null;
 			trkNote =
-				'Für den Trade Log braucht UEX deinen persönlichen Secret-Key (Einstellungen → „UEX persönlicher Secret-Key“).';
+				tr('trades.trade_log_need_secret');
 			myTrades = [];
 			trkLoaded = true;
 			return;
@@ -2081,7 +2089,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			myTrades = r.trades as unknown as UTrade[];
 			if (r.note) trkNote = r.note;
 		} catch (e) {
-			trkErr = String(e);
+			trkErr = errText(e);
 		}
 		trkLoading = false;
 		trkLoaded = true;
@@ -2178,12 +2186,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	function trkValidate(): string | null {
-		if (!trkForm.commodity_id) return 'Ware wählen (Tippen für Vorschläge).';
-		if (!trkForm.terminal_id) return 'Ort/Terminal wählen (Tippen für Vorschläge).';
+		if (!trkForm.commodity_id) return tr('trades.choose_commodity');
+		if (!trkForm.terminal_id) return tr('trades.choose_location');
 		const scu = Math.round(Number(trkForm.scu));
-		if (!Number.isFinite(scu) || scu <= 0) return 'Menge (SCU) muss eine positive Ganzzahl sein.';
+		if (!Number.isFinite(scu) || scu <= 0) return tr('trades.err_qty_positive');
 		const price = Number(trkForm.price);
-		if (!Number.isFinite(price) || price <= 0) return 'Preis muss positiv sein.';
+		if (!Number.isFinite(price) || price <= 0) return tr('trades.err_price_positive');
 		return null;
 	}
 
@@ -2220,11 +2228,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			else await invoke('trade_add', { payload });
 			trkOpen = false;
 			trkEditId = null;
-			trkMsg = wasEdit ? 'Trade aktualisiert.' : 'Trade erfasst.';
+			trkMsg = wasEdit ? tr('trades.updated_note') : tr('trades.created_note');
 			await loadTrk(true, true);
 		} catch (e) {
 			// Kein Retry (M2b-Philosophie): Meldung + Deep-Link-Button.
-			trkMsg = String(e);
+			trkMsg = errText(e);
 		}
 		trkBusy = false;
 	}
@@ -2238,10 +2246,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		trkMsg = null;
 		try {
 			await invoke('trade_remove', { id });
-			trkMsg = 'Trade gelöscht.';
+			trkMsg = tr('trades.deleted_note');
 			await loadTrk(true, true);
 		} catch (e) {
-			trkMsg = String(e);
+			trkMsg = errText(e);
 		}
 		trkBusy = false;
 	}
@@ -2252,7 +2260,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke('open_uex_trade_log');
 		} catch (e) {
-			trkMsg = String(e);
+			trkMsg = errText(e);
 		}
 	}
 
@@ -2286,7 +2294,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// ODER einseitig — date_closed XOR date_closed_client) → kein Senden
 		// (UI-Gate; das Backend lehnt den Write zusätzlich ab).
 		if (tradesDeal.date_closed || tradesDeal.date_closed_client) {
-			chatErr = 'Trade abgeschlossen — Verlauf nur lesbar.';
+			chatErr = tr('trades.readonly_note');
 			return;
 		}
 		const text = chatDraft.trim();
@@ -2306,7 +2314,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} catch (e) {
 			// KEIN Retry — Meldung + Deep-Link (429/403-Pfad wie bei den
 			// anderen Writes). chatErr rendert den Button im Chat-Pane.
-			chatErr = String(e);
+			chatErr = errText(e);
 		}
 		chatBusy = false;
 	}
@@ -2335,7 +2343,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_marketplace_listing', { slug: n.listing_slug });
 		} catch (e) {
-			tradesErr = what + ' · ' + String(e);
+			tradesErr = what + ' · ' + errText(e);
 		}
 	}
 
@@ -2346,7 +2354,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_negotiation_deal', { hash: n.hash });
 		} catch (e) {
-			tradesErr = String(e);
+			tradesErr = errText(e);
 		}
 	}
 
@@ -2375,10 +2383,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// marketplace_listings kein eigenes Status-Feld): ohne Ende → „aktiv",
 	// Zukunft → „läuft ab", Vergangenheit → „abgelaufen".
 	function shopStatus(o: Offer): string {
-		if (!o.approved) return 'wartet auf Freigabe';
-		if (!o.expires) return 'aktiv';
-		if (o.expires <= Math.floor(Date.now() / 1000)) return 'abgelaufen';
-		return 'läuft ab ' + new Date(o.expires * 1000).toLocaleDateString('de-DE');
+		if (!o.approved) return tr('shop.status_pending');
+		if (!o.expires) return tr('shop.status_active');
+		if (o.expires <= Math.floor(Date.now() / 1000)) return tr('shop.status_expired');
+		return tr('shop.status_expires_on', { date: new Date(o.expires * 1000).toLocaleDateString('de-DE') });
 	}
 	// QZ (t_ab10109f): Filter „Aktiv/Wartend" entfernt — UEX kann wartende
 	// Listings nicht per API liefern; Wartende kommen jetzt lokal (shopPending)
@@ -2391,9 +2399,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function dealStatus(n: Negotiation): string {
 		if (n.date_closed) {
 			const dv = n.deal_value ? ' · ' + fmtPrice(n.deal_value) + ' ' + (n.deal_value_currency || n.currency || '') : '';
-			return 'abgeschlossen' + dv;
+			return tr('trades.status_closed') + dv;
 		}
-		return 'in Verhandlung · seit ' + new Date((n.date_added || 0) * 1000).toLocaleDateString('de-DE');
+		return tr('shop.deal_status_open', { date: new Date((n.date_added || 0) * 1000).toLocaleDateString('de-DE') });
 	}
 	// Rolle des eigenen Accounts in diesem Deal (m-op-Anzeige).
 	function dealRole(n: Negotiation): 'sell' | 'buy' {
@@ -2405,7 +2413,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// Systembrowser via tauri-plugin-opener, nichts Schreibendes.
 			await invoke<string>('open_marketplace_listing', { slug: slug ?? '' });
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	async function openMyShopDeepLink() {
@@ -2416,7 +2424,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// Login macht er selbst im Browser.
 			await invoke<string>('open_marketplace_trades');
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	// QZ (t_ab10109f): Trades-Reiter → „Trades verwalten“ öffnet den Manager-
@@ -2425,7 +2433,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_marketplace_trades_home');
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	// QZ (t_ab10109f): lokalen pending-Eintrag entfernen (Nutzer-Aktion).
@@ -2434,7 +2442,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await invoke('pending_offers_remove', { id });
 			shopPending = shopPending.filter((p) => p.id !== id);
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	// M2b-Review-Fix (t_6e26ec82 R2): öffnet den Permalink eines frisch
@@ -2448,7 +2456,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				await invoke<string>('open_marketplace_listing', { slug: '' });
 			}
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 
@@ -2624,11 +2632,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (!files || !files.length) return;
 		const file = files[0];
 		if (!/^image\/(jpeg|png)$/.test(file.type)) {
-			advertNote = 'Nur JPG/PNG-Bilder sind erlaubt (UEX-Limit).';
+			advertNote = tr('shop.err_image_type');
 			return;
 		}
 		if (file.size > 10 * 1024 * 1024) {
-			advertNote = 'Bild „' + file.name + '“ ist größer als 10 MB (UEX-Limit).';
+			advertNote = tr('shop.img_too_big', { name: file.name });
 			return;
 		}
 		const reader = new FileReader();
@@ -2734,40 +2742,40 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function validateAdvertise(f: AdvertiseForm): AdvertErrors {
 		const errs: AdvertErrors = {};
 		// NN (t_060d134e): geleertes Listing-Type-Dropdown → Pflicht-Hinweis.
-		if (!f.listing_type) errs.listing_type = 'Listing Type ist Pflicht.';
-		if (!f.title.trim()) errs.title = 'Titel ist Pflicht.';
-		else if (f.title.trim().length > 140) errs.title = 'Titel max. 140 Zeichen (Doku).';
-		if (!f.description.trim()) errs.description = 'Beschreibung ist Pflicht.';
-		else if (f.description.trim().length > 65535) errs.description = 'Beschreibung max. 65.535 Zeichen (Doku).';
+		if (!f.listing_type) errs.listing_type = tr('shop.err_listing_type');
+		if (!f.title.trim()) errs.title = tr('shop.err_title_required');
+		else if (f.title.trim().length > 140) errs.title = tr('shop.err_title_max');
+		if (!f.description.trim()) errs.description = tr('shop.err_description_required');
+		else if (f.description.trim().length > 65535) errs.description = tr('shop.err_description_max');
 		const catId = Number(f.category);
 		if (!f.category || !Number.isFinite(catId) || catId <= 0) {
-			errs.category = 'Bitte eine Kategorie wählen (Pflicht für Item-/Contract-Listings).';
+			errs.category = tr('shop.err_category');
 		}
 		// Item ist PFLICHT nur bei type=item (Task-Regel „Pflicht wenn Type=Item").
 		if (f.listing_type === 'item' && !f.item_id) {
-			errs.item = 'Bitte ein Item wählen (Pflicht für Item-Listings).';
+			errs.item = tr('shop.err_item');
 		}
-		if (!f.location.trim()) errs.location = 'Ort ist Pflicht.';
+		if (!f.location.trim()) errs.location = tr('shop.err_location');
 		const price = Math.round(Number(f.price));
-		if (!Number.isFinite(price) || price <= 0) errs.price = 'Preis muss eine positive Ganzzahl sein.';
+		if (!Number.isFinite(price) || price <= 0) errs.price = tr('shop.err_price');
 		const qty = Math.round(Number(f.quantity));
-		if (!Number.isFinite(qty) || qty <= 0) errs.quantity = 'Menge muss eine positive Ganzzahl sein.';
-		if (!f.unit.trim()) errs.unit = 'Einheit ist Pflicht.';
-		if (!f.currency.trim()) errs.currency = 'Währung ist Pflicht.';
+		if (!Number.isFinite(qty) || qty <= 0) errs.quantity = tr('shop.err_qty');
+		if (!f.unit.trim()) errs.unit = tr('shop.err_unit');
+		if (!f.currency.trim()) errs.currency = tr('shop.err_currency');
 		// NN (t_060d134e): Quality-Bereich 0–1000 (UEX-Maske; 100 war zu eng).
 		if (f.quality !== '' && (!Number.isFinite(Number(f.quality)) || Number(f.quality) < 0 || Number(f.quality) > 1000)) {
-			errs.quality = 'Quality muss zwischen 0 und 1000 liegen.';
+			errs.quality = tr('shop.err_quality');
 		}
-		if (!f.hours) errs.hours = 'Laufzeit ist Pflicht.';
+		if (!f.hours) errs.hours = tr('shop.err_duration');
 		// NN (t_060d134e): UEX überträgt nur 1 Bild (image_data) — UI erlaubt
 		// genau 1 (neue Wahl ersetzt die alte), keine 5er-Sammlung mehr.
-		if (f.images.length > 1) errs.images = 'Maximal 1 Bild (UEX-Limit).';
+		if (f.images.length > 1) errs.images = tr('shop.err_image_max');
 		return errs;
 	}
 	function applyAdvertErrors(errs: AdvertErrors): boolean {
 		advertErrors = errs;
 		if (Object.keys(errs).length > 0) {
-			advertNote = 'Bitte die markierten Felder korrigieren.';
+			advertNote = tr('shop.err_fix_fields');
 			advertOpen = true;
 			return false;
 		}
@@ -2840,13 +2848,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// wird trotzdem sauber gemeldet (Button öffnet die Listung via id/url).
 			await loadShop(true);
 			shopCreatedUrl = res.url || null;
-			shopNote = (f.operation === 'sell'
-				? 'Listing „' + f.title.trim() + '“ wurde angelegt.'
-				: 'Kauf-Gesuch „' + f.title.trim() + '“ wurde angelegt.') +
-				' Es erscheint nach UEX-Approval in deiner Offers-Liste.';
+			shopNote =
+				tr(f.operation === 'sell' ? 'shop.created_note' : 'shop.request_created_note', {
+					title: f.title.trim()
+				}) + ' ' + tr('shop.appears_after_approval');
 		} catch (e) {
 			// KEIN Retry — Fehlermeldung + Deep-Link-Button (UI rendert shopErr).
-			shopErr = String(e);
+			shopErr = errText(e);
 			advertOpen = true;
 		}
 		writeBusy = false;
@@ -2864,9 +2872,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await invoke('marketplace_delete', { id: offer.id });
 			// Pull statt Optimismus.
 			await loadShop(true);
-			shopNote = 'Listing „' + offer.title + '“ wurde abgemeldet.';
+			shopNote = tr('shop.listing_removed', { title: offer.title });
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 		writeBusy = false;
 	}
@@ -3115,7 +3123,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} catch (e) {
 			routes_ = [];
 			rRefreshing = false;
-			rNote = String(e);
+			rNote = errText(e);
 		} finally {
 			rLoadingRef = false;
 			rLoading = false;
@@ -3209,7 +3217,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			if (rShipName !== only.name) void applyShipScu(only.name);
 		}
 	});
-	const DIST_LABELS = ['gleiches Terminal', 'gleicher Mond', 'gleicher Planet', 'gleiches System', 'anderes System'];
+	// T2 (t_c5904bcb): Labels als i18n-Keys — Übersetzung via tr().
+	const DIST_LABELS = ['routes.dist_same_terminal', 'routes.dist_same_moon', 'routes.dist_same_planet', 'routes.dist_same_system', 'routes.dist_other_system'].map((k) => tr(k));
 
 	function rMove(dir: number) {
 		if (!routes_.length) return;
@@ -3289,7 +3298,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				await listen<OverlayState>(OVERLAY_STATE_EVENT, (e) => {
 					overlay = e.payload;
 				});
-				// Tray "Config öffnen": Fenster zeigen macht das Backend — hier
+				// Tray tr('common.open_config'): Fenster zeigen macht das Backend — hier
 				// nur der Config-View (gleicher Pfad wie der Zahnrad-Button).
 				await listen(overlayTrayOpenConfig, () => openConfig());
 				// UC t_d323be7e: Backend-Signal nach einem Update-Check —
@@ -3308,7 +3317,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			status = await invoke<SyncStatus>('sync_status');
 		} catch (e) {
-			status = { provider: 'uex', syncing: false, online: false, last_error: String(e), datasets: [] };
+			status = { provider: 'uex', syncing: false, online: false, last_error: errText(e), datasets: [] };
 		}
 
 		try {
@@ -3321,7 +3330,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				phase = status && status.online ? 'idle' : 'offline';
 			}
 		} catch (e) {
-			status = { provider: 'uex', syncing: false, online: false, last_error: String(e), datasets: [] };
+			status = { provider: 'uex', syncing: false, online: false, last_error: errText(e), datasets: [] };
 			phase = 'error';
 		}
 	}
@@ -3442,7 +3451,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				groupOffsets = [];
 				phase = 'typing';
 			} catch (e) {
-				calcError = String(e);
+				calcError = errText(e);
 				calcResult = null;
 				phase = 'typing';
 			}
@@ -3475,7 +3484,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			sel = 0;
 			phase = 'typing';
 		} catch (e) {
-			errorMsg = String(e);
+			errorMsg = errText(e);
 			phase = 'error';
 		}
 	}
@@ -3621,9 +3630,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				force: true
 			});
 			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
-			flashStatus(`Detail aktualisiert · Stand ${rel(d.fetched_at)}`);
+			flashStatus(tr('market.detail_refreshed', { age: rel(d.fetched_at) }));
 		} catch (e) {
-			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
+			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: errText(e) };
 		}
 	}
 
@@ -3647,7 +3656,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			});
 			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
 		} catch (e) {
-			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
+			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: errText(e) };
 		}
 	}
 
@@ -3845,7 +3854,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			mAllLoaded = true;
 		} catch (e) {
 			offers = [];
-			mNote = String(e);
+			mNote = errText(e);
 			mSource = 'offline';
 			mAllLoaded = true;
 		}
@@ -3871,34 +3880,34 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	async function onF5() {
 		if (phase !== 'market' || offerDetail) return;
 		if (mTab === 'shop') {
-			flashStatus('Mein Shop sync läuft …');
+			flashStatus(tr('shop.sync_running'));
 			await loadShop();
 			flashStatus(
 				shopErr
-					? `Shop-Sync fehlgeschlagen · ${shopErr}`
-					: `Mein Shop aktualisiert · Quelle ${shopSource === 'live' ? 'UEX live' : shopSource === 'cache' ? 'Cache' : 'Offline-Snapshot'}`
+					? tr('shop.sync_failed', { msg: shopErr })
+					: tr('shop.updated_source', { src: shopSource === 'live' ? tr('shop.src_live') : shopSource === 'cache' ? tr('shop.src_cache') : tr('shop.src_offline') })
 			);
 			return;
 		}
 		if (mTab === 'routes') {
-			flashStatus('Routen-Sweep läuft …');
+			flashStatus(tr('routes.sweep_running'));
 			try {
 				status = await invoke<SyncStatus>('sync_now');
-				flashStatus(`Daten gesweept · Cache ${cacheAge(status)}`);
+				flashStatus(tr('routes.swept', { age: cacheAge(status) }));
 			} catch (e) {
-				flashStatus(`Sweep fehlgeschlagen · ${String(e)}`);
+				flashStatus(tr('routes.sweep_failed', { msg: trError(e) }));
 				return;
 			}
 			await loadRoutes();
 			return;
 		}
 		// Angebote-Tab: forcierte Market-Sync (echter Live-Fetch).
-		flashStatus('Market-Sync läuft …');
+		flashStatus(tr('market.sync_running'));
 		await fetchMarket(100, false, false, true);
 		flashStatus(
 			mNote
-				? `Market-Sync fehlgeschlagen · ${mNote}`
-				: `Market aktualisiert · ${offers.length} Angebote · vor ${rel(mFetchedAt || nowSec())}`
+				? tr('market.sync_failed', { msg: mNote })
+				: tr('market.updated', { n: offers.length, age: rel(mFetchedAt || nowSec()) })
 		);
 	}
 
@@ -3954,7 +3963,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_marketplace_listing', { slug: offerDetail.slug });
 		} catch (e) {
-			errorMsg = String(e);
+			errorMsg = errText(e);
 		}
 	}
 
@@ -4001,19 +4010,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function friendlyErr(e: unknown): string {
 		const s = String(e ?? '');
 		const lo = s.toLowerCase();
-		if (!s) return 'Unbekanntes Problem beim Laden der Preise.';
+		if (!s) return tr('market.price_err_unknown');
 		if (lo.includes('invalid type: null') || lo.includes('expected f64') || lo.includes('expected u'))
-			return 'Preisdaten unvollständig — der Anbieter lieferte leere Werte. Bitte erneut versuchen.';
+			return tr('market.price_err_empty');
 		if (lo.includes('requests limit reached') || lo.includes('rate limit'))
-			return 'Anfragenlimit erreicht — bitte kurz warten und erneut versuchen.';
+			return tr('market.price_err_ratelimit');
 		if (lo.includes('not found'))
-			return 'Keine Preisdaten für diesen Eintrag gefunden.';
+			return tr('market.price_err_notfound');
 		if (lo.includes('timeout') || lo.includes('timed out'))
-			return 'Zeitüberschreitung beim Laden — bitte erneut versuchen.';
+			return tr('market.price_err_timeout');
 		if (lo.includes('connection failed') || lo.includes('network') || lo.includes('offline'))
-			return 'Keine Verbindung zum Preisdienst. Bitte Internet prüfen.';
+			return tr('market.price_err_network');
 		// Fallback: bekannte Fehlermeldung, aber mit deutschem Kontext.
-		return `Preise konnten nicht geladen werden (${s}).`;
+		return tr('market.price_err_status', { s });
 	}
 
 	function nowSec(): number {
@@ -4023,10 +4032,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function rel(ts: number): string {
 		if (!ts) return '—';
 		const s = Math.max(0, nowSec() - ts);
-		if (s < 60) return `vor ${Math.max(1, s)} s`;
-		if (s < 3600) return `vor ${Math.floor(s / 60)} min`;
-		if (s < 86400) return `vor ${Math.floor(s / 3600)} h`;
-		return `vor ${Math.floor(s / 86400)} T`;
+		if (s < 60) return tr('rel.sec_ago', { n: Math.max(1, s) });
+		if (s < 3600) return tr('rel.min_ago', { n: Math.floor(s / 60) });
+		if (s < 86400) return tr('rel.hour_ago', { n: Math.floor(s / 3600) });
+		return tr('rel.day_ago', { n: Math.floor(s / 86400) });
 	}
 
 	function cacheAge(s?: SyncStatus | null): string {
@@ -4038,11 +4047,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	function syncLabel(): { text: string; cls: string } {
 		const s = status;
-		if (!s) return { text: 'SYNC …', cls: 'load' };
-		if (s.syncing) return { text: 'SYNC LÄUFT', cls: 'load' };
-		if (!hasData(s)) return s.last_error ? { text: 'SYNC FEHLER', cls: 'alert' } : { text: 'SYNC LÄUFT', cls: 'load' };
-		if (!s.online) return { text: `OFFLINE · CACHE ${cacheAge(s)}`, cls: 'off' };
-		return { text: `SYNC ${cacheAge(s)} · ${s.provider.toUpperCase()}`, cls: '' };
+		if (!s) return { text: tr('market.sync_dots'), cls: 'load' };
+		if (s.syncing) return { text: tr('market.sync_running_caps'), cls: 'load' };
+		if (!hasData(s)) return s.last_error ? { text: tr('market.sync_error_caps'), cls: 'alert' } : { text: tr('market.sync_running_caps'), cls: 'load' };
+		if (!s.online) return { text: tr('market.status_offline', { age: cacheAge(s) }), cls: 'off' };
+		return { text: tr('market.status_sync', { age: cacheAge(s), provider: s.provider.toUpperCase() }), cls: '' };
 	}
 
 	// ---- Formatierung (Deutsch, Mono — Spalten bleiben stehen) ---------------
@@ -4105,7 +4114,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_info_link', { kind });
 		} catch (e) {
-			infoMsg = String(e);
+			infoMsg = errText(e);
 		}
 	}
 
@@ -4570,31 +4579,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											     nutzbare Höhe, Body scrollt intern, Fuß (Buttons) fix. -->
 												{#if trkOpen}
 													<div class="advert-scrim" role="presentation">
-														<div class="trk-modal" role="dialog" aria-modal="true" aria-label="Trade erfassen">
+														<div class="trk-modal" role="dialog" aria-modal="true" aria-label={$t('trades.form.title')}>
 														<!-- Q2 (t_56d5264a): echtes <form> — Enter in den Zahl-Feldern bestätigt
 														     (impliziter Submit) wie der „Trade prüfen”-Button. -->
 															<form class="trk-body" onsubmit={(e) => { e.preventDefault(); requestTrkWrite(); }}>
 									<div class="center" style="padding: 0 0 10px">
-										<div class="big">{trkEditId ? 'Trade BEARBEITEN' : 'Trade ERFASSEN'}</div>
+										<div class="big">{trkEditId ? $t('trades.form.edit_caps') : $t('trades.form.create_caps')}</div>
 									</div>
 																	<!-- QY-2 (t_07edb03d): Formular-Rhythmus wie das Listing-Popup —
 								     Felder in VOLLER Popup-Breite, größere Feld-Überschriften,
 								     vertikaler Abstand; Scrim zentriert, Body scrollt intern. -->
 								<div class="trk-field">
-									<span class="trk-lbl">Richtung</span>
+									<span class="trk-lbl">{$t('trades.direction')}</span>
 									<div class="trk-dir">
-										<button type="button" class="chip" class:is-on={trkForm.operation === 'buy'} onclick={() => (trkForm.operation = 'buy')}>Kauf</button>
-										<button type="button" class="chip" class:is-on={trkForm.operation === 'sell'} onclick={() => (trkForm.operation = 'sell')}>Verkauf</button>
+										<button type="button" class="chip" class:is-on={trkForm.operation === 'buy'} onclick={() => (trkForm.operation = 'buy')}>{$t('common.buy')}</button>
+										<button type="button" class="chip" class:is-on={trkForm.operation === 'sell'} onclick={() => (trkForm.operation = 'sell')}>{$t('common.sell')}</button>
 									</div>
 								</div>
 								<div class="trk-field">
-									<span class="trk-lbl">Ware</span>
+									<span class="trk-lbl">{$t('common.commodity')}</span>
 									<RoutesTypeahead
 										fullWidth
 										bind:value={trkForm.commodity}
 										options={trkComOpts}
-										placeholder="z. B. Gold"
-										ariaLabel="Ware Type-ahead — Tippen filtert, ↵ übernimmt"
+										placeholder={$t('common.ph_eg_gold')}
+										ariaLabel={$t('trades.ph_commodity_typeahead')}
 										onselect={(v: string) => {
 											trkForm.commodity_id = Number(v) || null;
 											// QY-3: Ort-Auswahl invalidieren — der Ort muss die
@@ -4606,13 +4615,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									/>
 								</div>
 								<div class="trk-field">
-									<span class="trk-lbl">Ort</span>
+									<span class="trk-lbl">{$t('trades.location')}</span>
 									<RoutesTypeahead
 										fullWidth
 										bind:value={trkForm.terminal}
 										options={trkTermOpts}
-										placeholder="z. B. Everus Harbor"
-										ariaLabel="Ort/Terminal Type-ahead — Tippen filtert, ↵ übernimmt"
+										placeholder={$t('common.ph_eg_location')}
+										ariaLabel={$t('trades.ph_location_typeahead')}
 										onselect={(v: string) => {
 											trkForm.terminal_id = Number(v) || null;
 											trkComOpts = [];
@@ -4620,16 +4629,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									/>
 								</div>
 								<div class="trk-field">
-									<span class="trk-lbl">Menge (SCU)</span>
+									<span class="trk-lbl">{$t('trades.qty_scu')}</span>
 									<input class="qnum" style="width:100%" type="number" min="1" placeholder="SCU" bind:value={trkForm.scu} />
 								</div>
 								<div class="trk-field">
-									<span class="trk-lbl">Preis/SCU (aUEC)</span>
+									<span class="trk-lbl">{$t('trades.price_scu')}</span>
 									<input class="qnum" style="width:100%" type="number" min="0" step="any" placeholder="aUEC" bind:value={trkForm.price} />
 								</div>
-<div class="sm" style="color: var(--fgdim); margin-top: 6px">
-										Datum wird von UEX beim Erfassen gesetzt (heute) — die API kennt kein Datumsfeld.
-									</div>
+<div class="sm" style="color: var(--fgdim); margin-top: 6px">{$t('trades.date_uex_note_title')}</div>
 									{#if trkMsg}
 																	<div class="sm" style="color: var(--alert); margin-top: 6px" role="alert">{trkMsg}</div>
 																{/if}
@@ -4637,9 +4644,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<div class="advert-foot">
 										<div class="md-actions">
 											<button type="button" class="btn" disabled={trkBusy} onclick={requestTrkWrite}>
-												{trkBusy ? 'Speichern …' : trkEditId ? 'Änderung prüfen' : 'Trade prüfen'}
+												{trkBusy ? $t('common.saving') : trkEditId ? $t('trades.review_change') : $t('trades.review_trade')}
 											</button>
-											<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>Abbrechen (Esc)</span>
+											<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => { trkOpen = false; trkMsg = null; trkEditId = null; }}>{$t('trades.cancel_esc')}</span>
 										</div>
 									</div>
 									</div>
@@ -4649,27 +4656,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						     ebenfalls shell-anchored (advert-scrim) statt fixed am Viewport. -->
 						{#if trkConfirm}
 							<div class="advert-scrim" role="presentation">
-								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+								<div class="confirm-modal" role="dialog" aria-modal="true" aria-label={$t('common.confirm')}>
 									<div class="center" style="padding: 0 0 10px">
 										<div class="big" style="color: var(--alert)">
-											{trkConfirm.kind === 'remove' ? 'Trade LÖSCHEN?' : trkConfirm.kind === 'edit' ? 'Trade ÄNDERN?' : 'Trade ANLEGEN?'}
+											{trkConfirm.kind === 'remove' ? $t('trades.confirm_delete_title') : trkConfirm.kind === 'edit' ? $t('trades.confirm_edit_title') : $t('trades.confirm_create_title')}
 										</div>
 									</div>
 									{#if trkConfirm.kind === 'remove'}
-										<div class="sm" style="color: var(--fgdim)">Der Trade wird auf uexcorp.space GELÖSCHT — das kann nicht widerrufen werden.</div>
+										<div class="sm" style="color: var(--fgdim)">{$t('trades.delete_warning')}</div>
 									{:else}
-										<div class="c-row"><b>Richtung</b><span>{trkForm.operation === 'sell' ? 'Verkauf' : 'Kauf'}</span></div>
-										<div class="c-row"><b>Ware</b><span>{trkForm.commodity || '—'}</span></div>
-										<div class="c-row"><b>Ort</b><span>{trkForm.terminal || '—'}</span></div>
-										<div class="c-row"><b>Menge</b><span>{Math.round(Number(trkForm.scu))} SCU</span></div>
-										<div class="c-row"><b>Preis</b><span>{fmtPrice(Number(trkForm.price))} aUEC/SCU</span></div>
-										<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Trade wird auf uexcorp.space {(trkConfirm.kind === 'edit' ? 'GEÄNDERT' : 'ANGELEGT')}.</div>
+										<div class="c-row"><b>{$t('trades.direction')}</b><span>{trkForm.operation === 'sell' ? $t('common.sell') : $t('common.buy')}</span></div>
+										<div class="c-row"><b>{$t('common.commodity')}</b><span>{trkForm.commodity || '—'}</span></div>
+										<div class="c-row"><b>{$t('trades.location')}</b><span>{trkForm.terminal || '—'}</span></div>
+										<div class="c-row"><b>{$t('common.quantity')}</b><span>{Math.round(Number(trkForm.scu))} SCU</span></div>
+										<div class="c-row"><b>{$t('common.price')}</b><span>{fmtPrice(Number(trkForm.price))} aUEC/SCU</span></div>
+										<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('trades.uex_confirm', { kind: trkConfirm.kind === 'edit' ? $t('trades.changed_caps') : $t('trades.form.create_caps') })}</div>
 									{/if}
 									<div class="md-actions">
 										<button type="button" class="btn" disabled={trkBusy} onclick={() => { if (trkConfirm) (trkConfirm.kind === 'remove' ? void doTrkRemove() : void doTrkWrite()); }}>
-											{trkBusy ? 'Senden …' : 'Bestätigen'}
+											{trkBusy ? $t('common.sending') : $t('common.confirm_btn')}
 										</button>
-										<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (trkConfirm = null)}>Abbrechen (Esc)</span>
+										<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (trkConfirm = null)}>{$t('trades.cancel_esc')}</span>
 									</div>
 								</div>
 							</div>
@@ -4702,22 +4709,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				bind:value={input}
 				oninput={onInput}
 				placeholder={railMode === 'inventory'
-				? 'Inventar filtern — Standort oder Material …'
+				? $t('search.ph_inventory')
 				: railMode === 'hangar'
-					? 'Hangar search — Name, Custom-Name, Manufacturer or Base-Ship …'
+					? $t('search.ph_hangar')
 					: phase === 'market'
 					? mTab === 'routes'
-						? 'Handelsrouten filtern — Ware, Start- oder Zielort …'
-						: 'Marktplatz durchsuchen — Name / Typ / Terminal / Verkäufer …'
+						? $t('search.ph_routes')
+						: $t('search.ph_market')
 					: inDetail
 					? detailHit?.kind === 'location' || detailHit?.kind === 'terminal'
-						? `Filter: Waren in ${detailHit?.name} …`
-						: `Filter: Orte mit Preisen für ${detailHit?.name} …`
-					: 'Commodity, Item oder Terminal suchen …'}
+						? $t('search.detail_filter_commodities', { name: detailHit?.name || '' })
+						: $t('search.detail_filter_locations', { name: detailHit?.name || '' })
+					: $t('search.ph_default')}
 				spellcheck="false"
 				autocomplete="off"
 			/>
-			<span class="smode">{mode === 'market' ? 'MARKETPLACE' : mode === 'routes' ? 'HANDELSROUTEN' : mode === 'inventory' ? 'INVENTAR' : mode === 'hangar' ? 'HANGAR' : mode === 'settings' ? 'EINSTELLUNGEN' : 'SUCHE'}</span>
+			<span class="smode">{mode === 'market' ? $t('nav.marketplace') : mode === 'routes' ? $t('nav.routes') : mode === 'inventory' ? $t('nav.inventory') : mode === 'hangar' ? $t('nav.hangar') : mode === 'settings' ? $t('nav.settings') : $t('nav.search')}</span>
 			<span class="esc">ESC</span>
 		</div>
 
@@ -4725,13 +4732,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		     (Navigation, Filter, Refresh) lebt in der dynamischen Fußzeile (P6). -->
 		{#if phase !== 'market' && !inDetail && !railMode}
 			<div class="helper">
-				<span><kbd>:c</kbd> commodities</span>
+				<span><kbd>:c</kbd>{$t('search.group_commodities')}</span>
 				<span class="sep">·</span>
-				<span><kbd>:i</kbd> items</span>
+				<span><kbd>:i</kbd>{$t('search.group_items')}</span>
 				<span class="sep">·</span>
-				<span><kbd>:l</kbd> locations</span>
+				<span><kbd>:l</kbd>{$t('search.group_locations')}</span>
 				<span class="sep">·</span>
-				<span><kbd>=</kbd> math</span>
+				<span><kbd>=</kbd>{$t('search.group_math')}</span>
 			</div>
 		{/if}
 
@@ -4744,25 +4751,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<!-- Hangar (Karte t_317f19c5): Schiffe/Fahrzeuge/Module mit Versicherung.
 			     Import: Hangar-XPLORer JSON + CCUgame CSV · Export: eigenes JSON.
 			     Tastatur: ↑/↓ Auswahl · Enter Detail · Esc zurück/zur Suche. -->
-			<div class="hangar" role="region" aria-label="Hangar">
+			<div class="hangar" role="region" aria-label={$t('nav.hangar')}>
 				<header class="hangar-head">
-					<button class="hangar-back" onclick={hangarBack} title="Zurück (Esc)" aria-label="Zurück">←</button>
-					<span class="hangar-title">HANGAR</span>
+					<button class="hangar-back" onclick={hangarBack} title={$t('common.back_esc')} aria-label={$t('common.back')}>←</button>
+					<span class="hangar-title">{$t('nav.hangar_caps')}</span>
 					<div class="hangar-filters">
-						{#each [['all', 'ALLE'], ['pledge', 'PLEDGE'], ['ingame', 'INGAME'], ['lti', 'LTI'], ['module', 'MODULE']] as [f, lbl] (f)}
+						{#each [['all', 'hangar.filter_all'], ['pledge', 'hangar.filter_pledge'], ['ingame', 'hangar.filter_ingame'], ['lti', 'hangar.filter_lti'], ['module', 'hangar.filter_module']] as [f, lbl] (f)}
 							<button
 								type="button"
 								class="hchip"
 								class:is-on={hangarFilter === f}
 								onclick={() => { hangarFilter = f as typeof hangarFilter; hangarSel = 0; hangarDetail = null; }}
-							>{lbl}</button>
+							>{$t(lbl)}</button>
 						{/each}
 					</div>
 					<div class="hangar-actions">
-						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('xplorer')}>Import XPLorer</button>
-						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('ccugame')}>Import CCUgame</button>
-						<button class="hbtn" disabled={hangarBusy} onclick={hangarExport}>Export</button>
-						<button class="hbtn" disabled={hangarBusy} onclick={hangarOpenAdd} title="Eintrag manuell anlegen">+ Anlegen</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('xplorer')}>{$t('hangar.import_xplorer')}</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={() => hangarTriggerImport('ccugame')}>{$t('hangar.import_ccugame')}</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={hangarExport}>{$t('hangar.export')}</button>
+						<button class="hbtn" disabled={hangarBusy} onclick={hangarOpenAdd} title={$t('hangar.add_manual')}>{$t('hangar.plus_create')}</button>
 					</div>
 				</header>
 				<!-- S1 (t_38f79fff): KEINE Inline-Meldung über der Liste mehr —
@@ -4776,7 +4783,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<!-- TC (t_f269f5b7): Liste ist IMMER sichtbar — das Detail ist ein
 					     Popup (unten) und ersetzt die alte eigene Detail-Seite
 					     (hangarView 'list'/'detail' entfernt, kein doppelter Pfad). -->
-					<div class="hangar-list" role="listbox" aria-label="Hangar-Einträge">
+					<div class="hangar-list" role="listbox" aria-label={$t('hangar.entries_aria')}>
 						{#each hangarFiltered as it, i (it.id ?? `${it.name}#${i}`)}
 							<button
 								type="button"
@@ -4787,14 +4794,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span class="hname">
 									{hangarDisplayName(it)}
 									{#if it.custom_name && it.custom_name !== it.name}<span class="hmodel">· {it.name}</span>{/if}
-									{#if it.entity_type === 'module' && !it.base_ship}<span class="hmodel">· Modul (unverbunden)</span>{/if}
+									{#if it.entity_type === 'module' && !it.base_ship}<span class="hmodel">{$t('hangar.unlinked_module_prefix')}</span>{/if}
 								</span>
-								<span class="hchip o-{it.origin}">{it.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+								<span class="hchip o-{it.origin}">{it.origin === 'pledge' ? $t('hangar.origin_pledged') : $t('hangar.origin_ingame')}</span>
 								<span class="hchip ins">{it.insurance ?? '—'}</span>
 								<!-- TB (t_78a4a5e5, Punkt 3): Preis-Anzeige entfernt. -->
 							</button>
 						{:else}
-							<div class="hangar-empty">Keine Einträge{hangarFilter !== 'all' ? ` (Filter: ${hangarFilter.toUpperCase()})` : ''} {input.trim() ? ` · Search: ${input.trim()}` : ''} — Import oben.</div>
+							<div class="hangar-empty">{$t('hangar.no_entries')}{hangarFilter !== 'all' ? ` (${$t('common.filter')}: ${hangarFilter.toUpperCase()})` : ''} {input.trim() ? ` · ${$t('common.search')}: ${input.trim()}` : ''} — {$t('hangar.import_above')}</div>
 						{/each}
 						</div>
 						{#if hangarDetail}
@@ -4805,27 +4812,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     stehen; Schließen per Esc (hangarBack) oder Close-Button, ohne
 					     View-Wechsel. -->
 					<div class="advert-scrim" role="presentation">
-						<div class="hdetail-modal" role="dialog" aria-modal="true" aria-label={`Details ${hangarDisplayName(hangarDetail)}`}>
+						<div class="hdetail-modal" role="dialog" aria-modal="true" aria-label={tr('hangar.details_named', { name: hangarDisplayName(hangarDetail) })}>
 							<div class="hd-head">
 								<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
-								<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+								<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? $t('hangar.origin_pledged') : $t('hangar.origin_ingame')}</span>
 								<span class="hchip ins">{hangarDetail.insurance ?? '—'}</span>
 								{#if !hangarEdit}
-									<button class="hbtn" disabled={hangarBusy} onclick={() => hangarStartEdit(hangarDetail!)}>Bearbeiten</button>
+									<button class="hbtn" disabled={hangarBusy} onclick={() => hangarStartEdit(hangarDetail!)}>{$t('common.edit')}</button>
 								{/if}
-								<button class="hbtn danger" disabled={hangarBusy} onclick={() => hangarDelete(hangarDetail!)}>Löschen</button>
-								<button type="button" class="hd-close" title="Schließen (Esc)" aria-label="Details schließen" onclick={hangarCloseDetail}>✕</button>
+								<button class="hbtn danger" disabled={hangarBusy} onclick={() => hangarDelete(hangarDetail!)}>{$t('common.delete')}</button>
+								<button type="button" class="hd-close" title={$t('common.close_esc')} aria-label={$t('hangar.close_details')} onclick={hangarCloseDetail}>✕</button>
 							</div>
 							<div class="hangar-detail">
 							{#if !hangarEdit}
 							<!-- R2 (Punkt 7): Ship-Code/Pledge/Pledge-ID/Warbond/CCUD ENTFERNT —
 							     Import-Artefakte („nicht wichtig“), keine Anzeige mehr. -->
 							<dl class="hd-grid">
-								<div><dt>Modell</dt><dd>{hangarDetail.name}</dd></div>
-								<div><dt>Hersteller</dt><dd>{hangarDetail.manufacturer || '—'}</dd></div>
-								<div><dt>Typ</dt><dd>{hangarDetail.entity_type}</dd></div>
-								<div><dt>Custom-Name</dt><dd>{hangarDetail.custom_name || '—'}</dd></div>
-								<div><dt>Datum</dt><dd>{isoToDe(hangarDetail.purchase_date) || '—'}</dd></div>
+								<div><dt>{$t('hangar.model')}</dt><dd>{hangarDetail.name}</dd></div>
+								<div><dt>{$t('hangar.manufacturer')}</dt><dd>{hangarDetail.manufacturer || '—'}</dd></div>
+								<div><dt>{$t('hangar.type')}</dt><dd>{hangarDetail.entity_type}</dd></div>
+								<div><dt>{$t('hangar.custom_name')}</dt><dd>{hangarDetail.custom_name || '—'}</dd></div>
+								<div><dt>{$t('hangar.date')}</dt><dd>{isoToDe(hangarDetail.purchase_date) || '—'}</dd></div>
 								<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile entfernt. -->
 							</dl>
 							{#if hangarDetail.entity_type !== 'module' && hangarWikiMods?.known}
@@ -4834,33 +4841,33 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							     module-overrides.json; Schiffe ohne Eintrag zeigen
 							     GAR NICHTS über Module (kein Hinweistext mehr). -->
 							<div class="hd-mods">
-								<div class="h">Module ({hangarModulesOf(hangarDetail.name).length})</div>
+								<div class="h">{$t('hangar.modules_count', { n: hangarModulesOf(hangarDetail.name).length })}</div>
 								{#each hangarModulesOf(hangarDetail.name) as m (m.id ?? m.name)}
 									<!-- TB (t_78a4a5e5, Punkt 2): Modulzeile zeigt Versicherung
 									     UND Herkunft; Klick auf den Namen öffnet das Edit-Popup. -->
 									<div class="hmod">
-										<button type="button" class="hmod-name" title="Modul bearbeiten" aria-label={`Modul ${hangarDisplayName(m)} bearbeiten`} onclick={() => hangarStartEdit(m)}>{hangarDisplayName(m)}</button>
-										<span class="hchip o-{m.origin}">{m.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
+										<button type="button" class="hmod-name" title={$t('hangar.module_edit')} aria-label={tr('hangar.module_edit_named', { name: hangarDisplayName(m) })} onclick={() => hangarStartEdit(m)}>{hangarDisplayName(m)}</button>
+										<span class="hchip o-{m.origin}">{m.origin === 'pledge' ? $t('hangar.origin_pledged') : $t('hangar.origin_ingame')}</span>
 										<span class="hchip ins">{m.insurance ?? '—'}</span>
-										<button type="button" class="hmod-x" title="Modul entfernen" aria-label={`Modul ${hangarDisplayName(m)} entfernen`} disabled={hangarBusy} onclick={() => hangarModuleRemove(m)}>✕</button>
+										<button type="button" class="hmod-x" title={$t('hangar.module_remove')} aria-label={tr('hangar.module_remove_named', { name: hangarDisplayName(m) })} disabled={hangarBusy} onclick={() => hangarModuleRemove(m)}>✕</button>
 									</div>
 								{:else}
-									<div class="hmodempty">Keine Module zugeordnet.</div>
+									<div class="hmodempty">{$t('hangar.no_modules')}</div>
 								{/each}
 								<!-- S4 (t_66980b3c): Nur-Datei-Regel — Feld NUR bei
 							     Schiffen mit Eintrag in module-overrides.json;
 							     kein API-Fallschirm mehr. -->
 								{#if hangarModFieldVisible}
 								<div class="hmod-add">
-									<RoutesTypeahead bind:value={hangarModPick} options={hangarModOpts} fullWidth ariaLabel="Modul suchen" placeholder="Modul suchen … (z. B. Exploration Module)" onselect={() => {}} />
+									<RoutesTypeahead bind:value={hangarModPick} options={hangarModOpts} fullWidth ariaLabel={$t('hangar.search_module_btn')} placeholder={$t('hangar.ph_search_module')} onselect={() => {}} />
 								</div>
 								<!-- TB (t_78a4a5e5, Punkt 2): Versicherung + Herkunft je Modul —
 								     gleiche Optionen wie der Hangar-Eintrag; Herkunft ist
 								     Pflichtwahl (startet leer), Versicherung '' = Ohne. -->
 								<div class="hmod-add hmod-add-meta">
-									<SelectCombo bind:value={hangarModOrigin} ariaLabel="Modul-Herkunft" placeholder="— Herkunft wählen —" options={[{ value: 'pledge', label: 'Pledged' }, { value: 'ingame', label: 'In-Game' }]} />
-									<SelectCombo bind:value={hangarModIns} ariaLabel="Modul-Versicherung" options={INSURANCE_CHOICES} placeholder="Ohne" />
-									<button type="button" class="hbtn" disabled={hangarBusy || !hangarModPick.trim()} onclick={hangarModuleAdd}>Hinzufügen</button>
+									<SelectCombo bind:value={hangarModOrigin} ariaLabel={$t('hangar.module_origin_aria')} placeholder={$t('hangar.ph_choose_origin')} options={[{ value: 'pledge', label: $t('hangar.origin_pledged') }, { value: 'ingame', label: $t('hangar.origin_ingame') }]} />
+									<SelectCombo bind:value={hangarModIns} ariaLabel={$t('hangar.module_insurance_aria')} options={INSURANCE_CHOICES.map((c) => ({ ...c, label: $t(c.label) }))} placeholder={$t('common.none')} />
+									<button type="button" class="hbtn" disabled={hangarBusy || !hangarModPick.trim()} onclick={hangarModuleAdd}>{$t('hangar.add')}</button>
 								</div>
 								{/if}
 							</div>
@@ -4868,11 +4875,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<!-- R2: unverbundenes Modul (Migration/Bestand ohne base_ship) —
 							     bleibt erhalten, bis es hier manuell zugeordnet wird. -->
 							<div class="hd-mods">
-								<div class="h">Modul (unverbunden)</div>
-								<div class="hmodempty">Dieses Modul ist keinem Schiff zugeordnet.</div>
+								<div class="h">{$t('hangar.module_unlinked')}</div>
+								<div class="hmodempty">{$t('hangar.module_unassigned_note')}</div>
 								<div class="hmod-add">
-									<RoutesTypeahead bind:value={hangarAssignBase} options={hangarAssignOpts} fullWidth ariaLabel="Basisschiff zuordnen" placeholder="Basisschiff suchen …" onselect={hangarPickAssign} />
-									<button type="button" class="hbtn" disabled={hangarBusy || !hangarAssignBase.trim()} onclick={() => hangarModuleAssign(hangarDetail!)}>Zuordnen</button>
+									<RoutesTypeahead bind:value={hangarAssignBase} options={hangarAssignOpts} fullWidth ariaLabel={$t('hangar.assign_base_title')} placeholder={$t('hangar.ph_search_base_ship')} onselect={hangarPickAssign} />
+									<button type="button" class="hbtn" disabled={hangarBusy || !hangarAssignBase.trim()} onclick={() => hangarModuleAssign(hangarDetail!)}>{$t('hangar.assign')}</button>
 								</div>
 							</div>
 							{/if}
@@ -4888,22 +4895,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				     Body scrollt intern, Buttons fix unten. Bearbeiten öffnet DASSELBE
 				     Popup über dem Detail. Bestätigung (2-Schritt) wie elsewhere. -->
 				<div class="advert-scrim" role="presentation">
-					<div class="hform-modal" role="dialog" aria-modal="true" aria-label={hangarEdit ? 'Eintrag bearbeiten' : 'Eintrag anlegen'}>
+					<div class="hform-modal" role="dialog" aria-modal="true" aria-label={hangarEdit ? $t('hangar.edit_entry_title') : $t('hangar.create_entry_title')}>
 						<form onsubmit={(e) => { e.preventDefault(); requestHangarSave(); }}>
 						<div class="hform-body">
-							<div class="mbar2" style="margin-bottom: 14px"><span class="m-lbl">{hangarEdit ? 'EINTRAG BEARBEITEN' : 'EINTRAG ANLEGEN'}</span></div>
+							<div class="mbar2" style="margin-bottom: 14px"><span class="m-lbl">{hangarEdit ? $t('hangar.edit_entry_caps') : $t('hangar.create_entry_caps')}</span></div>
 							<!-- R2 (Punkt 4): Name in voller Popup-Breite (Schiffsnamen sind lang). -->
 							<div class="trk-field">
-								<span class="trk-lbl">Name</span>
+								<span class="trk-lbl">{$t('common.name')}</span>
 								<!-- R2 (Punkt 2/9): einheitlicher Typeahead (Maus + Tastatur),
 								     ALLE Schiffe UND Fahrzeuge (registrierte zuerst, dann Katalog).
 								     TB (t_78a4a5e5, Punkt 2): bei Modul-Edit Freitext — das
 								     Name-Typeahead schlägt Schiffe vor und würde via
 								     hangarPickName den entity_type des Moduls überschreiben. -->
 								{#if hangarForm.entity_type === 'module'}
-									<input class="rtext" style="width: 100%" aria-label="Modul-Name" placeholder="z. B. Cargo/Explorer-Modul" bind:value={hangarForm.name} />
+									<input class="rtext" style="width: 100%" aria-label={$t('hangar.module_name')} placeholder={$t('hangar.ph_eg_module')} bind:value={hangarForm.name} />
 								{:else}
-									<RoutesTypeahead bind:value={hangarForm.name} options={hangarNameOpts} fullWidth ariaLabel="Schiff/Fahrzeug-Name" placeholder="z. B. Cutlass Black" onselect={hangarPickName} />
+									<RoutesTypeahead bind:value={hangarForm.name} options={hangarNameOpts} fullWidth ariaLabel={$t('hangar.name_aria')} placeholder={$t('hangar.ph_eg_ship')} onselect={hangarPickName} />
 								{/if}
 							</div>
 							<div class="hform-row">
@@ -4911,60 +4918,60 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								     Selects. Typ=Modul ENTFERNT (Punkt 8: Module nur noch in
 								     den Ship-Details). -->
 								<div class="trk-field">
-									<span class="trk-lbl">Typ</span>
+									<span class="trk-lbl">{$t('hangar.type')}</span>
 									<!-- TB (t_78a4a5e5, Punkt 1): startet leer (Platzhalter) —
 									     Pflichtwahl bei Speichern. TB Punkt 2: bei Modul-Edit
 									     statisch „Modul“ (Module werden nicht als Schiff/Fahrzeug
 									     umtypisiert; die Auswahl kennt keinen Modul-Eintrag). -->
 									{#if hangarForm.entity_type === 'module'}
-										<input class="rtext" style="width: 100%" value="Modul" disabled aria-label="Typ (Modul)" />
+										<input class="rtext" style="width: 100%" value="Modul" disabled aria-label={$t('hangar.module_type')} />
 									{:else}
-										<SelectCombo bind:value={hangarForm.entity_type} ariaLabel="Typ" placeholder="— bitte wählen —" options={[{ value: 'ship', label: 'Schiff' }, { value: 'vehicle', label: 'Fahrzeug' }]} />
+										<SelectCombo bind:value={hangarForm.entity_type} ariaLabel={$t('hangar.type')} placeholder={$t('common.choose_placeholder')} options={[{ value: 'ship', label: $t('common.ship') }, { value: 'vehicle', label: $t('common.vehicle') }]} />
 									{/if}
 								</div>
 								<div class="trk-field">
-									<span class="trk-lbl">Herkunft</span>
+									<span class="trk-lbl">{$t('hangar.origin')}</span>
 									<!-- TB (t_78a4a5e5, Punkt 1): startet leer (Platzhalter) —
 									     Pflichtwahl bei Speichern. Labels lt. Task „Pledged /
 									     In-Game“ (gleiche Werte wie die Modul-Add-Zeile). -->
-									<SelectCombo bind:value={hangarForm.origin} ariaLabel="Herkunft" placeholder="— bitte wählen —" options={[{ value: 'ingame', label: 'In-Game' }, { value: 'pledge', label: 'Pledged' }]} />
+									<SelectCombo bind:value={hangarForm.origin} ariaLabel={$t('hangar.origin')} placeholder={$t('common.choose_placeholder')} options={[{ value: 'ingame', label: $t('hangar.origin_ingame') }, { value: 'pledge', label: $t('hangar.origin_pledged') }]} />
 								</div>
 							</div>
 							<div class="hform-row">
 								<!-- R2 (Punkt 5): Versicherung als Select. -->
 								<div class="trk-field">
-									<span class="trk-lbl">Versicherung</span>
-									<SelectCombo bind:value={hangarFormIns} ariaLabel="Versicherung" options={INSURANCE_CHOICES} placeholder="Ohne" />
+									<span class="trk-lbl">{$t('hangar.insurance')}</span>
+									<SelectCombo bind:value={hangarFormIns} ariaLabel={$t('hangar.insurance')} options={INSURANCE_CHOICES.map((c) => ({ ...c, label: $t(c.label) }))} placeholder={$t('common.none')} />
 								</div>
 								<!-- TB (t_78a4a5e5, Punkt 3): Preis-Feld entfernt. -->
 								</div>
 							<!-- R2 (Punkt 6): Datumseingabe dd.mm.jjjj (gespeichert ISO). -->
 							<div class="hform-row">
 								<div class="trk-field">
-									<span class="trk-lbl">Datum</span>
-									<input class="rtext" style="width: 100%" placeholder="31.01.2025" aria-label="Datum (dd.mm.jjjj)" bind:value={hangarFormDate} />
+									<span class="trk-lbl">{$t('hangar.date')}</span>
+									<input class="rtext" style="width: 100%" placeholder="31.01.2025" aria-label={$t('hangar.date_hint')} bind:value={hangarFormDate} />
 								</div>
 								<div class="trk-field">
-									<span class="trk-lbl">Custom-Name</span>
+									<span class="trk-lbl">{$t('hangar.custom_name')}</span>
 									<input class="rtext" style="width: 100%" bind:value={hangarForm.custom_name} />
 								</div>
 							</div>
 							<div class="trk-field">
-								<span class="trk-lbl">Hersteller</span>
+								<span class="trk-lbl">{$t('hangar.manufacturer')}</span>
 								<input class="rtext" style="width: 100%" bind:value={hangarForm.manufacturer} />
 							</div>
 							{#if hangarBaseOpen}
 							<!-- Snub-Ships brauchen ein Basisschiff (Bestand: Modul-Zeilen
 							     im Edit-Pfad); einheitlicher Typeahead. -->
 							<div class="trk-field">
-								<span class="trk-lbl">Basisschiff</span>
-								<RoutesTypeahead bind:value={hangarForm.base_ship} options={hangarBaseOpts} fullWidth ariaLabel="Basisschiff" placeholder="Pick from Hangar …" onselect={() => {}} />
+								<span class="trk-lbl">{$t('hangar.base_ship')}</span>
+								<RoutesTypeahead bind:value={hangarForm.base_ship} options={hangarBaseOpts} fullWidth ariaLabel={$t('hangar.base_ship')} placeholder={$t('hangar.ph_pick_from_hangar')} onselect={() => {}} />
 							</div>
 							{/if}
 						</div>
 						<div class="hform-foot">
-							<button type="submit" class="hbtn" disabled={hangarBusy}>Speichern</button>
-							<button type="button" class="hbtn" onclick={hangarCancelEdit}>Abbrechen</button>
+							<button type="submit" class="hbtn" disabled={hangarBusy}>{$t('common.save')}</button>
+							<button type="button" class="hbtn" onclick={hangarCancelEdit}>{$t('common.cancel')}</button>
 						</div>
 					</form>
 					</div>
@@ -4977,31 +4984,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		Confirm muss auch im DETAIL-View erscheinen (Löschen ohne
 		geöffnetes Formular; vorher war der Lösch-Flow tot). -->
 		<div class="advert-scrim" style="z-index: 210" role="presentation">
-		<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+		<div class="confirm-modal" role="dialog" aria-modal="true" aria-label={$t('common.confirm')}>
 			<div class="center" style="padding: 0 0 10px">
 				<div class="big" style="color: var(--alert)">
-					{hangarConfirm.kind === 'delete' ? 'EINTRAG LÖSCHEN?' : hangarEdit ? 'ÄNDERUNGEN SPEICHERN?' : 'EINTRAG ANLEGEN?'}
+					{hangarConfirm.kind === 'delete' ? $t('hangar.confirm_delete_title') : hangarEdit ? $t('hangar.confirm_save_title') : $t('hangar.confirm_create_title')}
 				</div>
 			</div>
 			{#if hangarConfirm.kind === 'delete'}
-				<div class="c-row"><b>Name</b><span>{hangarDisplayName(hangarDetail ?? hangarForm)}</span></div>
-				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Der Eintrag wird aus dem Hangar GELÖSCHT.</div>
+				<div class="c-row"><b>{$t('common.name')}</b><span>{hangarDisplayName(hangarDetail ?? hangarForm)}</span></div>
+				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('hangar.delete_warning')}</div>
 			{:else}
-				<div class="c-row"><b>Name</b><span>{hangarForm.name}</span></div>
-				<div class="c-row"><b>Typ</b><span>{hangarForm.entity_type === 'vehicle' ? 'Fahrzeug' : hangarForm.entity_type === 'module' ? 'Modul' : hangarForm.entity_type ? 'Schiff' : '—'}</span></div>
-				<div class="c-row"><b>Herkunft</b><span>{hangarForm.origin === 'pledge' ? 'Pledged' : hangarForm.origin === 'ingame' ? 'In-Game' : '—'}</span></div>
-				<div class="c-row"><b>Versicherung</b><span>{hangarFormIns || 'Ohne'}</span></div>
-				<div class="c-row"><b>Datum</b><span>{hangarFormDate || '—'}</span></div>
+				<div class="c-row"><b>{$t('common.name')}</b><span>{hangarForm.name}</span></div>
+				<div class="c-row"><b>{$t('hangar.type')}</b><span>{hangarForm.entity_type === 'vehicle' ? $t('common.vehicle') : hangarForm.entity_type === 'module' ? $t('common.module') : hangarForm.entity_type ? $t('common.ship') : '—'}</span></div>
+				<div class="c-row"><b>{$t('hangar.origin')}</b><span>{hangarForm.origin === 'pledge' ? $t('hangar.origin_pledged') : hangarForm.origin === 'ingame' ? $t('hangar.origin_ingame') : '—'}</span></div>
+				<div class="c-row"><b>{$t('hangar.insurance')}</b><span>{hangarFormIns || $t('common.none')}</span></div>
+				<div class="c-row"><b>{$t('hangar.date')}</b><span>{hangarFormDate || '—'}</span></div>
 				<!-- TB (t_78a4a5e5, Punkt 3): Preis-Zeile im Confirm entfernt. -->
-				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Eingaben sind bis zur Entscheidung gesperrt.</div>
+				<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('hangar.inputs_locked_note')}</div>
 			{/if}
 			<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">
 				{#if hangarConfirm.kind === 'delete'}
-					<button type="button" class="btn btn-danger" disabled={hangarBusy} onclick={() => hangarDetail && hangarDoDelete(hangarDetail)}>JA, LÖSCHEN</button>
+					<button type="button" class="btn btn-danger" disabled={hangarBusy} onclick={() => hangarDetail && hangarDoDelete(hangarDetail)}>{$t('common.confirm_delete')}</button>
 				{:else}
-					<button type="button" class="btn" disabled={hangarBusy} onclick={() => void hangarSaveForm()}>JA, SPEICHERN</button>
+					<button type="button" class="btn" disabled={hangarBusy} onclick={() => void hangarSaveForm()}>{$t('common.confirm_save')}</button>
 				{/if}
-				<button type="button" class="btn-ghost" disabled={hangarBusy} onclick={() => (hangarConfirm = null)}>Abbrechen</button>
+				<button type="button" class="btn-ghost" disabled={hangarBusy} onclick={() => (hangarConfirm = null)}>{$t('common.cancel')}</button>
 			</div>
 		</div>
 		</div>
@@ -5014,30 +5021,30 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		     Auto-Fade weiterhin über hangarNoteSet (~3.5 s). -->
 		<div class="hangar-toast" role="alert" aria-live="assertive">
 			<span class="ht-msg">{hangarNote}</span>
-			<button type="button" class="ht-x" title="Meldung schließen" aria-label="Meldung schließen" onclick={() => hangarNoteSet('')}>✕</button>
+			<button type="button" class="ht-x" title={$t('common.dismiss_note')} aria-label={$t('common.dismiss_note')} onclick={() => hangarNoteSet('')}>✕</button>
 		</div>
 		{/if}
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").
 			     Esc/zurück-Pfeil → zurück zur Suche; kein neues Fenster. -->
-			<div class="pane-config" role="dialog" aria-label="Konfiguration">
+			<div class="pane-config" role="dialog" aria-label={$t('settings.config')}>
 				<div class="cfg-head">
 					<button
 						type="button"
 						class="cfg-back"
 						onclick={closeConfig}
-						title="Zurück zur Suche (Esc)"
-						aria-label="Zurück zur Suche"
+						title={$t('common.back_to_search_esc')}
+						aria-label={$t('common.back_to_search')}
 					>←</button>
-					<div class="cfg-title">KONFIGURATION</div>
-					<span class="cfg-live">wirkt sofort</span>
+					<div class="cfg-title">{$t('nav.configuration_caps')}</div>
+					<span class="cfg-live">{$t('settings.immediate_note')}</span>
 				</div>
 				<div class="cfg-body">
 										<!-- UD (t_a36daafb): thematische Gruppe „Darstellung“ — reine UI-Umordnung -->
 					<div class="cfg-group">
-						<div class="h cfg-g-head">Darstellung</div>
+						<div class="h cfg-g-head">{$t('settings.appearance')}</div>
 <section class="cfg-sect">
-						<div class="h">Farbpalette</div>
+						<div class="h">{$t('settings.color_palette')}</div>
 						<div class="cfg-chips">
 							<button
 								type="button"
@@ -5050,7 +5057,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								class="chip"
 								class:is-on={cfg?.palette === 'mfcd'}
 								onclick={() => choosePalette('mfcd')}
-							>MFCD</button>
+							>{$t('settings.mfcd')}</button>
 							<button
 								type="button"
 								class="chip"
@@ -5060,7 +5067,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						</div>
 					</section>
 <section class="cfg-sect">
-						<div class="h">Schriftscale</div>
+						<div class="h">{$t('settings.font_scale')}</div>
 						<div class="cfg-chips">
 							{#each [80, 90, 100, 110, 125] as pct}
 								<button
@@ -5073,14 +5080,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						</div>
 					</section>
 <section class="cfg-sect">
-						<div class="h">Preis-Detail-Variante</div>
+						<div class="h">{$t('settings.price_detail_variant')}</div>
 						<div class="cfg-chips">
 							<button
 								type="button"
 								class="chip"
 								class:is-on={cfg?.detail_variant === 'c'}
 								onclick={() => chooseVariant('c')}
-							>C · Standard</button>
+							>{$t('settings.variant_c_standard')}</button>
 							<button
 								type="button"
 								class="chip"
@@ -5133,17 +5140,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 					<!-- UD (t_a36daafb): thematische Gruppe „Bedienung“ — reine UI-Umordnung -->
 					<div class="cfg-group">
-						<div class="h cfg-g-head">Bedienung</div>
+						<div class="h cfg-g-head">{$t('settings.controls')}</div>
 <section class="cfg-sect">
-						<div class="h">Tastenkürzel</div>
+						<div class="h">{$t('settings.shortcuts')}</div>
 						{#each shortcutFields as f (f.id)}
 							<div class="cfg-sc-row" class:is-cap={scCapture === f.id}>
 								<div class="cfg-sc-meta">
-									<div class="cfg-sc-lbl">{f.label}</div>
+									<div class="cfg-sc-lbl">{$t(f.label)}</div>
 									<!-- Soll-Ist: aktiv = persistierter Backend-Wert
 									     (überlebt Neustart), nicht der Entwurf im Feld. -->
-									<div class="cfg-sc-active">
-										Aktiv: <b>{f.display}</b>
+									<div class="cfg-sc-active">{$t('settings.active_label')}<b>{f.display}</b>
 									</div>
 								</div>
 								<button
@@ -5151,10 +5157,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									class="chip cfg-sc-capture"
 									class:is-on={scCapture === f.id}
 									onclick={() => (scCapture === f.id ? cancelShortcutCapture() : startShortcutCapture(f.id))}
-								>{scCapture === f.id ? 'Abbrechen (Esc)' : 'Ändern'}</button>
+								>{scCapture === f.id ? $t('trades.cancel_esc') : $t('common.change')}</button>
 								{#if scCapture === f.id}
 									<div class="cfg-sc-help" role="status">
-										{scPreview ? `Gewählt: ${scPreview} — prüfen…` : 'Mod-Taste (Strg/Alt/Shift/Win) + normale Taste drücken'}
+										{scPreview ? $t('trades.chosen_hint', { item: scPreview }) : $t('settings.capture_hint')}
 									</div>
 								{/if}
 								{#if scNoteFor === f.id}
@@ -5167,9 +5173,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     prüfen keine Mod-Tasten, darum sind diese Tasten für
 					     globale Kürzel gesperrt. -->
 						<div class="cfg-sc-note">
-							Für globale Hotkeys gesperrt: F-Tasten sind die Mode-Hotkeys
-							(konfigurierbar, Abschnitt „Mode-Hotkeys“), F5 führt den Resync aus.
-							Weitere interne Belegungen: Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
+								{$t('settings.sc_locked_note')}
 							{#if cfg && cfg.hyprland_session}
 								<!-- C2b (t_1adbc017): Hyprland führt die Kürzel als
 								     Compositor-Binds. OmaSettings-Pfad nur mit
@@ -5182,38 +5186,36 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											class="chip"
 											class:is-on={cfg.shortcuts_sync_omarchy}
 											onclick={() => void toggleOmarchySync()}
-										>{cfg.shortcuts_sync_omarchy ? '✓' : '○'} Tastenkürzel mit System (Omarchy) synchronisieren</button>
+										>{cfg.shortcuts_sync_omarchy ? '✓' : '○'} {$t('settings.omarchy_sync_toggle')}</button>
 									</div>
 									{#if cfg.shortcuts_sync_omarchy}
 										<div class="cfg-sc-ok" role="status">
-											Hyprland-Binds werden aus den gespeicherten Kürzeln geführt
+											{$t('settings.omarchy_sync_ok')}
 											(<span class="src">omasettings keys</span> ·
-											<span class="src">arch-overlay toggle</span>) — Änderungen wirken sofort.
-										</div>
+											<span class="src">{$t('settings.arch_toggle_label')}</span>{$t('settings.changes_immediate_suffix')}</div>
 									{:else}
 										<div class="cfg-sc-warn" role="status">
-											Gespeicherte Kürzel sind die kanonische Quelle, aber die
-											Hyprland-Binds werden noch nicht daraus geführt.
+											{$t('settings.omarchy_sync_pending')}
+
 										</div>
 									{/if}
 								{:else}
 									<div class="cfg-sc-warn" role="status">
-										OmaSettings-Plugin nicht gefunden — Binds manuell anlegen
-										(<span class="src">arch-overlay toggle</span>, Anleitung: docs/WAYLAND.md).
-										Die App verändert keine fremde Hyprland-Konfiguration.
+										{$t('settings.omasettings_missing')}
+										(<span class="src">{$t('settings.arch_toggle_label')}</span>{$t('settings.omasettings_manual_suffix')}
+										{$t('settings.no_foreign_hyprland')}
 									</div>
 								{/if}
 								{#if cfg.sync_note}
-									<div class="cfg-note" role="status">{cfg.sync_note}</div>
+									<div class="cfg-note" role="status">{trError(cfg.sync_note)}</div>
 								{/if}
 							{:else if cfg && !cfg.global_shortcuts_active}
-								<div class="cfg-sc-warn" role="status">
-									Globale Kürzel <b>nicht OS-seitig registriert</b> (reines Wayland ohne Hyprland):
-									die gespeicherten Kombinationen bleiben die kanonische Quelle; Compositor-Binds
-									manuell nach docs/WAYLAND.md anlegen.
+								<div class="cfg-sc-warn" role="status">{$t('settings.global_shortcuts')}<b>{$t('settings.not_os_registered')}</b>{$t('settings.wayland_no_hyprland_prefix')}
+									{$t('settings.wayland_no_hyprland')}
+
 								</div>
 							{:else if cfg}
-								<div class="cfg-sc-ok" role="status">Globale Kürzel OS-seitig registriert — Änderungen wirken sofort ohne Neustart.</div>
+								<div class="cfg-sc-ok" role="status">{$t('settings.global_registered_note')}</div>
 							{/if}
 						</div>
 					</section>
@@ -5222,13 +5224,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     nur F1–F12, F5 reserviert für den Resync, keine Doppelbelegung.
 					     Capture-Muster identisch zu den globalen Kürzeln (C2a). -->
 <section class="cfg-sect">
-						<div class="h">Mode-Hotkeys</div>
+						<div class="h">{$t('settings.mode_hotkeys')}</div>
 						{#each modeHotkeyFields as f (f.id)}
 							<div class="cfg-sc-row" class:is-cap={hkCapture === f.id}>
 								<div class="cfg-sc-meta">
-									<div class="cfg-sc-lbl">{f.label}</div>
-									<div class="cfg-sc-active">
-										Aktiv: <b>{hotkeyFor(cfg, f.id)}</b>
+									<div class="cfg-sc-lbl">{$t(f.label)}</div>
+									<div class="cfg-sc-active">{$t('settings.active_label')}<b>{hotkeyFor(cfg, f.id)}</b>
 									</div>
 								</div>
 								<button
@@ -5236,176 +5237,156 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									class="chip cfg-sc-capture"
 									class:is-on={hkCapture === f.id}
 									onclick={() => (hkCapture === f.id ? (hkCapture = null) : startModeHotkeyCapture(f.id))}
-								>{hkCapture === f.id ? 'Abbrechen (Esc)' : 'Ändern'}</button>
+								>{hkCapture === f.id ? $t('trades.cancel_esc') : $t('common.change')}</button>
 							</div>
 						{/each}
 						{#if hkCapture}
 							<div class="cfg-sc-help" role="status">
-								F-Taste drücken (F1–F12) für „{modeHotkeyFields.find((f) => f.id === hkCapture)?.label}“ — Esc bricht ab.
+								{$t('shortcuts.capture_hint', { label: modeHotkeyFields.find((f) => f.id === hkCapture)?.label ? $t(modeHotkeyFields.find((f) => f.id === hkCapture)!.label) : '' })}
 							</div>
 						{/if}
 						{#if hkNote}
 							<div class="cfg-sc-err" role="alert">{hkNote}</div>
 						{/if}
 						<div class="cfg-sc-note">
-							F5 ist fest für den Resync reserviert (Marktplatz, Mein Shop, Routen-Sweep)
-							und kann keinem Modus zugewiesen werden. Änderungen gelten sofort.
-							<button type="button" class="chip" onclick={() => void resetModeHotkeys()}>Standard-Belegung</button>
+							{$t('settings.f5_reserved')}
+							<button type="button" class="chip" onclick={() => void resetModeHotkeys()}>{$t('settings.default_mapping')}</button>
 						</div>
 					</section>
 					</div>
 					<!-- UD (t_a36daafb): thematische Gruppe „Daten & Dienste“ — reine UI-Umordnung -->
 					<div class="cfg-group">
-						<div class="h cfg-g-head">Daten & Dienste</div>
+						<div class="h cfg-g-head">{$t('settings.data_services')}</div>
 <section class="cfg-sect">
-						<div class="h">UEX API-Key</div>
-						<div class="cfg-key-status">
-							Status:
-							<b class:ok={cfg?.uex_api_key_set} class:off={!cfg?.uex_api_key_set}>
-								{cfg?.uex_api_key_set ? 'gesetzt' : 'nicht gesetzt'}
+						<div class="h">{$t('settings.uex_api_key')}</div>
+						<div class="cfg-key-status">{$t('settings.status')}<b class:ok={cfg?.uex_api_key_set} class:off={!cfg?.uex_api_key_set}>
+								{cfg?.uex_api_key_set ? $t('settings.state_set') : $t('settings.state_unset')}
 							</b>
 						</div>
 						<div class="cfg-key-row">
 							<input
 								type="password"
 								autocomplete="off"
-								placeholder="Key einfügen … (maskiert)"
+								placeholder={$t('settings.ph_paste_key')}
 								bind:value={apiKeyInput}
 								onkeydown={(e) => e.stopPropagation()}
 							/>
-							<button type="button" class="btn" onclick={saveApiKey} disabled={!apiKeyInput.trim()}>
-								Setzen
-							</button>
+							<button type="button" class="btn" onclick={saveApiKey} disabled={!apiKeyInput.trim()}>{$t('settings.set')}</button>
 							{#if cfg?.uex_api_key_set}
-							<button type="button" class="btn-ghost btn-danger" onclick={removeApiKey}>Entfernen</button>
+							<button type="button" class="btn-ghost btn-danger" onclick={removeApiKey}>{$t('settings.remove')}</button>
 							{/if}
 						</div>
 						<button
 							type="button"
 							class="chip"
 							style="margin-top: 8px"
-							title="API-Keys auf uexcorp.space verwalten (Login im Browser)"
+							title={$t('settings.manage_api_keys_uex')}
 							onclick={() => void openUex('open_uex_api_apps')}
-						>API-Keys auf UEX verwalten ↗</button>
+						>{$t('settings.manage_api_keys')}</button>
 						{#if apiKeyNote}
 							<div class="cfg-note">{apiKeyNote}</div>
 						{/if}
 					</section>
 <section class="cfg-sect">
-						<div class="h">UEX persönlicher Secret-Key</div>
+						<div class="h">{$t('settings.uex_secret_key')}</div>
 						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
-							Für den eigenen Shop („Mein Shop“, user-scoped Reads) braucht UEX
-							zusätzlich deinen persönlichen Secret-Key (40 Zeichen, noch maskierter
-							als der App-Key). Den Key auf uexcorp.space generieren/kopieren —
-							den Benutzernamen ermittelt das Overlay automatisch daraus.
+							{$t('settings.secret_key_note')}
 						</div>
-						<div class="cfg-key-status">
-							Secret-Key:
-							<b class:ok={cfg?.uex_secret_key_set} class:off={!cfg?.uex_secret_key_set}>
-								{cfg?.uex_secret_key_set ? 'gesetzt' : 'nicht gesetzt'}
+						<div class="cfg-key-status">{$t('settings.secret_key')}<b class:ok={cfg?.uex_secret_key_set} class:off={!cfg?.uex_secret_key_set}>
+								{cfg?.uex_secret_key_set ? $t('settings.state_set') : $t('settings.state_unset')}
 							</b>
 						</div>
 						<div class="cfg-key-row">
 							<input
 								type="password"
 								autocomplete="off"
-								placeholder="Secret-Key einfügen … (maskiert)"
+								placeholder={$t('settings.ph_paste_secret')}
 								bind:value={secretKeyInput}
 								onkeydown={(e) => e.stopPropagation()}
 							/>
-							<button type="button" class="btn" onclick={saveSecretKey} disabled={!secretKeyInput.trim()}>
-								Setzen
-							</button>
+							<button type="button" class="btn" onclick={saveSecretKey} disabled={!secretKeyInput.trim()}>{$t('settings.set')}</button>
 							{#if cfg?.uex_secret_key_set}
-							<button type="button" class="btn-ghost btn-danger" onclick={removeSecretKey}>Entfernen</button>
+							<button type="button" class="btn-ghost btn-danger" onclick={removeSecretKey}>{$t('settings.remove')}</button>
 							{/if}
 						</div>
 						<button
 							type="button"
 							class="chip"
 							style="margin-top: 8px"
-							title="Secret-Key auf uexcorp.space/account neu generieren/kopieren (Login im Browser)"
+							title={$t('settings.manage_secret_uex')}
 							onclick={() => void openUex('open_uex_account')}
-						>Secret-Key auf UEX verwalten ↗</button>
+						>{$t('settings.manage_secret_key')}</button>
 						{#if secretKeyNote}
 							<div class="cfg-note">{secretKeyNote}</div>
 						{/if}
 						<!-- PW-1 (t_fbe40115): Username-Feld ENTFALLEN — der Name wird
 						     automatisch aus dem Secret-Key ermittelt (GET /user) und
 						     gecacht; hier nur noch Status statt Eingabefeld. -->
-						<div class="cfg-key-status" style="margin-top: 10px">
-							UEX-Username (automatisch ermittelt):
-							<b class:ok={cfg?.uex_username?.trim()} class:off={!cfg?.uex_username?.trim()}>
-								{cfg?.uex_username?.trim() ? cfg.uex_username.trim() : 'wird aus dem Secret-Key ermittelt …'}
+						<div class="cfg-key-status" style="margin-top: 10px">{$t('settings.uex_username')}<b class:ok={cfg?.uex_username?.trim()} class:off={!cfg?.uex_username?.trim()}>
+								{cfg?.uex_username?.trim() ? cfg.uex_username.trim() : $t('settings.username_pending')}
 							</b>
 						</div>
 						{#if usernameNote}
 							<div class="cfg-note">{usernameNote}</div>
 						{/if}
-						<button type="button" class="chip" style="margin-top: 6px" onclick={() => void resolveUsername()}>
-							Username neu ermitteln
-						</button>
+						<button type="button" class="chip" style="margin-top: 6px" onclick={() => void resolveUsername()}>{$t('settings.redetect_username')}</button>
 					
-												<div class="cfg-key-status" style="margin-top: 12px">
-							Schreibbestätigung (2-Schritt):
-							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>Nach jeder Aktion (empfohlen)</button>
-							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>Nur beim Abmelden/Löschen eines Listings</button>
+												<div class="cfg-key-status" style="margin-top: 12px">{$t('settings.write_confirmation')}<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm !== 'delete_only'} onclick={() => void setMarketplaceConfirm('every_action')}>{$t('settings.confirm_every_action')}</button>
+							<button type="button" class="chip" class:is-on={cfg?.marketplace_confirm === 'delete_only'} onclick={() => void setMarketplaceConfirm('delete_only')}>{$t('settings.confirm_unlist_only')}</button>
 						</div>
 						<!-- MQ (t_d6ff5212): „Nur beim Abmelden“ war unklar → eindeutige
 						     Labels + 1-Zeilen-Erklärung, was jeweils bestätigt wird. -->
-						<div class="cfg-note">Bestätigungspflicht beim Anlegen von Listings vs. nur beim Entfernen.</div>
+						<div class="cfg-note">{$t('settings.confirm_note')}</div>
 						{#if mktConfirmNote}
 							<div class="cfg-note">{mktConfirmNote}</div>
 						{/if}
 				</section>
 <section class="cfg-sect">
-						<div class="h">Datenquellen</div>
+						<div class="h">{$t('settings.data_sources')}</div>
 						<!-- PS (t_c84e545d): Item-Preise (patch-getrieben, kein
 						     Auto-Sync) und Commodity-Preise (stündlich) zeigen
 						     ihre Frische GETRENNT und lassen sich per Button
 						     sofort erneuern. -->
 						{#if priceSyncAge}
 							<div class="cfg-note">
-								Commodity-Preise: {rel(priceSyncAge.commodity_age_secs ?? 0)} sync ·
-								{priceSyncAge.commodity_count} Waren · stündlich automatisch
+								{$t('settings.prices_commodity_note', { age: rel(priceSyncAge.commodity_age_secs ?? 0), n: priceSyncAge.commodity_count })}
 							</div>
 							<button
 								type="button"
 								class="chip"
 								disabled={priceSyncing}
 								onclick={refreshCommodityPrices}
-							>{priceSyncing ? 'Sync läuft …' : 'Commodity-Preise jetzt aktualisieren'}</button>
+							>{priceSyncing ? $t('common.syncing') : $t('settings.refresh_commodity_prices')}</button>
 							<div class="cfg-note">
-								Item-Preise: {rel(priceSyncAge.item_age_secs ?? 0)} sync ·
-								{priceSyncAge.item_count} Items · pro Patch konstant (kein Auto-Sync)
+								{$t('settings.prices_item_note', { age: rel(priceSyncAge.item_age_secs ?? 0), n: priceSyncAge.item_count })}
 							</div>
 							<button
 								type="button"
 								class="chip"
 								disabled={priceSyncing}
 								onclick={refreshItemPrices}
-							>{priceSyncing ? 'Sync läuft …' : 'Item-Preise jetzt aktualisieren'}</button>
+							>{priceSyncing ? $t('common.syncing') : $t('settings.refresh_item_prices')}</button>
 						{:else}
-							<div class="cfg-note">Datenquellen: noch keine Preisdaten im Cache.</div>
+							<div class="cfg-note">{$t('settings.no_price_data_note')}</div>
 						{/if}
 					</section>
 					<!-- S4 (t_66980b3c): Modul-Zuweisungen ausschließlich aus
 				     module-overrides.json — kein game-versions-Trigger mehr;
 				     der Button zieht NUR die Remote-Datei. -->
 <section class="cfg-sect">
-					<div class="h">Modul-Zuweisungen</div>
+					<div class="h">{$t('settings.module_assignments')}</div>
 					<div class="cfg-key-status">
-						Datenstand:
+						{$t('settings.data_asof')}
 						{#if modulStatus && modulStatus.version}
 							<b class="ok">{modulStatus.version}</b>
-							· {modulAgeText()} · {modulStatus.module_count} Module / {modulStatus.ship_count} Schiffe
+							· {modulAgeText()} · {$t('settings.module_ship_counts', { modules: modulStatus.module_count, ships: modulStatus.ship_count })}
 						{:else}
-							<b class="off">noch kein Sync</b>
+							<b class="off">{$t('settings.no_sync_yet')}</b>
 						{/if}
 					</div>
 					<div class="cfg-key-row">
 						<button type="button" class="btn" disabled={modulBusy} onclick={() => void modulRefreshNow()}>
-							{modulBusy ? 'Aktualisiere …' : 'Modul-Zuweisungen aktualisieren'}
+							{modulBusy ? $t('common.updating') : $t('settings.update_module_assignments')}
 						</button>
 					</div>
 					{#if modulNote}
@@ -5415,26 +5396,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</div>
 					<!-- UD (t_a36daafb): thematische Gruppe „App“ — reine UI-Umordnung -->
 					<div class="cfg-group">
-						<div class="h cfg-g-head">App</div>
+						<div class="h cfg-g-head">{$t('settings.app')}</div>
 					<!-- UC t_d323be7e: Auto-Updater — dezenter Update-Chip + on-demand
 				     „Jetzt aktualisieren“ (nie auto-install ohne Wunsch). Bei
 				     .deb-Installationen nur der apt-Hinweis (keine root-Aktionen
 				     aus der App). -->
 <section class="cfg-sect">
-					<div class="h">Aktualisierung</div>
+					<div class="h">{$t('settings.updater')}</div>
 					<div class="cfg-chips">
 						<button
 							type="button"
 							class="chip"
 							class:is-on={cfg?.updater_enabled !== false}
 							onclick={() => void setUpdaterEnabled(true)}
-						>Auto-Check an</button>
+						>{$t('settings.auto_check_on')}</button>
 						<button
 							type="button"
 							class="chip"
 							class:is-on={cfg?.updater_enabled === false}
 							onclick={() => void setUpdaterEnabled(false)}
-						>Auto-Check aus</button>
+						>{$t('settings.auto_check_off')}</button>
 					</div>
 					<div class="cfg-chips">
 						{#each [2, 6, 12, 24] as h}
@@ -5447,23 +5428,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{/each}
 					</div>
 					<div class="cfg-note">
-						Overlay {upStatus?.app_version ?? '…'} · geprüft gegen die Gitea-Release (alle {cfg?.updater_interval_hours ?? 6} h, nur ein GET — kein Telemetrie).
+						{$t('settings.updater_note', { version: upStatus?.app_version ?? '…', hours: cfg?.updater_interval_hours ?? 6 })}
 					</div>
 					{#if upStatus}
 						{#if upStatus.available}
 							<div class="cfg-key-status">
-								<b class="ok">Update v{upStatus.available.version} verfügbar</b>
+								<b class="ok">{$t('settings.update_available', { version: upStatus.available.version })}</b>
 							</div>
 						{:else if upStatus.note}
-							<div class="cfg-note">{upStatus.note}</div>
+							<div class="cfg-note">{trError(upStatus.note)}</div>
 						{/if}
 						<div class="cfg-key-row">
 							<button type="button" class="btn" disabled={upBusy} onclick={() => void updaterCheckNow()}>
-								{upBusy ? 'Prüfe …' : 'Jetzt prüfen'}
+								{upBusy ? $t('settings.checking') : $t('settings.check_now')}
 							</button>
 							{#if upStatus.available && upStatus.available.kind !== 'deb'}
 								<button type="button" class="btn" disabled={upBusy} onclick={() => void updaterInstallNow()}>
-									{upBusy ? 'Lade …' : `Jetzt aktualisieren (v${upStatus.available.version})`}
+									{upBusy ? $t('common.loading') : $t('settings.update_now_version', { version: upStatus.available.version })}
 								</button>
 							{/if}
 						</div>
@@ -5479,23 +5460,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<div class="pane-loading" role="status">
 				<div class="center">
 					<span class="spin"></span>
-					<div class="big" style="margin-top: 12px">Erster Sync läuft</div>
-					<div class="sm">Commodities · Terminals · Preise — danach wird sofort lokal gesucht.</div>
+					<div class="big" style="margin-top: 12px">{$t('settings.initial_sync')}</div>
+					<div class="sm">{$t('settings.initial_sync_note')}</div>
 				</div>
 			</div>
 
 		{:else if phase === 'error'}
 			<div class="pane-error">
 				<div class="center">
-					<div class="big" style="color: var(--alert)">UEX nicht erreichbar</div>
+					<div class="big" style="color: var(--alert)">{$t('settings.uex_unreachable')}</div>
 					<div class="sm">
-						{errorMsg ?? status?.last_error ?? 'Keine Verbindung'}<br />
-						Cache-Stand: {cacheAge()}
+						{errorMsg ?? status?.last_error ?? $t('settings.no_connection')}<br />
+						{$t('settings.cache_asof', { age: cacheAge() })}
 					</div>
-					<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={retrySync}>Erneut versuchen</span>
+					<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={retrySync}>{$t('common.try_again')}</span>
 					<div class="sm" style="margin-top: 10px">
-						<b style="color: var(--fgdim)">O</b> Offline mit Cache fortsetzen
-					</div>
+						<b style="color: var(--fgdim)">O</b>{$t('settings.continue_offline')}</div>
 				</div>
 			</div>
 
@@ -5509,15 +5489,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			     Zustand. Jetzt am abgeleiteten Mode (routes = kein Marktplatz-Reiter). -->
 			{#if !offerDetail && mode === 'market'}
 				<div class="mtabs" role="tablist">
-					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>Angebote</button>
+					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>{$t('market.tab_offers')}</button>
 					<!-- t_350c4300 B1: kein „Handelsrouten"-Tab im Marktplatz — Routen
 					     sind nur noch über das Navigationsband (Rail) bzw. den
 					     Mode-Hotkey für Routen (Default F3, konfigurierbar)
 					     erreichbar (setMode('routes') → mTab='routes' bleibt der
 					     interne Mechanismus). -->
-					<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>Mein Shop</button>
+					<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>{$t('market.tab_shop')}</button>
 					<!-- M3b (t_893761f1): Trades-Reiter — Deals + Chat im Overlay. -->
-					<button type="button" role="tab" aria-selected={mTab === 'trades'} class="chip" class:is-on={mTab === 'trades'} onclick={() => (mTab = 'trades')}>Trades</button>
+					<button type="button" role="tab" aria-selected={mTab === 'trades'} class="chip" class:is-on={mTab === 'trades'} onclick={() => (mTab = 'trades')}>{$t('market.tab_trades')}</button>
 				</div>
 			{/if}
 			{#if offerDetail}
@@ -5535,15 +5515,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						</div>
 						<div class="md-meta">
-							<span><b>Anbieter</b> {offerDetail.seller || '—'}</span>
-							<span><b>Menge</b> {fmtQty(offerDetail.quantity)}</span>
-							<span><b>Ort</b> {offerDetail.location || '—'}</span>
-							<span><b>Alter</b> {rel(offerDetail.updated)}</span>
+							<span><b>{$t('trades.seller')}</b> {offerDetail.seller || '—'}</span>
+							<span><b>{$t('common.quantity')}</b> {fmtQty(offerDetail.quantity)}</span>
+							<span><b>{$t('trades.location')}</b> {offerDetail.location || '—'}</span>
+							<span><b>{$t('trades.age')}</b> {rel(offerDetail.updated)}</span>
 							{#if offerDetail.expires}
-								<span><b>Ende</b> {rel(offerDetail.expires)}</span>
+								<span><b>{$t('trades.end')}</b> {rel(offerDetail.expires)}</span>
 							{/if}
 							{#if offerDetail.quality}
-								<span><b>Qualität</b> {offerDetail.quality}</span>
+								<span><b>{$t('common.quality')}</b> {offerDetail.quality}</span>
 							{/if}
 						</div>
 						<!-- M3a-R1: Bilder per Backend-Proxy (Base64-Data-URI) — direkte
@@ -5557,47 +5537,45 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<button
 											type="button"
 											class="md-photo"
-											title="Bild vergrößern (Inline-Lightbox im Overlay)"
+											title={$t('market.image_zoom_title')}
 											onclick={() => {
 												const uri = offerPhotoUris[pi];
 												if (uri && offerDetail) lightbox = { uri, title: offerDetail.title };
 											}}
 										>
-											<img src={offerPhotoUris[pi]} alt={'Bild ' + (pi + 1) + ' von „' + offerDetail!.title + '“'} loading="lazy" />
+											<img src={offerPhotoUris[pi]} alt={$t('market.image_n_of', { n: pi + 1, title: offerDetail!.title })} loading="lazy" />
 										</button>
 									{/if}
 								{/each}
 								{#if offerPhotoUris.length > 0 && offerPhotoUris.every((u) => u === null)}
-									<div class="md-desc empty">Kein Bild hinterlegt.</div>
+									<div class="md-desc empty">{$t('shop.no_image')}</div>
 								{/if}
 							</div>
 						{:else}
-							<div class="md-desc empty">Kein Bild hinterlegt.</div>
+							<div class="md-desc empty">{$t('shop.no_image')}</div>
 						{/if}
 						{#if offerDetail.description}
 							<div class="md-desc">{offerDetail.description}</div>
 						{:else}
-							<div class="md-desc empty">Keine Beschreibung.</div>
+							<div class="md-desc empty">{$t('shop.no_description')}</div>
 						{/if}
 						<div class="md-actions">
 							<!-- MQ (t_d6ff5212): Verhandlungs-Einstieg sichtbar machen. Die
 							     API bietet KEIN POST /marketplace_negotiations (Research) —
 							     Deals entstehen auf der UEX-Webseite → Deep-Link-Button. -->
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn" title="Deal starten: Verhandlung auf uexcorp.space beginnen (API-seitig nicht möglich, daher Browser)" onclick={() => void openListingDeepLink(offerDetail!.slug)}>VERHANDELN AUF UEX ↗</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openOfferDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => { offerDetail = null; lightbox = null; }}>Zurück</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn" title={$t('trades.deal_start_title')} onclick={() => void openListingDeepLink(offerDetail!.slug)}>{$t('trades.negotiate_uex_caps')}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openOfferDeepLink}>{$t('trades.open_uex_caps')}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => { offerDetail = null; lightbox = null; }}>{$t('common.back')}</span>
 						</div>
-						<div class="md-note">
-							Verhandeln startet auf <span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span> im Browser — dort Deal anlegen, chatten und beenden. Beide Seiten siehst du dann im Trades-Reiter.
-						</div>
+						<div class="md-note">{$t('trades.negotiate_starts_on')}<span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span>{$t('trades.negotiate_browser_note')}</div>
 						{#if lightbox}
 							<!-- MQ (t_d6ff5212): Bild-Lightbox — Inline-Zoom statt Browser.
 							     Klick auf den Scrim (oder Esc) schließt; Klick aufs Bild nicht. -->
 							<div class="lightbox-scrim" role="presentation" onclick={() => (lightbox = null)}>
-								<div class="lightbox-modal" role="dialog" aria-modal="true" aria-label="Bild vergrößert">
+								<div class="lightbox-modal" role="dialog" aria-modal="true" aria-label={$t('market.image_zoomed_aria')}>
 									<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events --><!-- Lightbox-Bild: Klick stoppt nur Propagation (Schließen via Scrim/Esc), keine Interaktion -->
-									<img src={lightbox.uri} alt={'Vergrößert: ' + lightbox.title} onclick={(ev) => ev.stopPropagation()} />
-									<div class="lightbox-cap">{lightbox.title} — Klick außerhalb oder Esc schließt</div>
+									<img src={lightbox.uri} alt={$t('market.zoomed_alt', { title: lightbox.title })} onclick={(ev) => ev.stopPropagation()} />
+									<div class="lightbox-cap">{lightbox.title} — {$t('market.lightbox_close_hint')}</div>
 								</div>
 							</div>
 						{/if}
@@ -5607,32 +5585,32 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     „Routen" (bestehende Matrix) und „Trade Log" (eigene
 					     Commodity-Trades + Tagesgewinn). -->
 					<div class="mbar2">
-						<button type="button" role="tab" aria-selected={rTab === 'matrix'} class="chip" class:is-on={rTab === 'matrix'} onclick={() => (rTab = 'matrix')}>Routen</button>
-						<button type="button" role="tab" aria-selected={rTab === 'tracking'} class="chip" class:is-on={rTab === 'tracking'} onclick={() => { rTab = 'tracking'; rDetail = null; if (!trkLoaded) void loadTrk(false); }}>Trade Log</button>
+						<button type="button" role="tab" aria-selected={rTab === 'matrix'} class="chip" class:is-on={rTab === 'matrix'} onclick={() => (rTab = 'matrix')}>{$t('market.tab_routes')}</button>
+						<button type="button" role="tab" aria-selected={rTab === 'tracking'} class="chip" class:is-on={rTab === 'tracking'} onclick={() => { rTab = 'tracking'; rDetail = null; if (!trkLoaded) void loadTrk(false); }}>{$t('market.tab_trade_log')}</button>
 					</div>
 					{#if rTab === 'tracking'}
 						<div class="mbar">
-							<span class="m-lbl">Trade Log</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => void loadTrk(true, true)}>Aktualisieren</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Trade erfassen (Kauf/Verkauf, Menge, Preis, Ort)" onclick={() => openTrkForm()}>+ Trade erfassen</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Trade Log auf uexcorp.space öffnen (Login im Browser)" onclick={() => void openTrkUex()}>Trade Log auf UEX öffnen ↗</span>
+							<span class="m-lbl">{$t('market.tab_trade_log')}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => void loadTrk(true, true)}>{$t('common.refresh')}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('trades.form.title_long')} onclick={() => openTrkForm()}>{$t('trades.plus_record')}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('trades.open_trade_log_uex_title')} onclick={() => void openTrkUex()}>{$t('trades.trade_log_uex_link')}</span>
 						</div>
 						{#if trkLoading && !myTrades.length}
 							<div class="center" style="padding: 28px 16px">
 								<span class="spin"></span>
-								<div class="big" style="margin-top: 12px">Lade Trades …</div>
+								<div class="big" style="margin-top: 12px">{$t('trades.loading')}</div>
 							</div>
 						{:else if trkErr && !myTrades.length}
 							<div class="row-empty" style="padding: 28px 16px; color: var(--alert)">
 								{trkErr}
-								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadTrk(false)}>Erneut versuchen</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadTrk(false)}>{$t('common.try_again')}</span>
 							</div>
 						{:else if myTrades.length === 0}
 							{#if trkMsg}
-								<div class="sm" style="color: {trkMsg === 'Trade gelöscht.' ? 'var(--fg)' : 'var(--alert)'}; margin: 6px 16px" role="alert">{trkMsg}</div>
+								<div class="sm" style="color: {trkMsg === $t('trades.deleted_note') ? 'var(--fg)' : 'var(--alert)'}; margin: 6px 16px" role="alert">{trkMsg}</div>
 							{/if}
 							<div class="row-empty" style="padding: 28px 16px">
-								{trkNote ?? 'Noch keine Commodity-Trades erfasst — lege deinen ersten Trade an („+ Trade erfassen“) oder führe ihn direkt auf UEX.'}
+								{trkNote ?? tr('trades.no_commodity_trades')}
 							</div>
 						{:else}
 							{#if trkNote}
@@ -5646,14 +5624,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<div class="mrow trow" style="cursor: default">
 										<div class="m-main">
 											<div class="m-title">{day.key}</div>
-											<div class="m-sub">{day.count} Trade{day.count === 1 ? '' : 's'}</div>
+											<div class="m-sub">{$t(day.count === 1 ? 'trades.day_count_one' : 'trades.day_count_other', { n: day.count })}</div>
 										</div>
 										<div class="m-right">
 											<div class="m-meta">
-												<span class="amt-neg" title="Ausgaben (Käufe) an diesem Tag">−{fmtPrice(day.expense)}</span>
-												<span class="amt-pos" title="Einnahmen (Verkäufe) an diesem Tag">+{fmtPrice(day.income)}</span>
+												<span class="amt-neg" title={$t('trades.expenses_today_title')}>−{fmtPrice(day.expense)}</span>
+												<span class="amt-pos" title={$t('trades.income_today_title')}>+{fmtPrice(day.income)}</span>
 											</div>
-											<div class="m-price {day.net >= 0 ? 'amt-pos' : 'amt-neg'}" title="Nettogewinn des Tages (aUEC)">{day.net >= 0 ? '+' : '−'}{fmtPrice(Math.abs(day.net))}</div>
+											<div class="m-price {day.net >= 0 ? 'amt-pos' : 'amt-neg'}" title={$t('trades.net_profit_today_title')}>{day.net >= 0 ? '+' : '−'}{fmtPrice(Math.abs(day.net))}</div>
 										</div>
 									</div>
 								{/each}
@@ -5662,93 +5640,93 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							     (deutsche UEX-Codes via friendly()) sind so im Trade-Log sichtbar,
 							     nicht nur im geschlossenen Add/Edit-Formular. -->
 							{#if trkMsg}
-								<div class="sm" style="color: {trkMsg === 'Trade gelöscht.' ? 'var(--fg)' : 'var(--alert)'}; margin: 6px 16px" role="alert">{trkMsg}</div>
+								<div class="sm" style="color: {trkMsg === $t('trades.deleted_note') ? 'var(--fg)' : 'var(--alert)'}; margin: 6px 16px" role="alert">{trkMsg}</div>
 							{/if}
 							<div class="mlist">
-								{#each trkSorted as t (t.id)}
+								{#each trkSorted as trk (trk.id)}
 									<div class="mrow trow" style="cursor: default">
-										<div class="m-op {t.operation === 'sell' ? 'sell' : 'buy'}">{t.operation === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-op {trk.operation === 'sell' ? 'sell' : 'buy'}">{trk.operation === 'sell' ? $t('common.sell') : $t('common.buy')}</div>
 										<div class="m-main">
-											<div class="m-title">{t.commodity}</div>
-											<div class="m-sub">{t.terminal} · {fmt(t.scu)} SCU @ {fmtPrice(t.price)} aUEC</div>
+											<div class="m-title">{trk.commodity}</div>
+											<div class="m-sub">{trk.terminal} · {fmt(trk.scu)} SCU @ {fmtPrice(trk.price)} aUEC</div>
 										</div>
 										<div class="m-right">
 											<!-- Q1 (t_535a98fb): Gesamtwert = Menge × Preis — Verkauf
 											     = Einnahme (GRÜN, +), Kauf = Ausgabe (ROT, −). -->
 											<div
-												class="m-price {t.operation === 'sell' ? 'amt-pos' : 'amt-neg'}"
-												title="Gesamtwert: {fmt(t.scu)} SCU × {fmtPrice(t.price)} aUEC"
-											>{t.operation === 'sell' ? '+' : '−'}{fmtPrice((t.scu || 0) * (t.price || 0))}</div>
-											<div class="m-meta">{new Date((t.date_added || 0) * 1000).toLocaleString('de-DE')}</div>
+												class="m-price {trk.operation === 'sell' ? 'amt-pos' : 'amt-neg'}"
+												title={$t('trades.total_value_title', { scu: fmt(trk.scu), price: fmtPrice(trk.price) })}
+											>{trk.operation === 'sell' ? '+' : '−'}{fmtPrice((trk.scu || 0) * (trk.price || 0))}</div>
+											<div class="m-meta">{new Date((trk.date_added || 0) * 1000).toLocaleString('de-DE')}</div>
 											<div class="m-meta">
-												<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" title="Trade bearbeiten" onclick={() => openTrkForm(t)}>Bearbeiten</span>
-												<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" style="color: var(--alert)" title="Trade löschen" onclick={() => requestTrkRemove(t)}>Löschen</span>
+												<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" title={$t('trades.form.edit_title')} onclick={() => openTrkForm(trk)}>{$t('common.edit')}</span>
+												<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" style="color: var(--alert)" title={$t('trades.form.delete_title')} onclick={() => requestTrkRemove(trk)}>{$t('common.delete')}</span>
 											</div>
 										</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{myTrades.length} Trades · Tages-Aggregat clientseitig (Kauf = Ausgabe, Verkauf = Einnahme) · Quelle UEX /user_trades</span>
+								<span>{$t(myTrades.length === 1 ? 'trades.track_foot_one' : 'trades.track_foot_other', { n: myTrades.length })}</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{/if}
 												{:else if rDetail}
-						<div class="rdetail" role="dialog" aria-modal="true" aria-label="Routen-Detail">
+						<div class="rdetail" role="dialog" aria-modal="true" aria-label={$t('routes.detail_title')}>
 							<div class="md-head">
 								<div class="md-t">
-									<h2>{rDetail.commodity} {rDetail.illegal ? '⚠ illegal' : ''}</h2>
-									<span class="tag" style="color: var(--fgdim)">Distanz: {DIST_LABELS[rDetail.distance] ?? rDetail.distance}</span>
+									<h2>{rDetail.commodity} {rDetail.illegal ? $t('market.illegal_chip') : ''}</h2>
+									<span class="tag" style="color: var(--fgdim)">{$t('routes.distance_chip', { d: DIST_LABELS[rDetail.distance] ?? rDetail.distance })}</span>
 								</div>
 								<div class="md-price">
 									<div class="v sell">+{fmtPrice(rDetail.profit_total)}</div>
-									<div class="u">aUEC Gewinn bei {routeMath(rDetail).qty} SCU</div>
+									<div class="u">{$t('routes.auec_profit_at', { qty: routeMath(rDetail).qty })}</div>
 								</div>
 							</div>
 							<div class="rd-leg">
 								<div class="rd-stop">
-									<div class="rd-cap">KAUF</div>
+									<div class="rd-cap">{$t('trades.buy_caps')}</div>
 									<div class="rd-term">{rDetail.buy_terminal}</div>
 									<div class="rd-chain">{rDetail.buy_chain}</div>
 									<div class="rd-price">{fmtPrice(rDetail.buy_price)} aUEC / SCU</div>
 									<div class="rd-flags">
-										{#if rDetail.buy_terminal_autoload}<span class="chip">Autoload</span>{/if}
-										{#if rDetail.buy_terminal_cargo_deck}<span class="chip">Cargodeck</span>{/if}
-										{#if rDetail.buy_terminal_ground}<span class="chip">Boden</span>{:else}<span class="chip">Space</span>{/if}
+										{#if rDetail.buy_terminal_autoload}<span class="chip">{$t('market.filter_autoload')}</span>{/if}
+										{#if rDetail.buy_terminal_cargo_deck}<span class="chip">{$t('market.filter_cargodeck')}</span>{/if}
+										{#if rDetail.buy_terminal_ground}<span class="chip">{$t('market.filter_ground')}</span>{:else}<span class="chip">{$t('market.filter_space')}</span>{/if}
 									</div>
 								</div>
 								<div class="rd-arrow">→</div>
 								<div class="rd-stop">
-									<div class="rd-cap">VERKAUF</div>
+									<div class="rd-cap">{$t('trades.sell_caps')}</div>
 									<div class="rd-term">{rDetail.sell_terminal}</div>
 									<div class="rd-chain">{rDetail.sell_chain}</div>
 									<div class="rd-price">{fmtPrice(rDetail.sell_price)} aUEC / SCU</div>
 									<div class="rd-flags">
-										{#if rDetail.sell_terminal_autoload}<span class="chip">Autoload</span>{/if}
-										{#if rDetail.sell_terminal_cargo_deck}<span class="chip">Cargodeck</span>{/if}
-										{#if rDetail.sell_terminal_ground}<span class="chip">Boden</span>{:else}<span class="chip">Space</span>{/if}
+										{#if rDetail.sell_terminal_autoload}<span class="chip">{$t('market.filter_autoload')}</span>{/if}
+										{#if rDetail.sell_terminal_cargo_deck}<span class="chip">{$t('market.filter_cargodeck')}</span>{/if}
+										{#if rDetail.sell_terminal_ground}<span class="chip">{$t('market.filter_ground')}</span>{:else}<span class="chip">{$t('market.filter_space')}</span>{/if}
 									</div>
 								</div>
 							</div>
 							<div class="rd-math">
-								<span><b>Menge</b> {fmtQty(routeMath(rDetail).qty)} SCU</span>
-								<span><b>Einkauf</b> {fmtPrice(routeMath(rDetail).cost)} aUEC</span>
-								<span><b>Brutto</b> {fmtPrice(routeMath(rDetail).gross)} aUEC</span>
-								<span title="Gain = (Sell−Buy) × Menge · absolute"><b>Netto-Gewinn</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
-								<span title="Marge = (Sell−Buy) ÷ Buy · relative gain in % (independent of SCU)"><b>Marge</b> {(rDetail.margin * 100).toFixed(1)} %</span>
-								<span><b>Bestand dort</b> {fmtPrice(rDetail.sell_stock)} SCU</span>
+								<span><b>{$t('common.quantity')}</b> {fmtQty(routeMath(rDetail).qty)} SCU</span>
+								<span><b>{$t('routes.purchase')}</b> {fmtPrice(routeMath(rDetail).cost)} aUEC</span>
+								<span><b>{$t('routes.gross')}</b> {fmtPrice(routeMath(rDetail).gross)} aUEC</span>
+								<span title={$t('routes.gain_formula_title')}><b>{$t('routes.net_profit')}</b> {fmtPrice(routeMath(rDetail).profit)} aUEC</span>
+								<span title={$t('routes.margin_formula_title')}><b>{$t('routes.margin')}</b> {(rDetail.margin * 100).toFixed(1)} %</span>
+								<span><b>{$t('routes.stock_there')}</b> {fmtPrice(rDetail.sell_stock)} SCU</span>
 						</div>
 						{#if rLocations && (rBuySorted.length > 0 || rSellSorted.length > 0)}
 												<div class="rd-pair">
 													<div class="rd-pair-col">
-														<div class="rd-pair-head">Kauforte <span class="rd-pair-sub">Preis ↑</span></div>
+														<div class="rd-pair-head">{$t('routes.buy_locations')}<span class="rd-pair-sub">{$t('routes.price_up')}</span></div>
 														{#if rBuySorted.length === 0}
-															<div class="rd-pair-empty">keine Kauforte</div>
+															<div class="rd-pair-empty">{$t('routes.no_buy_locations')}</div>
 														{:else}
 															{#each rBuySorted as loc (loc.terminal_id)}
 																<button type="button" class="rd-pair-row" data-side="buy" data-term-id={loc.terminal_id}
 																	class:is-selected={loc.terminal_id === rDetail?.buy_terminal_id}
-																	title={loc.terminal_id === rDetail?.buy_terminal_id ? 'Aktueller Kaufort dieser Route' : 'Kaufort im Filter setzen'}
+																	title={loc.terminal_id === rDetail?.buy_terminal_id ? $t('routes.current_buy_terminal_title') : $t('routes.set_buy_terminal_filter')}
 																	onclick={() => setRouteLocField('from', loc.terminal)}>
 																	<span class="rd-pair-main">
 																		<span class="rd-pair-term">{loc.terminal}</span>
@@ -5757,10 +5735,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	<span class="rd-pair-right">
 																		<span class="rd-pair-price">{fmtPrice(loc.price)}</span>
 																		<span class="rd-pair-meta">
-																			<span class="r-chip" title="Bestand am Terminal">≋ {fmt(Math.round(loc.stock))} SCU</span>
-																			{#if loc.status > 0}<span class="r-chip" title="Nachfrage (Lager-Level)">{loc.status}/7</span>{/if}
-																			{#if loc.autoload}<span class="r-chip">Autoload</span>{/if}
-																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title="Preisstand (UEX date_modified): {new Date(loc.updated * 1000).toLocaleString('de-DE')}">⏱ {rel(loc.updated)}</span>{/if}
+																			<span class="r-chip" title={$t('market.stock_at_terminal_title')}>≋ {fmt(Math.round(loc.stock))} SCU</span>
+																			{#if loc.status > 0}<span class="r-chip" title={$t('market.demand_title')}>{loc.status}/7</span>{/if}
+																			{#if loc.autoload}<span class="r-chip">{$t('market.filter_autoload')}</span>{/if}
+																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title={$t('routes.price_asof_title', { date: new Date(loc.updated * 1000).toLocaleString('de-DE') })}>⏱ {rel(loc.updated)}</span>{/if}
 																			</span>
 																			</span>
 																			</button>
@@ -5768,14 +5746,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																			{/if}
 																			</div>
 																			<div class="rd-pair-col">
-														<div class="rd-pair-head">Verkaufsorte <span class="rd-pair-sub">Preis ↓</span></div>
+														<div class="rd-pair-head">{$t('routes.sell_locations')}<span class="rd-pair-sub">{$t('routes.price_down')}</span></div>
 														{#if rSellSorted.length === 0}
-															<div class="rd-pair-empty">keine Verkaufsorte</div>
+															<div class="rd-pair-empty">{$t('routes.no_sell_locations')}</div>
 														{:else}
 															{#each rSellSorted as loc (loc.terminal_id)}
 																<button type="button" class="rd-pair-row" data-side="sell" data-term-id={loc.terminal_id}
 																	class:is-selected={loc.terminal_id === rDetail?.sell_terminal_id}
-																	title={loc.terminal_id === rDetail?.sell_terminal_id ? 'Aktueller Verkaufsort dieser Route' : 'Verkaufsort im Filter setzen'}
+																	title={loc.terminal_id === rDetail?.sell_terminal_id ? $t('routes.current_sell_terminal_title') : $t('routes.set_sell_terminal_filter')}
 																	onclick={() => setRouteLocField('to', loc.terminal)}>
 																	<span class="rd-pair-main">
 																		<span class="rd-pair-term">{loc.terminal}</span>
@@ -5784,10 +5762,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	<span class="rd-pair-right">
 																		<span class="rd-pair-price sell">+{fmtPrice(loc.price)}</span>
 																		<span class="rd-pair-meta">
-																			<span class="r-chip" title="Bestand am Terminal">≋ {fmt(Math.round(loc.stock))} SCU</span>
-																			{#if loc.status > 0}<span class="r-chip" title="Nachfrage (Lager-Level)">{loc.status}/7</span>{/if}
-																			{#if loc.autoload}<span class="r-chip">Autoload</span>{/if}
-																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title="Preisstand (UEX date_modified): {new Date(loc.updated * 1000).toLocaleString('de-DE')}">⏱ {rel(loc.updated)}</span>{/if}
+																			<span class="r-chip" title={$t('market.stock_at_terminal_title')}>≋ {fmt(Math.round(loc.stock))} SCU</span>
+																			{#if loc.status > 0}<span class="r-chip" title={$t('market.demand_title')}>{loc.status}/7</span>{/if}
+																			{#if loc.autoload}<span class="r-chip">{$t('market.filter_autoload')}</span>{/if}
+																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title={$t('routes.price_asof_title', { date: new Date(loc.updated * 1000).toLocaleString('de-DE') })}>⏱ {rel(loc.updated)}</span>{/if}
 																			</span>
 																			</span>
 																			</button>
@@ -5796,70 +5774,70 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																			</div>
 																			</div>
 											{:else if rDetail && !rLocsLoading}
-												<div class="rd-alt-none">keine Alternativorte für {rDetail.commodity}</div>
+												<div class="rd-alt-none">{$t('routes.no_alt_locations', { name: rDetail.commodity })}</div>
 											{/if}
-						<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
+						<div class="md-note">{$t('routes.price_asof_source', { date: rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—' })}</div>
 							<div class="md-actions">
-								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (rDetail = null)}>Zurück (Esc)</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (rDetail = null)}>{$t('common.back_esc')}</span>
 							</div>
 						</div>
 					{:else}
 						<div class="mbar2">
-							<span class="m-lbl">Schiff</span>
-							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder="z. B. Ironclad" ariaLabel="Schiff Type-ahead — Tippen filtert, ↵ übernimmt" onselect={(v: string) => applyShipScu(v)} />
-							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label="SCU-Kapazität" bind:value={rScu} />
-							<span class="m-lbl">Budget</span>
+							<span class="m-lbl">{$t('routes.ship')}</span>
+							<RoutesTypeahead bind:value={rShipQ} options={shipTypeaheadOpts} placeholder={$t('market.ph_eg_ironclad')} ariaLabel={$t('routes.ph_ship_typeahead')} onselect={(v: string) => applyShipScu(v)} />
+							<input class="qnum" type="number" min="0" placeholder="SCU" aria-label={$t('routes.scu_capacity_aria')} bind:value={rScu} />
+							<span class="m-lbl">{$t('routes.budget')}</span>
 							<div class="rb-wrap">
-								<input class="qnum rb-qnum" type="number" min="0" step="any" placeholder="aUEC" aria-label="Budget (aUEC) — kappt kaufbare Menge" bind:value={rBudget} />
+								<input class="qnum rb-qnum" type="number" min="0" step="any" placeholder="aUEC" aria-label={$t('routes.budget_title')} bind:value={rBudget} />
 								{#if rBudgetNum() !== null && rBudgetNum()! > 0}
-									<span class="rb-fmt" title="Budget in aUEC (formatiert)">{fmtPrice(rBudgetNum()!)}</span>
+									<span class="rb-fmt" title={$t('routes.budget_formatted_title')}>{fmtPrice(rBudgetNum()!)}</span>
 								{/if}
 							</div>
-							<span class="m-lbl">Ware</span>
-							<input class="rtext" placeholder="Ware" aria-label="Ware filtern" bind:value={rCommodity} />
-							<span class="m-lbl">Start</span>
-							<RoutesTypeahead bind:value={rFrom} options={fromOpts} placeholder="Startort" ariaLabel="Startort Type-ahead — Tippen filtert, ↵ übernimmt" />
-							<span class="m-lbl">Ziel</span>
-							<RoutesTypeahead bind:value={rTo} options={toOpts} placeholder="Zielort" ariaLabel="Zielort Type-ahead — Tippen filtert, ↵ übernimmt" />
-							<a class="rta-clear" href="#0" role="button" tabindex="0" title="Filter zurücksetzen" onclick={(ev) => { ev.preventDefault(); rShipQ = ''; rScu = 0; rCommodity = ''; rFrom = ''; rTo = ''; rBudget = ''; }}>Filter ×</a>
+							<span class="m-lbl">{$t('common.commodity')}</span>
+							<input class="rtext" placeholder={$t('common.commodity')} aria-label={$t('routes.filter_commodity_title')} bind:value={rCommodity} />
+							<span class="m-lbl">{$t('routes.start')}</span>
+							<RoutesTypeahead bind:value={rFrom} options={fromOpts} placeholder={$t('routes.origin')} ariaLabel={$t('routes.ph_origin_typeahead')} />
+							<span class="m-lbl">{$t('routes.destination_short')}</span>
+							<RoutesTypeahead bind:value={rTo} options={toOpts} placeholder={$t('routes.destination')} ariaLabel={$t('routes.ph_destination_typeahead')} />
+							<a class="rta-clear" href="#0" role="button" tabindex="0" title={$t('routes.reset_filter_title')} onclick={(ev) => { ev.preventDefault(); rShipQ = ''; rScu = 0; rCommodity = ''; rFrom = ''; rTo = ''; rBudget = ''; }}>{$t('routes.filter_chip')}</a>
 						</div>
 						<div class="mbar2">
-							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>Alle</button>
-							<button type="button" class="chip" class:is-on={rLegal === 'legal'} onclick={() => (rLegal = 'legal')}>Legal</button>
-							<button type="button" class="chip" class:is-on={rLegal === 'illegal'} onclick={() => (rLegal = 'illegal')}><span class="dot"></span>Illegal</button>
-							<span class="m-lbl">Autoload</span>
-							<button type="button" class="chip" class:is-on={rAutoload === 'any'} onclick={() => (rAutoload = 'any')}>Egal</button>
-							<button type="button" class="chip" class:is-on={rAutoload === 'yes'} onclick={() => (rAutoload = 'yes')}>Ja</button>
-							<button type="button" class="chip" class:is-on={rAutoload === 'no'} onclick={() => (rAutoload = 'no')}>Nein</button>
-							<span class="m-lbl">Cargodeck</span>
-							<button type="button" class="chip" class:is-on={rCargo === 'any'} onclick={() => (rCargo = 'any')}>Egal</button>
-							<button type="button" class="chip" class:is-on={rCargo === 'yes'} onclick={() => (rCargo = 'yes')}>Ja</button>
-							<button type="button" class="chip" class:is-on={rCargo === 'no'} onclick={() => (rCargo = 'no')}>Nein</button>
-							<span class="m-lbl">Ort</span>
-							<button type="button" class="chip" class:is-on={rPlace === 'any'} onclick={() => (rPlace = 'any')}>Alle</button>
-							<button type="button" class="chip" class:is-on={rPlace === 'ground'} onclick={() => (rPlace = 'ground')}>Boden</button>
-							<button type="button" class="chip" class:is-on={rPlace === 'space'} onclick={() => (rPlace = 'space')}>Space</button>
+							<button type="button" class="chip" class:is-on={rLegal === 'all'} onclick={() => (rLegal = 'all')}>{$t('common.all')}</button>
+							<button type="button" class="chip" class:is-on={rLegal === 'legal'} onclick={() => (rLegal = 'legal')}>{$t('routes.legal')}</button>
+							<button type="button" class="chip" class:is-on={rLegal === 'illegal'} onclick={() => (rLegal = 'illegal')}><span class="dot"></span>{$t('routes.illegal')}</button>
+							<span class="m-lbl">{$t('market.filter_autoload')}</span>
+							<button type="button" class="chip" class:is-on={rAutoload === 'any'} onclick={() => (rAutoload = 'any')}>{$t('routes.any')}</button>
+							<button type="button" class="chip" class:is-on={rAutoload === 'yes'} onclick={() => (rAutoload = 'yes')}>{$t('common.yes')}</button>
+							<button type="button" class="chip" class:is-on={rAutoload === 'no'} onclick={() => (rAutoload = 'no')}>{$t('common.no')}</button>
+							<span class="m-lbl">{$t('market.filter_cargodeck')}</span>
+							<button type="button" class="chip" class:is-on={rCargo === 'any'} onclick={() => (rCargo = 'any')}>{$t('routes.any')}</button>
+							<button type="button" class="chip" class:is-on={rCargo === 'yes'} onclick={() => (rCargo = 'yes')}>{$t('common.yes')}</button>
+							<button type="button" class="chip" class:is-on={rCargo === 'no'} onclick={() => (rCargo = 'no')}>{$t('common.no')}</button>
+							<span class="m-lbl">{$t('trades.location')}</span>
+							<button type="button" class="chip" class:is-on={rPlace === 'any'} onclick={() => (rPlace = 'any')}>{$t('common.all')}</button>
+							<button type="button" class="chip" class:is-on={rPlace === 'ground'} onclick={() => (rPlace = 'ground')}>{$t('market.filter_ground')}</button>
+							<button type="button" class="chip" class:is-on={rPlace === 'space'} onclick={() => (rPlace = 'space')}>{$t('market.filter_space')}</button>
 						</div>
 						<div class="mbar2">
-							<span class="m-lbl">Sort</span>
+							<span class="m-lbl">{$t('routes.sort')}</span>
 							<button
 								type="button"
 								class="chip"
 								class:is-on={rSort === 'profit_desc' || rSort === 'profit_asc'}
 								onclick={cycleProfitSort}
-								title="Gewinn/SCU umschalten: neutral → absteigend → aufsteigend → neutral"
-							>Gewinn/SCU{rSort === 'profit_desc' ? ' ↓' : rSort === 'profit_asc' ? ' ↑' : ''}</button>
-							<button type="button" class="chip" class:is-on={rSort === 'margin_desc'} onclick={() => (rSort = 'margin_desc')}>Marge ↓</button>
-							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>Distanz ↑</button>
+								title={$t('routes.profit_sort_toggle_title')}
+							>{$t('routes.profit_per_scu')}{rSort === 'profit_desc' ? ' ↓' : rSort === 'profit_asc' ? ' ↑' : ''}</button>
+							<button type="button" class="chip" class:is-on={rSort === 'margin_desc'} onclick={() => (rSort = 'margin_desc')}>{$t('routes.margin_down')}</button>
+							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>{$t('routes.distance_up')}</button>
 							<span class="m-spacer"></span>
-							{#if rSweptAt}<span class="chip"><span class="dot"></span>Stand {new Date(rSweptAt * 1000).toLocaleTimeString('de-DE')}</span>{/if}
-							{#if rRefreshing}<span class="chip">↻ Updating…</span>{/if}
+							{#if rSweptAt}<span class="chip"><span class="dot"></span>{$t('routes.asof_chip', { time: new Date(rSweptAt * 1000).toLocaleTimeString('de-DE') })}</span>{/if}
+							{#if rRefreshing}<span class="chip">↻ {$t('common.updating')}</span>{/if}
 						</div>
 						{#if rLoading && !routes_.length}
 							<div class="center" style="padding: 28px 16px">
 								<span class="spin"></span>
-								<div class="big" style="margin-top: 12px">Sweepe UEX-Terminals …</div>
-								<div class="sm">Erster Lauf ~1 min, danach aus dem Cache.</div>
+								<div class="big" style="margin-top: 12px">{$t('routes.sweeping')}</div>
+								<div class="sm">{$t('routes.first_run_note')}</div>
 							</div>
 						{:else if rNote && !routes_.length}
 							<div class="row-empty" style="padding: 28px 16px">{rNote}</div>
@@ -5879,31 +5857,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										<div class="m-title">{r.commodity} {r.illegal ? '⚠' : ''}</div>
 										<div class="m-sub">{r.buy_terminal} → {r.sell_terminal} · {DIST_LABELS[r.distance] ?? r.distance}</div>
 										{#if r.enrichment && (r.enrichment.scu_reachable > 0 || r.enrichment.scu_destination > 0)}
-											<div class="r-chip" title="UEX-Enrichment (Option b): Volumen/Nachfrage/Scarcity — nur Zusatzinfo, nicht sortierrelevant">
+											<div class="r-chip" title={$t('market.uex_enrichment_title')}>
 												<span class="r-chip-vol">≋ {r.enrichment.scu_reachable > 0 ? fmt(Math.round(r.enrichment.scu_reachable)) : fmt(Math.round(r.enrichment.scu_destination))} SCU</span>
 												{#if r.enrichment.status_destination > 0}
-												<span class="r-chip-stock" title="Nachfrage-Level Verkauf (1–7)">{r.enrichment.status_destination}</span>
+												<span class="r-chip-stock" title={$t('market.demand_sell_title')}>{r.enrichment.status_destination}</span>
 												{/if}
 											</div>
 										{/if}
 										{#if rBudgetActive}
-										<div class="r-chip r-chip-menge" title="RB2: mit diesem Budget kaufbare Menge (min SCHIFF-SCU, floor Budget ÷ Kaufpreis)">Menge {fmtQty(r.quantity)} SCU</div>
+										<div class="r-chip r-chip-menge" title={$t('routes.rb2_budget_title')}>{$t('routes.quantity_chip', { qty: fmtQty(r.quantity) })}</div>
 										{/if}
 									</div>
 									<div class="m-right">
-										<div class="m-price sell" title="Gain/SCU = Sell − Buy · absolute aUEC per SCU">+{fmtPrice(r.profit_per_scu)}</div>
-										<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title="Marge = relative: Gain/SCU ÷ Kauf-Preisdifference in % (independent of SCU; not just Gain/SCU rescaled)">Marge {(r.margin * 100).toFixed(0)} %</span></div>
-										{#if rBudgetActive && r.quantity <= 0}<div class="r-hint">Budget zu niedrig für 1 SCU</div>{/if}
+										<div class="m-price sell" title={$t('routes.gain_scu_formula_title')}>+{fmtPrice(r.profit_per_scu)}</div>
+										<div class="m-meta">{fmtPrice(r.profit_total)} aUEC · <span title={$t('routes.margin_relative_title')}>{$t('routes.margin_pct', { v: (r.margin * 100).toFixed(0) })}</span></div>
+										{#if rBudgetActive && r.quantity <= 0}<div class="r-hint">{$t('routes.budget_too_low')}</div>{/if}
 									</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{routes_.length} Routen · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · Marge = relative % (Gain/SCU ÷ Buy)</span>
+								<span>{$t('routes.count', { n: routes_.length })} · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · {$t('routes.margin_formula_suffix')}</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{:else}
-							<div class="row-empty" style="padding: 28px 16px">Keine Routen für diese Filter.</div>
+							<div class="row-empty" style="padding: 28px 16px">{$t('routes.no_routes')}</div>
 						{/if}
 					{/if}
 				{:else if mTab === 'trades'}
@@ -5914,19 +5892,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     (Research §3) → Deep-Link-Buttons, keine Fake-Buttons. -->
 					{#if tradesDeal}
 						<div class="mbar">
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => (tradesDeal = null)}>← Deals</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => (tradesDeal = null)}>{$t('trades.back_to_deals')}</span>
 							<span class="m-lbl" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">
 								{tradesDeal.listing_title}
 							</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Deal auf uexcorp.space öffnen (negotiate/hash)" onclick={() => void openTradesDeal(tradesDeal!)}>Deal auf UEX öffnen ↗</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('trades.open_deal_uex_title')} onclick={() => void openTradesDeal(tradesDeal!)}>{$t('trades.deal_open_uex_link')}</span>
 							<!-- QW-4 (t_28bfd027): geschlossene Deals sind READ-ONLY. -->
-							{#if tradesDealEnded}<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? 'Abgeschlossen' : 'Beendet'}</span>{/if}
+							{#if tradesDealEnded}<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? $t('trades.status_closed') : $t('trades.status_ended')}</span>{/if}
 						</div>
 						<div class="chat" bind:this={chatScroller}>
 							{#if chatLoading}
-								<div class="center" style="padding: 20px 0"><span class="spin"></span><div class="big" style="margin-top: 10px">Lade Verlauf …</div></div>
+								<div class="center" style="padding: 20px 0"><span class="spin"></span><div class="big" style="margin-top: 10px">{$t('trades.loading_history')}</div></div>
 							{:else if chatMsgs.length === 0}
-								<div class="row-empty" style="padding: 14px 16px">Noch keine Nachrichten in dieser Verhandlung.</div>
+								<div class="row-empty" style="padding: 14px 16px">{$t('trades.no_messages')}</div>
 							{:else}
 								{#each chatMsgs as m (m.id)}
 									{#if m.event && !m.message}
@@ -5947,7 +5925,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="row-empty" style="padding: 10px 16px; color: var(--alert); display: flex; align-items: center; gap: 12px" role="alert">
 								<span style="flex: 1">{chatErr}</span>
 								<!-- Send-Fehlerpfad (429/403): Meldung + Deep-Link statt Retry. -->
-								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openTradesDeal(tradesDeal!)}>DEAL AUF UEXCORP.SPACE ÖFFNEN ↗</button>
+								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openTradesDeal(tradesDeal!)}>{$t('trades.open_deal_caps')}</button>
 							</div>
 						{/if}
 						<!-- QW-4 (t_28bfd027): abgeschlossener Deal (date_closed von
@@ -5958,21 +5936,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<div class="chat-input">
 							<input
 								class="rtext"
-								placeholder="Nachricht an {tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || 'Käufer') : (tradesDeal.advertiser_username || 'Anbieter')} …"
+								placeholder={$t('trades.chat_placeholder', { who: tradesDeal.is_listing_advertiser ? (tradesDeal.client_username || $t('trades.buyer')) : (tradesDeal.advertiser_username || $t('trades.advertiser')) })}
 								bind:value={chatDraft}
 								onkeydown={chatKey}
 								maxlength={65535}
-								aria-label="Chat-Nachricht senden"
+								aria-label={$t('trades.send_chat_title')}
 							/>
 							<button type="button" class="btn" disabled={chatBusy || !chatDraft.trim()} onclick={() => void sendChat()}>
-								{chatBusy ? 'Senden …' : 'Senden'}
+								{chatBusy ? $t('common.sending') : $t('trades.send')}
 							</button>
 							</div>
 							{:else}
 							<!-- Read-only-Fuß: Verlauf bleibt sichtbar, Senden entfällt.
 							     QY: auch einseitig beendet (nur eine Seite geschlossen). -->
 							<div class="mbar">
-								<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? 'Trade abgeschlossen' : 'Trade beendet'} — Verlauf nur lesbar</span>
+								<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? $t('trades.completed') : $t('trades.ended')}{$t('trades.readonly_suffix')}</span>
 								<!-- Q1 (t_535a98fb): unterer zweiter Button ENTFIELT — der obere
 								     „Deal auf UEX öffnen" bleibt immer sichtbar und zielt auf
 								     den Deal (negotiate/hash), nicht auf das Listing. -->
@@ -5980,33 +5958,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{/if}
 					{:else}
 						<div class="mbar">
-							<span class="m-lbl">Deals</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => void loadDeals(true)}>Aktualisieren</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Eigene Trades im UEX-Manager öffnen (Login im Browser)" onclick={openMyTradesDeepLink}>Trades verwalten ↗</span>
+							<span class="m-lbl">{$t('trades.deals')}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" onclick={() => void loadDeals(true)}>{$t('common.refresh')}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('trades.open_trades_manager_title')} onclick={openMyTradesDeepLink}>{$t('shop.manage_listings_link')}</span>
 						</div>
 						<!-- MQ (t_d6ff5212): Deal-Einstieg sichtbar machen — Deals KANN das
 						     Overlay nicht starten (API hat kein POST /marketplace_negotiations).
 						     Sie entstehen auf uexcorp.space; hier nur verhandeln/chatten/beenden. -->
-						<div class="row-empty" style="padding: 8px 16px; text-align: left">
-							Deals entstehen auf <span class="src">uexcorp.space</span> — Deal auf der Angebotsseite starten („Deal“/„Negotiate“ am Listing), danach hier verhandeln, chatten und beenden.
-						</div>
+						<div class="row-empty" style="padding: 8px 16px; text-align: left">{$t('shop.deals_created_on')}<span class="src">uexcorp.space</span>{$t('shop.deal_start_note')}</div>
 						{#if tradesLoading}
 							<div class="center">
 								<span class="spin"></span>
-								<div class="big" style="margin-top: 12px">Lade Trades …</div>
+								<div class="big" style="margin-top: 12px">{$t('trades.loading')}</div>
 							</div>
 						{:else if tradesErr && !myNegotiations.length}
 							<div class="pane-error">
 								<div class="center">
-									<div class="big" style="color: var(--alert)">Trades nicht erreichbar</div>
+									<div class="big" style="color: var(--alert)">{$t('trades.unreachable')}</div>
 									<div class="sm">{tradesErr}</div>
-									<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadDeals(false)}>Erneut versuchen</span>
-									<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+									<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadDeals(false)}>{$t('common.try_again')}</span>
+									<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openMyShopDeepLink}>{$t('trades.open_uex_caps')}</span>
 								</div>
 							</div>
 						{:else if dealsSorted.length === 0}
 							<div class="row-empty" style="padding: 28px 16px">
-								{tradesNote ?? 'Keine Verhandlungen/Abschlüsse zu deinen Listings — starte einen Deal auf uexcorp.space.'}
+								{tradesNote ?? $t('trades.no_deals_note')}
 							</div>
 						{:else}
 							{#if tradesNote}
@@ -6018,27 +5994,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										class="mrow trow"
 										role="option"
 										aria-selected={false}
-										title="Deal-Chat öffnen"
+										title={$t('trades.open_deal_chat_title')}
 										onclick={() => void selectDeal(n)}
 									>
-										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? 'Verkauf' : 'Kauf'}</div>
+										<div class="m-op {dealRole(n)}">{dealRole(n) === 'sell' ? $t('common.sell') : $t('common.buy')}</div>
 										<div class="m-main">
 											<div class="m-title">{n.listing_title}</div>
 											<div class="m-sub">
 												{n.is_listing_advertiser
-													? `Gegenüber ${n.client_username || n.client_name || '—'} (Käufer)`
-													: `Gegenüber ${n.advertiser_username || n.advertiser_name || '—'} (Anbieter)`}
+													? $t('trades.chat_with_buyer', { who: n.client_username || n.client_name || '—' })
+													: $t('trades.chat_with_seller', { who: n.advertiser_username || n.advertiser_name || '—' })}
 											</div>
 										</div>
 										<div class="m-right">
 											<div class="m-meta">{dealTime(n.date_modified || n.date_added)}</div>
-											<div class="m-meta">{dealStatus(n)}{#if dealUnread(n)}<span class="chat-dot" title="Neue Interaktion"></span>{/if}</div>
+											<div class="m-meta">{dealStatus(n)}{#if dealUnread(n)}<span class="chat-dot" title={$t('trades.new_interaction_title')}></span>{/if}</div>
 										</div>
 									</div>
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{dealsSorted.length} Deals · Chat im Overlay · Starten/Beenden/Bewerten nur auf UEX (Deep-Link) · Polling 1/min</span>
+								<span>{$t(dealsSorted.length === 1 ? 'deals.list_foot_one' : 'deals.list_foot_other', { n: dealsSorted.length })}</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{/if}
@@ -6047,27 +6023,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<div class="mbar">
 						<!-- PW-1 (t_fbe40115): Username-Feld entfallen — der Name
 						     kommt automatisch aus dem Secret-Key (Settings-Cache). -->
-						<span class="m-lbl">Mein Shop</span>
-						<span class="chip">{shopUser.trim() || 'Username wird ermittelt …'}</span>
+						<span class="m-lbl">{$t('market.tab_shop')}</span>
+						<span class="chip">{shopUser.trim() || $t('settings.username_detecting')}</span>
 						<span role="button" tabindex="0" onkeydown={keyActivate}
 							class="btn-ghost"
-							title="Eigene Offers + Deals neu laden"
+							title={$t('shop.reload_offers_title')}
 							onclick={() => void loadShop()}
-						>Laden</span>
+						>{$t('common.load')}</span>
 						<span class="m-spacer"></span>
 						{#if shopLoading}<span class="chip">↻ …</span>{/if}
 						{#if shopSource === 'offline'}
-							<span class="chip warn"><span class="dot"></span>Offline-Snapshot</span>
+							<span class="chip warn"><span class="dot"></span>{$t('shop.offline_snapshot')}</span>
 						{:else if shopSource === 'cache'}
-							<span class="chip"><span class="dot"></span>Cache</span>
+							<span class="chip"><span class="dot"></span>{$t('shop.cache')}</span>
 						{/if}
 					</div>
 					{#if !cfg?.uex_api_key_set}
 						<div class="pane-error" style="margin: 10px 0">
 							<div class="center">
-								<div class="big" style="color: var(--alert)">UEX API-Key nicht gesetzt</div>
-								<div class="sm">Eigene Offers + Marktplatz-Trades brauchen deinen UEX-API-Key — ohne Key bleibt der Abschnitt leer.</div>
-								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</span>
+								<div class="big" style="color: var(--alert)">{$t('shop.no_api_key')}</div>
+								<div class="sm">{$t('shop.need_api_key_note')}</div>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openConfig}>{$t('shop.set_in_settings')}</span>
 							</div>
 						</div>
 					{:else if !cfg?.uex_secret_key_set}
@@ -6077,24 +6053,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						     Meldung + Settings-Verweis. -->
 						<div class="pane-error" style="margin: 10px 0">
 							<div class="center">
-								<div class="big" style="color: var(--alert)">Secret-Key fehlt oder ist falsch — siehe Einstellungen</div>
-								<div class="sm">User-scoped Reads (eigene Offers, Marktplatz-Trades) brauchen zusätzlich zum App-Key den „UEX persönlichen Secret-Key“ (40 Zeichen) — exakt wie auf uexcorp.space registriert.</div>
-								<button type="button" class="btn-ghost" onclick={openConfig}>In den Einstellungen hinterlegen</button>
+								<div class="big" style="color: var(--alert)">{$t('shop.secret_missing')}</div>
+								<div class="sm">{$t('shop.user_scoped_note')}</div>
+								<button type="button" class="btn-ghost" onclick={openConfig}>{$t('shop.set_in_settings')}</button>
 							</div>
 						</div>
 					{:else if shopLoading}
 						<div class="center">
 							<span class="spin"></span>
-							<div class="big" style="margin-top: 12px">Lade Mein Shop …</div>
-							<div class="sm">Eigene Offers + Marktplatz-Trades vom UEX-Client.</div>
+							<div class="big" style="margin-top: 12px">{$t('shop.loading')}</div>
+							<div class="sm">{$t('shop.from_uex_client')}</div>
 						</div>
 					{:else if shopErr && !myOffers.length && !myNegotiations.length}
 						<div class="pane-error">
 							<div class="center">
-								<div class="big" style="color: var(--alert)">Mein Shop nicht erreichbar</div>
+								<div class="big" style="color: var(--alert)">{$t('shop.unreachable')}</div>
 								<div class="sm">{shopErr}</div>
-								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadShop()}>Erneut versuchen</span>
-								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openMyShopDeepLink}>AUF UEXCORP.SPACE ÖFFNEN ↗</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => void loadShop()}>{$t('common.try_again')}</span>
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openMyShopDeepLink}>{$t('trades.open_uex_caps')}</span>
 							</div>
 						</div>
 					{:else}
@@ -6103,7 +6079,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<span style="flex: 1">{shopErr}</span>
 								<!-- M2b-3: Fehlerpfad — Meldung + Deep-Link-Button (passende
 								     UEX-Seite: Marketplace-Home, dort weitermachen). Kein Retry. -->
-								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openListingDeepLink(null)}>AUF UEXCORP.SPACE ÖFFNEN ↗</button>
+								<button type="button" class="btn-ghost" style="color: var(--alert)" onclick={() => void openListingDeepLink(null)}>{$t('trades.open_uex_caps')}</button>
 							</div>
 						{/if}
 						{#if shopNote}
@@ -6113,18 +6089,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 														<!-- M2b-Review-Fix (t_6e26ec82 R2): Erfolgs-Deep-Link aus der
 														     Create-Antwort (Listings erscheinen erst nach UEX-Approval —
 														     der Pull kann sie nicht zeigen, der Direct-Link schon). -->
-														<button type="button" class="btn-ghost" onclick={() => void openCreatedListing(shopCreatedUrl!)}>ANGELEGTES LISTING ÖFFNEN ↗</button>
+														<button type="button" class="btn-ghost" onclick={() => void openCreatedListing(shopCreatedUrl!)}>{$t('shop.open_created_caps')}</button>
 													{/if}
 												</div>
 											{/if}
 											<div class="mbar2" style="margin-top: 10px">
-													<span class="m-lbl">Eigene Offers ({myOffers.length}{shopPending.length ? ` + ${shopPending.length} wartend` : ''})</span>
+													<span class="m-lbl">{$t('shop.own_offers_prefix')} ({myOffers.length}{shopPending.length ? ` + ${shopPending.length} ${$t('shop.pending_short')}` : ''})</span>
 															<!-- QZ (t_ab10109f): Filter Alle/Aktiv/Wartend ENTFERNT — UEX
 															     kann wartende Listings nicht per API liefern; Wartende
 															     kommen lokal (pending_offers) und sind immer sichtbar. -->
 															<span class="m-spacer"></span>
-															<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Anlegen = NEUES Listing posten (UEX marketplace_advertise). Bearbeiten gibt es nicht — Abmelden + Neu anlegen." onclick={() => void openAdvertise(null)}>Anlegen</span>
-															<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title="Eigene Listings im UEX-Manager öffnen (Login im Browser)" onclick={openMyShopDeepLink}>Listings verwalten ↗</span>
+															<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('shop.create_new_note_title')} onclick={() => void openAdvertise(null)}>{$t('shop.create')}</span>
+															<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('shop.open_listings_manager_title')} onclick={openMyShopDeepLink}>{$t('shop.manage_listings')}</span>
 												</div>
 												{#if advertOpen}
 												<!-- M3a: das „Neues Listing“-Formular als modales Popup
@@ -6132,26 +6108,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												     feste Karte). Passt in die Overlay-Größe, mlist-Body
 												     scrollt intern, Button-Leiste bleibt erreichbar. -->
 													<div class="advert-scrim" role="presentation">
-														<div class="advert-modal" role="dialog" aria-modal="true" aria-label="Neues Listing anlegen">
+														<div class="advert-modal" role="dialog" aria-modal="true" aria-label={$t('shop.new_listing_title')}>
 													<div class="pane-error advert-pane" style="background: rgba(255,255,255,.03)">
-														<div class="mbar2"><span class="m-lbl">{editingOffer ? 'NEU ANLEGEN (Bearbeiten = erst Abmelden, dann Neu)' : 'NEUES LISTING ANLEGEN'}</span></div>
+														<div class="mbar2"><span class="m-lbl">{editingOffer ? $t('shop.recreate_title') : $t('shop.new_listing_caps')}</span></div>
 														{#if editingOffer}
-															<div class="row-empty" style="padding: 8px 12px">Dieses Formular ist VORBEFÜLLT mit „{editingOffer.title}“. Für eine Änderung musst du das alte Listing zuerst ABmelden (unten) und dann mit den neuen Werten neu anlegen — UEX unterstützt kein Bearbeiten.</div>
+															<div class="row-empty" style="padding: 8px 12px">{$t('shop.recreate_note', { title: editingOffer.title })}</div>
 														{/if}
 														<div class="mlist" style="padding: 6px 14px">
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Art</span>
-																<button type="button" class="chip" class:is-on={advertForm.operation === 'sell'} onclick={() => (advertForm.operation = 'sell')}>Verkauf (sell)</button>
-																<button type="button" class="chip" class:is-on={advertForm.operation === 'buy'} onclick={() => (advertForm.operation = 'buy')}>Kauf (buy)</button>
-																<span class="m-lbl">Listing Type</span>
+																<span class="m-lbl">{$t('shop.kind')}</span>
+																<button type="button" class="chip" class:is-on={advertForm.operation === 'sell'} onclick={() => (advertForm.operation = 'sell')}>{$t('shop.sell_type')}</button>
+																<button type="button" class="chip" class:is-on={advertForm.operation === 'buy'} onclick={() => (advertForm.operation = 'buy')}>{$t('shop.buy_type')}</button>
+																<span class="m-lbl">{$t('shop.listing_type')}</span>
 																<SelectCombo
 																	bind:value={advertForm.listing_type}
-																	ariaLabel="Listing Type"
-																	placeholder="— bitte wählen —"
+																	ariaLabel={$t('shop.listing_type')}
+																	placeholder={$t('common.choose_placeholder')}
 																	options={[
-																		{ value: 'item', label: 'Item' },
-																		{ value: 'service', label: 'Service' },
-																		{ value: 'contract', label: 'Contract' }
+																		{ value: 'item', label: $t('shop.item') },
+																		{ value: 'service', label: $t('shop.opt_service') },
+																		{ value: 'contract', label: $t('shop.opt_contract') }
 																	]}
 																	onselect={() => {
 																		// Unit-Referenzliste wechselt mit dem Type (Doku [7]);
@@ -6165,12 +6141,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	{#if advertErrors.listing_type}<span class="chip warn" style="margin-left: 4px">{advertErrors.listing_type}</span>{/if}
 																	</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Titel</span>
+																<span class="m-lbl">{$t('common.title')}</span>
 																				<!-- NN (t_060d134e): breit genug für lange Titel (z. B.
 																				     „Atzkav Sniper Rifle 970 Q Crafted …“) ohne Abschneiden. -->
-																				<input class="rtext" style="width: 560px" placeholder="Artikelname (alphanumerisch + -)" maxlength="140" bind:value={advertForm.title} />
+																				<input class="rtext" style="width: 560px" placeholder={$t('shop.item_name_title')} maxlength="140" bind:value={advertForm.title} />
 																				{#if advertErrors.title}<span class="chip warn" style="margin-left: 4px">{advertErrors.title}</span>{/if}
-																				<span class="m-lbl">Preis</span>
+																				<span class="m-lbl">{$t('common.price')}</span>
 																				<!-- NN (t_060d134e): breit für einstellige Milliarden +
 																				     Tausender-Punkte bei der Eingabe (gespeichert wird die
 																				     reine Ziffernfolge — Validierung/Parse unverändert). -->
@@ -6179,30 +6155,30 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																					style="width: 170px"
 																					type="text"
 																					inputmode="numeric"
-																					placeholder="z. B. 1.500.000.000"
-																					aria-label="Preis (Ganzzahl, Tausender-Punkte werden bei der Eingabe angezeigt)"
+																					placeholder={$t('shop.ph_eg_price')}
+																					aria-label={$t('shop.price_hint_title')}
 																					value={fmtGroup(advertForm.price)}
 																					oninput={onPriceInput}
 																				/>
 																{#if advertErrors.price}<span class="chip warn" style="margin-left: 4px">{advertErrors.price}</span>{/if}
-																<span class="m-lbl">Währung</span>
-																<SelectCombo bind:value={advertForm.currency} ariaLabel="Currency" placeholder="Währung wählen" options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
+																<span class="m-lbl">{$t('shop.currency')}</span>
+																<SelectCombo bind:value={advertForm.currency} ariaLabel={$t('shop.currency')} placeholder={$t('shop.ph_choose_currency')} options={CURRENCY_CHOICES.map((c) => ({ value: c, label: c }))} />
 																{#if advertErrors.currency}<span class="chip warn" style="margin-left: 4px">{advertErrors.currency}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Menge</span>
+																<span class="m-lbl">{$t('common.quantity')}</span>
 																<input class="qnum" type="number" min="1" step="1" bind:value={advertForm.quantity} />
 																{#if advertErrors.quantity}<span class="chip warn" style="margin-left: 4px">{advertErrors.quantity}</span>{/if}
-																<span class="m-lbl">Einheit</span>
-																<SelectCombo bind:value={advertForm.unit} ariaLabel="Einheit" placeholder="Einheit wählen" options={unitsFor(advertForm.listing_type).map((u) => ({ value: u, label: u }))} />
+																<span class="m-lbl">{$t('shop.unit')}</span>
+																<SelectCombo bind:value={advertForm.unit} ariaLabel={$t('shop.unit')} placeholder={$t('shop.ph_choose_unit')} options={unitsFor(advertForm.listing_type).map((u) => ({ value: u, label: u }))} />
 																{#if advertErrors.unit}<span class="chip warn" style="margin-left: 4px">{advertErrors.unit}</span>{/if}
-																<span class="m-lbl">Ort</span>
+																<span class="m-lbl">{$t('trades.location')}</span>
 																<div style="position: relative; display: inline-flex">
 																	<RoutesTypeahead
 																		bind:value={advertForm.location}
 																		options={advertLocOpts}
-																		placeholder="z. B. Port Tressler"
-																		ariaLabel="Ort Type-ahead — Locations, keine Shops"
+																		placeholder={$t('shop.ph_eg_location')}
+																		ariaLabel={$t('shop.ph_location_typeahead')}
 																		onselect={(v: string) => {
 																			advertForm.location = v;
 																			advertErrors.location = undefined;
@@ -6215,13 +6191,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<!-- M2b-Review-Fix (t_6e26ec82): id_category ist für type=item Pflicht —
 																     UEX sendet sonst 400 missing_id_category. Die Auswahl kommt aus
 																     /categories (get_categories-IPC), angezeigt mit Section-Präfix. -->
-																<span class="m-lbl">Kategorie</span>
+																<span class="m-lbl">{$t('shop.category')}</span>
 																<SelectCombo
 																	bind:value={advertForm.category}
-																	ariaLabel="Kategorie"
-																	placeholder="— bitte wählen —"
+																	ariaLabel={$t('shop.category')}
+																	placeholder={$t('common.choose_placeholder')}
 																	options={[
-																		{ value: '', label: '— bitte wählen —' },
+																		{ value: '', label: $t('common.choose_placeholder') },
 																		...advertCategories.map((c) => ({
 																			value: String(c.id),
 																			label: (c.section ? c.section + ' › ' : '') + c.name
@@ -6230,13 +6206,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																/>
 																{#if advertErrors.category}<span class="chip warn" style="margin-left: 4px">{advertErrors.category}</span>{/if}
 																{#if advertForm.listing_type === 'item'}
-																	<span class="m-lbl">Item</span>
+																	<span class="m-lbl">{$t('shop.item')}</span>
 																	<div style="position: relative; display: inline-flex">
 																		<RoutesTypeahead
 																			bind:value={advertForm.item_label}
 																			options={advertItemOpts}
-																			placeholder="Item suchen (z. B. Custodian SMG)"
-																			ariaLabel="Item Type-ahead — Pflicht für Item-Listings"
+																			placeholder={$t('shop.ph_search_item')}
+																			ariaLabel={$t('shop.ph_item_typeahead')}
 																			onselect={(v: string) => {
 																				advertForm.item_id = v;
 																				advertErrors.item = undefined;
@@ -6244,58 +6220,58 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																		/>
 																	</div>
 																	{#if advertForm.item_id}
-																		<span class="chip" title="Item gewählt">✓ {advertForm.item_label}</span>
+																		<span class="chip" title={$t('shop.item_selected_title')}>✓ {advertForm.item_label}</span>
 																	{/if}
 																	{#if advertErrors.item}<span class="chip warn" style="margin-left: 4px">{advertErrors.item}</span>{/if}
 																{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Laufzeit</span>
+																<span class="m-lbl">{$t('shop.duration')}</span>
 																<SelectCombo
 																	bind:value={advertForm.hours}
-																	ariaLabel="Laufzeit"
-																	placeholder="Laufzeit wählen"
+																	ariaLabel={$t('shop.duration')}
+																	placeholder={$t('shop.ph_choose_duration')}
 																	options={HOUR_CHOICES.map((h) => ({ value: h, label: hourLabel(h) }))}
 																/>
 																{#if advertErrors.hours}<span class="chip warn" style="margin-left: 4px">{advertErrors.hours}</span>{/if}
-																<span class="m-lbl">Item Source</span>
+																<span class="m-lbl">{$t('shop.item_source')}</span>
 																<SelectCombo
 																	bind:value={advertForm.source}
-																	ariaLabel="Item Source"
-																	placeholder="— (optional) —"
+																	ariaLabel={$t('shop.item_source')}
+																	placeholder={$t('common.ph_optional')}
 																	options={[
-																		{ value: '', label: '— (optional) —' },
+																		{ value: '', label: $t('common.ph_optional') },
 																		...SOURCE_CHOICES.map((s) => ({ value: s, label: s.replace(/_/g, ' ') }))
 																	]}
 																/>
-																<span class="m-lbl">Quality</span>
+																<span class="m-lbl">{$t('shop.quality')}</span>
 																<!-- NN (t_060d134e): Quality 0–1000 (war 0–100) — UEX-Maske
 												     erlaubt bis 1000, z. B. „970 Q Crafted“. -->
-								<input class="qnum" type="number" min="0" max="1000" step="1" placeholder="0–1000" title="Quality 0–1000" bind:value={advertForm.quality} />
+								<input class="qnum" type="number" min="0" max="1000" step="1" placeholder={$t('common.range_0_1000')} title={$t('shop.quality_title')} bind:value={advertForm.quality} />
 																{#if advertErrors.quality}<span class="chip warn" style="margin-left: 4px">{advertErrors.quality}</span>{/if}
-																<span class="m-lbl">Availability</span>
+																<span class="m-lbl">{$t('shop.availability')}</span>
 																<SelectCombo
 																	bind:value={advertForm.availability}
-																	ariaLabel="Availability"
-																	placeholder="— (optional) —"
+																	ariaLabel={$t('shop.availability')}
+																	placeholder={$t('common.ph_optional')}
 																	options={[
-																		{ value: '', label: '— (optional) —' },
+																		{ value: '', label: $t('common.ph_optional') },
 																		...AVAILABILITY_CHOICES.map((a) => ({ value: a, label: a.replace(/_/g, ' ') }))
 																	]}
 																/>
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl">Hide Listing</span>
+																<span class="m-lbl">{$t('shop.hide_listing')}</span>
 																<button
 																	type="button"
 																	class="chip"
 																	class:is-on={advertForm.hidden}
 																	onclick={() => (advertForm.hidden = !advertForm.hidden)}
-																	title="Verborgenes Listing erscheint erst nach manuellem UEX-Approval"
-																>{advertForm.hidden ? 'Ja' : 'No'}</button>
+																	title={$t('shop.hidden_listing_title')}
+																>{advertForm.hidden ? $t('common.yes') : $t('common.no')}</button>
 															</div>
 															<div class="mbar2 advert-desc-row" style="flex-wrap: wrap; gap: 6px">
-																<span class="m-lbl" style="align-self: flex-start; padding-top: 6px">Beschreibung</span>
+																<span class="m-lbl" style="align-self: flex-start; padding-top: 6px">{$t('shop.description')}</span>
 																<!-- MQ (t_d6ff5212): mehrzeiliges Textfeld. API-Beleg
 																     [POST /marketplace_advertise Doku]: description string(65535),
 																     Newlines werden nicht eingeschränkt → \n wird 1:1 durchgereicht
@@ -6305,14 +6281,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<textarea
 																	class="rtext advert-desc"
 																	rows="3"
-																	placeholder="Freitext, mehrzeilig (Markdown ok, max. 65.535 Zeichen) — Enter = neue Zeile"
+																	placeholder={$t('shop.description_hint_title')}
 																	maxlength="65535"
 																	bind:value={advertForm.description}
 																></textarea>
 																{#if advertErrors.description}<span class="chip warn" style="margin-left: 4px">{advertErrors.description}</span>{/if}
 															</div>
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px; align-items: center">
-																<span class="m-lbl">Bild (JPG/PNG, 1 erlaubt)</span>
+																<span class="m-lbl">{$t('shop.image_label')}</span>
 																				<!-- NN (t_060d134e): genau 1 Bild — UEX überträgt nur 1
 																				     (image_data). Neue Wahl ersetzt die alte; Vorschau +
 																				     Entfernen bleiben. -->
@@ -6328,25 +6304,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																	}}
 																/>
 																{#each advertForm.images as img, i (img + '#' + i)}
-																	<span style="position: relative; display: inline-block; margin: 2px" title="Bild {i + 1}">
-																		<img src={img} alt="Vorschau {i + 1}" style="width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,.2)" />
+																	<span style="position: relative; display: inline-block; margin: 2px" title={$t('shop.image_title_n', { i: i + 1 })}>
+										<img src={img} alt={$t('shop.image_alt_n', { i: i + 1 })} style="width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,.2)" />
 																		<button
 																			type="button"
 																			class="chip warn"
 																			style="position: absolute; top: -8px; right: -8px; padding: 0 6px; line-height: 16px; min-height: 16px"
-																			title="Bild entfernen"
+																			title={$t('shop.remove_image_title')}
 																			onclick={() => (advertForm.images = advertForm.images.filter((_, k) => k !== i))}
 																		>✕</button>
 																	</span>
 																{/each}
 																{#if advertForm.images.length}
-																	<span class="sm" style="opacity: .6">UEX überträgt 1 Bild pro Listing (image_data) — ein neu gewähltes Bild ersetzt das alte.</span>
+																	<span class="sm" style="opacity: .6">{$t('shop.image_note')}</span>
 																{/if}
 																{#if advertErrors.images}<span class="chip warn" style="margin-left: 4px">{advertErrors.images}</span>{/if}
 															</div>
 															<div class="mbar2 advert-foot" style="margin-top: 8px">
-																<button type="button" class="btn" disabled={writeBusy} onclick={() => void requestAdvertise()}>{writeBusy ? 'Wird gesendet …' : 'Anlegen (2-Schritt)'}</button>
-																<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => requestCloseAdvert()}>Abbrechen</button>
+																<button type="button" class="btn" disabled={writeBusy} onclick={() => void requestAdvertise()}>{writeBusy ? $t('shop.sending') : $t('shop.create_2step')}</button>
+																<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => requestCloseAdvert()}>{$t('common.cancel')}</button>
 																{#if advertNote}<span class="chip warn" style="margin-left: 8px">{advertNote}</span>{/if}
 															</div>
 																												</div>
@@ -6355,11 +6331,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 														     statt verlustfreiem Wegwerfen. -->
 														{#if advertDiscard}
 															<div class="advert-discard">
-																<div class="big" style="color: var(--alert)">Eingaben verwerfen?</div>
-																<div class="sm" style="color: var(--fgdim)">Es wurden noch keine Daten an UEX gesendet.</div>
+																<div class="big" style="color: var(--alert)">{$t('shop.discard_confirm')}</div>
+																<div class="sm" style="color: var(--fgdim)">{$t('shop.nothing_sent')}</div>
 																<div class="mbar2" style="margin-top: 10px; justify-content: center; border: 0; background: transparent; padding: 0">
-																	<button type="button" class="btn btn-danger" onclick={() => { advertOpen = false; advertDiscard = false; editingOffer = null; advertForm = emptyAdvertise(); }}>Verwerfen</button>
-																	<button type="button" class="btn-ghost" onclick={() => (advertDiscard = false)}>Weiter bearbeiten</button>
+																	<button type="button" class="btn btn-danger" onclick={() => { advertOpen = false; advertDiscard = false; editingOffer = null; advertForm = emptyAdvertise(); }}>{$t('shop.discard')}</button>
+																	<button type="button" class="btn-ghost" onclick={() => (advertDiscard = false)}>{$t('shop.keep_editing')}</button>
 																</div>
 															</div>
 														{/if}
@@ -6377,20 +6353,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												class="mrow"
 												role="option"
 												aria-selected={false}
-												title="Lokal gespeichert — UEX listet wartende Ads nicht per API; nach der Freigabe erscheint das Listing beim nächsten Pull als aktives Listing."
+												title={$t('shop.saved_locally_title')}
 												>
 												<div class="m-op {p.operation}">{p.operation === 'sell' ? 'WTS' : 'WTB'}</div>
 												<div class="m-main">
 													<div class="m-title">{p.title}</div>
-													<div class="m-sub">{p.location || '—'} · seit {new Date(p.created_at * 1000).toLocaleString('de-DE')}</div>
-													<span class="chip warn" title={p.created_at < Date.now() / 1000 - 24 * 3600 ? 'Das Listing taucht seit über 24 h nicht in der UEX-API auf — Freigabe unbestätigt (evtl. abgelehnt). Prüfe es im Listings-Manager.' : 'UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.'}>{p.created_at < Date.now() / 1000 - 24 * 3600 ? 'Freigabe unbestätigt' : 'wartet auf Freigabe'}</span>
+													<div class="m-sub">{p.location || '—'} · {$t('shop.listed_since', { date: new Date(p.created_at * 1000).toLocaleString('de-DE') })}</div>
+													<span class="chip warn" title={p.created_at < Date.now() / 1000 - 24 * 3600 ? tr('shop.approval_stale_note') : tr('shop.pending_moderation_title')}>{p.created_at < Date.now() / 1000 - 24 * 3600 ? $t('shop.approval_unconfirmed') : $t('shop.status_pending')}</span>
 												</div>
 												<div class="m-right">
 													<div class="m-price {p.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(p.price)}</div>
 													<div class="m-meta">{fmtQty(p.quantity)} {p.unit || 'unit'}</div>
 												</div>
 												<div class="m-right" style="gap: 4px">
-													<button type="button" class="btn-ghost" title="Lokalen Eintrag entfernen (nötig, falls UEX das Listing abgelehnt hat)" onclick={() => void removePendingOffer(p.id)}>Entfernen</button>
+													<button type="button" class="btn-ghost" title={$t('shop.remove_local_title')} onclick={() => void removePendingOffer(p.id)}>{$t('settings.remove')}</button>
 												</div>
 												</div>
 												{/each}
@@ -6401,7 +6377,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										aria-selected={false}
 										class:is-sel={false}
 										data-shop-offer-idx={i}
-										title="Listung auf uexcorp.space öffnen (nur Lesen)"
+										title={$t('shop.open_listing_readonly_title')}
 										onclick={() => void openListingDeepLink(o.slug)}
 									>
 										<div class="m-op {o.operation}">{o.operation === 'sell' ? 'WTS' : 'WTB'}</div>
@@ -6409,7 +6385,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<div class="m-title">{o.title}</div>
 											<div class="m-sub">{o.location || '—'}{o.region ? ' · ' + o.region : ''} · {shopStatus(o)}</div>
 											{#if !o.approved}
-												<span class="chip warn" title="UEX hat dieses Listing noch nicht freigegeben — es erscheint öffentlich erst nach der Moderation.">wartet auf Freigabe</span>
+												<span class="chip warn" title={$t('shop.pending_moderation_title')}>{$t('shop.pending')}</span>
 											{/if}
 										</div>
 																				<div class="m-right">
@@ -6417,20 +6393,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																					<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
 																				</div>
 																				<div class="m-right" style="gap: 4px">
-																					<button type="button" class="btn-ghost" title="Verhandeln startet auf uexcorp.space (API-seitig kein POST /marketplace_negotiations) — Angebotsseite im Browser öffnen" onclick={(ev) => { ev.stopPropagation(); void openListingDeepLink(o.slug); }}>💬 Verhandeln</button>
-									<button type="button" class="btn-ghost" title="Bearbeiten gibt es nicht: Liste AB und lege neu an (2-Schritt bestätigt beides)" onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>✎ Neu</button>
-																					<button type="button" class="btn-ghost" title="Listing auf uexcorp.space ABMELDEN (2-Schritt-Bestätigung)" onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>Abmelden</button>
+																					<button type="button" class="btn-ghost" title={$t('shop.negotiate_browser_title')} onclick={(ev) => { ev.stopPropagation(); void openListingDeepLink(o.slug); }}>💬 {$t('shop.negotiate')}</button>
+									<button type="button" class="btn-ghost" title={$t('shop.no_edit_note_title')} onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>{$t('shop.new_button')}</button>
+																					<button type="button" class="btn-ghost" title={$t('shop.unlist_2step_title')} onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>{$t('shop.unlist')}</button>
 																				</div>
 																			</div>
 																		{/each}
 							</div>
 							<div class="m-foot">
-								<span>Klick öffnet die Listung auf uexcorp.space — nur Lesen, keine Änderungen.</span>
+								<span>{$t('shop.click_readonly_note')}</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{:else}
 							<div class="row-empty" style="padding: 14px 16px">
-									{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : 'Kein Username ermittelt — Secret-Key in den Einstellungen (F12) prüfen.'}
+									{shopUser.trim() ? $t('shop.no_offers_for_user', { user: shopUser.trim() }) : $t('shop.no_username_note')}
 								</div>
 						{/if}
 						<!-- QZ (t_ab10109f): „Letzte 5 Marktplatz-Trades" ENTFERNT — die
@@ -6445,31 +6421,31 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													     der Bestätigungsphase sind die Eingaben gesperrt (Scrim + Lock). -->
 														{#if confirmAction}
 															<div class="confirm-scrim" role="presentation">
-																<div class="confirm-modal" role="dialog" aria-modal="true" aria-label="Bestätigung">
+																<div class="confirm-modal" role="dialog" aria-modal="true" aria-label={$t('common.confirm')}>
 																	<div class="center" style="padding: 0 0 10px">
 																		<div class="big" style="color: var(--alert)">
-																			{confirmAction.kind === 'delete' ? 'Listing ABMELDEN?' : 'Listing ANLEGEN?'}
+																			{confirmAction.kind === 'delete' ? $t('shop.confirm_unlist_title') : $t('shop.confirm_create_title')}
 																		</div>
 																	</div>
 																	{#if confirmAction.kind === 'delete'}
-																		<div class="c-row"><b>Titel</b><span>{confirmAction.offer.title}</span></div>
-																		<div class="c-row"><b>Preis</b><span>{fmtPrice(confirmAction.offer.price)} {confirmAction.offer.currency}</span></div>
-																		<div class="c-row"><b>Menge</b><span>{fmtQty(confirmAction.offer.quantity)} {confirmAction.offer.unit || 'unit'}</span></div>
-																		<div class="c-row"><b>Ort</b><span>{confirmAction.offer.location || '—'}</span></div>
-																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Listing wird auf uexcorp.space ABGEMELDET.</div>
+																		<div class="c-row"><b>{$t('common.title')}</b><span>{confirmAction.offer.title}</span></div>
+																		<div class="c-row"><b>{$t('common.price')}</b><span>{fmtPrice(confirmAction.offer.price)} {confirmAction.offer.currency}</span></div>
+																		<div class="c-row"><b>{$t('common.quantity')}</b><span>{fmtQty(confirmAction.offer.quantity)} {confirmAction.offer.unit || $t('shop.unit')}</span></div>
+																		<div class="c-row"><b>{$t('trades.location')}</b><span>{confirmAction.offer.location || '—'}</span></div>
+																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('shop.unlist_note')}</div>
 																	{:else}
-																		<div class="c-row"><b>Titel</b><span>{advertForm.title}</span></div>
-																		<div class="c-row"><b>Art</b><span>{advertForm.operation === 'sell' ? 'Verkaufs-Angebot' : 'Kauf-Gesuch'} ({advertForm.listing_type})</span></div>
-																		<div class="c-row"><b>Preis</b><span>{fmtGroup(advertForm.price)} {advertForm.currency}</span></div>
-																		<div class="c-row"><b>Menge</b><span>{advertForm.quantity} {advertForm.unit}</span></div>
-																		<div class="c-row"><b>Ort</b><span>{advertForm.location || '—'}</span></div>
-																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">Das Angebot wird auf uexcorp.space ANGELEGT. Eingaben sind bis zur Entscheidung gesperrt.</div>
+																		<div class="c-row"><b>{$t('common.title')}</b><span>{advertForm.title}</span></div>
+																		<div class="c-row"><b>{$t('shop.kind')}</b><span>{advertForm.operation === 'sell' ? $t('shop.sell_offer_label') : $t('shop.buy_request_label')} ({advertForm.listing_type})</span></div>
+																		<div class="c-row"><b>{$t('common.price')}</b><span>{fmtGroup(advertForm.price)} {advertForm.currency}</span></div>
+																		<div class="c-row"><b>{$t('common.quantity')}</b><span>{advertForm.quantity} {advertForm.unit}</span></div>
+																		<div class="c-row"><b>{$t('trades.location')}</b><span>{advertForm.location || '—'}</span></div>
+																		<div class="sm" style="margin-top: 8px; color: var(--fgdim)">{$t('shop.create_note')}</div>
 																	{/if}
 																	<div class="mbar2" style="margin-top: 12px; justify-content: center; border: 0; padding: 0; background: transparent">
 																		<button type="button" class="btn" class:btn-danger={confirmAction.kind === 'delete'} disabled={writeBusy} onclick={() => confirmAction?.kind === 'delete' ? void doDelete(confirmAction.offer) : void doAdvertise()}>
-																			{confirmAction.kind === 'delete' ? 'JA, ABMELDEN' : 'JA, ANLEGEN'}
+																			{confirmAction.kind === 'delete' ? $t('shop.confirm_unlist') : $t('shop.confirm_create')}
 																		</button>
-																		<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => (confirmAction = null)}>Abbrechen</button>
+																		<button type="button" class="btn-ghost" disabled={writeBusy} onclick={() => (confirmAction = null)}>{$t('common.cancel')}</button>
 																	</div>
 																</div>
 															</div>
@@ -6477,38 +6453,38 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				{:else if mLoading && !offers.length}
 					<div class="center">
 						<span class="spin"></span>
-						<div class="big" style="margin-top: 12px">Lade Marketplace …</div>
+						<div class="big" style="margin-top: 12px">{$t('market.loading')}</div>
 					</div>
 				{:else if mNote && !offers.length}
 					<div class="pane-error">
 						<div class="center">
-							<div class="big" style="color: var(--alert)">Marketplace nicht erreichbar</div>
+							<div class="big" style="color: var(--alert)">{$t('market.unreachable')}</div>
 							<div class="sm">{mNote}</div>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => loadMarket()}>Erneut versuchen</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => loadMarket()}>{$t('common.try_again')}</span>
 						</div>
 					</div>
 				{:else}
 					<div class="mbar">
-						<button type="button" class="chip" class:is-on={mOp === 'all'} onclick={() => setOp('all')}>Alle</button>
-						<button type="button" class="chip" class:is-on={mOp === 'sell'} onclick={() => setOp('sell')}><span class="dot"></span>Verkauf</button>
-						<button type="button" class="chip" class:is-on={mOp === 'buy'} onclick={() => setOp('buy')}><span class="dot"></span>Kauf</button>
+						<button type="button" class="chip" class:is-on={mOp === 'all'} onclick={() => setOp('all')}>{$t('common.all')}</button>
+						<button type="button" class="chip" class:is-on={mOp === 'sell'} onclick={() => setOp('sell')}><span class="dot"></span>{$t('common.sell')}</button>
+						<button type="button" class="chip" class:is-on={mOp === 'buy'} onclick={() => setOp('buy')}><span class="dot"></span>{$t('common.buy')}</button>
 						<span class="m-spacer"></span>
 					</div>
 					<div class="mbar2">
-						<span class="m-lbl">Qualität</span>
-						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder="min" aria-label="Min-Qualität (0–1000)" title="Min-Qualität (0–1000)" bind:value={mqMin} />
+						<span class="m-lbl">{$t('common.quality')}</span>
+						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder={$t('common.min')} aria-label={$t('shop.min_quality_title')} title={$t('shop.min_quality_title')} bind:value={mqMin} />
 						<span class="qnum-dash">–</span>
-						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder="max" aria-label="Max-Qualität (0–1000)" title="Max-Qualität (0–1000)" bind:value={mqMax} />
-						<button type="button" class="chip" onclick={() => { mqMin = ''; mqMax = ''; }}>Q ×</button>
-						<span class="m-lbl">Sort</span>
-						<button type="button" class="chip" class:is-on={mSort === 'price_asc'} onclick={() => setSort('price_asc')}>Preis ↑</button>
-						<button type="button" class="chip" class:is-on={mSort === 'price_desc'} onclick={() => setSort('price_desc')}>Preis ↓</button>
-						<button type="button" class="chip" class:is-on={mSort === 'newest'} onclick={() => setSort('newest')}>Neueste</button>
+						<input class="qnum" type="number" min="0" max="1000" step="10" placeholder={$t('common.max')} aria-label={$t('shop.max_quality_title')} title={$t('shop.max_quality_title')} bind:value={mqMax} />
+						<button type="button" class="chip" onclick={() => { mqMin = ''; mqMax = ''; }}>{$t('market.quality_reset')}</button>
+						<span class="m-lbl">{$t('routes.sort')}</span>
+						<button type="button" class="chip" class:is-on={mSort === 'price_asc'} onclick={() => setSort('price_asc')}>{$t('routes.price_up')}</button>
+						<button type="button" class="chip" class:is-on={mSort === 'price_desc'} onclick={() => setSort('price_desc')}>{$t('routes.price_down')}</button>
+						<button type="button" class="chip" class:is-on={mSort === 'newest'} onclick={() => setSort('newest')}>{$t('market.newest')}</button>
 						<span class="m-spacer"></span>
 						{#if mSource === 'offline'}
-							<span class="chip warn"><span class="dot"></span>Offline-Snapshot</span>
+							<span class="chip warn"><span class="dot"></span>{$t('shop.offline_snapshot')}</span>
 						{:else if mSource === 'cache'}
-							<span class="chip"><span class="dot"></span>Cache</span>
+							<span class="chip"><span class="dot"></span>{$t('shop.cache')}</span>
 						{/if}
 					</div>
 
@@ -6535,24 +6511,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									</div>
 									<div class="m-right">
 										<div class="m-price {o.operation === 'sell' ? 'sell' : 'buy'}">{fmtPrice(o.price)}</div>
-										<div class="m-meta">{fmtQty(o.quantity)} Einheiten · {rel(o.updated)}</div>
+										<div class="m-meta">{$t('market.units_asof', { n: fmtQty(o.quantity), when: rel(o.updated) })}</div>
 									</div>
 								</div>
 							{/each}
 						</div>
 						<div class="m-foot">
-							<span>{mVew.length} / {visOffers.length} Angebote · Seite {Math.min(M_PAGE, mMshown) === 0 ? 0 : Math.ceil(mMshown / M_PAGE)}</span>
+							<span>{$t('market.offers_page', { shown: mVew.length, total: visOffers.length, page: Math.min(M_PAGE, mMshown) === 0 ? 0 : Math.ceil(mMshown / M_PAGE) })}</span>
 							<div class="m-more">
 								{#if mLoadingMore || mMshown < visOffers.length || !mAllLoaded}
-									<span class="spin"></span><span class="sm">{mLoadingMore ? 'lädt …' : 'automatisch nachladen …'}</span>
+									<span class="spin"></span><span class="sm">{mLoadingMore ? $t('market.loading_more') : $t('market.autoload_more')}</span>
 								{:else}
-									<span class="sm">Alle geladen</span>
+									<span class="sm">{$t('market.all_loaded')}</span>
 								{/if}
 								<span class="src">UEX Corp</span>
 							</div>
 						</div>
 					{:else}
-						<div class="row-empty" style="padding: 28px 16px">Keine Angebote für diese Filter.</div>
+						<div class="row-empty" style="padding: 28px 16px">{$t('market.no_offers')}</div>
 					{/if}
 				{/if}
 			</div>
@@ -6561,7 +6537,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<div class="pane-list" class:in-detail={inDetail}>
 				{#if status?.online === false}
 					<div class="offlineband">
-						<span class="dot"></span>Offline · Cache von {cacheAge()} · Preise ggf. veraltet
+						<span class="dot"></span>{$t('market.offline_stale', { age: cacheAge() })}
 					</div>
 				{/if}
 
@@ -6577,14 +6553,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				{:else if flat.length && ((input as string).trim() || searchTotal > 0)}
 					<!-- Found-Chip über der Liste -->
 					<div class="found">
-						<span class="c">Found <b>{searchTotal}</b> results in <b>{searchMs}</b> ms</span>
+						<span class="c">{$t('market.found')}<b>{searchTotal}</b>{$t('market.results_in')}<b>{searchMs}</b> ms</span>
 					</div>
 
 					<div class="list">
 						{#each groups as g, gi}
 							{@const show = filters.length ? filters.includes(g.kind) : true}
 							{#if show && g.hits.length}
-								<div class="vgroup">{g.label} <span class="n">{g.hits.length}</span></div>
+								<div class="vgroup">{$t(g.label)} <span class="n">{g.hits.length}</span></div>
 								{#each g.hits as h, hi}
 									{@const idx = groupOffset(gi) + hi}
 									<div class="rwrap" class:in-detail={inDetail && expanded === idx}>
@@ -6610,39 +6586,39 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									</div>
 								{/each}
 							{:else if show && !g.hits.length}
-								<div class="vgroup">{g.label} <span class="n">0</span></div>
-								<div class="row-empty">Keine Treffer</div>
+								<div class="vgroup">{$t(g.label)} <span class="n">0</span></div>
+								<div class="row-empty">{$t('market.no_matches')}</div>
 							{/if}
 						{/each}
 					</div>
 
 					<!-- Detail-Seite (Overlay über der Liste) -->
 					{#if inDetail}
-						<div class="pane-detail" role="dialog" aria-modal="true" aria-label="Detail">
+						<div class="pane-detail" role="dialog" aria-modal="true" aria-label={$t('common.detail')}>
 							{#if xpan?.busy && !xpan?.detail}
 								<div class="d-ghost">
-									<div class="cap">Lade Preise …</div>
+									<div class="cap">{$t('market.loading_prices')}</div>
 								</div>
 							{:else if xpan?.error}
 								<div class="d-ghost">
-									<div class="cap">Fehler</div>
+									<div class="cap">{$t('common.error')}</div>
 									<div class="sm">{friendlyErr(xpan.error)}</div>
 								</div>
 							{:else if xpan?.detail}
 								{@const d = xpan.detail}
 								<div class="d-head">
-									<button class="d-back" aria-label="zurück zur Liste" onclick={closeDetail}>←</button>
+									<button class="d-back" aria-label={$t('common.back_to_list')} onclick={closeDetail}>←</button>
 									<div class="d-title">
 										<h2>{detailHit?.name ?? d.commodity}</h2>
 										<span class="c">{detailHit?.subtitle ?? ''}</span>
 									</div>
 									<div class="d-price">
-										<span class="buy"><i>Best Kauf</i>{dBest.buy === Infinity ? '—' : fmt(dBest.buy)}</span>
-										<span class="sell"><i>Best Verkauf</i>{dBest.sell > 0 ? fmt(dBest.sell) : '—'}</span>
+										<span class="buy"><i>{$t('market.best_buy')}</i>{dBest.buy === Infinity ? '—' : fmt(dBest.buy)}</span>
+										<span class="sell"><i>{$t('market.best_sell')}</i>{dBest.sell > 0 ? fmt(dBest.sell) : '—'}</span>
 									</div>
-									<div class="d-variant" role="group" aria-label="Preis-Detail-Darstellung">
-										<button class:active={detailVariant === 'a'} onclick={() => { localVariant = 'a'; void chooseVariant('a'); }} title="Variante A — Zeilenboxen">A</button>
-											<button class:active={detailVariant === 'c'} onclick={() => { localVariant = 'c'; void chooseVariant('c'); }} title="Variante C — Trader-Hero (Default)">C</button>
+									<div class="d-variant" role="group" aria-label={$t('market.price_detail_title')}>
+										<button class:active={detailVariant === 'a'} onclick={() => { localVariant = 'a'; void chooseVariant('a'); }} title={$t('settings.price_variant_a_title')}>A</button>
+											<button class:active={detailVariant === 'c'} onclick={() => { localVariant = 'c'; void chooseVariant('c'); }} title={$t('settings.price_variant_c_title')}>C</button>
 									</div>
 								</div>
 
@@ -6653,20 +6629,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								     K6 P1: ohne Key und UEX primär → Hinweis (Preise kommen
 								     nur aus dem Wiki-Fallback). -->
 								<div class="d-src" role="note">
-									Quelle: {d.source.toUpperCase()} · Stand: {rel(d.fetched_at)}
+									{$t('common.source_asof', { src: d.source.toUpperCase(), rel: rel(d.fetched_at) })}
 									<button
 										type="button"
 										class="chip"
-										aria-label="Diesen Datensatz aktualisieren"
+										aria-label={$t('routes.update_record_title')}
 										onclick={() => void refreshDetailLive()}
-									>↻ Aktualisieren</button>
+									>↻ {$t('common.refresh')}</button>
 									{#if d.source.includes('uex') && cfg && !cfg.uex_api_key_set}
-										· <span class="warn">kein UEX-API-Key — UEX anonym geladen</span>
+										· <span class="warn">{$t('market.no_key_anon')}</span>
 									{/if}
 								</div>
 
 								{#if dFilter}
-									<div class="lock-hint"><span class="dot"></span>Filter aktiv: <b>{dFilter}</b> · {dRows.length} Zeilen · Feld leeren = alles zeigen</div>
+									<div class="lock-hint"><span class="dot"></span>{$t('market.filter_active')}<b>{dFilter}</b> · {$t('market.filter_rows_hint', { n: dRows.length })}</div>
 								{/if}
 
 								
@@ -6678,10 +6654,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<div class="ptab locgrp">
 												<div class="cap">{grp.terminal_name}</div>
 												{#if grp.buys.length || grp.sells.length}
-													<div class="ph"><span>Item</span><span>Preis</span><span>SCU</span></div>
+													<div class="ph"><span>{$t('shop.item')}</span><span>{$t('common.price')}</span><span>SCU</span></div>
 												<!-- P8: leere Richtungs-Sektionen entfallen — nur vorhandene Richtungen bekommen Sektionen. -->
 												{#if grp.buys.length}
-													<div class="psub buy">Kauf</div>
+													<div class="psub buy">{$t('common.buy')}</div>
 													{#each grp.buys as r}
 														<div class="pr" class:best={r === grp.buys[0]} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
@@ -6690,7 +6666,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													{/each}
 												{/if}
 												{#if grp.sells.length}
-													<div class="psub sell">Verkauf</div>
+													<div class="psub sell">{$t('common.sell')}</div>
 													{#each grp.sells as r}
 														<div class="pr" class:best={r === grp.sells[0]} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
@@ -6699,16 +6675,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													{/each}
 												{/if}
 												{:else}
-													<div class="pr"><span class="loc muted">keine Preisdaten</span></div>
+													<div class="pr"><span class="loc muted">{$t('market.no_price_data')}</span></div>
 												{/if}
 											</div>
 										{/each}
 										{#if !dLoc.length}
-											<div class="np-state">Kein Terminal/Keine Ware passt zum Filter</div>
+											<div class="np-state">{$t('market.no_terminal_match')}</div>
 										{/if}
 									{:else if d.prices.length === 0}
 										<!-- QA-Auflage B: Item ohne Preise → "nicht kaufbar" -->
-										<div class="np-state">nicht kaufbar · keine Preisdaten</div>
+										<div class="np-state">{$t('market.not_buyable')}</div>
 									{:else}
 										<!-- P8: Commodity / Terminal mit Preisen (N2: über dRows gefiltert). -->
 										<!-- Variante C (Default): Bestpreis-Hero + kompakte Terminal-Liste; -->
@@ -6723,25 +6699,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 										{#if detailVariant !== 'a'}
 											<div class="vC-hero">
 												<div class="vC-kpi buy">
-													<span class="k">Günstigster Kauf</span>
+													<span class="k">{$t('market.cheapest_buy')}</span>
 													<span class="v">{bb ? fmt(bb.p.buy_price) : '—'}</span>
-													{#if bb}<span class="u">aUEC / SCU</span>{/if}
-													<span class="w">{bb ? `${bb.name} · ${stockTxt(bb.p, 'buy')}` : 'kein Kauf-Angebot'}</span>
+													{#if bb}<span class="u">{$t('common.auec_scu')}</span>{/if}
+													<span class="w">{bb ? `${bb.name} · ${stockTxt(bb.p, 'buy')}` : $t('market.no_buy_offer')}</span>
 												</div>
 												<div class="vC-kpi sell">
-													<span class="k">Höchster Verkauf</span>
+													<span class="k">{$t('market.highest_sell')}</span>
 													<span class="v">{bs ? fmt(bs.p.sell_price) : '—'}</span>
-													{#if bs}<span class="u">aUEC / SCU</span>{/if}
-													<span class="w">{bs ? `${bs.name} · ${stockTxt(bs.p, 'sell')}` : 'kein Verkauf-Angebot'}</span>
+													{#if bs}<span class="u">{$t('common.auec_scu')}</span>{/if}
+													<span class="w">{bs ? `${bs.name} · ${stockTxt(bs.p, 'sell')}` : $t('market.no_sell_offer')}</span>
 												</div>
 												<div class="vC-kpi margin">
-													<span class="k">Marge / SCU</span>
+													<span class="k">{$t('market.margin_scu')}</span>
 													<span class="v">{bb && bs ? fmt(margin) : '—'}</span>
-													{#if bb && bs}<span class="u">aUEC / SCU · {fmt(margin * 100)} je 100 SCU</span>{/if}
-													<span class="w">{bb && bs ? `${bb.name} → ${bs.name}` : 'nur eine Seite vorhanden — kein Rundlauf möglich'}</span>
+													{#if bb && bs}<span class="u">{$t('market.margin_per100', { v: fmt(margin * 100) })}</span>{/if}
+													<span class="w">{bb && bs ? `${bb.name} → ${bs.name}` : $t('market.one_side_only')}</span>
 												</div>
 											</div>
-											<div class="vC-listhead"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Kauf</span><span>Verkauf</span></div>
+											<div class="vC-listhead"><span>{dIsTerminal ? $t('shop.item') : $t('market.n_terminals')}</span><span>{$t('common.buy')}</span><span>{$t('common.sell')}</span></div>
 											{#each dRows as r}
 												<div class="pr vC-r" class:is-sel={r.fi === dSel}>
 													<span class="vC-t">{r.name}<small>{stockTxt(r.p, r.kind)}</small></span>
@@ -6755,13 +6731,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												</div>
 											{/each}
 											{#if !dRows.length}
-												<div class="np-state">Keine Preise passen zum Filter</div>
+												<div class="np-state">{$t('market.no_price_match')}</div>
 											{/if}
 										{:else}
 											{#if buys.length}
 												<div class="ptab">
-													<div class="cap">Alle <b class="buy">Kauf</b>-Preise · {buys.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
-													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+													<div class="cap">{$t('market.all_buy_prices', { what: dIsTerminal ? $t('market.n_items') : $t('market.n_terminals'), n: buys.length })}</div>
+													<div class="ph"><span>{dIsTerminal ? $t('shop.item') : $t('market.n_terminals')}</span><span>{$t('common.price')}</span><span>SCU</span></div>
 													{#each buys as r, bi}
 														<div class="pr" class:best={bi === 0} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'buy')}</small></span>
@@ -6770,12 +6746,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													{/each}
 												</div>
 											{:else}
-												<div class="np-state">{dIsTerminal ? 'Kein Artikel zum Kauf' : 'Kein Terminal kauft diese Ware'}</div>
+												<div class="np-state">{dIsTerminal ? $t('market.no_item_to_buy') : $t('market.no_terminal_buys')}</div>
 											{/if}
 											{#if sells.length}
 												<div class="ptab">
-													<div class="cap">Alle <b class="sell">Verkauf</b>-Preise · {sells.length} {dIsTerminal ? 'Artikel' : 'Terminal'}</div>
-													<div class="ph"><span>{dIsTerminal ? 'Item' : 'Terminal'}</span><span>Preis</span><span>SCU</span></div>
+													<div class="cap">{$t('market.all_sell_prices', { what: dIsTerminal ? $t('market.n_items') : $t('market.n_terminals'), n: sells.length })}</div>
+													<div class="ph"><span>{dIsTerminal ? $t('shop.item') : $t('market.n_terminals')}</span><span>{$t('common.price')}</span><span>SCU</span></div>
 													{#each sells as r, si}
 														<div class="pr" class:best={si === 0} class:is-sel={r.fi === dSel}>
 															<span class="loc">{r.name}<small>{stockTxt(r.p, 'sell')}</small></span>
@@ -6784,7 +6760,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													{/each}
 												</div>
 											{:else}
-												<div class="np-state">{dIsTerminal ? 'Kein Artikel zum Verkauf' : 'Kein Terminal verkauft diese Ware'}</div>
+												<div class="np-state">{dIsTerminal ? $t('market.no_item_to_sell') : $t('market.no_terminal_sells')}</div>
 											{/if}
 										{/if}
 								{/if}
@@ -6798,20 +6774,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				{:else}
 					<!-- idle -->
 					<div class="pane-idle">
-						<div class="sect"><div class="h">Zuletzt gesucht</div></div>
+						<div class="sect"><div class="h">{$t('search.last_searched')}</div></div>
 						<div class="recent">
 						{#each recent.slice(0, 6) as q (q)}
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="r" title="This search" onclick={() => { input = q; void runSearch(); }}>{q}</span>
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="r" title={$t('search.this_search_title')} onclick={() => { input = q; void runSearch(); }}>{q}</span>
 						{:else}
-							<span class="r">Keine — tippe, um zu suchen</span>
+							<span class="r">{$t('search.none_type_to_search')}</span>
 						{/each}
 					</div>
-						<div class="sect"><div class="h">Schnellzugriff</div></div>
+						<div class="sect"><div class="h">{$t('search.quick_access')}</div></div>
 							<div class="recent">
-								<span class="r"><b>{hotkeyFor(cfg, 'market')}</b> Marktplatz · <b>{hotkeyFor(cfg, 'routes')}</b> Routen</span>
-								<span class="r"><b>F12</b> Einstellungen</span>
-								<span class="r"><b>Rechner</b> · =2*250+15%</span>
-								<span class="r"><b>Kategorie</b> · :c gold</span>
+								<span class="r"><b>{hotkeyFor(cfg, 'market')}</b>{$t('search.marketplace_dot')}<b>{hotkeyFor(cfg, 'routes')}</b>{$t('market.tab_routes')}</span>
+								<span class="r"><b>F12</b>{$t('nav.settings')}</span>
+								<span class="r"><b>{$t('search.calculator')}</b>{$t('search.math_eg')}</span>
+								<span class="r"><b>{$t('shop.category')}</b>{$t('search.c_eg')}</span>
 							</div>
 					</div>
 				{/if}
@@ -6827,45 +6803,45 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<!-- PB (t_1c9bc240, B2): der F5-Hinweis erscheint nur an Orten mit
 					     Resync-Bezug (Angebote, Mein Shop, Routen) — nie global. -->
 					{#if offerDetail}
-						<span><kbd>Esc</kbd> zurück zur Liste</span>
-						<span><kbd>↵</kbd> im Browser öffnen</span>
+						<span><kbd>Esc</kbd>{$t('common.back_to_list')}</span>
+						<span><kbd>↵</kbd>{$t('search.open_in_browser')}</span>
 					{:else if mTab === 'shop'}
 						{#if cfg?.uex_secret_key_set}
-							<span><kbd>F5</kbd> Mein Shop syncen</span>
+							<span><kbd>F5</kbd>{$t('search.shop_sync')}</span>
 						{/if}
-						<span><kbd>Esc</kbd> zurück zur Suche</span>
+						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{:else if mTab === 'routes'}
-						<span><kbd>↑↓</kbd> Routen</span>
-						<span><kbd>↵</kbd> Detail</span>
-						<span><kbd>F5</kbd> Routen-Sweep</span>
-						<span><kbd>Esc</kbd> zurück zur Suche</span>
+						<span><kbd>↑↓</kbd>{$t('market.tab_routes')}</span>
+						<span><kbd>↵</kbd>{$t('common.detail')}</span>
+						<span><kbd>F5</kbd>{$t('search.route_sweep')}</span>
+						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{:else}
-						<span><kbd>↑↓</kbd> Angebote</span>
-						<span><kbd>Alt+1..0</kbd> Offer</span>
-						<span><kbd>↵</kbd> Detail</span>
-						<span><kbd>F5</kbd> Market syncen</span>
-						<span><kbd>Esc</kbd> zurück zur Suche</span>
+						<span><kbd>↑↓</kbd>{$t('market.tab_offers')}</span>
+						<span><kbd>{$t('search.alt_hotkeys')}</kbd>{$t('search.offer')}</span>
+						<span><kbd>↵</kbd>{$t('common.detail')}</span>
+						<span><kbd>F5</kbd>{$t('search.market_sync')}</span>
+						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{/if}
 				{:else if inDetail}
 					{#if dRows.length}
-						<span><kbd>↑↓</kbd> Zeile ({dSel + 1}/{dRows.length})</span>
-						<span><kbd>↵</kbd> Trade erfassen (Waren)</span>
+						<span><kbd>↑↓</kbd> {$t('market.row_nav', { cur: dSel + 1, total: dRows.length })}</span>
+						<span><kbd>↵</kbd>{$t('search.trade_commodities')}</span>
 					{/if}
-					<span>Suchfeld = Filter</span>
-					<span><kbd>Esc</kbd> zurück</span>
+					<span>{$t('search.field_is_filter')}</span>
+					<span><kbd>Esc</kbd>{$t('search.back')}</span>
 				{:else if railMode || inConfig}
 					<!-- PW-6 (t_fbe40115): Hangar/Inventar/Settings — KEINE Alt-1..0-
 					     Ergebnis-Hinweise (keine Ergebnisliste) und kein F2-Marktplatz-
 					     Hinweis; nur die kontextuellen Tasten dieser Views. -->
-					<span><kbd>↑↓</kbd> Nav</span>
-					<span><kbd>↵</kbd> Detail</span>
-					<span><kbd>Esc</kbd> zurück</span>
+					<span><kbd>↑↓</kbd>{$t('search.nav_label')}</span>
+					<span><kbd>↵</kbd>{$t('common.detail')}</span>
+					<span><kbd>Esc</kbd>{$t('search.back')}</span>
 				{:else}
-					<span><kbd>↑↓</kbd> Nav</span>
-					<span><kbd>Alt+1..0</kbd> Treffer</span>
-					<span><kbd>↵</kbd> Detail</span>
-					<span><kbd>Esc</kbd> zurück</span>
-					<span><kbd>{hotkeyFor(cfg, 'market')}</kbd> Marktplatz</span>
+					<span><kbd>↑↓</kbd>{$t('search.nav_label')}</span>
+					<span><kbd>{$t('search.alt_hotkeys')}</kbd>{$t('search.matches')}</span>
+					<span><kbd>↵</kbd>{$t('common.detail')}</span>
+					<span><kbd>Esc</kbd>{$t('search.back')}</span>
+					<span><kbd>{hotkeyFor(cfg, 'market')}</kbd>{$t('nav.marketplace')}</span>
 				{/if}
 			</div>
 			{#if f5Msg}
@@ -6887,15 +6863,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				<div class="spot-status">
 					<span class="dot" class:live={overlay?.game_running}></span>
 					<button onclick={toggleClickThrough}>
-						{overlay?.click_through ? 'KLICK' : 'FOKUS'}
+						{overlay?.click_through ? $t('overlay.click_mode') : $t('overlay.focus_mode')}
 					</button>
 					<!-- TW (t_f178b084): Info-Chip RECHTS neben dem Fokus/Klick-Button
 					     — öffnet das Info-Popup (modales Muster, kein View-Wechsel). -->
 					<button
 						type="button"
 						class="info-btn"
-						title="Info — Architects Overlay"
-						aria-label="Info öffnen"
+						title={$t('info.title')}
+						aria-label={$t('info.open_title')}
 						onclick={openInfo}>ⓘ</button
 					>
 				</div>
@@ -6913,36 +6889,36 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			     (class:shell-info → min-height), damit das Popup ohne internen
 			     Scroll vollständig in die content-driven Shell passt. -->
 			<div class="advert-scrim" style="z-index: 240" role="presentation">
-				<div class="info-modal" role="dialog" aria-modal="true" aria-label="Info — Architects Overlay">
+				<div class="info-modal" role="dialog" aria-modal="true" aria-label={$t('info.title')}>
 					<div class="info-head">
 						<div class="info-hero">
-							<img class="info-logo" src={logoUrl} alt="Architects Overlay — Sebos Vector-Logo" draggable="false" />
+							<img class="info-logo" src={logoUrl} alt={$t('info.logo_alt')} draggable="false" />
 							<div class="info-title">Architects Overlay</div>
 							<div class="info-meta">
-								<span>Version v{infoVersion}</span>
-								<span>Build {__BUILD_DATE__}</span>
+								<span>{$t('info.version', { ver: infoVersion ?? '' })}</span>
+								<span>{$t('info.build', { date: __BUILD_DATE__ })}</span>
 							</div>
 						</div>
 						<button
 							type="button"
 							class="hd-close"
-							title="Schließen (Esc)"
-							aria-label="Info schließen"
+							title={$t('common.close_esc')}
+							aria-label={$t('info.close_title')}
 							onclick={closeInfo}>✕</button
 						>
 					</div>
 					<div class="info-body">
 						<section class="info-sec">
-							<h3 class="info-sec-title">Über</h3>
+							<h3 class="info-sec-title">{$t('info.about')}</h3>
 							<p class="info-text">
-								Architects Overlay ist ein inoffizielles Community-Projekt für Star Citizen:
-								Handelsrouten, Marktplatz-Preise und Hangar-Verwaltung direkt im Spiel —
-								als Overlay von der Community, für die Community. Non-Commercial, ohne
-								RSI-/CIG-Assets als eigenes Branding.
+								{$t('info.about_body')}
+
+
+
 							</p>
 						</section>
 						<section class="info-sec">
-							<h3 class="info-sec-title">Datenquellen</h3>
+							<h3 class="info-sec-title">{$t('settings.data_sources')}</h3>
 							<div class="info-badges">
 								<!-- UEX: offizielles API-Badge-Asset (uexcorp.space/about/resources) —
 								     Link zur API-Doku; das Overlay ruft die API 2.0
@@ -6952,13 +6928,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									role="button"
 									tabindex="0"
 									onkeydown={keyActivate}
-									title="UEX API-Dokumentation öffnen"
+									title={$t('info.open_uex_docs_title')}
 									onclick={() => void openInfoLink('uex_api')}
 								>
 									<img src="/uex-api-badge-powered.png" alt="Powered by UEX" draggable="false" />
 									<span class="info-badge-text">
-										<b>Daten &amp; Marktplatz</b>
-										<span>UEX Corp API · api.uexcorp.space</span>
+										<b>{$t('info.data_marketplace')}</b>
+										<span>{$t('info.uex_api_source')}</span>
 									</span>
 								</span>
 								<!-- SC-Wiki: keine offiziellen Badge-Assets gefunden (Swagger-
@@ -6970,24 +6946,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									role="button"
 									tabindex="0"
 									onkeydown={keyActivate}
-									title="Star Citizen Wiki API öffnen — Schiffsdaten"
+									title={$t('info.open_scwiki_title')}
 									onclick={() => void openInfoLink('scwiki_api')}
 								>
-									<span class="info-badge-mark">SC-WIKI API</span>
+									<span class="info-badge-mark">{$t('info.scwiki_api')}</span>
 									<span class="info-badge-text">
-										<b>Schiffsdaten</b>
-										<span>Star Citizen Wiki API · api.star-citizen.wiki</span>
+										<b>{$t('info.ship_data')}</b>
+										<span>{$t('info.scwiki_source')}</span>
 									</span>
 								</span>
 							</div>
 						</section>
 						<section class="info-sec">
-							<h3 class="info-sec-title">Rechtliches</h3>
+							<h3 class="info-sec-title">{$t('info.legal')}</h3>
 							<p class="info-disclaimer">
-								Architects Overlay steht in keiner Verbindung zu Cloud Imperium Games (CIG),
-								Roberts Space Industries oder deren Partnern und wird nicht offiziell
-								unterstützt oder gesponsert. Star Citizen, Roberts Space Industries und das
-								RSI-Logo sind Marken von Cloud Imperium Games Corp.
+								{$t('info.disclaimer_body')}
+
+
+
 							</p>
 							<div class="info-cig">
 								<!-- CIG Fan-Content-Policy: „Made by the Community“-Asset —
@@ -6995,19 +6971,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								     Fandom-FAQ (siehe brand/third-party/README.md). -->
 								<img
 									src="/cig-made-by-the-community.png"
-									alt="Made by the Community"
+									alt={$t('info.cig_badge_alt')}
 									draggable="false"
 								/>
-								<span class="info-cig-src">
-									Offizielles CIG-Fan-Asset („Made by the Community“), unverändert.
-								</span>
+								<span class="info-cig-src">{$t('info.cig_asset_note')}</span>
 							</div>
-							<p class="info-license">Lizenz: MIT — Lizenztext im Repository (LICENSE).</p>
+							<p class="info-license">{$t('info.license_note')}</p>
 						</section>
 						<footer class="info-foot">
 							<div class="info-links">
-								<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Öffentliches Repository (GitHub)" onclick={() => void openInfoLink('repo')}>GitHub-Repo ↗</span>
-								<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title="Release-Seite: Downloads + Changelog" onclick={() => void openInfoLink('releases')}>Releases / Changelog ↗</span>
+								<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title={$t('info.github_repo_title')} onclick={() => void openInfoLink('repo')}>{$t('info.github_repo')}</span>
+								<span class="chip" role="button" tabindex="0" onkeydown={keyActivate} title={$t('info.release_page_title')} onclick={() => void openInfoLink('releases')}>{$t('info.releases')}</span>
 							</div>
 							{#if infoMsg}<span class="info-msg" role="status">{infoMsg}</span>{/if}
 						</footer>

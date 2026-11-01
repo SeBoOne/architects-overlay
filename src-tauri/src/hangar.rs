@@ -26,7 +26,9 @@
 //!
 //! Kein Org-Tool/API-Anbindung in dieser Karte (out of scope).
 
+use crate::i18n_err::{err_key, err_keyp};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tauri::State;
 
 use crate::trade::TradeState;
@@ -109,8 +111,8 @@ pub struct HangarImportResult {
 /// Hangar XPLORer JSON (Primärformat). Akzeptiert ein JSON-Array; einzelne
 /// Einträge, die weder `name` noch `ship_name` tragen, werden übersprungen.
 pub fn parse_xplorer_json(text: &str) -> Result<(Vec<HangarItem>, usize), String> {
-    let arr: Vec<serde_json::Value> =
-        serde_json::from_str(text.trim()).map_err(|e| format!("Ungültiges XPLORer-JSON: {e}"))?;
+    let arr: Vec<serde_json::Value> = serde_json::from_str(text.trim())
+        .map_err(|e| err_keyp("hangar.err_xplorer_json", json!({ "err": e.to_string() })))?;
     let mut out = Vec::with_capacity(arr.len());
     let mut skipped = 0usize;
     for v in arr.iter() {
@@ -821,10 +823,7 @@ fn migrate_unlinked_modules(conn: &mut rusqlite::Connection) -> rusqlite::Result
 /// über hangar_update editierbar/zuordenbar.
 fn validate_manual_item(item: &HangarItem) -> Result<(), String> {
     if item.entity_type == "module" && item.id.is_none() && item.base_ship.trim().is_empty() {
-        return Err(
-            "Module werden nicht mehr separat angelegt — im Schiff-Detail unter „Module“ hinzufügen"
-                .to_string(),
-        );
+        return Err(err_key("hangar.err_modules_note"));
     }
     Ok(())
 }
@@ -833,7 +832,7 @@ fn validate_manual_item(item: &HangarItem) -> Result<(), String> {
 #[tauri::command]
 pub fn hangar_add(state: State<'_, TradeState>, item: HangarItem) -> Result<HangarItem, String> {
     if item.name.trim().is_empty() {
-        return Err("Name darf nicht leer sein".to_string());
+        return Err(err_key("hangar.err_name_empty"));
     }
     validate_manual_item(&item)?;
     let item = HangarItem {

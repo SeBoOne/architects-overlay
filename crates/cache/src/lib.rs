@@ -127,7 +127,15 @@ impl std::fmt::Display for CacheError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CacheError::Open(msg) => write!(f, "cannot open cache: {msg}"),
-            CacheError::Query(msg) => write!(f, "cache query failed: {msg}"),
+            CacheError::Query(msg) => {
+                // T2 (t_c5904bcb): Query-Fehler können key-JSON sein
+                // (Inventory-Validierung) — dann ohne Präfix durchreichen.
+                if msg.starts_with('{') {
+                    write!(f, "{msg}")
+                } else {
+                    write!(f, "cache query failed: {msg}")
+                }
+            }
         }
     }
 }

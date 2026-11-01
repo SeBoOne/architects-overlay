@@ -2,7 +2,7 @@
 //! gleiche Prämisse wie `integration_uex.rs`: deterministisch, keine
 //! Live-API im CI-Pfad.
 
-use scwiki_client::{ScWikiClient, category_label};
+use scwiki_client::ScWikiClient;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -91,7 +91,7 @@ async fn fetches_version_vehicles_paginated_and_items() {
     let rows = scwiki_client::build_compat(&with_ports, &items);
     assert_eq!(rows.len(), 2);
     let dm = rows.iter().find(|r| r.module_name.contains("DM")).unwrap();
-    assert_eq!(dm.category, category_label("Module"));
+    assert_eq!(dm.category, "moduletype.module"); // T2: i18n-Key statt deutschem Label
     assert_eq!(
         dm.ships,
         vec!["Aurora Mk II".to_string(), "C2 Hercules".to_string()]

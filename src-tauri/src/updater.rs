@@ -24,6 +24,8 @@
 //! herunterladen → SHA256 → atomar über die laufende exe renamen + Hinweis
 //! „Neustart des Overlays anwenden lassen“ — KEIN Auto-Restart/Exit.
 
+use crate::i18n_err::{err_key, err_keyp};
+use serde_json::json;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -114,17 +116,25 @@ async fn run_check(state: &UpdaterState, settings: &SettingsState) {
                 version: latest_version.clone(),
                 plan,
             });
-            state.set_note(format!("Update v{latest_version} verfügbar."));
+            state.set_note(err_keyp(
+                "update.note_available",
+                json!({ "version": latest_version }),
+            ));
         }
         Ok(None) => {
             *state.available.lock().expect("updater avail lock") = None;
-            state.set_note(format!("Kein Update gefunden — v{current} ist aktuell."));
+            state.set_note(err_keyp(
+                "update.note_uptodate",
+                json!({ "version": current }),
+            ));
         }
         Err(err) => {
             // Fehlerpfad (Umsetzung 6): alter Zustand bleibt intakt — nur die
             // Note meldet den Fehlversuch, ein vorhandenes Available bleibt.
             log::warn!("updater: check failed: {err}");
-            state.set_note(format!("Update-Prüfung fehlgeschlagen: {}", friendly(&err)));
+            // T2: Note = der key-JSON-Fehler selbst (kein Wrapping — die
+            // Details leben im Log; die UI zeigt die übersetzte Meldung).
+            state.set_note(friendly(&err));
         }
     }
 }
@@ -220,7 +230,7 @@ pub async fn updater_check_now(
         return Ok(status(&app, state.inner(), settings.inner()));
     }
     state.checking.store(false, Ordering::SeqCst);
-    state.set_note("Prüfe auf Updates …");
+    state.set_note(err_key("update.note_checking"));
     run_check(&state, settings.inner()).await;
     emit_status(&app);
     Ok(status(&app, state.inner(), settings.inner()))
@@ -241,7 +251,7 @@ fn spawn_nsis_silent(installer: &std::path::Path) -> Result<(), String> {
         .arg("/R")
         .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
         .spawn()
-        .map_err(|e| format!("Setup konnte nicht gestartet werden: {e}"))?;
+        .map_err(|e| err_keyp("update.err_spawn_setup", json!({ "err": e.to_string() })))?;
     Ok(())
 }
 
@@ -307,25 +317,28 @@ pub async fn updater_install(
 ) -> Result<UpdaterStatus, String> {
     use tauri::Manager;
     let Some(avail) = state.available.lock().expect("updater avail lock").clone() else {
-        return Err("Kein Update verfügbar — es gibt nichts zu installieren.".into());
+        return Err(err_key("update.err_none_available"));
     };
-    state.set_note(format!("Update v{} wird heruntergeladen …", avail.version));
+    state.set_note(err_keyp(
+        "update.note_downloading",
+        json!({ "version": avail.version }),
+    ));
     if let Plan::DebHint { .. } = &avail.plan {
         // Umsetzung 4: keine root-Aktionen aus der App — UI zeigt den
         // apt-Hint (bereits in der Note); hier nur der Guards-Fehler.
         let hint = avail
             .plan
             .deb_hint()
-            .unwrap_or_else(|| "apt-Hint nicht verfügbar".into());
+            .unwrap_or_else(|| err_key("update.err_apt_hint_missing"));
         let msg = hint.clone();
-        state.set_note(msg);
+        state.set_note(msg.clone());
         return Err(hint);
     }
     let new_path = updater::perform_download(&avail.plan).await.map_err(|e| {
         // Umsetzung 6: Fehlerpfad — alte Version bleibt intakt, Note meldet.
         let msg = friendly(&e);
-        log::warn!("updater: download failed: {e}");
-        state.set_note(format!("Update fehlgeschlagen: {msg}"));
+        log::warn!("updater: download failed: {msg}");
+        state.set_note(msg.clone()); // key-JSON direkt (kein Wrapping)
         msg
     })?;
     match &avail.plan {
@@ -333,15 +346,15 @@ pub async fn updater_install(
             #[cfg(windows)]
             {
                 spawn_nsis_silent(&new_path)?;
-                state.set_note(format!(
-                    "Update v{} geladen — Setup läuft im Hintergrund, das Overlay wird geschlossen.",
-                    avail.version
+                state.set_note(err_keyp(
+                    "update.note_nsis_done",
+                    json!({ "version": avail.version }),
                 ));
             }
             #[cfg(not(windows))]
             {
                 let _ = new_path;
-                return Err("Windows-Installer nur unter Windows möglich.".into());
+                return Err(err_key("update.err_windows_only"));
             }
         }
         Plan::LinuxAppImage { appimage_path, .. } => {
@@ -349,16 +362,16 @@ pub async fn updater_install(
             {
                 let target = appimage_path.clone();
                 install_appimage(&new_path, &target)?;
-                state.set_note(format!(
-                    "Update v{} installiert — Overlay wird neu gestartet.",
-                    avail.version
+                state.set_note(err_keyp(
+                    "update.note_appimage_done",
+                    json!({ "version": avail.version }),
                 ));
             }
             #[cfg(not(target_os = "linux"))]
             {
                 let _ = new_path;
                 let _ = appimage_path;
-                return Err("AppImage-Update nur unter Linux möglich.".into());
+                return Err(err_key("update.err_appimage_only"));
             }
         }
         Plan::LinuxBin { exe_path, .. } => {
@@ -366,9 +379,9 @@ pub async fn updater_install(
             {
                 let target = exe_path.clone();
                 install_bare_bin(&new_path, &target)?;
-                state.set_note(format!(
-                    "Update v{} installiert — Neustart des Overlays anwenden lassen (systemd restart oder Overlay schließen/öffnen).",
-                    avail.version
+                state.set_note(err_keyp(
+                    "update.note_barebin_done",
+                    json!({ "version": avail.version }),
                 ));
                 // TH t_df9646a3: kein Auto-Restart, kein systemctl aus der
                 // App — nur Datei-Swap + Nutzerhinweis. Die App läuft WEITER.
@@ -380,7 +393,7 @@ pub async fn updater_install(
             {
                 let _ = new_path;
                 let _ = exe_path;
-                return Err("Binary-Update nur unter Linux möglich.".into());
+                return Err(err_key("update.err_binary_only"));
             }
         }
         Plan::DebHint { .. } => unreachable!("oben geprüft"),

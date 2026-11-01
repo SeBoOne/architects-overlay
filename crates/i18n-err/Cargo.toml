@@ -1,0 +1,9 @@
+[package]
+name = "i18n-err"
+version = "0.1.0"
+description = "UI-error transport: Rust sends error_key+params JSON; the Svelte frontend translates (T2 i18n)"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+serde_json = "1.0"

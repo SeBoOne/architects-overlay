@@ -54,27 +54,28 @@ pub const MODULE_TYPES: &[&str] = &[
     "TractorBeam",
 ];
 
-/// Deutsche Kategorie-Labels für die Autocomplete-Anzeige (Type → Label).
+/// Kategorie-Labels für die Autocomplete-Anzeige (Type → i18n-KEY;
+/// T2 t_c5904bcb: das Frontend übersetzt via $t(label), Fallback en).
 pub fn category_label(item_type: &str) -> String {
     match item_type {
-        "Shield" => "Schild",
-        "PowerPlant" => "Generator",
-        "Cooler" => "Kühler",
-        "QuantumDrive" => "Quantumantrieb",
-        "Radar" => "Radar",
-        "LifeSupportGenerator" => "Life-Support",
-        "EMP" => "EMP",
-        "QuantumInterdictionGenerator" => "Q-Interdiction",
-        "WeaponGun" => "Waffe",
-        "WeaponDefensive" => "Defensivwaffe",
-        "MissileLauncher" => "Raketen",
-        "BombLauncher" => "Bomben",
-        "Turret" => "Geschütz",
-        "Module" => "Modul",
-        "Container" => "Container",
-        "FuelTank" => "Treibstoff",
-        "MiningLaser" => "Mining-Laser",
-        "TractorBeam" => "Traktorstrahl",
+        "Shield" => "moduletype.shield",
+        "PowerPlant" => "moduletype.powerplant",
+        "Cooler" => "moduletype.cooler",
+        "QuantumDrive" => "moduletype.quantumdrive",
+        "Radar" => "moduletype.radar",
+        "LifeSupportGenerator" => "moduletype.lifesupport",
+        "EMP" => "moduletype.emp",
+        "QuantumInterdictionGenerator" => "moduletype.qinterdiction",
+        "WeaponGun" => "moduletype.weapongun",
+        "WeaponDefensive" => "moduletype.weapongdef",
+        "MissileLauncher" => "moduletype.missile",
+        "BombLauncher" => "moduletype.bomb",
+        "Turret" => "moduletype.turret",
+        "Module" => "moduletype.module",
+        "Container" => "moduletype.container",
+        "FuelTank" => "moduletype.fueltank",
+        "MiningLaser" => "moduletype.mininglaser",
+        "TractorBeam" => "moduletype.tractorbeam",
         other => other,
     }
     .to_string()
@@ -555,7 +556,7 @@ mod tests {
         let rows = build_compat(&vehicles, &items);
         assert_eq!(rows.len(), 3);
         let dm = rows.iter().find(|r| r.module_name.contains("DM")).unwrap();
-        assert_eq!(dm.category, "Modul");
+        assert_eq!(dm.category, "moduletype.module");
         assert_eq!(dm.ships, vec!["Aurora Mk II".to_string()]);
         // Size-3-Modul passt nicht in Size-1-Port.
         let apollo = rows

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import {  t, tr } from '../lib/i18n';
 	// Rail — linke Modusleiste des Overlays (Karte t_315a26cc).
 	//
 	// Schmale vertikale Leiste am linken Rand der Shell: ein Eintrag je Modus
@@ -34,12 +35,12 @@
 
 	// Inventar/Hangar: eigene Karten — hier nur Rail-Eintrag + Platzhalter-View.
 	const ENTRIES: Entry[] = [
-		{ id: 'search', key: 'F1', label: 'Suche', title: 'Suche (F1)', icon: 'search' },
-		{ id: 'market', key: 'F2', label: 'Marktplatz', title: 'Marktplatz (F2)', icon: 'market' },
-		{ id: 'routes', key: 'F3', label: 'Routen', title: 'Handelsrouten (F3)', icon: 'routes' },
-		{ id: 'inventory', key: 'F4', label: 'Inventar', title: 'Inventar (F4)', icon: 'inventory' },
-		{ id: 'hangar', key: 'F11', label: 'Hangar', title: 'Hangar (F11)', icon: 'hangar' },
-		{ id: 'settings', key: 'F12', label: 'Einstellungen', title: 'Einstellungen (F12)', icon: 'settings' }
+		{ id: 'search', key: 'F1', label: 'nav.search', title: 'nav.search_title', icon: 'search' },
+		{ id: 'market', key: 'F2', label: 'nav.marketplace', title: 'nav.marketplace_title', icon: 'market' },
+		{ id: 'routes', key: 'F3', label: 'nav.routes', title: 'nav.routes_title', icon: 'routes' },
+		{ id: 'inventory', key: 'F4', label: 'nav.inventory', title: 'nav.inventory_title', icon: 'inventory' },
+		{ id: 'hangar', key: 'F11', label: 'nav.hangar', title: 'nav.hangar_title', icon: 'hangar' },
+		{ id: 'settings', key: 'F12', label: 'nav.settings', title: 'nav.settings_title', icon: 'settings' }
 	];
 
 	// PB (t_1c9bc240, B1): angezeigte Taste = persistierter Wert (Settings-
@@ -60,12 +61,12 @@
 			: DEFAULT_KEYS[id];
 	}
 	function titleFor(en: Entry): string {
-		const label = en.id === 'routes' ? 'Handelsrouten' : en.label;
-		return `${label} (${keyFor(en.id)})`;
+		const label = en.id === 'routes' ? 'nav.routes_full' : en.label;
+		return `${tr(label)} (${keyFor(en.id)})`;
 	}
 </script>
 
-<nav class="rail" class:is-compact={compact} aria-label="Modi">
+<nav class="rail" class:is-compact={compact} aria-label={$t('nav.modes')}>
 	{#each ENTRIES as en (en.id)}
 		<button
 			type="button"
@@ -115,7 +116,7 @@
 				{/if}
 			</span>
 			<span class="rkey">{keyFor(en.id)}</span>
-			<span class="rlbl">{en.label}</span>
+			<span class="rlbl">{$t(en.label)}</span>
 		</button>
 	{/each}
 </nav>

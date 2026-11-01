@@ -17,6 +17,8 @@
 //!
 //! No telemetry: nothing is logged or transmitted.
 
+use crate::i18n_err::{err_key, err_keyp};
+use serde_json::json;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -328,13 +330,22 @@ fn register_combo<R: Runtime>(
     kind: ShortcutKind,
     canonical: &str,
 ) -> Result<(), String> {
-    let shortcut: Shortcut = canonical
-        .parse()
-        .map_err(|err| format!("Ungültige Kombination {canonical:?}: {err}"))?;
+    let shortcut: Shortcut = match canonical.parse() {
+        Ok(s) => s,
+        Err(err) => {
+            return Err(err_keyp(
+                "shortcuts.err_combo_invalid",
+                json!({ "combo": canonical, "err": err.to_string() }),
+            ));
+        }
+    };
     let global_shortcut = app.state::<GlobalShortcut<R>>();
-    global_shortcut
-        .register(shortcut)
-        .map_err(|err| format!("{canonical:?}: {err}"))?;
+    global_shortcut.register(shortcut).map_err(|err| {
+        err_keyp(
+            "overlay.err_register",
+            json!({ "combo": canonical, "err": err.to_string() }),
+        )
+    })?;
     if let Some(bindings) = app.try_state::<ShortcutBindings>() {
         bindings.set(kind, Some(shortcut));
     }
@@ -355,11 +366,14 @@ pub fn rebind_shortcut<R: Runtime>(
     kind: ShortcutKind,
     canonical: &str,
 ) -> Result<(), String> {
-    let new_shortcut: Shortcut = canonical
-        .parse()
-        .map_err(|err| format!("Ungültige Kombination {canonical:?}: {err}"))?;
+    let new_shortcut: Shortcut = canonical.parse::<Shortcut>().map_err(|err| {
+        err_keyp(
+            "overlay.err_invalid_combo",
+            json!({ "combo": canonical, "err": err.to_string() }),
+        )
+    })?;
     let Some(bindings) = app.try_state::<ShortcutBindings>() else {
-        return Err("Overlay-State nicht verfügbar — Kürzel nicht geändert.".into());
+        return Err(err_key("overlay.err_state_unavailable"));
     };
     let old = bindings.current(kind);
 
@@ -372,8 +386,9 @@ pub fn rebind_shortcut<R: Runtime>(
             if let Some(old) = old {
                 let _ = global_shortcut.register(old);
             }
-            return Err(format!(
-                "Tastenkürzel {canonical} konnte nicht registriert werden (anderweitig belegt?): {err} — bisheriges Kürzel bleibt aktiv."
+            return Err(err_keyp(
+                "overlay.err_register_occupied",
+                json!({ "combo": canonical, "err": err.to_string() }),
             ));
         }
     } else {

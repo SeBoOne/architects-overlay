@@ -23,9 +23,18 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
 
-    let toggle = MenuItem::with_id(app, "toggle", "Overlay ein-/ausblenden", true, None::<&str>)?;
-    let config = MenuItem::with_id(app, "config", "Config öffnen", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
+    // T2 (t_c5904bcb): Tray-Labels folgen der persistierten Sprache
+    // (de → deutsch, sonst en-Default). Das Tray-Menü wird beim
+    // Sprachwechsel nicht live neu gebaut — erst nach Neustart (dokumentiert).
+    let de = crate::app_settings::SettingsState::current_language_is_de();
+    let (toggle_label, config_label, quit_label) = if de {
+        ("Overlay ein-/ausblenden", "Config öffnen", "Beenden")
+    } else {
+        ("Toggle overlay", "Open config", "Quit")
+    };
+    let toggle = MenuItem::with_id(app, "toggle", toggle_label, true, None::<&str>)?;
+    let config = MenuItem::with_id(app, "config", config_label, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
     let menu = Menu::with_items(app, &[&toggle, &config, &separator, &quit])?;
 

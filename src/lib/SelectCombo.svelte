@@ -1,4 +1,5 @@
 <script lang="ts">
+	import {  t, tr } from '../lib/i18n';
 	// MD (t_10be9255, D2): Dunkles, mausbedienbares Dropdown mit Typeahead —
 	// ersetzt die nativen <select> im Listing-Formular (Listing Type, Currency,
 	// Einheit, Kategorie, Laufzeit, Item Source, Availability). Kombiniert:
@@ -163,7 +164,7 @@
 		onblur={onblur}
 		onclick={() => (open = true)}
 	/>
-	<button type="button" class="scb-chev" tabindex="-1" aria-label="Ausklappen" onclick={toggle}>▾</button>
+	<button type="button" class="scb-chev" tabindex="-1" aria-label={$t('rail.expand')} onclick={toggle}>▾</button>
 	{#if open && !disabled && filtered.length}
 		<div class="scb-dd" role="listbox" id={uid + '-dd'}>
 			{#each filtered as o, i (o.value + '|' + o.label)}

@@ -8,7 +8,9 @@ use provider::routes::{RouteFilters, RouteList, TradeRoute};
 
 use provider::EntityKind;
 
+use crate::i18n_err::err_keyp;
 use crate::trade::{TradeState, friendly};
+use serde_json::json;
 
 /// Response der Routen-Abfrage.
 #[derive(Clone, serde::Serialize)]
@@ -102,7 +104,7 @@ pub fn location_suggest(
     let entities = state
         .cache
         .entities_of(EntityKind::Locations)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     let mut starts: Vec<String> = Vec::new();
     let mut contains: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();

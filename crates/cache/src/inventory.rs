@@ -126,14 +126,16 @@ const COLS: &str = "id, entity_kind, entity_id, name, quality, location_id, loca
 fn validate(new: &NewInventoryEntry) -> Result<()> {
     if new.quality > 1000 {
         return Err(CacheError::Query(
-            "Qualität muss zwischen 0 und 1000 liegen".into(),
+            i18n_err::err_key("inventory.err_quality").into(),
         ));
     }
     if new.name.trim().is_empty() {
-        return Err(CacheError::Query("Name fehlt".into()));
+        return Err(CacheError::Query(i18n_err::err_key("inventory.err_name")));
     }
     if new.location_name.trim().is_empty() {
-        return Err(CacheError::Query("Standort fehlt".into()));
+        return Err(CacheError::Query(i18n_err::err_key(
+            "inventory.err_location",
+        )));
     }
     Ok(())
 }
@@ -189,7 +191,10 @@ impl Cache {
             )
         })?;
         if changed == 0 {
-            return Err(CacheError::Query(format!("Position {id} existiert nicht")));
+            return Err(CacheError::Query(i18n_err::err_keyp(
+                "inventory.err_position_missing",
+                serde_json::json!({ "id": id }),
+            )));
         }
         Ok(())
     }

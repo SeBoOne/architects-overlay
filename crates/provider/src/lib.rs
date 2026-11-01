@@ -40,6 +40,13 @@ pub enum ProviderError {
     Cache(String),
     /// Configuration problem (missing key file, unreadable config, …).
     Config(String),
+    /// Error with an i18n key + params instead of UI plaintext (T2 t_c5904bcb:
+    /// params must NOT contain UI plaintext — the frontend translates via the
+    /// fallback chain selected → en → raw key).
+    Keyed {
+        key: String,
+        params: serde_json::Value,
+    },
     /// The source does not support the requested operation/entity kind.
     Unsupported(String),
     /// Catch-all for anything else.
@@ -63,6 +70,7 @@ impl std::fmt::Display for ProviderError {
             ProviderError::NotFound(what) => write!(f, "not found: {what}"),
             ProviderError::Cache(msg) => write!(f, "cache error: {msg}"),
             ProviderError::Config(msg) => write!(f, "configuration error: {msg}"),
+            ProviderError::Keyed { key, .. } => write!(f, "error: {key}"),
             ProviderError::Unsupported(msg) => write!(f, "unsupported: {msg}"),
             ProviderError::Other(msg) => write!(f, "{msg}"),
         }

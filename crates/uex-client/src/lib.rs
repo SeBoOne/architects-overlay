@@ -1868,9 +1868,10 @@ impl UexProvider {
         id_negotiation: u64,
     ) -> Result<Vec<provider::NegotiationMessage>> {
         if hash.is_empty() && id_negotiation == 0 {
-            return Err(ProviderError::Config(
-                "Verhandlung nicht eindeutig (hash oder id nötig)".into(),
-            ));
+            return Err(ProviderError::Keyed {
+                key: "error.uex.negotiation_ambiguous".into(),
+                params: serde_json::json!({}),
+            });
         }
         let mut params: Vec<(String, String)> = Vec::new();
         if !hash.is_empty() {
@@ -1905,22 +1906,28 @@ impl UexProvider {
         message: &str,
     ) -> Result<u64> {
         if message.trim().is_empty() {
-            return Err(ProviderError::Config("Nachricht ist leer".into()));
+            return Err(ProviderError::Keyed {
+                key: "error.uex.msg_empty".into(),
+                params: serde_json::json!({}),
+            });
         }
         if message.len() > 65_535 {
-            return Err(ProviderError::Config(
-                "Nachricht zu lang (max. 65.535 Zeichen)".into(),
-            ));
+            return Err(ProviderError::Keyed {
+                key: "error.uex.msg_too_long".into(),
+                params: serde_json::json!({}),
+            });
         }
         if hash.is_empty() && id_negotiation == 0 {
-            return Err(ProviderError::Config(
-                "Verhandlung nicht eindeutig (hash oder id nötig)".into(),
-            ));
+            return Err(ProviderError::Keyed {
+                key: "error.uex.negotiation_ambiguous".into(),
+                params: serde_json::json!({}),
+            });
         }
         if self.secret_key.is_none() {
-            return Err(ProviderError::Config(
-                "UEX Secret-Key fehlt (Einstellungen → „UEX persönlicher Secret-Key“)".into(),
-            ));
+            return Err(ProviderError::Keyed {
+                key: "error.uex.secret_key_missing".into(),
+                params: serde_json::json!({}),
+            });
         }
         // Beide Identifier mitsenden (Doku: „either id_negotiation OR hash
         // alone may work; examples show both patterns") — serverseitig
@@ -2037,16 +2044,19 @@ pub async fn fetch_listing_photo(url: &str) -> Result<String> {
     // `https://cdn.uexcorp.space/…`, Max. 2 MB, JPG/PNG-Magic-Bytes-Sniff.
     use base64::Engine as _;
     const MAX_BYTES: usize = 2 * 1024 * 1024;
-    let parsed = reqwest::Url::parse(url.trim())
-        .map_err(|e| ProviderError::Config(format!("ungültige Foto-URL: {e}")))?;
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|e| ProviderError::Keyed {
+        key: "error.uex.photo_url_invalid".into(),
+        params: serde_json::json!({ "err": e.to_string() }),
+    })?;
     let host_ok = matches!(
         parsed.host_str(),
         Some(h) if h.eq_ignore_ascii_case("cdn.uexcorp.space")
     );
     if parsed.scheme() != "https" || !host_ok {
-        return Err(ProviderError::Config(
-            "Nur https://cdn.uexcorp.space-Fotos werden geladen.".into(),
-        ));
+        return Err(ProviderError::Keyed {
+            key: "error.uex.photo_host".into(),
+            params: serde_json::json!({}),
+        });
     }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -2059,24 +2069,30 @@ pub async fn fetch_listing_photo(url: &str) -> Result<String> {
         .await
         .map_err(|_| ProviderError::Timeout)?;
     if !resp.status().is_success() {
-        return Err(ProviderError::Json(format!(
-            "Foto-HTTP {}",
-            resp.status().as_u16()
-        )));
+        return Err(ProviderError::Keyed {
+            key: "error.uex.photo_http".into(),
+            params: serde_json::json!({ "status": resp.status().as_u16() }),
+        });
     }
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|_| ProviderError::Json("Foto-Body nicht lesbar".into()))?;
+    let bytes = resp.bytes().await.map_err(|_| ProviderError::Keyed {
+        key: "error.uex.photo_body".into(),
+        params: serde_json::json!({}),
+    })?;
     if bytes.len() > MAX_BYTES {
-        return Err(ProviderError::Json("Foto größer als 2 MB".into()));
+        return Err(ProviderError::Keyed {
+            key: "error.uex.photo_too_large".into(),
+            params: serde_json::json!({}),
+        });
     }
     let mime = if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         "image/jpeg"
     } else if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         "image/png"
     } else {
-        return Err(ProviderError::Json("Foto ist weder JPG noch PNG".into()));
+        return Err(ProviderError::Keyed {
+            key: "error.uex.photo_mime".into(),
+            params: serde_json::json!({}),
+        });
     };
     Ok(format!(
         "data:{mime};base64,{}",
@@ -3704,15 +3720,17 @@ mod tests {
         let e = crate::fetch_listing_photo("https://evil.example.com/a-t.jpg")
             .await
             .unwrap_err();
+        // T2 t_c5904bcb: Keyed-Variante — der Key ist der UI-Vertrag (Params
+        // ohne UI-Klartext), Display liefert "error: <key>".
         assert!(
-            e.to_string().contains("cdn.uexcorp.space"),
+            e.to_string().contains("error.uex.photo_host"),
             "fremder Host abgelehnt: {e}"
         );
         let e = crate::fetch_listing_photo("http://cdn.uexcorp.space/a-t.jpg")
             .await
             .unwrap_err();
         assert!(
-            e.to_string().contains("https"),
+            e.to_string().contains("error.uex.photo_host"),
             "http-Scheme abgelehnt: {e}"
         );
     }

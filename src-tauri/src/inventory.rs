@@ -7,6 +7,7 @@
 //! Errors cross the IPC boundary as human-readable German strings (same
 //! contract as the trade commands).
 
+use crate::i18n_err::err_wrap;
 use cache::inventory::{InventoryEntry, NewInventoryEntry};
 use tauri::State;
 
@@ -19,7 +20,7 @@ pub fn inventory_list(state: State<'_, TradeState>) -> Result<Vec<InventoryEntry
     state
         .cache
         .inventory_list()
-        .map_err(|e| format!("Inventar-Fehler: {e}"))
+        .map_err(|e| err_wrap("error.inventory", e.to_string()))
 }
 
 /// Distinct location names for the add-form datalist.
@@ -28,7 +29,7 @@ pub fn inventory_locations(state: State<'_, TradeState>) -> Result<Vec<String>, 
     state
         .cache
         .inventory_locations()
-        .map_err(|e| format!("Inventar-Fehler: {e}"))
+        .map_err(|e| err_wrap("error.inventory", e.to_string()))
 }
 
 /// Add one position, returns the stored row (with id + timestamps).
@@ -40,11 +41,11 @@ pub fn inventory_add(
     let id = state
         .cache
         .inventory_add(entry)
-        .map_err(|e| format!("Inventar-Fehler: {e}"))?;
+        .map_err(|e| err_wrap("error.inventory", e.to_string()))?;
     Ok(state
         .cache
         .inventory_list()
-        .map_err(|e| format!("Inventar-Fehler: {e}"))?
+        .map_err(|e| err_wrap("error.inventory", e.to_string()))?
         .into_iter()
         .find(|e| e.id == id)
         .unwrap_or_else(|| panic!("just-inserted inventory row {id} vanished")))
@@ -60,7 +61,7 @@ pub fn inventory_update(
     state
         .cache
         .inventory_update(id.0, entry)
-        .map_err(|e| format!("Inventar-Fehler: {e}"))
+        .map_err(|e| err_wrap("error.inventory", e.to_string()))
 }
 
 /// Delete one position.
@@ -69,7 +70,7 @@ pub fn inventory_delete(state: State<'_, TradeState>, id: FlexId) -> Result<(), 
     state
         .cache
         .inventory_delete(id.0)
-        .map_err(|e| format!("Inventar-Fehler: {e}"))
+        .map_err(|e| err_wrap("error.inventory", e.to_string()))
 }
 
 /// IPC-bound row id: the frontend holds inventory-row ids as STRINGS (they
@@ -164,9 +165,10 @@ mod tests {
         inventory_delete(state.clone(), FlexId(added.id)).unwrap();
         assert!(inventory_list(state.clone()).unwrap().is_empty());
 
-        // Quality validation surfaces as a German IPC error.
+        // Quality validation surfaces as a key-JSON IPC error (T2).
         let err = inventory_add(state.clone(), entry("Gold", 1001, "x")).unwrap_err();
-        assert!(err.contains("Qualität"), "got {err}");
+        let v: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(v["error_key"], "inventory.err_quality", "got {err}");
 
         let _ = app;
     }

@@ -13,6 +13,9 @@ mod app_settings;
 mod hangar;
 #[cfg(desktop)]
 mod hyprland_sync;
+/// T2 (t_c5904bcb): UI-Fehler als `{"error_key": ..., "params": ...}`-JSON —
+/// das Frontend übersetzt (Fallback-Kette gewählt → en → raw Key).
+pub mod i18n_err;
 #[cfg(desktop)]
 mod info;
 #[cfg(desktop)]

@@ -88,9 +88,7 @@ pub async fn fetch_latest_json(
         return Ok(None);
     }
     if status.as_u16() == 429 {
-        return Err(UpdaterError::Network(
-            "Rate-Limit (429) — später erneut prüfen".into(),
-        ));
+        return Err(UpdaterError::Network("update.reason_rate_limit".into()));
     }
     if !status.is_success() {
         return Err(UpdaterError::Network(format!("HTTP {status}")));

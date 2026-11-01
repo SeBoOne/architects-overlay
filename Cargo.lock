@@ -73,6 +73,7 @@ dependencies = [
  "game_detection",
  "gdk-sys",
  "glib",
+ "i18n-err",
  "log",
  "math-eval",
  "provider",
@@ -418,6 +419,7 @@ name = "cache"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "i18n-err",
  "log",
  "provider",
  "rusqlite",
@@ -1804,6 +1806,13 @@ dependencies = [
  "tokio",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "i18n-err"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -3689,8 +3698,10 @@ name = "settings"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "i18n-err",
  "log",
  "serde",
+ "serde_json",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
 ]
@@ -4733,6 +4744,7 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 name = "updater"
 version = "0.5.13"
 dependencies = [
+ "i18n-err",
  "log",
  "reqwest 0.12.28",
  "serde",
