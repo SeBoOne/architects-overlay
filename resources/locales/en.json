@@ -68,6 +68,7 @@
     "connector.flow.autofill_applied": "Auto-filled (can be overwritten)",
     "connector.flow.code_enter": "Open session",
     "connector.flow.code_entry": "Enter code",
+    "connector.flow.code_ph": "Enter code …",
     "connector.flow.mark_collected": "Mark as collected",
     "connector.flow.refresh": "Refresh",
     "connector.flow.select_hint": "Select an entry",
