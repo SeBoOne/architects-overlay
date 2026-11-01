@@ -214,6 +214,68 @@ window.__TAURI_INTERNALS__ = {
 			case 'settings_reset_mode_hotkeys':
 				stubState.mode_hotkeys = { search: 'F1', market: 'F2', routes: 'F3', inventory: 'F4', hangar: 'F11', settings: 'F12' };
 				return stubSettings();
+			// C2 (t_91124322): Manifest-Connectors — die Probe preset
+			// window.__STUB_CONNECTORS__ (ConnectorEntry-Liste); Data pro View
+			// via window.__STUB_CONNECTOR_DATA__[viewId] (optional, sonst leere
+			// mapped-Arrays). Toggle/Remove/Hotkey/Auth spiegeln wie die Setter.
+			case 'connector_list': {
+				const list = window.__STUB_CONNECTORS__;
+				if (!list) return undefined;
+				return list.map((c) => ({ ...c }));
+			}
+			case 'connector_import': {
+				const list = window.__STUB_CONNECTORS__ || [];
+				let m;
+				try { m = JSON.parse(a.manifestJson); }
+				catch { throw new Error(JSON.stringify({ error_key: 'error.connector.invalid_json', params: {} })); }
+				if (!m.id || !m.views) throw new Error(JSON.stringify({ error_key: 'error.connector.validation_failed', params: { details: 'missing id/views' } }));
+				if (!a.ignoreWarnings && /warn/i.test(m.id))
+					throw new Error(JSON.stringify({ error_key: 'error.connector.warnings', params: { details: 'stub warning' } }));
+				const entry = { id: m.id, manifest: m, enabled: true, auth_set: {}, hotkey: null };
+				const i = list.findIndex((c) => c.id === m.id);
+				if (i >= 0) list[i] = entry; else list.push(entry);
+				return list.map((c) => ({ ...c }));
+			}
+			case 'connector_remove': {
+				const list = window.__STUB_CONNECTORS__ || [];
+				const out = list.filter((c) => c.id !== a.id);
+				window.__STUB_CONNECTORS__ = out;
+				return out.map((c) => ({ ...c }));
+			}
+			case 'connector_set_enabled': {
+				const list = window.__STUB_CONNECTORS__ || [];
+				const c = list.find((x) => x.id === a.id);
+				if (!c) throw new Error(JSON.stringify({ error_key: 'error.connector.unknown', params: {} }));
+				c.enabled = a.on;
+				return list.map((x) => ({ ...x }));
+			}
+			case 'connector_set_auth_value': {
+				const list = window.__STUB_CONNECTORS__ || [];
+				const c = list.find((x) => x.id === a.id);
+				if (!c) throw new Error(JSON.stringify({ error_key: 'error.connector.unknown', params: {} }));
+				c.auth_set = { ...c.auth_set, [a.key]: !!a.value };
+				return list.map((x) => ({ ...x }));
+			}
+			case 'connector_set_hotkey': {
+				const list = window.__STUB_CONNECTORS__ || [];
+				const c = list.find((x) => x.id === a.id);
+				if (!c) throw new Error(JSON.stringify({ error_key: 'error.connector.unknown', params: {} }));
+				if (a.key === 'F5') throw new Error(JSON.stringify({ error_key: 'hotkeys.err_f5_noslot', params: {} }));
+				c.hotkey = a.key || null;
+				return list.map((x) => ({ ...x }));
+			}
+			case 'connector_fetch': {
+				const data = (window.__STUB_CONNECTOR_DATA__ || {})[a.viewId] || { rows: [] };
+				return {
+					status: 200,
+					body: data.body ?? { data: [] },
+					mapped: data.mapped ?? data.rows ?? [],
+					cached: !a.force && !!data.cached,
+					fetched_at_ms: Date.now() - (data.age_secs ?? 0) * 1000
+				};
+			}
+			case 'connector_form_submit':
+				return { status: (window.__STUB_CONNECTOR_FORM_STATUS__ ?? 201), body: { ok: true } };
 			case 'sync_status':
 				return {
 					provider: 'uex',
