@@ -57,7 +57,7 @@ Release-Bundle lokal: `pnpm tauri build` (deb/AppImage bzw. exe/msi).
 ## Release-Flow
 
 Kurzform: Feature-Branches im **privaten Dev-Repo**
-(`git.sebo-home.de/sebo/architects-overlay`, Gitea-Host, nur DEV-Kontext) →
+(`git.sebo-home.de/sebo/architects-overlay`, Gitea-Host — Historie-Name, nur DEV-Kontext) →
 Gates → Merge nach `main` → Version-Bump → Tag `v*` → Push auf dev +
 public (`SeBoOne/architects-overlay`). GitHub ist die **einzige**
 Build-/Release-Plattform (GitHub Actions auf dem öffentlichen Repo bauen bei
@@ -130,7 +130,7 @@ Das Overlay ist vollständig lokalisiert — Default-Sprache **en**, Deutsch
 
 - **Key-Dateien:** `resources/locales/en.json` + `resources/locales/de.json`
   (flaches `"key" → "text"`-Map unter `strings`, `meta`-Block mit Code/Name;
-  Key-Parität en/de wird per Skript sichergestellt — aktuell 924 Keys).
+  Key-Parität en/de wird per Skript sichergestellt — aktuell 922 Keys).
 - **Fallback-Kette:** gewählte Sprache → `en` → roher Key. Fehlende Keys sind
   kein Fehler — sie werden im Debug-Log notiert (einmal pro Key).
 - **Implementierung:** eigene Svelte-Store-`t()`-Funktion

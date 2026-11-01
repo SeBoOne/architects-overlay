@@ -4,7 +4,7 @@
 IPC-Grenze gestubbt (smoke-stub.js, window.__MODUL_*__), echte Svelte-UI.
 Die Modul-Zuordnung (FOR_SHIP) kommt NICHT hartkodiert, sondern aus dem
 Live-Test `live_sync_file_only_and_decision` (docs/scripts/s4-modul-fixture.json
-— echte Gitea-Raw/Repo-Baseline + reale modul_for_ship_decision-Logik):
+— echte Repo-Baseline (Historie: Gitea-Raw) + reale modul_for_ship_decision-Logik):
 
   1. Detail Aegis Eclipse (Datei-Eintrag) → Modul-Feld sichtbar,
      Autocomplete = NUR die Datei-Racks (S10/S3 Bomb Rack Weapon Kit),
@@ -31,7 +31,7 @@ URL = "http://127.0.0.1:8796/"
 
 # FOR_SHIP kommt aus dem REALEN Backend-Pfad (S4): docs/scripts/s4-modul-fixture.json
 # wird vom Live-Test `live_sync_file_only_and_decision` erzeugt (echte
-# Gitea-Raw/Repo-Baseline + reale modul_for_ship_decision-Logik) — die UI-Probe
+# Repo-Baseline (Historie: Gitea-Raw) + reale modul_for_ship_decision-Logik) — die UI-Probe
 # erfindet hier NICHTS.
 FIXTURE_PATH = ROOT / "docs/scripts/s4-modul-fixture.json"
 FIXTURE = json.loads(FIXTURE_PATH.read_text())

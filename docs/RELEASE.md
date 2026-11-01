@@ -1,7 +1,7 @@
 # Release-Flow — GitHub ist die kanonische Plattform
 
 Seit dem 31.10.2026 ist **GitHub die einzige Build-/Release-Plattform** —
-Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
+Gitea wird nicht mehr gebaut, gespiegelt oder referenziert — Historie.
 
 ## Repos
 
@@ -17,7 +17,8 @@ Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
 2. Omar merged nach `main` (dev-Repo) und bumped die Version
    (`Cargo.toml` + `tauri.conf.json`) **vor** dem Tag — der Tag-Commit muss
    die Version tragen (Assets heißen sonst falsch).
-3. `git push gitea-sebo main --tags` auf das **dev-Repo**.
+3. `git push <dev-remote> main --tags` auf das **dev-Repo** (Remote-Alias
+   `gitea-sebo` ist ein Historie-Name und zeigt auf das dev-Repo).
 4. `git push public main --tags` auf das **öffentliche Repo** — der Push des
    `v*`-Tags triggert die GitHub-Actions (`.github/workflows/build.yml`,
    nur auf Tags).
@@ -28,11 +29,11 @@ Gitea wird nicht mehr gebaut, gespiegelt oder referenziert.
 
 ## Was NICHT mehr passiert
 
-- **Keine Gitea-CI-Builds** (`.gitea/` ist entfernt); der selfhosted
+- **Keine Gitea-CI-Builds** (Historie — `.gitea/` ist entfernt); der selfhosted
   Windows-VM-Runner (dockur/windows auf server-hermes) ist ausgeschaltet,
   bleibt aber eingerichtet — bei Bedarf einfach wieder hochfahren und das
   Label `windows-selfhosted` reaktivieren.
-- **Kein Gitea→GitHub-Spiegel-Job** — das öffentliche Repo bekommt main +
+- **Kein Gitea→GitHub-Spiegel-Job** (Historie) — das öffentliche Repo bekommt main +
   Tags direkt per Push (derselbe Push, kein nachträgliches Kopieren).
 - **Keine macOS-Builds** (pausiert bis Mitspieler-Livetests; ein
   `macos-latest`-Job ist bei Bedarf reaktivierbar).

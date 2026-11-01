@@ -30,9 +30,9 @@ Updater lädt/installiert das Update selbst.
   ```
 - Genau **EIN GET** auf `latest.json` (Redirect-Pfad, TG). Fallback (alte
   Releases ohne `latest.json`): EIN GET auf `repos/{repo}/releases/latest` —
-  GitHub-Form ohne `/api/v1` (S5); eine Gitea-Instanz als `base_url`
-  bleibt möglich (dort `/api/v1/repos/…` und direkt API, da Gitea den
-  Redirect-Pfad nicht hat). Sonst KEIN Netzverkehr (kein Telemetrie/
+  GitHub-Form ohne `/api/v1` (S5); als Historie-Option bleibt eine Gitea-Instanz
+  als `base_url` möglich (dort `/api/v1/repos/…` und direkt API, da der
+  Historie-Host den Redirect-Pfad nicht hat). Sonst KEIN Netzverkehr (kein Telemetrie/
   Phoning). Checksummen kommen aus `latest.json` (SHA256 pro Asset); beim
   API-Fallback optional EIN GET auf das `SHA256SUMS`-Sidecar.
 - Versionsvergleich: semver mit Pre-release-Suffixen (`v0.6.0-rc.1` ist
@@ -109,7 +109,7 @@ Der Check ist ein UNAUTHENTIFIZIERTES GET auf
 pro IP betroffen; Fallback: Releases-API wie oben).
 (S5: das öffentliche GitHub-Mirror-Repo ist die Release-Quelle — es ist
 public, der Check funktioniert damit ohne Token). Damit der Updater funktioniert, muss die Release-Seite
-der Instanz anonym lesbar sein (GitHub-Mirror ist public; Gitea: Repo public bzw. „public“-Rechte für
+der Instanz anonym lesbar sein (GitHub-Mirror ist public; Historie-Host Gitea: Repo public bzw. „public“-Rechte für
 Releases) — auch die Asset-Download-URLs müssen ohne Token ladbar sein.
 Wird ein Token nötig, gehört er in die `[updater]`-Sektion (Konfig-only),
 nicht ins Frontend.
@@ -126,7 +126,7 @@ nicht ins Frontend.
 
 ## Komponenten
 
-- `crates/updater/` — versionslose Kernlogik: semver-Vergleich, Releases-API-Client (GitHub/Gitea),
+- `crates/updater/` — versionslose Kernlogik: semver-Vergleich, Releases-API-Client (GitHub/Gitea; Gitea = Historie-Option),
   SHA256-Integrität, Asset-Auswahl/Plan, Streaming-Download (11 Unit-Tests).
 - `crates/settings/` — `[updater]`-Sektion (`enabled`, `interval_hours`,
   `repo`, `base_url`).
