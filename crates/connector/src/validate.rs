@@ -384,6 +384,92 @@ fn check_screen(
     for (i, ac) in s.autocomplete.iter().flatten().enumerate() {
         check_autocomplete(flow_id, sid, i, ac, report);
     }
+    // SF2: Multi-Select nur auf Listen; Confirm braucht eine Write-Action.
+    if let Some(multi) = &s.multi {
+        if s.screen_type != ScreenType::List {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': 'multi' is only valid on type list"
+            ));
+        }
+        let has_write = s.actions.iter().flatten().any(|a| !a.is_navigation());
+        if !has_write {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': multi list needs an action with method (confirm)"
+            ));
+        }
+        if let Some(mp) = &multi.max_path {
+            if mp.trim().is_empty() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': multi.max_path is empty"
+                ));
+            }
+        }
+    }
+    // SF2: Actions — eindeutige IDs, method/path-Paarigkeit, goto-Referenzen,
+    // Header-Templates gegen die deklarierten Action-Params.
+    let mut action_ids = std::collections::BTreeSet::new();
+    for a in s.actions.iter().flatten() {
+        if !seen_insert(&mut action_ids, &a.id.as_str()) {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': duplicate action id '{}'",
+                a.id
+            ));
+        }
+        if a.id.trim().is_empty() {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': action with empty id"
+            ));
+        }
+        match (
+            a.method,
+            a.path.as_deref().map(str::trim).filter(|p| !p.is_empty()),
+        ) {
+            (None, None) if a.goto.is_none() => report.error(format!(
+                "flow '{flow_id}': screen '{sid}': action '{}' needs method+path or goto",
+                a.id
+            )),
+            (Some(_), None) => report.error(format!(
+                "flow '{flow_id}': screen '{sid}': action '{}' with method needs 'path'",
+                a.id
+            )),
+            (None, Some(_)) if a.goto.is_none() => report.error(format!(
+                "flow '{flow_id}': screen '{sid}': action '{}' with path needs 'method'",
+                a.id
+            )),
+            _ => {}
+        }
+        if let Some(g) = a.goto.as_deref() {
+            // goto NACH erfolgreichem Write ist legitim (Transition nach
+            // Submit, z. B. wishes → wait) — keine Warnung.
+            check_screen_id_ref(flow_id, &format!("action '{}'", a.id), g, ids, report);
+        }
+        let aparams: std::collections::BTreeSet<&str> =
+            a.params.iter().flatten().map(|p| p.key.as_str()).collect();
+        for (name, template) in a.headers.iter().flatten() {
+            if name.trim().is_empty() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': action '{}' has empty header name",
+                    a.id
+                ));
+            }
+            for param in extract_params(template) {
+                if !aparams.contains(param.as_str()) {
+                    report.error(format!(
+                        "flow '{flow_id}': screen '{sid}': action '{}': header template '{{{param}}}' has no declared param",
+                        a.id
+                    ));
+                }
+            }
+        }
+        for p in a.params.iter().flatten() {
+            if p.key.trim().is_empty() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': action '{}': param key empty",
+                    a.id
+                ));
+            }
+        }
+    }
 }
 
 fn check_endpoint_target(
@@ -1077,6 +1163,81 @@ mod tests {
         let r = validate_manifest(manifest_with_flow(&flow_json("wishes", &empty_fill)).as_bytes());
         assert!(
             r.warnings.iter().any(|w| w.contains("no 'fill' mapping")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn flow_multi_and_actions_checked() {
+        // multi auf Nicht-Liste → Error
+        let bad = r#"{"id": "d", "type": "detail", "title": {"de": "d", "en": "d"}, "endpoint": "/api/d", "mapping": {"n": "n"}, "multi": {}}"#;
+        let r = validate_manifest(manifest_with_flow(&flow_json("d", bad)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("'multi' is only valid on type list")),
+            "{r:?}"
+        );
+
+        // multi Liste ohne Write-Action → Error; mit Action + goto ok
+        let list_no_action = r#"{"id": "w", "type": "list", "title": {"de": "w", "en": "w"}, "endpoint": "/api/w", "mapping": {"n": "n"}, "multi": {"max_path": "max_wishes"}}"#;
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", list_no_action)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("multi list needs an action with method")),
+            "{r:?}"
+        );
+
+        let ok = r#"{"id": "w", "type": "list", "title": {"de": "w", "en": "w"}, "endpoint": "/api/w", "mapping": {"n": "n"}, "multi": {"max_path": "max_wishes"}, "actions": [{"id": "confirm", "title": {"de": "c", "en": "c"}, "method": "post", "path": "/api/w", "goto": "done"}, {"id": "nav", "title": {"de": "n", "en": "n"}, "goto": "done"}]},
+            {"id": "done", "type": "results", "title": {"de": "r", "en": "r"}, "endpoint": "/api/r", "mapping": {"n": "n"}}"#;
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+
+        // goto auf unbekannten Screen → Error
+        let bad_goto = ok.replace(r#""goto": "done""#, r#""goto": "ghost""#);
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &bad_goto)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("action 'confirm'") && e.contains("ghost")),
+            "{r:?}"
+        );
+
+        // method ohne path → Error
+        let no_path = ok.replace(
+            r#""method": "post", "path": "/api/w""#,
+            r#""method": "post""#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &no_path)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("action 'confirm' with method needs 'path'")),
+            "{r:?}"
+        );
+
+        // Header-Template ohne deklarierten Param → Error
+        let bad_header = ok.replace(
+            r#""method": "post", "path": "/api/w""#,
+            r#""method": "post", "path": "/api/w", "headers": {"X-SCLM-Code": "{code}"}"#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &bad_header)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("action 'confirm'") && e.contains("{code}")),
+            "{r:?}"
+        );
+
+        // doppelte Action-ID → Error
+        let dup = ok.replace(
+            r#"{"id": "nav""#,
+            r#"{"id": "confirm", "title": {"de": "x", "en": "x"}, "goto": "done"}, {"id": "nav""#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &dup)).as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("duplicate action id")),
             "{r:?}"
         );
     }
