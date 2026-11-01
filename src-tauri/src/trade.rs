@@ -2047,6 +2047,7 @@ pub(crate) fn friendly(e: ProviderError) -> String {
         ProviderError::Timeout => err_key("error.uex.timeout"),
         ProviderError::NotFound(what) => err_keyp("error.uex.not_found", json!({ "what": what })),
         ProviderError::Cache(msg) => err_keyp("error.uex.cache", json!({ "msg": msg })),
+        ProviderError::Keyed { key, params } => err_keyp(&key, params),
         ProviderError::Config(msg) => err_keyp("error.uex.config", json!({ "msg": msg })),
         ProviderError::Json(msg) => err_keyp("error.uex.bad_response", json!({ "msg": msg })),
         ProviderError::Unsupported(msg) => err_keyp("error.uex.unsupported", json!({ "msg": msg })),

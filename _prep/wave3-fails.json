@@ -1,1 +1,0 @@
-[["src/routes/+page.svelte", "{dIsTerminal ? 'Artikel' : 'Terminal'}</div>", 2, 1], ["src/routes/+page.svelte", "<span>{dIsTerminal ? 'Item' : 'Terminal'}</span>", 3, 1], ["src/lib/Inventory.svelte", "{r.entity_kind === null ? 'Freitext' : r.entity_kind === 'it", 4, 1], ["src/lib/Inventory.svelte", "{r.entity_kind === 'item' ? 'Stk' : 'SCU'}", 5, 1]]

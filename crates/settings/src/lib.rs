@@ -1547,7 +1547,10 @@ mod tests {
         }
         // Escape als Kombination ablehnen (Task-Vorgabe).
         let err = validate_shortcut_combo("Ctrl+Shift+Escape").unwrap_err();
-        assert!(err.contains("shortcuts.err_escape"), "message names Escape: {err}");
+        assert!(
+            err.contains("shortcuts.err_escape"),
+            "message names Escape: {err}"
+        );
         // Alt+Zahl ist intern die Badge-Navigation (ignoriert weitere Mods).
         let err = validate_shortcut_combo("Ctrl+Alt+3").unwrap_err();
         assert!(

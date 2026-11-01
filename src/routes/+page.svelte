@@ -839,7 +839,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			a.download = 'architects-overlay-hangar.json';
 			a.click();
 			URL.revokeObjectURL(a.href);
-			hangarNoteSet('Export: architects-overlay-hangar.json');
+			hangarNoteSet(`${tr('hangar.export')}: architects-overlay-hangar.json`);
 		} catch (e) {
 			hangarNoteSet(errText(e));
 		} finally {
@@ -5376,10 +5376,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <section class="cfg-sect">
 					<div class="h">{$t('settings.module_assignments')}</div>
 					<div class="cfg-key-status">
-						Datenstand:
+						{$t('settings.data_asof')}
 						{#if modulStatus && modulStatus.version}
 							<b class="ok">{modulStatus.version}</b>
-							· {modulAgeText()} · {modulStatus.module_count} Module / {modulStatus.ship_count} Schiffe
+							· {modulAgeText()} · {$t('settings.module_ship_counts', { modules: modulStatus.module_count, ships: modulStatus.ship_count })}
 						{:else}
 							<b class="off">{$t('settings.no_sync_yet')}</b>
 						{/if}
@@ -5471,7 +5471,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<div class="big" style="color: var(--alert)">{$t('settings.uex_unreachable')}</div>
 					<div class="sm">
 						{errorMsg ?? status?.last_error ?? $t('settings.no_connection')}<br />
-						Cache-Stand: {cacheAge()}
+						{$t('settings.cache_asof', { age: cacheAge() })}
 					</div>
 					<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={retrySync}>{$t('common.try_again')}</span>
 					<div class="sm" style="margin-top: 10px">
@@ -5830,8 +5830,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<button type="button" class="chip" class:is-on={rSort === 'margin_desc'} onclick={() => (rSort = 'margin_desc')}>{$t('routes.margin_down')}</button>
 							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>{$t('routes.distance_up')}</button>
 							<span class="m-spacer"></span>
-							{#if rSweptAt}<span class="chip"><span class="dot"></span>Stand {new Date(rSweptAt * 1000).toLocaleTimeString('de-DE')}</span>{/if}
-							{#if rRefreshing}<span class="chip">↻ Updating…</span>{/if}
+							{#if rSweptAt}<span class="chip"><span class="dot"></span>{$t('routes.asof_chip', { time: new Date(rSweptAt * 1000).toLocaleTimeString('de-DE') })}</span>{/if}
+							{#if rRefreshing}<span class="chip">↻ {$t('common.updating')}</span>{/if}
 						</div>
 						{#if rLoading && !routes_.length}
 							<div class="center" style="padding: 28px 16px">
@@ -5877,7 +5877,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{/each}
 							</div>
 							<div class="m-foot">
-								<span>{routes_.length} Routen · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · Marge = relative % (Gain/SCU ÷ Buy)</span>
+								<span>{$t('routes.count', { n: routes_.length })} · Gain/SCU = Sell − Buy (absolute aUEC/SCU) · Marge = relative % (Gain/SCU ÷ Buy)</span>
 								<span class="src">UEX Corp</span>
 							</div>
 						{:else}
@@ -6393,7 +6393,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																					<div class="m-meta">{fmtQty(o.quantity)} {o.unit || 'unit'} · {rel(o.updated)}</div>
 																				</div>
 																				<div class="m-right" style="gap: 4px">
-																					<button type="button" class="btn-ghost" title={$t('shop.negotiate_browser_title')} onclick={(ev) => { ev.stopPropagation(); void openListingDeepLink(o.slug); }}>💬 Verhandeln</button>
+																					<button type="button" class="btn-ghost" title={$t('shop.negotiate_browser_title')} onclick={(ev) => { ev.stopPropagation(); void openListingDeepLink(o.slug); }}>💬 {$t('shop.negotiate')}</button>
 									<button type="button" class="btn-ghost" title={$t('shop.no_edit_note_title')} onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>{$t('shop.new_button')}</button>
 																					<button type="button" class="btn-ghost" title={$t('shop.unlist_2step_title')} onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>{$t('shop.unlist')}</button>
 																				</div>
@@ -6629,7 +6629,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								     K6 P1: ohne Key und UEX primär → Hinweis (Preise kommen
 								     nur aus dem Wiki-Fallback). -->
 								<div class="d-src" role="note">
-									Quelle: {d.source.toUpperCase()} · Stand: {rel(d.fetched_at)}
+									{$t('common.source_asof', { src: d.source.toUpperCase(), rel: rel(d.fetched_at) })}
 									<button
 										type="button"
 										class="chip"
