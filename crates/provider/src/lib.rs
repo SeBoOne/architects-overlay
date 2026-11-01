@@ -19,7 +19,6 @@ pub use crate::model::{
     OfferSort, PricePoint, SearchEntities, SearchHit, TerminalPriceGroup, Trade, TradePayload,
     deserialize_id_flexible, deserialize_opt_id_flexible, serialize_id_as_string,
 };
-use serde_json::Value;
 
 /// Domain error produced by a provider implementation.
 #[derive(Debug, Clone, serde::Serialize)]

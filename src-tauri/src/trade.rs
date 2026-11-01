@@ -32,6 +32,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::i18n_err::{err_key, err_keyp};
 use cache::{Cache, CacheError};
 use provider::{DataProvider, EntityKind, ProviderError, SearchHit};
 use serde_json::json;
@@ -363,7 +364,7 @@ pub fn search(
         let mut hits = state
             .cache
             .search_sourced(entity_kind, sources, query, name_only, PER_GROUP_LIMIT)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?;
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
         // Location-Gruppe (Kriterium 2 / QA-Auflage A): die Standort-ENTITY
         // selbst ist kein eigenes Dataset — `/terminals` liefert nur Terminal-
         // Reihen (EntityKind::Terminals). Damit der Standort-Klick das Aggregat
@@ -374,8 +375,8 @@ pub fn search(
         // Kriterium 1). Ohne diese Zeile wäre `kind='location'` im Frontend
         // toter Code (Reviewer t_9608f33c, Auflage 1).
         if *kind == "location" {
-            hits =
-                with_location_rows(&state.cache, hits).map_err(|e| format!("Cache-Fehler: {e}"))?;
+            hits = with_location_rows(&state.cache, hits)
+                .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
         }
         total += hits.len();
         groups.push(GroupHits {
@@ -799,7 +800,7 @@ async fn item_name(state: &TradeState, id: Option<u64>, raw: &str) -> Result<Str
     let entities = state
         .cache
         .entities_of(EntityKind::Items)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(entities
         .iter()
         .find(|e| e.id == item_id)
@@ -812,7 +813,7 @@ async fn terminal_name(state: &TradeState, id: u64, raw: &str) -> Result<String,
     let entities = state
         .cache
         .entities_of(EntityKind::Terminals)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(entities
         .iter()
         .find(|e| e.id == id)
@@ -862,13 +863,13 @@ pub async fn refresh_item_prices_now(
     let entities = state
         .cache
         .entities_of(EntityKind::Items)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     for e in entities {
         match state.provider.refresh_item_prices(e.id).await {
             Ok(_) => continue,
             Err(provider::ProviderError::NotFound(_)) => continue,
             Err(provider::ProviderError::RateLimit { .. }) => {
-                return Err("Rate-Limit erreicht — bitte in Kürze erneut versuchen".into());
+                return Err(err_key("error.uex.rate_limit"));
             }
             Err(err) => return Err(friendly(err)),
         }
@@ -876,7 +877,7 @@ pub async fn refresh_item_prices_now(
     state
         .cache
         .price_sync_ages()
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// PS (t_c84e545d): Settings "Commodity-Preise jetzt aktualisieren" — same
@@ -889,7 +890,7 @@ pub async fn refresh_commodity_prices_now(
     state
         .cache
         .price_sync_ages()
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// PS (t_c84e545d): age overview for the two price datatypes (Settings
@@ -899,7 +900,7 @@ pub fn prices_sync_ages(state: State<'_, TradeState>) -> Result<cache::PriceSync
     state
         .cache
         .price_sync_ages()
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// Marketplace offers, filtered client-side (q/location/region/sort) by the
@@ -1199,7 +1200,7 @@ pub fn open_marketplace_trades(app: AppHandle) -> Result<String, String> {
     let url = marketplace_manager_url().to_string();
     let _ = &app;
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1210,7 +1211,7 @@ pub fn open_marketplace_trades_home(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/marketplace/manage/tab/home/";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1221,7 +1222,7 @@ pub fn open_uex_api_apps(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/api/apps";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1232,7 +1233,7 @@ pub fn open_uex_trade_log(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/trade/home";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1242,7 +1243,7 @@ pub fn open_uex_account(app: AppHandle) -> Result<String, String> {
     const URL: &str = "https://uexcorp.space/account";
     let _ = &app;
     tauri_plugin_opener::open_url(URL, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(URL.to_string())
 }
 
@@ -1276,7 +1277,7 @@ pub fn open_marketplace_listing(app: AppHandle, slug: String) -> Result<String, 
     // not from user/remote input). Opens in the system default browser.
     let _ = &app; // AppHandle kept for signature symmetry with sibling commands
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1300,12 +1301,12 @@ fn listing_deep_link(slug: &str) -> String {
 pub fn open_negotiation_deal(app: AppHandle, hash: String) -> Result<String, String> {
     let hash = hash.trim().to_string();
     if hash.is_empty() {
-        return Err("Kein Deal-Hash vorhanden — Deal kann nicht geöffnet werden.".into());
+        return Err(err_key("error.trade.no_deal_hash"));
     }
     let url = format!("https://uexcorp.space/marketplace/negotiate/hash/{hash}");
     let _ = &app; // AppHandle kept for signature symmetry with sibling commands
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1318,10 +1319,10 @@ pub fn open_negotiation_deal(app: AppHandle, hash: String) -> Result<String, Str
 pub fn open_created_listing(_app: AppHandle, url: String) -> Result<String, String> {
     let url = url.trim().to_string();
     if !url.starts_with("https://uexcorp.space/") {
-        return Err("Nur uexcorp.space-Links werden geöffnet.".into());
+        return Err(err_key("error.trade.uex_links_only"));
     }
     tauri_plugin_opener::open_url(&url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url)
 }
 
@@ -1382,7 +1383,7 @@ pub fn pending_offers_remove(state: State<'_, TradeState>, id: u64) -> Result<()
     state
         .cache
         .pending_offers_remove(id)
-        .map_err(|e| format!("Cache-Fehler: {e}"))
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))
 }
 
 /// Tauri-Command: Anlegen (M2b). Validierung der Pflichtfelder liegt im
@@ -1426,7 +1427,7 @@ pub async fn trade_add(
     state
         .cache
         .own_trades_invalidate()
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(id)
 }
 
@@ -1450,7 +1451,7 @@ pub async fn trade_edit(
     state
         .cache
         .own_trades_invalidate()
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(id)
 }
 
@@ -1465,7 +1466,7 @@ pub async fn trade_remove(state: State<'_, TradeState>, id: u64) -> Result<(), S
     state
         .cache
         .own_trades_invalidate()
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     Ok(())
 }
 
@@ -1512,7 +1513,7 @@ pub fn item_suggest(
     let entities = state
         .cache
         .entities_of(EntityKind::Items)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     let mut starts: Vec<provider::ItemSuggestion> = Vec::new();
     let mut contains: Vec<provider::ItemSuggestion> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -1562,12 +1563,12 @@ fn entity_suggest(
         state
             .cache
             .entities_of_sourced(kind, Some(cache::SOURCE_UEX))
-            .map_err(|e| format!("Cache-Fehler: {e}"))?
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?
     } else {
         state
             .cache
             .entities_of(kind)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?
     };
     let mut starts: Vec<provider::ItemSuggestion> = Vec::new();
     let mut contains: Vec<provider::ItemSuggestion> = Vec::new();
@@ -1636,7 +1637,7 @@ pub fn trade_location_suggest(
     let rows = state
         .cache
         .trade_locations_for_commodity(id_commodity, &operation, &query)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     if rows.is_empty() {
         return entity_suggest(&state, EntityKind::Terminals, query);
     }
@@ -1673,7 +1674,7 @@ pub fn trade_commodity_suggest(
     let rows = state
         .cache
         .trade_commodities_for_terminal(id_terminal, &operation, &query)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     // Q1: Fallback + ZUSAMMENFÜHRUNG — der volle Commodity-Suggest bleibt
     // immer Teil der Liste (priorisiert: ort-gefilterte Treffer zuerst).
     let full = entity_suggest(&state, EntityKind::Commodities, query)?;
@@ -1836,13 +1837,13 @@ async fn refresh_commodity_price_tables(
 ) -> Result<usize, String> {
     let entities = cache
         .entities_of(EntityKind::Commodities)
-        .map_err(|e| format!("Cache-Fehler: {e}"))?;
+        .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     let uex = composite.uex();
     let mut renewed = 0;
     for e in entities {
         let fresh = cache
             .prices_fresh(e.id)
-            .map_err(|err| format!("Cache-Fehler: {err}"))?;
+            .map_err(|err| err_keyp("error.uex.cache", json!({ "msg": err.to_string() })))?;
         if fresh {
             continue;
         }
@@ -1891,7 +1892,7 @@ async fn sweep(
         for entity_kind in *entity_kinds {
             let fresh = cache
                 .is_fresh(*entity_kind)
-                .map_err(|e| format!("Cache-Fehler: {e}"))?;
+                .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
             if fresh {
                 continue;
             }
@@ -1907,11 +1908,11 @@ async fn sweep(
             if *entity_kind == EntityKind::Locations {
                 cache
                     .delete_entities_sourced(EntityKind::Locations, cache::SOURCE_WIKI)
-                    .map_err(|e| format!("Cache-Fehler: {e}"))?;
+                    .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
             }
             cache
                 .store_entities_sourced(*entity_kind, cache::SOURCE_UEX, &entities)
-                .map_err(|e| format!("Cache-Fehler: {e}"))?;
+                .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
             log::info!("sync: {label} stored ({} entries)", entities.len());
         }
     }
@@ -1924,7 +1925,7 @@ async fn sweep(
             .map_err(friendly)?;
         cache
             .store_entities(EntityKind::Commodities, &entities)
-            .map_err(|e| format!("Cache-Fehler: {e}"))?;
+            .map_err(|e| err_keyp("error.uex.cache", json!({ "msg": e.to_string() })))?;
     }
     Ok(())
 }

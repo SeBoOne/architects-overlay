@@ -366,9 +366,12 @@ pub fn rebind_shortcut<R: Runtime>(
     kind: ShortcutKind,
     canonical: &str,
 ) -> Result<(), String> {
-    let new_shortcut: Shortcut = canonical
-        .parse()
-        .map_err(|err| format!("Ungültige Kombination {canonical:?}: {err}"))?;
+    let new_shortcut: Shortcut = canonical.parse::<Shortcut>().map_err(|err| {
+        err_keyp(
+            "overlay.err_invalid_combo",
+            json!({ "combo": canonical, "err": err.to_string() }),
+        )
+    })?;
     let Some(bindings) = app.try_state::<ShortcutBindings>() else {
         return Err(err_key("overlay.err_state_unavailable"));
     };
