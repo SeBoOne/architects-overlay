@@ -390,10 +390,8 @@ pub async fn connector_fetch(
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
             return Err(err_key("error.connector.unknown"));
         };
-        let Some(v) = st.manifest.views.iter().find(|v| v.id == view_id) else {
-            return Err(err_key("error.connector.view_unknown"));
-        };
-        (st.manifest.clone(), v.clone())
+        let view = resolve_fetch_view(&st.manifest, &view_id, &params)?;
+        (st.manifest.clone(), view)
     };
     if view.view_type == connector::ViewType::Form {
         // Form-Views sind Write-Kontext (C3) — kein GET hier.
@@ -476,6 +474,89 @@ fn auth_header_opt(
         .map(|v| (header, v.to_owned()))
 }
 
+/// Fetch-Ziel-Auflösung (tauri-frei, testbar): Views zuerst, dann
+/// Flow-Screens (SF1), sonst Flow-Autocomplete-Handshake (SF1-Fix
+/// t_031c54e9, D2): der FlowRenderer sucht mit synthetischer Screen-ID
+/// `<flow>:<field>` und übergibt den Such-Endpoint der AutocompleteRule
+/// als `params.__flow_ep` (inkl. `{q}`-Platzhalter). Generischer
+/// Handshake — kein SCLM-Hardcoding: Endpoint wird gefüllt
+/// (percent-encoded), die Rohantwort durchgereicht (Renderer liest
+/// body[]).
+pub(crate) fn resolve_fetch_view(
+    manifest: &connector::ConnectorManifest,
+    view_id: &str,
+    params: &BTreeMap<String, String>,
+) -> Result<connector::View, String> {
+    if let Some(v) = manifest.views.iter().find(|v| v.id == view_id) {
+        return Ok(v.clone());
+    }
+    if let Some(s) = manifest
+        .flows
+        .iter()
+        .flatten()
+        .flat_map(|f| &f.screens)
+        .find(|s| s.id == view_id)
+    {
+        if s.screen_type == connector::flow::ScreenType::Form {
+            // Form-Screens sind Write-Kontext (C3) — kein GET hier.
+            return Err(err_key("error.connector.form_not_fetchable"));
+        }
+        return Ok(screen_as_view(s));
+    }
+    let Some(ep) = params.get("__flow_ep") else {
+        return Err(err_key("error.connector.view_unknown"));
+    };
+    let mut endpoint = ep.clone();
+    for (k, v) in params {
+        if k == "__flow_ep" {
+            continue;
+        }
+        let ph = format!("{{{k}}}");
+        if endpoint.contains(&ph) {
+            endpoint = endpoint.replace(&ph, &percent_encode(v));
+        }
+    }
+    Ok(connector::View {
+        id: view_id.to_owned(),
+        view_type: connector::ViewType::Table,
+        title: connector::manifest::LocalizedText {
+            de: "Autocomplete".into(),
+            en: "Autocomplete".into(),
+        },
+        endpoint,
+        mapping: Default::default(),
+        poll_seconds: None,
+        form: None,
+        params: None,
+        headers: None,
+    })
+}
+
+/// Flow-Screen → generische View-Form (SF1): Screens teilen die Fetch-Form
+/// mit Views (endpoint/headers/params/mapping/poll_seconds) — der Rest des
+/// Cores (Cache, Mapping, HTTP) bleibt typgleich. Form-Screens werden NICHT
+/// überführt (Write-Kontext); Listen/Ergebnisse → Table, Rest → Detail.
+fn screen_as_view(s: &connector::flow::Screen) -> connector::View {
+    use connector::flow::ScreenType;
+    let view_type = match s.screen_type {
+        ScreenType::List | ScreenType::Results => connector::ViewType::Table,
+        ScreenType::Detail | ScreenType::CodeEntry | ScreenType::Wait | ScreenType::Form => {
+            connector::ViewType::Detail
+        }
+    };
+    connector::View {
+        id: s.id.clone(),
+        view_type,
+        title: s.title.clone(),
+        endpoint: s.endpoint.clone().unwrap_or_default(),
+        mapping: s.mapping.clone(),
+        poll_seconds: s.poll_seconds,
+        form: None,
+        params: s.params.clone(),
+        headers: s.headers.clone(),
+    }
+}
+
 /// Generischer Form-Submit (Formular-View): validiert Pflichtfelder, füllt
 /// `{param}`-Platzhalter in path + body_template, sendet mit Header-Auth.
 /// Antwort: `{ status, body }`. Write nur USER-initiiert (Button) — hier
@@ -493,13 +574,30 @@ pub async fn connector_form_submit(
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
             return Err(err_key("error.connector.unknown"));
         };
-        let Some(v) = st.manifest.views.iter().find(|v| v.id == form_id) else {
-            return Err(err_key("error.connector.view_unknown"));
+        // Views zuerst, dann Flow-Screens mit form-Block (SF1).
+        let f = match st.manifest.views.iter().find(|v| v.id == form_id) {
+            Some(v) => match &v.form {
+                Some(f) => f.clone(),
+                None => return Err(err_key("error.connector.form_not_fetchable")),
+            },
+            None => {
+                let Some(s) = st
+                    .manifest
+                    .flows
+                    .iter()
+                    .flatten()
+                    .flat_map(|f| &f.screens)
+                    .find(|s| s.id == form_id)
+                else {
+                    return Err(err_key("error.connector.view_unknown"));
+                };
+                let Some(f) = &s.form else {
+                    return Err(err_key("error.connector.form_not_fetchable"));
+                };
+                f.clone()
+            }
         };
-        let Some(f) = &v.form else {
-            return Err(err_key("error.connector.form_not_fetchable"));
-        };
-        (st.manifest.clone(), f.clone())
+        (st.manifest.clone(), f)
     };
     let (status, resp_body) =
         form_submit_core(&manifest, &form, values, &settings_state, &id).await?;
@@ -599,6 +697,85 @@ pub(crate) async fn form_submit_core(
     .await
 }
 
+/// Generischer Screen-Action-Submit (SF2-Flow): führt eine `actions`-Action
+/// eines Flow-Screens aus (method+path+body+headers aus der Action-Deklaration,
+/// Werte aus dem Flow-Zustand des Renderers). Antwort: `{ status, body }`.
+/// Write nur USER-initiiert (Button) — kein Polling, kein Hintergrundaufruf.
+#[tauri::command]
+pub async fn connector_screen_action(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    id: String,
+    screen_id: String,
+    action_id: String,
+    values: BTreeMap<String, serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let manifest = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
+            return Err(err_key("error.connector.unknown"));
+        };
+        st.manifest.clone()
+    };
+    let action = {
+        let screen = manifest
+            .flows
+            .iter()
+            .flatten()
+            .flat_map(|f| &f.screens)
+            .find(|s| s.id == screen_id)
+            .ok_or_else(|| err_key("error.connector.view_unknown"))?;
+        screen
+            .actions
+            .iter()
+            .flatten()
+            .find(|a| a.id == action_id)
+            .cloned()
+            .ok_or_else(|| err_key("error.connector.view_unknown"))?
+    };
+    let method = action
+        .method
+        .ok_or_else(|| err_key("error.connector.form_not_fetchable"))?;
+    let path_template = action
+        .path
+        .ok_or_else(|| err_key("error.connector.form_not_fetchable"))?;
+    // Pfad: ROHE Werte einsetzen (wie Formular-Submit).
+    let path = fill_form_path(&path_template, &values)
+        .map_err(|k| err_keyp("error.connector.param_required", json!({ "key": k })))?;
+    // Body: JSON-bewusst einsetzen (Listen bleiben strukturiert), unfüllte
+    // Keys entfernen.
+    let mut body = action.body_template.clone().unwrap_or(json!({}));
+    apply_fill(&mut body, &values);
+    strip_unfilled(&mut body);
+    // Header-Templates der Action: Platzhalter aus den Werten (stringifiziert).
+    let mut string_values: BTreeMap<String, String> = BTreeMap::new();
+    for (k, v) in &values {
+        if let Some(s) = v.as_str() {
+            string_values.insert(k.clone(), s.to_owned());
+        } else if !v.is_null() {
+            string_values.insert(k.clone(), v.to_string());
+        }
+    }
+    let mut headers: Vec<(String, String)> = Vec::new();
+    for (name, template) in action.headers.iter().flatten() {
+        let value = fill_params(template, &string_values)
+            .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
+        headers.push((name.clone(), value));
+    }
+    let (status, resp_body) = submit_form_request(
+        &manifest,
+        method,
+        &path,
+        &body,
+        &headers,
+        auth_header_opt(&manifest, &settings_state, &id),
+    )
+    .await?;
+    // Writes invalidieren den Cache des Connectors.
+    state.cache.lock().expect("cache lock").clear();
+    Ok(json!({ "status": status, "body": resp_body }))
+}
+
 /// `{param}`-Platzhalter in einem String auflösen. Fehlt der Wert → Err(key).
 fn fill_params(template: &str, params: &BTreeMap<String, String>) -> Result<String, String> {
     let mut out = template.to_owned();
@@ -624,6 +801,22 @@ fn find_unfilled(s: &str) -> Option<String> {
     let after = &s[start + 1..];
     let end = after.find('}')?;
     Some(after[..end].to_owned())
+}
+
+/// Prozent-Encoding für Endpoint-Fills im Flow-Autocomplete (D2): Wert
+/// landet im Query-Teil der URL — Leerzeichen/& etc. dürfen roh nicht
+/// durchreichen. Unreserved-Zeichen (RFC 3986) bleiben roh.
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Stabile Cache-Schlüssel-Ordnung (BTreeMap ist bereits sortiert).
@@ -945,6 +1138,117 @@ mod tests {
         let out = map_view(&v, &body).unwrap();
         assert_eq!(out.as_array().unwrap().len(), 2);
         assert_eq!(out[0]["name"], json!("Sabre"));
+    }
+
+    // ---- resolve_fetch_view: Flow-Autocomplete-Handshake (SF1-Fix D2) ----
+
+    fn flow_manifest(view_ids: &[&str], screen_ids: &[&str]) -> connector::ConnectorManifest {
+        let views: Vec<connector::View> = view_ids
+            .iter()
+            .map(|id| {
+                let mut v = view(connector::ViewType::Table, &[]);
+                v.id = (*id).to_owned();
+                v
+            })
+            .collect();
+        let screens = screen_ids
+            .iter()
+            .map(|id| connector::flow::Screen {
+                id: (*id).to_owned(),
+                screen_type: connector::flow::ScreenType::List,
+                title: connector::manifest::LocalizedText {
+                    de: "S".into(),
+                    en: "S".into(),
+                },
+                endpoint: Some("/api/session/{code}".into()),
+                mapping: Default::default(),
+                params: Some(vec![connector::manifest::Param {
+                    key: "code".into(),
+                    label: connector::manifest::LocalizedText {
+                        de: "c".into(),
+                        en: "c".into(),
+                    },
+                    required: None,
+                }]),
+                headers: None,
+                poll_seconds: None,
+                form: None,
+                pins: None,
+                when: None,
+                on_submit: None,
+                on_select: None,
+                exit: None,
+                autocomplete: None,
+                multi: None,
+                actions: None,
+            })
+            .collect();
+        connector::ConnectorManifest {
+            manifest_version: 1,
+            id: "sclm".into(),
+            name: connector::manifest::LocalizedText {
+                de: "S".into(),
+                en: "S".into(),
+            },
+            base_url: "https://sclm.site".into(),
+            auth: None,
+            placement: connector::manifest::Placement {
+                kind: connector::manifest::PlacementKind::Own,
+                label: Some(connector::manifest::LocalizedText {
+                    de: "SCLM".into(),
+                    en: "SCLM".into(),
+                }),
+                hotkey_slot: true,
+                target: None,
+            },
+            views: views,
+            sync: None,
+            flows: Some(vec![connector::flow::Flow {
+                id: "participant".into(),
+                title: connector::manifest::LocalizedText {
+                    de: "T".into(),
+                    en: "T".into(),
+                },
+                entry: screen_ids.first().copied().unwrap_or("").into(),
+                screens,
+            }]),
+        }
+    }
+
+    #[test]
+    fn flow_autocomplete_uses_flow_ep_endpoint() {
+        // synthetische Screen-ID + __flow_ep → Endpoint wird gefüllt,
+        // Rohantwort-Mapping (leer) durchgereicht — kein view_unknown.
+        let m = flow_manifest(&["sessions"], &["code"]);
+        let mut params = BTreeMap::new();
+        params.insert("__flow_ep".into(), "/api/items/search?q={q}".into());
+        params.insert("q".into(), "cutlass black".into());
+        let v = resolve_fetch_view(&m, "participant:loot_id", &params).unwrap();
+        assert_eq!(v.endpoint, "/api/items/search?q=cutlass%20black");
+        assert!(v.mapping.is_empty());
+    }
+
+    #[test]
+    fn flow_autocomplete_without_flow_ep_still_unknown() {
+        let m = flow_manifest(&["sessions"], &["code"]);
+        let params = BTreeMap::new();
+        let err = resolve_fetch_view(&m, "ghost:id", &params).unwrap_err();
+        assert!(err.contains("view_unknown"), "{err}");
+    }
+
+    #[test]
+    fn flow_screen_resolves_via_screen_id() {
+        let m = flow_manifest(&["sessions"], &["code"]);
+        let v = resolve_fetch_view(&m, "code", &BTreeMap::new()).unwrap();
+        assert_eq!(v.endpoint, "/api/session/{code}");
+    }
+
+    #[test]
+    fn percent_encode_unreserved_only() {
+        assert_eq!(percent_encode("cutlass black"), "cutlass%20black");
+        assert_eq!(percent_encode("a&b=c/d"), "a%26b%3Dc%2Fd");
+        assert_eq!(percent_encode("AB-9_~."), "AB-9_~.");
+        assert_eq!(percent_encode(""), "");
     }
 
     #[test]

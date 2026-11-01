@@ -10,10 +10,12 @@
 //!   des Nutzers“-Beschluss
 //! - mapping: Dot-Path-Engine (`"name": "data[].ship_name"`)
 
+pub mod flow;
 pub mod manifest;
 pub mod mapping;
 pub mod validate;
 
+pub use flow::{AutocompleteRule, CondOp, Condition, Flow, Screen, ScreenType};
 pub use manifest::{AuthType, ConnectorManifest, View, ViewType};
 pub use mapping::{DotPathError, dot_path};
 pub use validate::{MAX_MANIFEST_BYTES, Report, validate_manifest};
