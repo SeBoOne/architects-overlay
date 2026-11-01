@@ -32,8 +32,9 @@ pub use plan::{
 };
 pub use version::{is_newer, parse_version};
 
-/// Fehler eines Update-Vorgangs. Deutsche Meldungen (Config-View-Note
-/// folgt dem K6-Muster der anderen Settings-Meldungen).
+/// Fehler eines Update-Vorgangs. T2 (t_c5904bcb): Display liefert
+/// `{error_key, params}`-JSON — das Frontend übersetzt via trError
+/// (Fallback-Kette gewählt → en → raw Key).
 #[derive(Debug)]
 pub enum UpdaterError {
     /// Repo-URL/Base-URL ist kein HTTPS — Umsetzung 5: HTTPS-only.
@@ -54,32 +55,54 @@ pub enum UpdaterError {
     /// Self-Update für die Installationsart nicht möglich (z. B. .deb —
     /// Umsetzung 4: keine root-Aktionen aus der App).
     NotSupported(String),
+    /// Kein passendes Asset im Release für diese Plattform (T2: eigener
+    /// Key statt Malformed-Freitext).
+    NoAsset { tag: String },
 }
 
 impl std::fmt::Display for UpdaterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InsecureUrl(url) => {
-                write!(f, "Update-URL ist nicht HTTPS — abgelehnt: {url}")
+                write!(f, "{}", i18n_err::err_keyp(
+                    "update.err_insecure_url",
+                    serde_json::json!({ "url": url }),
+                ))
             }
-            Self::Network(msg) => write!(f, "Gitea nicht erreichbar: {msg}"),
-            Self::Malformed(msg) => write!(f, "Release-Antwort unlesbar: {msg}"),
-            Self::NoChecksum(asset) => write!(
-                f,
-                "Keine SHA256-Prüfsumme für {asset} im Release — Update aus Sicherheitsgründen abgelehnt."
-            ),
-            Self::ChecksumMismatch { expected, actual } => write!(
-                f,
-                "SHA256-Prüfung fehlgeschlagen (erwartet {expected}, tatsächlich {actual}) — Update abgelehnt."
-            ),
+            Self::Network(msg) => write!(f, "{}", i18n_err::err_keyp(
+                "update.err_network",
+                serde_json::json!({ "msg": msg }),
+            )),
+            Self::Malformed(msg) => write!(f, "{}", i18n_err::err_keyp(
+                "update.err_malformed",
+                serde_json::json!({ "msg": msg }),
+            )),
+            Self::NoChecksum(asset) => write!(f, "{}", i18n_err::err_keyp(
+                "update.err_no_checksum",
+                serde_json::json!({ "asset": asset }),
+            )),
+            Self::ChecksumMismatch { expected, actual } => write!(f, "{}", i18n_err::err_keyp(
+                "update.err_checksum_mismatch",
+                serde_json::json!({ "expected": expected, "actual": actual }),
+            )),
             Self::TooLarge { limit_bytes } => {
-                write!(
-                    f,
-                    "Download größer als das Limit ({limit_bytes} Bytes) — abgelehnt."
-                )
+                write!(f, "{}", i18n_err::err_keyp(
+                    "update.err_too_large",
+                    serde_json::json!({ "limit": limit_bytes }),
+                ))
             }
-            Self::Io(msg) => write!(f, "Dateisystem: {msg}"),
-            Self::NotSupported(msg) => write!(f, "Self-Update nicht möglich: {msg}"),
+            Self::Io(msg) => write!(f, "{}", i18n_err::err_keyp(
+                "update.err_io",
+                serde_json::json!({ "msg": msg }),
+            )),
+            Self::NotSupported(msg) => write!(f, "{}", i18n_err::err_keyp(
+                "update.err_not_supported",
+                serde_json::json!({ "reason": msg }),
+            )),
+            Self::NoAsset { tag } => write!(f, "{}", i18n_err::err_keyp(
+                "update.err_no_asset",
+                serde_json::json!({ "tag": tag }),
+            )),
         }
     }
 }
@@ -144,10 +167,9 @@ pub async fn check(
         },
     };
     let plan = plan::plan_for_release(&release, checksums_text.as_deref()).ok_or_else(|| {
-        UpdaterError::Malformed(format!(
-            "Kein passendes Asset im Release {} für diese Plattform",
-            release.tag_name
-        ))
+        UpdaterError::NoAsset {
+            tag: release.tag_name.clone(),
+        }
     })?;
     Ok(Some(CheckResult {
         current_version: current_version.to_owned(),
@@ -191,7 +213,7 @@ pub async fn perform_download(plan: &Plan) -> Result<std::path::PathBuf> {
             Ok(path)
         }
         Plan::DebHint { .. } => Err(UpdaterError::NotSupported(
-            ".deb-Installationen aktualisieren sich per apt — die App führt keine root-Aktionen aus.".into(),
+            "update.reason_deb_apt".into(),
         )),
     }
 }

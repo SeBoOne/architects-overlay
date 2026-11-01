@@ -8,6 +8,8 @@
 //! bleibt komplett im Backend — dieselbe Sicherheits-Motivation wie
 //! `open_created_listing` (niemals freie URLs aus dem Frontend öffnen).
 
+use crate::i18n_err::err_keyp;
+use serde_json::json;
 use tauri::AppHandle;
 
 /// Offizielle Ziel-URLs des Info-Popups (kinds). Fest verdrahtet, keine
@@ -42,6 +44,6 @@ pub fn open_info_link(app: AppHandle, kind: String) -> Result<String, String> {
         .ok_or_else(|| format!("Unbekannter Info-Link: {kind}"))?;
     let _ = &app; // AppHandle nur für Signatur-Symmetrie mit den Geschwister-Commands
     tauri_plugin_opener::open_url(url, None::<&str>)
-        .map_err(|e| format!("Browser nicht erreichbar: {e}"))?;
+        .map_err(|e| err_keyp("error.browser_open", json!({ "err": e.to_string() })))?;
     Ok(url.to_string())
 }

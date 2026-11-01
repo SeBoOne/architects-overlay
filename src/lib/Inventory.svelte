@@ -1,5 +1,5 @@
 <script lang="ts">
-	import {  t, tr } from '../lib/i18n';
+	import {  t, tr trError } from '../lib/i18n';
 // A11y-Helfer: Enter/Space aktiviert klickbare Nicht-Button-Elemente (nur bei Eigenfokus).
 function keyActivate(e: KeyboardEvent) {
 	if (e.target !== e.currentTarget) return;
@@ -113,7 +113,7 @@ function keyActivate(e: KeyboardEvent) {
 			rows = await invoke<InvEntry[]>('inventory_list');
 			loaded = true;
 		} catch (e) {
-			toastMsg(String(e));
+			toastMsg(trError(e));
 			loaded = true;
 		}
 	}
@@ -344,7 +344,7 @@ function keyActivate(e: KeyboardEvent) {
 			rows = rows.filter((r) => r.id !== id);
 			toastMsg(tr('inventory.deleted_note'));
 		} catch (e) {
-			toastMsg(String(e));
+			toastMsg(trError(e));
 		}
 	}
 
@@ -428,7 +428,7 @@ function keyActivate(e: KeyboardEvent) {
 				.flatMap((g) => g.hits);
 		} catch (e) {
 			pickHits = [];
-			formError = String(e);
+			formError = trError(e);
 		}
 		pickBusy = false;
 	}
@@ -523,7 +523,7 @@ function keyActivate(e: KeyboardEvent) {
 			if (editingId === null) {
 				const added = await invoke<InvEntry>('inventory_add', { entry: payload });
 				rows = [...rows, added];
-				toastMsg(`Position erfasst: ${added.name} Q${added.quality} · ${added.location_name}`);
+				toastMsg(tr('inventory.added_note', { name: added.name, q: added.quality, loc: added.location_name }));
 			} else {
 				await invoke('inventory_update', { id: editingId, entry: payload });
 				rows = rows.map((r) =>
@@ -534,7 +534,7 @@ function keyActivate(e: KeyboardEvent) {
 			closeForm();
 			void loadLocSuggestions();
 		} catch (e) {
-			formError = String(e);
+			formError = trError(e);
 		}
 	}
 
@@ -687,7 +687,7 @@ function keyActivate(e: KeyboardEvent) {
 					{/if}
 					{#if pickQuery.trim()}
 						<button type="button" class="if-pick free" onclick={chooseFreeText}>
-							<span class="k">f</span>Als Freitext übernehmen: „{pickQuery.trim()}“
+							<span class="k">f</span>{$t('inventory.freetext_pick', { q: pickQuery.trim() })}
 						</button>
 					{/if}
 					<div class="if-chosen">{$t('inventory.material_label')}<b>{fName || '—'}</b>
@@ -775,7 +775,7 @@ function keyActivate(e: KeyboardEvent) {
 				<div class="if-sums">
 					<span><i>{$t('inventory.total')}</i> {fmtQty(itemTotal)}</span>
 					<span><i>{$t('inventory.positions')}</i> {itemRows.length}</span>
-					<span><i>Ø Qualität</i> {itemTotal ? itemAvgQ : '—'}</span>
+					<span><i>{$t('inventory.avg_quality')}</i> {itemTotal ? itemAvgQ : '—'}</span>
 				</div>
 			</div>
 			<div class="inv-list">
@@ -805,7 +805,7 @@ function keyActivate(e: KeyboardEvent) {
 					<span><i>{$t('inventory.total')}</i> {fmtQty(locTotal)}</span>
 					<span><i>{$t('inventory.positions')}</i> {locRows.length}</span>
 					<span><i>{$t('inventory.materials')}</i> {locMatCount}</span>
-					<span><i>Ø Qualität</i> {locRows.length ? locAvgQ : '—'}</span>
+					<span><i>{$t('inventory.avg_quality')}</i> {locRows.length ? locAvgQ : '—'}</span>
 				</div>
 			</div>
 			<div class="inv-list">
@@ -816,7 +816,7 @@ function keyActivate(e: KeyboardEvent) {
 							class="isub-btn"
 							onclick={() => openItem(m.name)}
 							title={$t('inventory.open_material_detail')}
-							aria-label="Material {m.name} öffnen"
+							aria-label={$t('inventory.open_material', { name: m.name })}
 						>{m.name}</button>
 						<span class="n">{m.list.length} {$t('inventory.pos_short')} · {fmtQty(m.total)} {m.list[0]?.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</span>
 					</div>
@@ -825,7 +825,7 @@ function keyActivate(e: KeyboardEvent) {
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div class="main">
 								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? 'Item' : 'Commodity'}</span>{/if}</div>
-								<div class="sub">{#if r.price}Kauf {fmtPrice(r.price)} aUEC{:else}kein Kaufpreis{/if}</div>
+								<div class="sub">{#if r.price}{$t('common.buy')} {fmtPrice(r.price)} aUEC{:else}{$t('inventory.no_purchase_price')}{/if}</div>
 							</div>
 							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
 							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
@@ -904,7 +904,7 @@ function keyActivate(e: KeyboardEvent) {
 						class="vgroup"
 						onclick={() => openLocation(g.loc)}
 						title={$t('inventory.open_location_detail')}
-						aria-label="Standort {g.loc} öffnen"
+						aria-label={$t('inventory.open_location', { name: g.loc })}
 					>
 						{g.loc} <span class="n">{g.entries.length} {$t('inventory.pos_short')} · {fmtQty(g.total)} {g.entries[0]?.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</span>
 					</button>
@@ -915,7 +915,7 @@ function keyActivate(e: KeyboardEvent) {
 								class="isub-btn"
 								onclick={() => openItem(m.name)}
 								title={$t('inventory.open_material_detail')}
-								aria-label="Material {m.name} öffnen"
+								aria-label={$t('inventory.open_material', { name: m.name })}
 							>{m.name}</button>
 							<span class="n">{m.list.length} · {fmtQty(m.total)}</span>
 						</div>

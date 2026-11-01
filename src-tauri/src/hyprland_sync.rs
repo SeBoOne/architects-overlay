@@ -38,6 +38,8 @@
 //! PAGE_UP, PRINT, UP are the correct spellings). Modmasks verified live via
 //! `hyprctl binds -j`: SHIFT=1, CTRL=4, ALT=8, SUPER=64.
 
+use crate::i18n_err::{err_key, err_keyp};
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -68,7 +70,7 @@ pub fn to_system_combo(canonical: &str) -> Result<String, String> {
         });
     }
     if parts.len() < 2 {
-        return Err("Kürzel braucht mindestens eine Mod-Taste und eine Taste.".into());
+        return Err(err_key("shortcuts.err_need_mod"));
     }
     Ok(parts.join(" + "))
 }
@@ -121,9 +123,7 @@ fn hyprland_key_token(up: &str) -> Result<String, String> {
         "SEMICOLON" => "SEMICOLON",
         "SLASH" => "SLASH",
         _ => {
-            return Err(format!(
-                "Taste {up} ist unter Hyprland nicht bindbar — andere Taste wählen."
-            ));
+            return Err(err_keyp("sync.err_unbindable_key", json!({ "key": up })));
         }
     };
     Ok(mapped.to_owned())
@@ -354,10 +354,13 @@ impl OmarchyPaths {
             .arg("keys")
             .args(args)
             .output()
-            .map_err(|e| format!("omasettings nicht ausführbar: {e}"))?;
+            .map_err(|e| err_keyp("sync.err_omasettings_run", json!({ "err": e.to_string() })))?;
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-            return Err(format!("omasettings keys {}: {err}", args.join(" ")));
+            return Err(err_keyp(
+                "sync.err_omasettings_keys",
+                json!({ "args": args.join(" "), "err": err }),
+            ));
         }
         Ok(())
     }
@@ -388,7 +391,7 @@ impl OmarchyPaths {
             .arg("-e")
             .arg(&expr)
             .output()
-            .map_err(|e| format!("lua nicht ausführbar: {e}"))?;
+            .map_err(|e| err_keyp("sync.err_lua_run", json!({ "err": e.to_string() })))?;
         if out.status.success() {
             Ok(())
         } else {
@@ -494,7 +497,12 @@ pub fn sync_combo(
     // new bind table is live) — a single immediate query can still see the
     // OLD table (observed live t_1adbc017: startup drift aborted because the
     // verification raced the reload). Poll a few short rounds before failing.
-    let mut note = format!("Sync {command}: {target}");
+    // T2 (t_c5904bcb): Notes als error_key + params — Frontend übersetzt
+    // via trError (Fallback-Kette gewählt → en → raw Key).
+    let mut note = err_keyp(
+        "sync.compositor_ok",
+        json!({ "command": command, "target": target }),
+    );
     let want_mask = modmask(canonical);
     let want_key =
         to_system_combo(canonical).map(|c| c.rsplit(" + ").next().unwrap_or("").to_owned())?;
@@ -523,31 +531,47 @@ pub fn sync_combo(
             }
         }
         if verified {
-            note.push_str(" — verifiziert (hyprctl binds)");
+            note = err_keyp(
+                "sync.compositor_verified",
+                json!({ "command": command, "target": target }),
+            );
         } else if seen_any {
             let (key, mask) = last.unwrap();
-            return Err(format!(
-                "Sync geschrieben, aber Hyprland zeigt {command} als key {key:?} modmask {mask} statt {want_key:?} modmask {want_mask} (5 Prüf-Runden) — Store prüfen.",
+            return Err(err_keyp(
+                "sync.err_mismatch",
+                json!({ "command": command, "key": key, "mask": mask, "want_key": want_key, "want_mask": want_mask }),
             ));
         } else {
-            return Err(format!(
-                "Sync geschrieben, aber kein Bind {description:?} in hyprctl binds gefunden (5 Prüf-Runden) — Reload/Lua prüfen.",
+            return Err(err_keyp(
+                "sync.err_nobind",
+                json!({ "description": description }),
             ));
         }
     } else {
-        note.push_str(" — hyprctl nicht erreichbar, Verifikation entfällt");
+        note = err_keyp(
+            "sync.compositor_ok_noverify",
+            json!({ "command": command, "target": target }),
+        );
     }
 
     if let Err(e) = paths.lua_syntax_ok() {
-        return Err(format!(
-            "Sync {command}: Bindings geschrieben, aber {e} — Änderungen rückgängig machen über {}",
-            backup
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "omasettings keys remove".into())
+        return Err(err_keyp(
+            "sync.err_lua_syntax",
+            json!({
+                "command": command,
+                "err": e.to_string(),
+                "backup": backup
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "omasettings keys remove".into()),
+            }),
         ));
     }
     if let Some(p) = &backup {
-        note.push_str(&format!(" (Backup: {})", p.display()));
+        // Backup-Pfad hängt die UI als Param an (Key sync.compositor_backup).
+        note = err_keyp(
+            "sync.compositor_backup",
+            json!({ "command": command, "target": target, "backup": p.display().to_string() }),
+        );
     }
     Ok(SyncOutcome {
         changed: true,
@@ -603,7 +627,7 @@ pub fn startup_sync_drift(
             Err(e) => {
                 out.push(SyncOutcome {
                     changed: false,
-                    note: format!("Compositor-Sync {command} übersprungen: {e}"),
+                    note: err_keyp("sync.compositor_skipped", json!({ "command": command, "err": e })),
                 });
                 continue;
             }
@@ -843,9 +867,12 @@ echo '[{"modmask": 12, "key": "K", "description": "Architects Overlay: Palette e
 
         let outcome = sync_combo(&paths, "Ctrl+Alt+K", TOGGLE_COMMAND, TOGGLE_DESCRIPTION).unwrap();
         assert!(outcome.changed);
-        assert!(outcome.note.contains("CTRL + ALT + K"));
-        assert!(outcome.note.contains("verifiziert"));
-        assert!(outcome.note.contains("bak-"));
+        // T2 (t_c5904bcb): Note ist key-JSON — Params tragen die Fakten.
+        let note: serde_json::Value = serde_json::from_str(&outcome.note).unwrap();
+        assert!(note["error_key"].as_str().unwrap().starts_with("sync."));
+        let params = note["params"].as_object().unwrap();
+        assert!(params.values().any(|v| v.as_str().unwrap_or("").contains("CTRL + ALT + K")));
+        assert!(params.values().any(|v| v.as_str().unwrap_or("").contains("bak-")));
 
         let log = std::fs::read_to_string(&calls).unwrap();
         let lines: Vec<&str> = log.lines().collect();
@@ -914,11 +941,10 @@ echo '[{"modmask": 5, "key": "U", "description": "Architects Overlay: Palette ei
             lua: PathBuf::new(),
         };
         let err = sync_combo(&paths, "Ctrl+Alt+K", TOGGLE_COMMAND, TOGGLE_DESCRIPTION).unwrap_err();
-        assert!(err.contains("statt"), "report mismatch: {err}");
-        assert!(
-            err.contains("Prüf-Runden"),
-            "retry rounds named in error: {err}"
-        );
+        // T2: Fehler als key-JSON — Key + Params-Struktur prüfen.
+        let v: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(v["error_key"], "sync.err_mismatch", "got {err}");
+        assert!(v["params"]["want_key"].is_string() && v["params"]["want_mask"].is_u64());
     }
 
     // Drift-Sync bricht NICHT ab, wenn ein Slot verifizierungs-seitig fällt:

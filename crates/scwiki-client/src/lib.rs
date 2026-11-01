@@ -54,27 +54,28 @@ pub const MODULE_TYPES: &[&str] = &[
     "TractorBeam",
 ];
 
-/// Deutsche Kategorie-Labels für die Autocomplete-Anzeige (Type → Label).
+/// Kategorie-Labels für die Autocomplete-Anzeige (Type → i18n-KEY;
+/// T2 t_c5904bcb: das Frontend übersetzt via $t(label), Fallback en).
 pub fn category_label(item_type: &str) -> String {
     match item_type {
-        "Shield" => "Schild",
-        "PowerPlant" => "Generator",
-        "Cooler" => "Kühler",
-        "QuantumDrive" => "Quantumantrieb",
-        "Radar" => "Radar",
-        "LifeSupportGenerator" => "Life-Support",
-        "EMP" => "EMP",
-        "QuantumInterdictionGenerator" => "Q-Interdiction",
-        "WeaponGun" => "Waffe",
-        "WeaponDefensive" => "Defensivwaffe",
-        "MissileLauncher" => "Raketen",
-        "BombLauncher" => "Bomben",
-        "Turret" => "Geschütz",
-        "Module" => "Modul",
-        "Container" => "Container",
-        "FuelTank" => "Treibstoff",
-        "MiningLaser" => "Mining-Laser",
-        "TractorBeam" => "Traktorstrahl",
+        "Shield" => "moduletype.shield",
+        "PowerPlant" => "moduletype.powerplant",
+        "Cooler" => "moduletype.cooler",
+        "QuantumDrive" => "moduletype.quantumdrive",
+        "Radar" => "moduletype.radar",
+        "LifeSupportGenerator" => "moduletype.lifesupport",
+        "EMP" => "moduletype.emp",
+        "QuantumInterdictionGenerator" => "moduletype.qinterdiction",
+        "WeaponGun" => "moduletype.weapongun",
+        "WeaponDefensive" => "moduletype.weapongdef",
+        "MissileLauncher" => "moduletype.missile",
+        "BombLauncher" => "moduletype.bomb",
+        "Turret" => "moduletype.turret",
+        "Module" => "moduletype.module",
+        "Container" => "moduletype.container",
+        "FuelTank" => "moduletype.fueltank",
+        "MiningLaser" => "moduletype.mininglaser",
+        "TractorBeam" => "moduletype.tractorbeam",
         other => other,
     }
     .to_string()

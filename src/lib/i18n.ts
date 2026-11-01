@@ -83,9 +83,18 @@ export const t = derived([locales, lang], ([$locales, $lang]) => {
 			text = key;
 		}
 		if (!params) return text;
-		return text.replace(/\{(\w+)\}/g, (m, p: string) =>
-			Object.prototype.hasOwnProperty.call(params, p) ? String(params[p]) : m
-		);
+		return text.replace(/\{(\w+)\}/g, (m, p: string) => {
+			if (!Object.prototype.hasOwnProperty.call(params, p)) return m;
+			const v = params[p];
+			if (typeof v === 'string') {
+				// T2 (t_c5904bcb): Params dürfen selbst i18n-Keys sein
+				// (z. B. hotkey.slot_search als Slot in Fehlermeldungen) —
+				// wird ein Key in der Fallback-Kette gefunden, übersetzen.
+				const tv = resolve(v);
+				if (tv !== undefined) return tv;
+			}
+			return String(v);
+		});
 	};
 });
 

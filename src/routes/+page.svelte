@@ -75,6 +75,12 @@ function keyActivate(e: KeyboardEvent) {
 	// lokale (Community-)Dateien via locale_import/locale_list.
 	import {  t, importLocaleFromText, initI18n, localeList, setLanguage, trError, tr } from '../lib/i18n';
 
+/** T2 (t_c5904bcb): Rust-Fehler (key-JSON oder Klartext) UI-tauglich
+ *  übersetzen — zentraler Display-Pfad für alle Catch-Sites. */
+function errText(e: unknown): string {
+	return trError(e);
+}
+
 	// ---- IPC-Typen (Mirror der Serde-DTOs in src-tauri/src/trade.rs) ---------
 	type OverlayState = { visible: boolean; game_running: boolean; click_through: boolean };
 	// t_925a577a: id kommt als STRING (Wiki-IDs > 2^53 runden als JS-Number
@@ -363,20 +369,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					: tr('settings.update_already_running');
 			await modulLoadStatus();
 		} catch (e) {
-			modulNote = String(e);
+			modulNote = errText(e);
 		} finally {
 			modulBusy = false;
 		}
 	}
 	function modulAgeText(): string {
 		const s = modulStatus?.age_seconds;
-		if (s == null) return 'Alter unbekannt';
-		if (s < 120) return `vor ${s} s`;
+		if (s == null) return tr('common.age_unknown');
+		if (s < 120) return tr('rel.sec_ago', { n: s });
 		const m = Math.round(s / 60);
-		if (m < 120) return `vor ${m} min`;
+		if (m < 120) return tr('rel.min_ago', { n: m });
 		const h = Math.round(m / 60);
-		if (h < 48) return `vor ${h} h`;
-		return `vor ${Math.round(h / 24)} Tagen`;
+		if (h < 48) return tr('rel.hour_ago', { n: h });
+		return tr('rel.day_ago', { n: Math.round(h / 24) });
 	}
 	// K6 (t_9b385831, P2): kurze Confirm-Zeile im Config-View nach Aktionen
 	// (Preisquelle umstellen) — analog K3 Notif-Timeout: verschwindet nach 3 s
@@ -401,9 +407,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		priceSyncing = true;
 		try {
 			priceSyncAge = await invoke<NonNullable<typeof priceSyncAge>>('refresh_commodity_prices_now');
-			cfgConfirm('Commodity-Preise aktualisiert.');
+			cfgConfirm(tr('settings.prices_commodity_ok'));
 		} catch (e) {
-			cfgConfirm(`Commodity-Preise: ${String(e)}`);
+			cfgConfirm(tr('settings.prices_commodity_err', { err: errText(e) }));
 		}
 		priceSyncing = false;
 	}
@@ -412,9 +418,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		priceSyncing = true;
 		try {
 			priceSyncAge = await invoke<NonNullable<typeof priceSyncAge>>('refresh_item_prices_now');
-			cfgConfirm('Item-Preise aktualisiert.');
+			cfgConfirm(tr('settings.prices_item_ok'));
 		} catch (e) {
-			cfgConfirm(`Item-Preise: ${String(e)}`);
+			cfgConfirm(tr('settings.prices_item_err', { err: errText(e) }));
 		}
 		priceSyncing = false;
 	}
@@ -500,7 +506,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		const token = codeToToken(e.code);
 		if (!token) {
 			scNoteFor = field;
-			scNote = `Taste ${e.key} nicht unterstützt — Buchstabe, Ziffer, F1–F24 oder Sonderzeichen der Haupttastatur nutzen.`;
+			scNote = tr('settings.key_unsupported', { key: e.key });
 			return;
 		}
 		const mods: string[] = [];
@@ -528,7 +534,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			scPreview = '';
 			scNote = '';
 			scNoteFor = null;
-			cfgConfirm(`Tastenkürzel übernommen: ${canonicalToLabel(applied ?? '')} — gilt ab sofort.`);
+			cfgConfirm(tr('settings.shortcut_applied', { k: canonicalToLabel(applied ?? '') }));
 			scheduleSyncNoteRefresh();
 		} catch (err) {
 			// Nichts persistiert, OS-Registration unverändert (Backend hat den
@@ -577,7 +583,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const applied = cfg?.mode_hotkeys?.[field] ?? '';
 			hkCapture = null;
 			hkNote = '';
-			cfgConfirm(`Mode-Hotkey übernommen: ${applied} — gilt ab sofort.`);
+			cfgConfirm(tr('settings.mode_hotkey_applied', { k: applied }));
 		} catch (err) {
 			hkNote = String(err);
 			hkCapture = null;
@@ -605,10 +611,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			applySettings(cfg);
 			cfgConfirm(cfg.sync_note || (on
 				? tr('settings.compositor_sync_on')
-				: 'Compositor-Sync deaktiviert.'));
+				: tr('settings.compositor_sync_off')));
 		scheduleSyncNoteRefresh();
 		} catch (err) {
-			cfgConfirm(`Compositor-Sync: ${String(err)}`);
+			cfgConfirm(tr('settings.compositor_sync_err', { msg: trError(err) }));
 		}
 	}
 	let shortcutFields = $derived([
@@ -742,7 +748,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			hangarItems = await invoke<HangarItem[]>('hangar_list');
 			hangarLoaded = true;
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -801,10 +807,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const text = await file.text();
 			const res = await invoke<HangarImportResult>('hangar_import', { format, text });
-			hangarNoteSet(`Import (${res.format}): ${res.imported} neu · ${res.updated} aktualisiert · ${res.skipped} übersprungen`);
+			hangarNoteSet(tr('hangar.import_result', { format: res.format, added: res.imported, updated: res.updated, skipped: res.skipped }));
 			await loadHangar(true);
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -833,7 +839,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			URL.revokeObjectURL(a.href);
 			hangarNoteSet('Export: architects-overlay-hangar.json');
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1081,7 +1087,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Listing-/Trade-Formulare) — erst Zusammenfassung, dann Write.
 	function requestHangarSave() {
 		if (!hangarForm.name.trim()) {
-			hangarNoteSet('Name fehlt');
+			hangarNoteSet(tr('hangar.err_name_missing'));
 			return;
 		}
 		// TB (t_78a4a5e5, Punkt 1): Typ/Herkunft starten leer — Pflichtwahl
@@ -1102,7 +1108,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		hangarNoteSet('');
 		try {
 			const name = hangarForm.name.trim();
-			if (!name) throw new Error('Name fehlt');
+			if (!name) throw new Error(tr('hangar.err_name_missing'));
 			const item: HangarItem = {
 				...hangarForm,
 				name,
@@ -1115,10 +1121,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			let msg;
 			if (item.id != null) {
 				await invoke<HangarItem>('hangar_update', { item });
-				msg = `Aktualisiert: ${name}`;
+				msg = tr('hangar.updated_named', { name });
 			} else {
 				const saved = await invoke<HangarItem>('hangar_add', { item });
-				msg = `Angelegt: ${hangarDisplayName(saved)}`;
+				msg = tr('hangar.created_named', { name: hangarDisplayName(saved) });
 			}
 			hangarFormOpen = false;
 			hangarEdit = false;
@@ -1132,7 +1138,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			hangarNoteSet(msg);
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1145,13 +1151,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await invoke('hangar_delete', { id: item.id });
 			hangarConfirm = null;
 			await loadHangar(true);
-			hangarNoteSet(`Gelöscht: ${hangarDisplayName(item)}`);
+			hangarNoteSet(tr('hangar.deleted_named', { name: hangarDisplayName(item) }));
 			// TC (t_f269f5b7): Löschung erfolgte aus dem Detail-Popup — Popup
 			// schließt sich, Liste dahinter aktualisiert sich via loadHangar.
 			hangarDetail = null;
 			hangarWikiMods = null;
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1187,9 +1193,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await loadHangar(true);
 			const fresh = hangarItems.find((i) => i.id === ship.id);
 			if (fresh) hangarDetail = fresh;
-			hangarNoteSet(`Modul hinzugefügt: ${modName}`);
+			hangarNoteSet(tr('hangar.module_added', { name: modName }));
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1206,9 +1212,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				const fresh = hangarItems.find((i) => i.id === hangarDetail!.id);
 				if (fresh) hangarDetail = fresh;
 			}
-			hangarNoteSet(`Modul entfernt: ${hangarDisplayName(m)}`);
+			hangarNoteSet(tr('hangar.module_removed', { name: hangarDisplayName(m) }));
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1228,9 +1234,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// das zugeordnete Modul verschwindet aus der Liste (verlinkt).
 			hangarDetail = null;
 			hangarWikiMods = null;
-			hangarNoteSet(`Zugeordnet: ${hangarDisplayName(m)} → ${base}`);
+			hangarNoteSet(tr('hangar.assigned_named', { name: hangarDisplayName(m), base }));
 		} catch (e) {
-			hangarNoteSet(String(e));
+			hangarNoteSet(errText(e));
 		} finally {
 			hangarBusy = false;
 		}
@@ -1337,7 +1343,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			upStatus = await invoke<UpdaterStatus>('updater_check_now');
 		} catch (e) {
-			upStatus = upStatus ? { ...upStatus, note: String(e) } : upStatus;
+			upStatus = upStatus ? { ...upStatus, note: errText(e) } : upStatus;
 		}
 		upBusy = false;
 	}
@@ -1351,7 +1357,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// den Neustart-Hinweis — die Antwort ist Best-Effort-Status.
 			upStatus = await invoke<UpdaterStatus>('updater_install');
 		} catch (e) {
-			upStatus = upStatus ? { ...upStatus, note: String(e) } : upStatus;
+			upStatus = upStatus ? { ...upStatus, note: errText(e) } : upStatus;
 		}
 		upBusy = false;
 	}
@@ -1424,7 +1430,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_palette', { name });
 			applySettings(cfg);
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1433,7 +1439,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_detail_variant', { name });
 			applySettings(cfg);
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1485,7 +1491,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_scale', { pct });
 			applySettings(cfg);
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 			if (typeof document !== 'undefined')
 				document.documentElement.style.setProperty(
 					'--ui-scale', String(pct / 100));
@@ -1500,7 +1506,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			apiKeyInput = '';
 			apiKeyNote = tr('settings.apikey_saved');
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1508,9 +1514,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_uex_api_key', { key: null });
 			apiKeyInput = '';
-			apiKeyNote = 'API-Key entfernt.';
+			apiKeyNote = tr('settings.apikey_removed');
 		} catch (e) {
-			apiKeyNote = String(e);
+			apiKeyNote = errText(e);
 		}
 	}
 
@@ -1527,7 +1533,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			usernameNote = '';
 			void resolveUsername();
 		} catch (e) {
-			secretKeyNote = String(e);
+			secretKeyNote = errText(e);
 		}
 	}
 
@@ -1535,9 +1541,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_set_uex_secret_key', { key: null });
 			secretKeyInput = '';
-			secretKeyNote = 'Secret-Key entfernt.';
+			secretKeyNote = tr('settings.secretkey_removed');
 		} catch (e) {
-			secretKeyNote = String(e);
+			secretKeyNote = errText(e);
 		}
 	}
 
@@ -1549,7 +1555,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke(cmd);
 		} catch (e) {
-			secretKeyNote = String(e);
+			secretKeyNote = errText(e);
 		}
 	}
 
@@ -1559,11 +1565,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_resolve_uex_username');
 			if (!bg) {
 				usernameNote = cfg?.uex_username?.trim()
-					? `UEX-Username automatisch ermittelt: ${cfg.uex_username.trim()}`
+					? tr('settings.username_detected', { user: cfg.uex_username.trim() })
 					: '';
 			}
 		} catch (e) {
-			usernameNote = `Username konnte nicht ermittelt werden: ${String(e)}`;
+			usernameNote = tr('settings.username_detect_failed', { msg: trError(e) });
 		}
 	}
 
@@ -1578,7 +1584,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				? tr('settings.confirm_mode_every')
 				: tr('settings.confirm_mode_unlist');
 		} catch (e) {
-			mktConfirmNote = String(e);
+			mktConfirmNote = errText(e);
 		}
 	}
 
@@ -1668,8 +1674,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Meldung", nicht „0 SCU" — deshalb Klartext statt eines Strichs.
 	function stockTxt(p: PricePoint, kind: 'buy' | 'sell'): string {
 		const n = Math.round(kind === 'buy' ? p.buy_stock : p.sell_stock);
-		if (kind === 'buy') return n > 0 ? `Bestand ${fmt(n)} SCU` : 'kein Bestand gemeldet';
-		return n > 0 ? `Nachfrage ${fmt(n)} SCU` : 'keine Nachfrage gemeldet';
+		if (kind === 'buy') return n > 0 ? tr('market.stock_scu', { n: fmt(n) }) : tr('market.no_stock_reported');
+		return n > 0 ? tr('market.demand_scu', { n: fmt(n) }) : tr('market.no_demand_reported');
 	}
 
 	// ---- Market-State (Phase 2) --------------------------------------------
@@ -1967,7 +1973,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			myNegotiations = r.negotiations;
 			if (r.note) tradesNote = r.note;
 		} catch (e) {
-			tradesErr = String(e);
+			tradesErr = errText(e);
 		}
 		tradesLoading = false;
 	}
@@ -1985,7 +1991,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			chatMsgs = r.messages;
 			if (r.note) chatErr = r.note;
 		} catch (e) {
-			chatErr = String(e);
+			chatErr = errText(e);
 		}
 		chatLoading = false;
 		// Verlauf ans Ende scrollen (neueste unten).
@@ -2081,7 +2087,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			myTrades = r.trades as unknown as UTrade[];
 			if (r.note) trkNote = r.note;
 		} catch (e) {
-			trkErr = String(e);
+			trkErr = errText(e);
 		}
 		trkLoading = false;
 		trkLoaded = true;
@@ -2220,11 +2226,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			else await invoke('trade_add', { payload });
 			trkOpen = false;
 			trkEditId = null;
-			trkMsg = wasEdit ? 'Trade aktualisiert.' : 'Trade erfasst.';
+			trkMsg = wasEdit ? tr('trades.updated_note') : tr('trades.created_note');
 			await loadTrk(true, true);
 		} catch (e) {
 			// Kein Retry (M2b-Philosophie): Meldung + Deep-Link-Button.
-			trkMsg = String(e);
+			trkMsg = errText(e);
 		}
 		trkBusy = false;
 	}
@@ -2241,7 +2247,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			trkMsg = tr('trades.deleted_note');
 			await loadTrk(true, true);
 		} catch (e) {
-			trkMsg = String(e);
+			trkMsg = errText(e);
 		}
 		trkBusy = false;
 	}
@@ -2252,7 +2258,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke('open_uex_trade_log');
 		} catch (e) {
-			trkMsg = String(e);
+			trkMsg = errText(e);
 		}
 	}
 
@@ -2306,7 +2312,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} catch (e) {
 			// KEIN Retry — Meldung + Deep-Link (429/403-Pfad wie bei den
 			// anderen Writes). chatErr rendert den Button im Chat-Pane.
-			chatErr = String(e);
+			chatErr = errText(e);
 		}
 		chatBusy = false;
 	}
@@ -2335,7 +2341,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_marketplace_listing', { slug: n.listing_slug });
 		} catch (e) {
-			tradesErr = what + ' · ' + String(e);
+			tradesErr = what + ' · ' + errText(e);
 		}
 	}
 
@@ -2346,7 +2352,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_negotiation_deal', { hash: n.hash });
 		} catch (e) {
-			tradesErr = String(e);
+			tradesErr = errText(e);
 		}
 	}
 
@@ -2391,9 +2397,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function dealStatus(n: Negotiation): string {
 		if (n.date_closed) {
 			const dv = n.deal_value ? ' · ' + fmtPrice(n.deal_value) + ' ' + (n.deal_value_currency || n.currency || '') : '';
-			return 'abgeschlossen' + dv;
+			return tr('trades.status_closed') + dv;
 		}
-		return 'in Verhandlung · seit ' + new Date((n.date_added || 0) * 1000).toLocaleDateString('de-DE');
+		return tr('shop.deal_status_open', { date: new Date((n.date_added || 0) * 1000).toLocaleDateString('de-DE') });
 	}
 	// Rolle des eigenen Accounts in diesem Deal (m-op-Anzeige).
 	function dealRole(n: Negotiation): 'sell' | 'buy' {
@@ -2405,7 +2411,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// Systembrowser via tauri-plugin-opener, nichts Schreibendes.
 			await invoke<string>('open_marketplace_listing', { slug: slug ?? '' });
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	async function openMyShopDeepLink() {
@@ -2416,7 +2422,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// Login macht er selbst im Browser.
 			await invoke<string>('open_marketplace_trades');
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	// QZ (t_ab10109f): Trades-Reiter → „Trades verwalten“ öffnet den Manager-
@@ -2425,7 +2431,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_marketplace_trades_home');
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	// QZ (t_ab10109f): lokalen pending-Eintrag entfernen (Nutzer-Aktion).
@@ -2434,7 +2440,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await invoke('pending_offers_remove', { id });
 			shopPending = shopPending.filter((p) => p.id !== id);
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 	// M2b-Review-Fix (t_6e26ec82 R2): öffnet den Permalink eines frisch
@@ -2448,7 +2454,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				await invoke<string>('open_marketplace_listing', { slug: '' });
 			}
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 	}
 
@@ -2628,7 +2634,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			return;
 		}
 		if (file.size > 10 * 1024 * 1024) {
-			advertNote = 'Bild „' + file.name + '“ ist größer als 10 MB (UEX-Limit).';
+			advertNote = tr('shop.img_too_big', { name: file.name });
 			return;
 		}
 		const reader = new FileReader();
@@ -2846,7 +2852,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				}) + ' ' + tr('shop.appears_after_approval');
 		} catch (e) {
 			// KEIN Retry — Fehlermeldung + Deep-Link-Button (UI rendert shopErr).
-			shopErr = String(e);
+			shopErr = errText(e);
 			advertOpen = true;
 		}
 		writeBusy = false;
@@ -2864,9 +2870,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await invoke('marketplace_delete', { id: offer.id });
 			// Pull statt Optimismus.
 			await loadShop(true);
-			shopNote = 'Listing „' + offer.title + '“ wurde abgemeldet.';
+			shopNote = tr('shop.listing_removed', { title: offer.title });
 		} catch (e) {
-			shopErr = String(e);
+			shopErr = errText(e);
 		}
 		writeBusy = false;
 	}
@@ -3115,7 +3121,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} catch (e) {
 			routes_ = [];
 			rRefreshing = false;
-			rNote = String(e);
+			rNote = errText(e);
 		} finally {
 			rLoadingRef = false;
 			rLoading = false;
@@ -3209,7 +3215,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			if (rShipName !== only.name) void applyShipScu(only.name);
 		}
 	});
-	const DIST_LABELS = ['gleiches Terminal', 'gleicher Mond', 'gleicher Planet', 'gleiches System', 'anderes System'];
+	// T2 (t_c5904bcb): Labels als i18n-Keys — Übersetzung via tr().
+	const DIST_LABELS = ['routes.dist_same_terminal', 'routes.dist_same_moon', 'routes.dist_same_planet', 'routes.dist_same_system', 'routes.dist_other_system'].map((k) => tr(k));
 
 	function rMove(dir: number) {
 		if (!routes_.length) return;
@@ -3308,7 +3315,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			status = await invoke<SyncStatus>('sync_status');
 		} catch (e) {
-			status = { provider: 'uex', syncing: false, online: false, last_error: String(e), datasets: [] };
+			status = { provider: 'uex', syncing: false, online: false, last_error: errText(e), datasets: [] };
 		}
 
 		try {
@@ -3321,7 +3328,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				phase = status && status.online ? 'idle' : 'offline';
 			}
 		} catch (e) {
-			status = { provider: 'uex', syncing: false, online: false, last_error: String(e), datasets: [] };
+			status = { provider: 'uex', syncing: false, online: false, last_error: errText(e), datasets: [] };
 			phase = 'error';
 		}
 	}
@@ -3442,7 +3449,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				groupOffsets = [];
 				phase = 'typing';
 			} catch (e) {
-				calcError = String(e);
+				calcError = errText(e);
 				calcResult = null;
 				phase = 'typing';
 			}
@@ -3475,7 +3482,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			sel = 0;
 			phase = 'typing';
 		} catch (e) {
-			errorMsg = String(e);
+			errorMsg = errText(e);
 			phase = 'error';
 		}
 	}
@@ -3621,9 +3628,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				force: true
 			});
 			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
-			flashStatus(`Detail aktualisiert · Stand ${rel(d.fetched_at)}`);
+			flashStatus(tr('market.detail_refreshed', { age: rel(d.fetched_at) }));
 		} catch (e) {
-			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
+			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: errText(e) };
 		}
 	}
 
@@ -3647,7 +3654,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			});
 			if (myToken === xpanToken) xpan = { busy: false, detail: d, error: null };
 		} catch (e) {
-			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: String(e) };
+			if (myToken === xpanToken) xpan = { busy: false, detail: null, error: errText(e) };
 		}
 	}
 
@@ -3845,7 +3852,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			mAllLoaded = true;
 		} catch (e) {
 			offers = [];
-			mNote = String(e);
+			mNote = errText(e);
 			mSource = 'offline';
 			mAllLoaded = true;
 		}
@@ -3875,8 +3882,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			await loadShop();
 			flashStatus(
 				shopErr
-					? `Shop-Sync fehlgeschlagen · ${shopErr}`
-					: `Mein Shop aktualisiert · Quelle ${shopSource === 'live' ? 'UEX live' : shopSource === 'cache' ? 'Cache' : 'Offline-Snapshot'}`
+					? tr('shop.sync_failed', { msg: shopErr })
+					: tr('shop.updated_source', { src: shopSource === 'live' ? tr('shop.src_live') : shopSource === 'cache' ? tr('shop.src_cache') : tr('shop.src_offline') })
 			);
 			return;
 		}
@@ -3884,9 +3891,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			flashStatus(tr('routes.sweep_running'));
 			try {
 				status = await invoke<SyncStatus>('sync_now');
-				flashStatus(`Daten gesweept · Cache ${cacheAge(status)}`);
+				flashStatus(tr('routes.swept', { age: cacheAge(status) }));
 			} catch (e) {
-				flashStatus(`Sweep fehlgeschlagen · ${String(e)}`);
+				flashStatus(tr('routes.sweep_failed', { msg: trError(e) }));
 				return;
 			}
 			await loadRoutes();
@@ -3897,8 +3904,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		await fetchMarket(100, false, false, true);
 		flashStatus(
 			mNote
-				? `Market-Sync fehlgeschlagen · ${mNote}`
-				: `Market aktualisiert · ${offers.length} Angebote · vor ${rel(mFetchedAt || nowSec())}`
+				? tr('market.sync_failed', { msg: mNote })
+				: tr('market.updated', { n: offers.length, age: rel(mFetchedAt || nowSec()) })
 		);
 	}
 
@@ -3954,7 +3961,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_marketplace_listing', { slug: offerDetail.slug });
 		} catch (e) {
-			errorMsg = String(e);
+			errorMsg = errText(e);
 		}
 	}
 
@@ -4013,7 +4020,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (lo.includes('connection failed') || lo.includes('network') || lo.includes('offline'))
 			return tr('market.price_err_network');
 		// Fallback: bekannte Fehlermeldung, aber mit deutschem Kontext.
-		return `Preise konnten nicht geladen werden (${s}).`;
+		return tr('market.price_err_status', { s });
 	}
 
 	function nowSec(): number {
@@ -4023,10 +4030,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function rel(ts: number): string {
 		if (!ts) return '—';
 		const s = Math.max(0, nowSec() - ts);
-		if (s < 60) return `vor ${Math.max(1, s)} s`;
-		if (s < 3600) return `vor ${Math.floor(s / 60)} min`;
-		if (s < 86400) return `vor ${Math.floor(s / 3600)} h`;
-		return `vor ${Math.floor(s / 86400)} T`;
+		if (s < 60) return tr('rel.sec_ago', { n: Math.max(1, s) });
+		if (s < 3600) return tr('rel.min_ago', { n: Math.floor(s / 60) });
+		if (s < 86400) return tr('rel.hour_ago', { n: Math.floor(s / 3600) });
+		return tr('rel.day_ago', { n: Math.floor(s / 86400) });
 	}
 
 	function cacheAge(s?: SyncStatus | null): string {
@@ -4038,11 +4045,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	function syncLabel(): { text: string; cls: string } {
 		const s = status;
-		if (!s) return { text: 'SYNC …', cls: 'load' };
+		if (!s) return { text: tr('market.sync_dots'), cls: 'load' };
 		if (s.syncing) return { text: tr('market.sync_running_caps'), cls: 'load' };
-		if (!hasData(s)) return s.last_error ? { text: 'SYNC FEHLER', cls: 'alert' } : { text: tr('market.sync_running_caps'), cls: 'load' };
-		if (!s.online) return { text: `OFFLINE · CACHE ${cacheAge(s)}`, cls: 'off' };
-		return { text: `SYNC ${cacheAge(s)} · ${s.provider.toUpperCase()}`, cls: '' };
+		if (!hasData(s)) return s.last_error ? { text: tr('market.sync_error_caps'), cls: 'alert' } : { text: tr('market.sync_running_caps'), cls: 'load' };
+		if (!s.online) return { text: tr('market.status_offline', { age: cacheAge(s) }), cls: 'off' };
+		return { text: tr('market.status_sync', { age: cacheAge(s), provider: s.provider.toUpperCase() }), cls: '' };
 	}
 
 	// ---- Formatierung (Deutsch, Mono — Spalten bleiben stehen) ---------------
@@ -4105,7 +4112,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			await invoke<string>('open_info_link', { kind });
 		} catch (e) {
-			infoMsg = String(e);
+			infoMsg = errText(e);
 		}
 	}
 
@@ -4709,8 +4716,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						: $t('search.ph_market')
 					: inDetail
 					? detailHit?.kind === 'location' || detailHit?.kind === 'terminal'
-						? `Filter: Waren in ${detailHit?.name} …`
-						: `Filter: Orte mit Preisen für ${detailHit?.name} …`
+						? $t('search.detail_filter_commodities', { name: detailHit?.name || '' })
+						: $t('search.detail_filter_locations', { name: detailHit?.name || '' })
 					: $t('search.ph_default')}
 				spellcheck="false"
 				autocomplete="off"
@@ -4747,13 +4754,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<button class="hangar-back" onclick={hangarBack} title={$t('common.back_esc')} aria-label={$t('common.back')}>←</button>
 					<span class="hangar-title">{$t('nav.hangar_caps')}</span>
 					<div class="hangar-filters">
-						{#each [['all', 'ALLE'], ['pledge', 'PLEDGE'], ['ingame', 'INGAME'], ['lti', 'LTI'], ['module', 'MODULE']] as [f, lbl] (f)}
+						{#each [['all', 'hangar.filter_all'], ['pledge', 'hangar.filter_pledge'], ['ingame', 'hangar.filter_ingame'], ['lti', 'hangar.filter_lti'], ['module', 'hangar.filter_module']] as [f, lbl] (f)}
 							<button
 								type="button"
 								class="hchip"
 								class:is-on={hangarFilter === f}
 								onclick={() => { hangarFilter = f as typeof hangarFilter; hangarSel = 0; hangarDetail = null; }}
-							>{lbl}</button>
+							>{$t(lbl)}</button>
 						{/each}
 					</div>
 					<div class="hangar-actions">
@@ -4803,7 +4810,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     stehen; Schließen per Esc (hangarBack) oder Close-Button, ohne
 					     View-Wechsel. -->
 					<div class="advert-scrim" role="presentation">
-						<div class="hdetail-modal" role="dialog" aria-modal="true" aria-label={`Details ${hangarDisplayName(hangarDetail)}`}>
+						<div class="hdetail-modal" role="dialog" aria-modal="true" aria-label={tr('hangar.details_named', { name: hangarDisplayName(hangarDetail) })}>
 							<div class="hd-head">
 								<span class="hd-name">{hangarDisplayName(hangarDetail)}</span>
 								<span class="hchip o-{hangarDetail.origin}">{hangarDetail.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
@@ -4837,10 +4844,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<!-- TB (t_78a4a5e5, Punkt 2): Modulzeile zeigt Versicherung
 									     UND Herkunft; Klick auf den Namen öffnet das Edit-Popup. -->
 									<div class="hmod">
-										<button type="button" class="hmod-name" title={$t('hangar.module_edit')} aria-label={`Modul ${hangarDisplayName(m)} bearbeiten`} onclick={() => hangarStartEdit(m)}>{hangarDisplayName(m)}</button>
+										<button type="button" class="hmod-name" title={$t('hangar.module_edit')} aria-label={tr('hangar.module_edit_named', { name: hangarDisplayName(m) })} onclick={() => hangarStartEdit(m)}>{hangarDisplayName(m)}</button>
 										<span class="hchip o-{m.origin}">{m.origin === 'pledge' ? 'PLEDGE' : 'INGAME'}</span>
 										<span class="hchip ins">{m.insurance ?? '—'}</span>
-										<button type="button" class="hmod-x" title={$t('hangar.module_remove')} aria-label={`Modul ${hangarDisplayName(m)} entfernen`} disabled={hangarBusy} onclick={() => hangarModuleRemove(m)}>✕</button>
+										<button type="button" class="hmod-x" title={$t('hangar.module_remove')} aria-label={tr('hangar.module_remove_named', { name: hangarDisplayName(m) })} disabled={hangarBusy} onclick={() => hangarModuleRemove(m)}>✕</button>
 									</div>
 								{:else}
 									<div class="hmodempty">{$t('hangar.no_modules')}</div>
@@ -5148,10 +5155,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									class="chip cfg-sc-capture"
 									class:is-on={scCapture === f.id}
 									onclick={() => (scCapture === f.id ? cancelShortcutCapture() : startShortcutCapture(f.id))}
-								>{scCapture === f.id ? 'Abbrechen (Esc)' : $t('common.change')}</button>
+								>{scCapture === f.id ? $t('trades.cancel_esc') : $t('common.change')}</button>
 								{#if scCapture === f.id}
 									<div class="cfg-sc-help" role="status">
-										{scPreview ? `Gewählt: ${scPreview} — prüfen…` : $t('settings.capture_hint')}
+										{scPreview ? $t('trades.chosen_hint', { item: scPreview }) : $t('settings.capture_hint')}
 									</div>
 								{/if}
 								{#if scNoteFor === f.id}
@@ -5164,9 +5171,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					     prüfen keine Mod-Tasten, darum sind diese Tasten für
 					     globale Kürzel gesperrt. -->
 						<div class="cfg-sc-note">
-							Für globale Hotkeys gesperrt: F-Tasten sind die Mode-Hotkeys
-							(konfigurierbar, Abschnitt „Mode-Hotkeys“), F5 führt den Resync aus.
-							Weitere interne Belegungen: Esc, Enter, Tab, Pfeiltasten, m, Alt+Zahlen.
+								{$t('settings.sc_locked_note')}
 							{#if cfg && cfg.hyprland_session}
 								<!-- C2b (t_1adbc017): Hyprland führt die Kürzel als
 								     Compositor-Binds. OmaSettings-Pfad nur mit
@@ -5183,29 +5188,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									</div>
 									{#if cfg.shortcuts_sync_omarchy}
 										<div class="cfg-sc-ok" role="status">
-											Hyprland-Binds werden aus den gespeicherten Kürzeln geführt
+											{$t('settings.omarchy_sync_ok')}
 											(<span class="src">omasettings keys</span> ·
 											<span class="src">{$t('settings.arch_toggle_label')}</span>{$t('settings.changes_immediate_suffix')}</div>
 									{:else}
 										<div class="cfg-sc-warn" role="status">
-											Gespeicherte Kürzel sind die kanonische Quelle, aber die
-											Hyprland-Binds werden noch nicht daraus geführt.
+											{$t('settings.omarchy_sync_pending')}
+
 										</div>
 									{/if}
 								{:else}
 									<div class="cfg-sc-warn" role="status">
-										OmaSettings-Plugin nicht gefunden — Binds manuell anlegen
+										{$t('settings.omasettings_missing')}
 										(<span class="src">{$t('settings.arch_toggle_label')}</span>, Anleitung: docs/WAYLAND.md).
-										Die App verändert keine fremde Hyprland-Konfiguration.
+										{$t('settings.no_foreign_hyprland')}
 									</div>
 								{/if}
 								{#if cfg.sync_note}
-									<div class="cfg-note" role="status">{cfg.sync_note}</div>
+									<div class="cfg-note" role="status">{trError(cfg.sync_note)}</div>
 								{/if}
 							{:else if cfg && !cfg.global_shortcuts_active}
 								<div class="cfg-sc-warn" role="status">{$t('settings.global_shortcuts')}<b>{$t('settings.not_os_registered')}</b> (reines Wayland ohne Hyprland):
-									die gespeicherten Kombinationen bleiben die kanonische Quelle; Compositor-Binds
-									manuell nach docs/WAYLAND.md anlegen.
+									{$t('settings.wayland_no_hyprland')}
+
 								</div>
 							{:else if cfg}
 								<div class="cfg-sc-ok" role="status">{$t('settings.global_registered_note')}</div>
@@ -5230,7 +5235,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									class="chip cfg-sc-capture"
 									class:is-on={hkCapture === f.id}
 									onclick={() => (hkCapture === f.id ? (hkCapture = null) : startModeHotkeyCapture(f.id))}
-								>{hkCapture === f.id ? 'Abbrechen (Esc)' : $t('common.change')}</button>
+								>{hkCapture === f.id ? $t('trades.cancel_esc') : $t('common.change')}</button>
 							</div>
 						{/each}
 						{#if hkCapture}
@@ -5242,8 +5247,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="cfg-sc-err" role="alert">{hkNote}</div>
 						{/if}
 						<div class="cfg-sc-note">
-							F5 ist fest für den Resync reserviert (Marktplatz, Mein Shop, Routen-Sweep)
-							und kann keinem Modus zugewiesen werden. Änderungen gelten sofort.
+							{$t('settings.f5_reserved')}
 							<button type="button" class="chip" onclick={() => void resetModeHotkeys()}>{$t('settings.default_mapping')}</button>
 						</div>
 					</section>
@@ -5254,7 +5258,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <section class="cfg-sect">
 						<div class="h">{$t('settings.uex_api_key')}</div>
 						<div class="cfg-key-status">{$t('settings.status')}<b class:ok={cfg?.uex_api_key_set} class:off={!cfg?.uex_api_key_set}>
-								{cfg?.uex_api_key_set ? 'gesetzt' : 'nicht gesetzt'}
+								{cfg?.uex_api_key_set ? $t('settings.state_set') : $t('settings.state_unset')}
 							</b>
 						</div>
 						<div class="cfg-key-row">
@@ -5284,13 +5288,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <section class="cfg-sect">
 						<div class="h">{$t('settings.uex_secret_key')}</div>
 						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
-							Für den eigenen Shop („Mein Shop“, user-scoped Reads) braucht UEX
-							zusätzlich deinen persönlichen Secret-Key (40 Zeichen, noch maskierter
-							als der App-Key). Den Key auf uexcorp.space generieren/kopieren —
-							den Benutzernamen ermittelt das Overlay automatisch daraus.
+							{$t('settings.secret_key_note')}
 						</div>
 						<div class="cfg-key-status">{$t('settings.secret_key')}<b class:ok={cfg?.uex_secret_key_set} class:off={!cfg?.uex_secret_key_set}>
-								{cfg?.uex_secret_key_set ? 'gesetzt' : 'nicht gesetzt'}
+								{cfg?.uex_secret_key_set ? $t('settings.state_set') : $t('settings.state_unset')}
 							</b>
 						</div>
 						<div class="cfg-key-row">
@@ -5346,8 +5347,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						     sofort erneuern. -->
 						{#if priceSyncAge}
 							<div class="cfg-note">
-								Commodity-Preise: {rel(priceSyncAge.commodity_age_secs ?? 0)} sync ·
-								{priceSyncAge.commodity_count} Waren · stündlich automatisch
+								{$t('settings.prices_commodity_note', { age: rel(priceSyncAge.commodity_age_secs ?? 0), n: priceSyncAge.commodity_count })}
 							</div>
 							<button
 								type="button"
@@ -5356,8 +5356,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								onclick={refreshCommodityPrices}
 							>{priceSyncing ? $t('common.syncing') : $t('settings.refresh_commodity_prices')}</button>
 							<div class="cfg-note">
-								Item-Preise: {rel(priceSyncAge.item_age_secs ?? 0)} sync ·
-								{priceSyncAge.item_count} Items · pro Patch konstant (kein Auto-Sync)
+								{$t('settings.prices_item_note', { age: rel(priceSyncAge.item_age_secs ?? 0), n: priceSyncAge.item_count })}
 							</div>
 							<button
 								type="button"
@@ -5427,15 +5426,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{/each}
 					</div>
 					<div class="cfg-note">
-						Overlay {upStatus?.app_version ?? '…'} · geprüft gegen die Gitea-Release (alle {cfg?.updater_interval_hours ?? 6} h, nur ein GET — kein Telemetrie).
+						{$t('settings.updater_note', { version: upStatus?.app_version ?? '…', hours: cfg?.updater_interval_hours ?? 6 })}
 					</div>
 					{#if upStatus}
 						{#if upStatus.available}
 							<div class="cfg-key-status">
-								<b class="ok">Update v{upStatus.available.version} verfügbar</b>
+								<b class="ok">{$t('settings.update_available', { version: upStatus.available.version })}</b>
 							</div>
 						{:else if upStatus.note}
-							<div class="cfg-note">{upStatus.note}</div>
+							<div class="cfg-note">{trError(upStatus.note)}</div>
 						{/if}
 						<div class="cfg-key-row">
 							<button type="button" class="btn" disabled={upBusy} onclick={() => void updaterCheckNow()}>
@@ -5443,7 +5442,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</button>
 							{#if upStatus.available && upStatus.available.kind !== 'deb'}
 								<button type="button" class="btn" disabled={upBusy} onclick={() => void updaterInstallNow()}>
-									{upBusy ? $t('common.loading') : `Jetzt aktualisieren (v${upStatus.available.version})`}
+									{upBusy ? $t('common.loading') : $t('settings.update_now_version', { version: upStatus.available.version })}
 								</button>
 							{/if}
 						</div>
@@ -5679,7 +5678,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								</div>
 								<div class="md-price">
 									<div class="v sell">+{fmtPrice(rDetail.profit_total)}</div>
-									<div class="u">aUEC Gewinn bei {routeMath(rDetail).qty} SCU</div>
+									<div class="u">{$t('routes.auec_profit_at', { qty: routeMath(rDetail).qty })}</div>
 								</div>
 							</div>
 							<div class="rd-leg">
@@ -5737,7 +5736,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																			<span class="r-chip" title={$t('market.stock_at_terminal_title')}>≋ {fmt(Math.round(loc.stock))} SCU</span>
 																			{#if loc.status > 0}<span class="r-chip" title={$t('market.demand_title')}>{loc.status}/7</span>{/if}
 																			{#if loc.autoload}<span class="r-chip">{$t('market.filter_autoload')}</span>{/if}
-																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title="Preisstand (UEX date_modified): {new Date(loc.updated * 1000).toLocaleString('de-DE')}">⏱ {rel(loc.updated)}</span>{/if}
+																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title={$t('routes.price_asof_title', { date: new Date(loc.updated * 1000).toLocaleString('de-DE') })}>⏱ {rel(loc.updated)}</span>{/if}
 																			</span>
 																			</span>
 																			</button>
@@ -5764,7 +5763,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																			<span class="r-chip" title={$t('market.stock_at_terminal_title')}>≋ {fmt(Math.round(loc.stock))} SCU</span>
 																			{#if loc.status > 0}<span class="r-chip" title={$t('market.demand_title')}>{loc.status}/7</span>{/if}
 																			{#if loc.autoload}<span class="r-chip">{$t('market.filter_autoload')}</span>{/if}
-																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title="Preisstand (UEX date_modified): {new Date(loc.updated * 1000).toLocaleString('de-DE')}">⏱ {rel(loc.updated)}</span>{/if}
+																			{#if loc.updated > 0}<span class="r-chip r-chip-age" class:stale={rLocStale(loc)} title={$t('routes.price_asof_title', { date: new Date(loc.updated * 1000).toLocaleString('de-DE') })}>⏱ {rel(loc.updated)}</span>{/if}
 																			</span>
 																			</span>
 																			</button>
@@ -5773,9 +5772,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																			</div>
 																			</div>
 											{:else if rDetail && !rLocsLoading}
-												<div class="rd-alt-none">keine Alternativorte für {rDetail.commodity}</div>
+												<div class="rd-alt-none">{$t('routes.no_alt_locations', { name: rDetail.commodity })}</div>
 											{/if}
-						<div class="md-note">Preisstand: {rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—'} · Quelle: UEX</div>
+						<div class="md-note">{$t('routes.price_asof_source', { date: rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—' })}</div>
 							<div class="md-actions">
 								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (rDetail = null)}>{$t('common.back_esc')}</span>
 							</div>
@@ -5825,7 +5824,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								class:is-on={rSort === 'profit_desc' || rSort === 'profit_asc'}
 								onclick={cycleProfitSort}
 								title={$t('routes.profit_sort_toggle_title')}
-							>Gewinn/SCU{rSort === 'profit_desc' ? ' ↓' : rSort === 'profit_asc' ? ' ↑' : ''}</button>
+							>{$t('routes.profit_per_scu')}{rSort === 'profit_desc' ? ' ↓' : rSort === 'profit_asc' ? ' ↑' : ''}</button>
 							<button type="button" class="chip" class:is-on={rSort === 'margin_desc'} onclick={() => (rSort = 'margin_desc')}>{$t('routes.margin_down')}</button>
 							<button type="button" class="chip" class:is-on={rSort === 'distance_asc'} onclick={() => (rSort = 'distance_asc')}>{$t('routes.distance_up')}</button>
 							<span class="m-spacer"></span>
@@ -6001,8 +6000,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											<div class="m-title">{n.listing_title}</div>
 											<div class="m-sub">
 												{n.is_listing_advertiser
-													? `Gegenüber ${n.client_username || n.client_name || '—'} (Käufer)`
-													: `Gegenüber ${n.advertiser_username || n.advertiser_name || '—'} (Anbieter)`}
+													? $t('trades.chat_with_buyer', { who: n.client_username || n.client_name || '—' })
+													: $t('trades.chat_with_seller', { who: n.advertiser_username || n.advertiser_name || '—' })}
 											</div>
 										</div>
 										<div class="m-right">
@@ -6093,7 +6092,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												</div>
 											{/if}
 											<div class="mbar2" style="margin-top: 10px">
-													<span class="m-lbl">Eigene Offers ({myOffers.length}{shopPending.length ? ` + ${shopPending.length} wartend` : ''})</span>
+													<span class="m-lbl">Eigene Offers ({myOffers.length}{shopPending.length ? ` + ${shopPending.length} ${$t('shop.pending_short')}` : ''})</span>
 															<!-- QZ (t_ab10109f): Filter Alle/Aktiv/Wartend ENTFERNT — UEX
 															     kann wartende Listings nicht per API liefern; Wartende
 															     kommen lokal (pending_offers) und sind immer sichtbar. -->
@@ -6111,7 +6110,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 													<div class="pane-error advert-pane" style="background: rgba(255,255,255,.03)">
 														<div class="mbar2"><span class="m-lbl">{editingOffer ? $t('shop.recreate_title') : $t('shop.new_listing_caps')}</span></div>
 														{#if editingOffer}
-															<div class="row-empty" style="padding: 8px 12px">Dieses Formular ist VORBEFÜLLT mit „{editingOffer.title}“. Für eine Änderung musst du das alte Listing zuerst ABmelden (unten) und dann mit den neuen Werten neu anlegen — UEX unterstützt kein Bearbeiten.</div>
+															<div class="row-empty" style="padding: 8px 12px">{$t('shop.recreate_note', { title: editingOffer.title })}</div>
 														{/if}
 														<div class="mlist" style="padding: 6px 14px">
 															<div class="mbar2" style="flex-wrap: wrap; gap: 6px">
@@ -6405,7 +6404,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{:else}
 							<div class="row-empty" style="padding: 14px 16px">
-									{shopUser.trim() ? `Keine eigenen Offers für „${shopUser.trim()}“ bei UEX.` : $t('shop.no_username_note')}
+									{shopUser.trim() ? $t('shop.no_offers_for_user', { user: shopUser.trim() }) : $t('shop.no_username_note')}
 								</div>
 						{/if}
 						<!-- QZ (t_ab10109f): „Letzte 5 Marktplatz-Trades" ENTFERNT — die
@@ -6516,7 +6515,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							{/each}
 						</div>
 						<div class="m-foot">
-							<span>{mVew.length} / {visOffers.length} Angebote · Seite {Math.min(M_PAGE, mMshown) === 0 ? 0 : Math.ceil(mMshown / M_PAGE)}</span>
+							<span>{$t('market.offers_page', { shown: mVew.length, total: visOffers.length, page: Math.min(M_PAGE, mMshown) === 0 ? 0 : Math.ceil(mMshown / M_PAGE) })}</span>
 							<div class="m-more">
 								{#if mLoadingMore || mMshown < visOffers.length || !mAllLoaded}
 									<span class="spin"></span><span class="sm">{mLoadingMore ? $t('market.loading_more') : $t('market.autoload_more')}</span>
@@ -6536,7 +6535,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<div class="pane-list" class:in-detail={inDetail}>
 				{#if status?.online === false}
 					<div class="offlineband">
-						<span class="dot"></span>Offline · Cache von {cacheAge()} · Preise ggf. veraltet
+						<span class="dot"></span>{$t('market.offline_stale', { age: cacheAge() })}
 					</div>
 				{/if}
 
@@ -6910,10 +6909,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<section class="info-sec">
 							<h3 class="info-sec-title">{$t('info.about')}</h3>
 							<p class="info-text">
-								Architects Overlay ist ein inoffizielles Community-Projekt für Star Citizen:
-								Handelsrouten, Marktplatz-Preise und Hangar-Verwaltung direkt im Spiel —
-								als Overlay von der Community, für die Community. Non-Commercial, ohne
-								RSI-/CIG-Assets als eigenes Branding.
+								{$t('info.about_body')}
+
+
+
 							</p>
 						</section>
 						<section class="info-sec">
@@ -6959,10 +6958,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<section class="info-sec">
 							<h3 class="info-sec-title">{$t('info.legal')}</h3>
 							<p class="info-disclaimer">
-								Architects Overlay steht in keiner Verbindung zu Cloud Imperium Games (CIG),
-								Roberts Space Industries oder deren Partnern und wird nicht offiziell
-								unterstützt oder gesponsert. Star Citizen, Roberts Space Industries und das
-								RSI-Logo sind Marken von Cloud Imperium Games Corp.
+								{$t('info.disclaimer_body')}
+
+
+
 							</p>
 							<div class="info-cig">
 								<!-- CIG Fan-Content-Policy: „Made by the Community“-Asset —

@@ -55,7 +55,7 @@ pub async fn download_asset(url: &str, dir: &Path, max_bytes: u64) -> Result<Pat
     if status.as_u16() == 429 {
         let _ = std::fs::remove_file(&part);
         return Err(UpdaterError::Network(
-            "Rate-Limit (429) — später erneut versuchen".into(),
+            "update.reason_rate_limit_retry".into(),
         ));
     }
     if !status.is_success() {

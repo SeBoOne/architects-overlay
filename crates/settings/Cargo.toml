@@ -10,6 +10,8 @@ dirs = "7"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.9"
 log = "0.4"
+serde_json = "1.0"
+i18n-err = { path = "../i18n-err" }
 
 [dev-dependencies]
 tempfile = "3"

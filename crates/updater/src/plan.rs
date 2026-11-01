@@ -137,11 +137,11 @@ impl Plan {
             ..
         } = self
         {
-            Some(format!(
-                "Self-Update ist für .deb-Installationen nicht möglich (keine root-Aktionen aus der App).\
-                 \nUpdate per Download + apt:\
-                 \n  curl -Lo {deb_path_hint} \"{asset_url}\"\
-                 \n  sudo apt install {deb_path_hint}"
+            // T2 (t_c5904bcb): key-JSON — die UI übersetzt, Params sind
+            // Download-URL + Zielpfad.
+            Some(i18n_err::err_keyp(
+                "update.deb_hint",
+                serde_json::json!({ "url": asset_url, "path": deb_path_hint }),
             ))
         } else {
             None
@@ -271,7 +271,7 @@ pub fn windows_update_dir() -> super::Result<PathBuf> {
 pub fn linux_update_dir() -> super::Result<PathBuf> {
     let Some(path) = appimage_path() else {
         return Err(super::UpdaterError::NotSupported(
-            "Kein laufendes AppImage gefunden".into(),
+            "update.reason_no_appimage".into(),
         ));
     };
     let dir = path

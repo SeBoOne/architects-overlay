@@ -35,6 +35,7 @@ use std::sync::{Arc, Mutex};
 use cache::{Cache, CacheError};
 use provider::{DataProvider, EntityKind, ProviderError, SearchHit};
 use tauri::{AppHandle, Emitter, State};
+use serde_json::json;
 
 /// Tauri event fired after every background sync sweep run (start or finish)
 /// so the frontend can drop its spinner without polling.
@@ -46,12 +47,18 @@ pub const SYNC_EVENT: &str = "trade-sync";
 /// (EntityKind::Locations, PS t_c84e545d) and the UEX terminal dataset.
 /// Commodities stay on the UEX id space.
 const GROUPS: &[(&str, &str, &[EntityKind])] = &[
-    ("commodity", "Commodities", &[EntityKind::Commodities]),
-    ("item", "Items", &[EntityKind::Items]),
+    // T2 (t_c5904bcb): label ist ein i18n-KEY — das Frontend übersetzt
+    // via $t(label); Fallback-Kette liefert en bei fehlender Sprache.
+    (
+        "commodity",
+        "search.group_commodities",
+        &[EntityKind::Commodities]
+    ),
+    ("item", "search.group_items", &[EntityKind::Items]),
     (
         "location",
-        "Locations",
-        &[EntityKind::Locations, EntityKind::Terminals],
+        "search.group_locations",
+        &[EntityKind::Locations, EntityKind::Terminals]
     ),
 ];
 
@@ -600,10 +607,30 @@ fn is_money_terminal(name: &str) -> bool {
 #[tauri::command]
 pub fn math_eval(expr: String) -> Result<String, String> {
     let expr = expr.trim_start_matches('=').trim();
+    // T2 (t_c5904bcb): math-eval bleibt bewusst dependency-frei — die
+    // deutschen Klartext-Fehler werden hier an der Seam auf error_key +
+    // params gemappt; unbekannte Muster fallen als Rohstring durch.
+    fn map_eval_err(e: String) -> String {
+        if let Some(rest) = e.strip_prefix("Unerwartetes Zeichen '") {
+            if let Some(ch) = rest.strip_suffix("'") {
+                return crate::i18n_err::err_keyp(
+                    "calc.err_unexpected_char",
+                    serde_json::json!({ "ch": ch }),
+                );
+            }
+        }
+        match e.as_str() {
+            "Leerer Ausdruck" => crate::i18n_err::err_key("calc.err_empty"),
+            "Ausdruck unvollständig (z. B. Operator am Ende)" => {
+                crate::i18n_err::err_key("calc.err_incomplete")
+            }
+            _ => e,
+        }
+    }
     match math_eval::evaluate(expr) {
         Ok(v) if v.is_finite() => Ok(fmt_number(v)),
-        Ok(_) => Err("Ergebnis ist nicht endlich (Division durch 0?)".to_string()),
-        Err(e) => Err(e),
+        Ok(_) => Err(crate::i18n_err::err_key("calc.err_not_finite")),
+        Err(e) => Err(map_eval_err(e)),
     }
 }
 
@@ -1976,51 +2003,55 @@ fn build_status(
     }
 }
 
-/// Map a seam error to a German, user-facing message (design contract).
+/// Map a seam error to an error_key+params JSON message (T2 t_c5904bcb:
+/// the frontend translates; the fallback chain resolves en, then raw key).
 pub(crate) fn friendly(e: ProviderError) -> String {
+    // T2 (t_c5904bcb): Fehler als error_key + params — das Frontend
+    // übersetzt via trError (Fallback-Kette gewählt → en → raw Key).
+    use crate::i18n_err::{err_key, err_keyp};
     match e {
         ProviderError::RateLimit { retry_after } => match retry_after {
-            Some(secs) => format!("HTTP 429 · Rate-Limit (Retry in {secs} s)"),
-            None => "HTTP 429 · Rate-Limit erreicht".to_string(),
+            Some(secs) => err_keyp("error.uex.rate_limit_retry", json!({ "secs": secs })),
+            None => err_key("error.uex.rate_limit"),
         },
         ProviderError::Http { status, body }
             if (status == 400 || status == 403)
                 && (body.contains("user_not_found") || body.contains("invalid_secret_key")) =>
         {
             // M2a-Fix (t_2f197d1c): UEX-Auth-Codes der User-scoped Reads —
-            // deutscher Hinweis statt Rohfehler-Status/Text.
-            "Secret-Key fehlt oder ist falsch — siehe Einstellungen („UEX persönlicher Secret-Key“)."
-                .to_string()
+            // übersetzbarer Hinweis statt Rohfehler-Status/Text.
+            err_key("error.uex.secret_invalid")
         }
         // R1 (t_9caac387): Delete-spezifische Doku-Codes von
-        // DELETE /user_trades_remove — deutsch, Code bleibt sichtbar.
-        // `"missing_id"` in Anführungszeichen, damit `missing_id_category`
-        // (Trades-Add) NICHT in diesen Arm läuft.
+        // DELETE /user_trades_remove — Key + Doku-Code-Text, Code bleibt
+        // im Schlüsseltext sichtbar. `"missing_id"` in Anführungszeichen,
+        // damit `missing_id_category` (Trades-Add) NICHT in diesen Arm läuft.
         ProviderError::Http { status, body }
             if (status == 400 || status == 403) && body.contains("\"trade_not_found\"") =>
         {
-            "Der Trade existiert nicht (trade_not_found) — vermutlich bereits gelöscht oder fremde ID."
-                .to_string()
+            err_key("error.uex.trade_not_found")
         }
         ProviderError::Http { status, body }
             if (status == 400 || status == 403) && body.contains("\"missing_secret_key\"") =>
         {
-            "Secret-Key fehlt — siehe Einstellungen („UEX persönlicher Secret-Key“).".to_string()
+            err_key("error.uex.secret_missing")
         }
         ProviderError::Http { status, body }
             if (status == 400 || status == 403) && body.contains("\"missing_id\"") =>
         {
-            "Trade-ID fehlt (missing_id).".to_string()
+            err_key("error.uex.missing_id")
         }
         ProviderError::Http { status, .. } => {
-            format!("HTTP {status} · UEX nicht erreichbar")
+            err_keyp("error.uex.http", json!({ "status": status }))
         }
-        ProviderError::Timeout => "Zeitüberschreitung · UEX nicht erreichbar".to_string(),
-        ProviderError::NotFound(what) => format!("Nicht gefunden: {what}"),
-        ProviderError::Cache(msg) => format!("Cache-Fehler: {msg}"),
-        ProviderError::Config(msg) => format!("Konfigurationsfehler: {msg}"),
-        ProviderError::Json(msg) => format!("Ungültige Antwort: {msg}"),
-        ProviderError::Unsupported(msg) => format!("Nicht unterstützt: {msg}"),
+        ProviderError::Timeout => err_key("error.uex.timeout"),
+        ProviderError::NotFound(what) => err_keyp("error.uex.not_found", json!({ "what": what })),
+        ProviderError::Cache(msg) => err_keyp("error.uex.cache", json!({ "msg": msg })),
+        ProviderError::Config(msg) => err_keyp("error.uex.config", json!({ "msg": msg })),
+        ProviderError::Json(msg) => err_keyp("error.uex.bad_response", json!({ "msg": msg })),
+        ProviderError::Unsupported(msg) => {
+            err_keyp("error.uex.unsupported", json!({ "msg": msg }))
+        }
         _ => e.to_string(),
     }
 }
@@ -2066,35 +2097,41 @@ mod tests {
     // bleibt sichtbar; `missing_id_category` darf NICHT als `missing_id`
     // durchgehen.
     #[test]
-    fn friendly_maps_delete_doku_codes_to_german() {
+    fn friendly_maps_delete_doku_codes_to_keys() {
+        // T2 (t_c5904bcb): Doku-Codes kommen als error_key + params an; der
+        // Code bleibt im Schlüsseltext sichtbar (Key-Text nennt ihn).
         let err = |body: &str| ProviderError::Http {
             status: 400,
             body: body.to_string(),
         };
+        let key_of = |s: String| {
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            v["error_key"].as_str().unwrap().to_string()
+        };
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"trade_not_found","http_code":400,"data":null}"#
-            )),
-            "Der Trade existiert nicht (trade_not_found) — vermutlich bereits gelöscht oder fremde ID."
+            ))),
+            "error.uex.trade_not_found"
         );
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"missing_secret_key","http_code":400,"data":null}"#
-            )),
-            "Secret-Key fehlt — siehe Einstellungen („UEX persönlicher Secret-Key“)."
+            ))),
+            "error.uex.secret_missing"
         );
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"missing_id","http_code":400,"data":null}"#
-            )),
-            "Trade-ID fehlt (missing_id)."
+            ))),
+            "error.uex.missing_id"
         );
         // Kein Fehl-Mapping: missing_id_category (Trades-Add) bleibt generisch.
         assert_eq!(
-            friendly(err(
+            key_of(friendly(err(
                 r#"{"status":"missing_id_category","http_code":400,"data":[]}"#
-            )),
-            "HTTP 400 · UEX nicht erreichbar"
+            ))),
+            "error.uex.http"
         );
     }
 
@@ -2122,20 +2159,26 @@ mod tests {
     }
 
     #[test]
-    fn friendly_rate_limit_is_german_and_actionable() {
-        assert_eq!(
-            friendly(ProviderError::RateLimit {
-                retry_after: Some(34)
-            }),
-            "HTTP 429 · Rate-Limit (Retry in 34 s)"
+    fn friendly_rate_limit_is_a_key_with_params() {
+        // T2 (t_c5904bcb): Rate-Limit kommt als Key + {secs}-Param an.
+        let s = friendly(ProviderError::RateLimit {
+            retry_after: Some(34)
+        });
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["error_key"], "error.uex.rate_limit_retry");
+        assert_eq!(v["params"]["secs"], 34);
+        assert!(
+            friendly(ProviderError::Timeout)
+                .contains("error.uex.timeout"),
+            "timeout maps to a key"
         );
-        assert!(friendly(ProviderError::Timeout).contains("UEX"));
         assert!(
             friendly(ProviderError::Http {
                 status: 500,
                 body: "x".into()
             })
-            .contains("500")
+            .contains("500"),
+            "http status rides as a param"
         );
     }
 
@@ -2153,24 +2196,26 @@ mod tests {
             body: "invalid_secret_key".into(),
         });
         for m in [&msg_400, &msg_403] {
-            assert!(
-                m.contains("Secret-Key fehlt oder ist falsch") && m.contains("Einstellungen"),
-                "unexpected friendly(): {m}"
-            );
-            assert!(!m.contains("HTTP"), "raw status leaked: {m}");
+            // T2: key-JSON statt deutschem Klartext.
+            let v: serde_json::Value = serde_json::from_str(m).unwrap();
+            assert_eq!(v["error_key"], "error.uex.secret_invalid", "got {m}");
         }
         // Andere 400/403 ohne Auth-Code bleiben beim bisherigen Mapping.
         let plain = friendly(ProviderError::Http {
             status: 403,
             body: "forbidden".into(),
         });
-        assert!(plain.contains("HTTP 403"));
+        // T2: Key-JSON mit Status-Param.
+        let pv: serde_json::Value = serde_json::from_str(&plain).unwrap();
+        assert_eq!(pv["error_key"], "error.uex.http", "got {plain}");
+        assert_eq!(pv["params"]["status"], 403);
         // UEX kapselt die Codes auch als envelope.status (body == status).
         let enveloped = friendly(ProviderError::Http {
             status: 400,
             body: "{\"status\":\"user_not_found\"}".into(),
         });
-        assert!(enveloped.contains("Secret-Key fehlt oder ist falsch"));
+        let ev: serde_json::Value = serde_json::from_str(&enveloped).unwrap();
+        assert_eq!(ev["error_key"], "error.uex.secret_invalid", "got {enveloped}");
     }
 
     /// The grouped search contract: three groups in a fixed order, per-group
@@ -2178,9 +2223,9 @@ mod tests {
     /// terminal dataset.
     #[test]
     fn group_contract_is_stable() {
-        assert_eq!(GROUPS[0].1, "Commodities");
-        assert_eq!(GROUPS[1].1, "Items");
-        assert_eq!(GROUPS[2].1, "Locations");
+        assert_eq!(GROUPS[0].1, "search.group_commodities");
+        assert_eq!(GROUPS[1].1, "search.group_items");
+        assert_eq!(GROUPS[2].1, "search.group_locations");
         // The location group serves BOTH datasets: wiki locations (rich
         // hierarchy) first, then the UEX terminal dataset.
         assert_eq!(GROUPS[2].2, &[EntityKind::Locations, EntityKind::Terminals]);
@@ -2699,7 +2744,9 @@ mod tests {
         let err = get_marketplace(state.clone(), provider::MarketplaceFilter::default())
             .await
             .unwrap_err();
-        assert!(err.contains("Zeitüberschreitung"), "got {err}");
+                // T2: key-JSON mit Timeout-Key.
+        let v: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(v["error_key"], "error.uex.timeout", "got {err}");
 
         // with a snapshot → offline fallback with note
         state
@@ -3477,7 +3524,9 @@ mod tests {
         let err = send_negotiation_message(state.clone(), 12847, "a3f7c91d".into(), "429".into())
             .await
             .unwrap_err();
-        assert_eq!(err, "HTTP 429 · Rate-Limit erreicht");
+                // T2: key-JSON statt Klartext.
+        let v: serde_json::Value = serde_json::from_str(&err).unwrap();
+        assert_eq!(v["error_key"], "error.uex.rate_limit", "got {err}");
         let _ = app;
     }
 

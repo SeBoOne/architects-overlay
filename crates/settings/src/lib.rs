@@ -26,6 +26,8 @@
 //! ```
 
 use std::fmt;
+use i18n_err::{err_key, err_keyp};
+use serde_json::json;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -193,20 +195,20 @@ pub const DEFAULT_CLICK_SHORTCUT: &str = "Ctrl+Shift+O";
 /// Konflikt abgelehnt und in der Fehlermeldung als Konfliktliste sichtbar.
 /// (F7–F11 sind frei.)
 pub const RESERVED_INTERNAL_KEYS: &[(&str, &str)] = &[
-    ("F1", "Modus Suche"),
-    ("F2", "Marktplatz"),
-    ("F3", "Inventar"),
-    ("F4", "Hangar"),
-    ("F5", "Preis-/Market-Sync"),
-    ("F6", "Handelsrouten"),
-    ("F12", "Einstellungen"),
-    ("ENTER", "Bestätigen (Detail/Auswahl)"),
-    ("TAB", "Angebote ⇄ Routen"),
-    ("ARROWUP", "Listen-Navigation"),
-    ("ARROWDOWN", "Listen-Navigation"),
-    ("ARROWLEFT", "Detail zurück"),
-    ("ARROWRIGHT", "Detail öffnen"),
-    ("M", "Marktplatz verlassen"),
+    ("F1", "reserved.mode_search"),
+    ("F2", "reserved.market"),
+    ("F3", "reserved.inventory"),
+    ("F4", "reserved.hangar"),
+    ("F5", "reserved.price_sync"),
+    ("F6", "reserved.routes"),
+    ("F12", "reserved.settings"),
+    ("ENTER", "reserved.enter"),
+    ("TAB", "reserved.tab"),
+    ("ARROWUP", "reserved.list_nav"),
+    ("ARROWDOWN", "reserved.list_nav"),
+    ("ARROWLEFT", "reserved.detail_back"),
+    ("ARROWRIGHT", "reserved.detail_open"),
+    ("M", "reserved.market_exit"),
 ];
 
 /// Mod-Tokens in kanonischer Ausgabereihenfolge.
@@ -285,18 +287,16 @@ pub fn parse_shortcut_combo(input: &str) -> std::result::Result<String, String> 
             continue;
         }
         if key.is_some() {
-            return Err("Mehrere Haupttasten — genau eine normale Taste pro Kürzel.".into());
+            return Err(err_key("shortcuts.err_multi_main"));
         }
         key = Some(normalize_key_token(tok)?);
     }
 
     if mods.is_empty() {
-        return Err(
-            "Mindestens eine Mod-Taste (Strg/Alt/Shift/Win) plus eine normale Taste.".into(),
-        );
+        return Err(err_key("shortcuts.err_need_mod"));
     }
     let Some(key) = key else {
-        return Err("Es fehlt eine normale Haupttaste (nur Mod-Tasten reichen nicht).".into());
+        return Err(err_key("shortcuts.err_need_main"));
     };
 
     // Kanonische Reihenfolge Ctrl → Alt → Shift → Super, Haupttaste zuletzt.
@@ -338,7 +338,7 @@ fn normalize_key_token(tok: &str) -> std::result::Result<String, String> {
         return Ok(rest.to_string());
     }
     if tok.starts_with("NUMPAD") || tok.starts_with("NUM") {
-        return Err("Ziffernblock-Tasten werden nicht unterstützt — Haupttastatur nutzen.".into());
+        return Err(err_key("shortcuts.err_numpad"));
     }
     if let Some((canon, _)) = KEY_ALIASES
         .iter()
@@ -346,9 +346,7 @@ fn normalize_key_token(tok: &str) -> std::result::Result<String, String> {
     {
         return Ok(canon.to_string());
     }
-    Err(format!(
-        "Unbekannte Taste {tok:?} — nicht als globales Kürzel registrierbar."
-    ))
+    Err(err_keyp("shortcuts.err_unknown_key", json!({ "tok": tok })))
 }
 
 /// Vollvalidierung eines Kürzels inkl. interner Konflikte (Konfliktliste in
@@ -362,20 +360,17 @@ pub fn validate_shortcut_combo(input: &str) -> std::result::Result<String, Strin
     let key_upper = key.to_ascii_uppercase();
 
     if key_upper == "ESCAPE" || key_upper == "ESC" {
-        return Err(
-            "Escape ist als Kürzel nicht erlaubt (Abbrechen/Zurück in jeder Ansicht).".into(),
-        );
+        return Err(err_key("shortcuts.err_escape"));
     }
     if let Some((_, what)) = RESERVED_INTERNAL_KEYS.iter().find(|(k, _)| *k == key_upper) {
-        return Err(format!(
-            "Intern belegt: {key} ({what}) — im fokussierten Overlay würde beides feuern. Andere Taste wählen."
+        return Err(err_keyp(
+            "shortcuts.err_reserved",
+            json!({ "key": key, "what": what }),
         ));
     }
     let mods_part = canonical[..canonical.len() - key.len() - 1].to_ascii_uppercase();
     if mods_part.contains("ALT") && key.len() == 1 && key.as_bytes()[0].is_ascii_digit() {
-        return Err(format!(
-            "Intern belegt: Alt+{key} (Angebots-Treffer {key} fokussieren) — andere Kombination wählen."
-        ));
+        return Err(err_keyp("shortcuts.err_reserved_alt_digit", json!({ "key": key })));
     }
     Ok(canonical)
 }
@@ -529,14 +524,32 @@ pub fn validate_fkey(raw: &str) -> std::result::Result<String, String> {
     let key = raw.trim().to_ascii_uppercase();
     let digits = key
         .strip_prefix('F')
-        .ok_or_else(|| format!("unzulässige Taste „{raw}“ — nur F-Tasten (F1–F12)"))?;
+        .ok_or_else(|| err_keyp("fkey.err_invalid", json!({ "raw": raw })))?;
     let n: u8 = digits
         .parse()
-        .map_err(|_| format!("unzulässige Taste „{raw}“ — nur F-Tasten (F1–F12)"))?;
+        .map_err(|_| err_keyp("fkey.err_invalid", json!({ "raw": raw })))?;
     if n == 0 || n > 12 {
-        return Err(format!("unzulässige Taste „{raw}“ — nur F1 bis F12"));
+        return Err(err_keyp("fkey.err_invalid", json!({ "raw": raw })));
     }
     Ok(format!("F{n}"))
+}
+
+
+/// T2 (t_c5904bcb): einer key-JSON-Fehlermeldung den Slot-Key als Param
+/// beilegen (JSON round-trip; ohne JSON → Rohdurchreich).
+fn with_slot(err: &str, slot_key: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(err) {
+        Ok(mut v) => {
+            if let Some(obj) = v.as_object_mut() {
+                let params = obj.entry("params").or_insert_with(|| json!({}));
+                if let Some(p) = params.as_object_mut() {
+                    p.insert("slot".into(), json!(slot_key));
+                }
+            }
+            v.to_string()
+        }
+        Err(_) => err.to_owned(),
+    }
 }
 
 impl ModeHotkeys {
@@ -557,21 +570,26 @@ impl ModeHotkeys {
     /// keine Doppelbelegung.
     pub fn validate(&self) -> std::result::Result<(), String> {
         let slots = [
-            ("Suche", self.search.as_str()),
-            ("Marktplatz", self.market.as_str()),
-            ("Handelsrouten", self.routes.as_str()),
-            ("Inventar", self.inventory.as_str()),
-            ("Hangar", self.hangar.as_str()),
-            ("Einstellungen", self.settings.as_str()),
+            ("hotkey.slot_search", self.search.as_str()),
+            ("hotkey.slot_market", self.market.as_str()),
+            ("hotkey.slot_routes", self.routes.as_str()),
+            ("hotkey.slot_inventory", self.inventory.as_str()),
+            ("hotkey.slot_hangar", self.hangar.as_str()),
+            ("hotkey.slot_settings", self.settings.as_str()),
         ];
         let mut seen: Vec<String> = Vec::new();
-        for (slot, raw) in slots {
-            let key = validate_fkey(raw).map_err(|e| format!("{slot}: {e}"))?;
+        // T2 (t_c5904bcb): Fehler als error_key + params — `slot` ist ein
+        // i18n-Key (hotkey.slot_*), das Frontend übersetzt Params-Mitte.
+        for (slot_key, raw) in slots {
+            let key = validate_fkey(raw).map_err(|e| with_slot(&e, slot_key))?;
             if key == MODE_HOTKEY_RESERVED {
-                return Err(format!("{slot}: F5 ist für den Resync reserviert"));
+                return Err(err_keyp("hotkeys.err_f5", json!({ "slot": slot_key })));
             }
             if seen.iter().any(|k| k == &key) {
-                return Err(format!("{slot}: {key} ist bereits belegt"));
+                return Err(err_keyp(
+                    "hotkeys.err_dup",
+                    json!({ "slot": slot_key, "key": key }),
+                ));
             }
             seen.push(key);
         }

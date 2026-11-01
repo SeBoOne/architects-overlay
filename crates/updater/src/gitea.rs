@@ -94,7 +94,7 @@ pub async fn fetch_latest(base_url: &str, repo: &str) -> Result<Release> {
     let status = resp.status();
     if status.as_u16() == 429 {
         return Err(UpdaterError::Network(
-            "Rate-Limit (429) — später erneut prüfen".into(),
+            "update.reason_rate_limit".into(),
         ));
     }
     if !status.is_success() {

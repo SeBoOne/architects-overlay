@@ -9,6 +9,8 @@
 //! Secrets: the UEX API key is never returned to the frontend, only its
 //! "set / not set" status.
 
+use crate::i18n_err::{err_key, err_keyp};
+use serde_json::json;
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -21,6 +23,15 @@ pub struct SettingsState {
 }
 
 impl SettingsState {
+    /// T2 (t_c5904bcb): persistierte UI-Sprache für Rust-seitige Labels
+    /// (z. B. Tray-Menü). true = de, sonst en-Default. Ein Lesefehler
+    /// schadet nicht (→ en).
+    pub fn current_language_is_de() -> bool {
+        settings::Settings::load()
+            .map(|s| s.language() == "de")
+            .unwrap_or(false)
+    }
+
     /// Load from the standard config path; a broken/missing config falls back
     /// to defaults (a broken config must not prevent the overlay from
     /// starting — same policy as the API-key load in `setup_trade`).
@@ -188,8 +199,10 @@ fn validate_shortcut_input(
 ) -> Result<String, String> {
     let canonical = settings::validate_shortcut_combo(combo)?;
     if canonical == peer_combo {
-        return Err(format!(
-            "Diese Kombination ist bereits das {peer_label}-Kürzel — zwei Kürzel derselben Taste doppelt vergeben geht nicht."
+        // T2 (t_c5904bcb): error_key + params — `peer` ist ein i18n-Key.
+        return Err(err_keyp(
+            "shortcuts.err_duplicate",
+            json!({ "peer": peer_label }),
         ));
     }
     Ok(canonical)
@@ -218,7 +231,7 @@ fn sync_slot(consent: bool, note: &SyncNote, canonical: &str, command: &str, des
     }
     let Some(paths) = crate::hyprland_sync::OmarchyPaths::detect() else {
         eprintln!("[ao-sync] slot skipped: Plugin nicht gefunden");
-        note.set("Compositor-Sync: Hyprland läuft, aber das OmaSettings-Plugin wurde nicht gefunden. Manuelles Anlegen der Binds: docs/WAYLAND.md.");
+        note.set(err_key("sync.compositor_plugin_missing"));
         return;
     };
     // ANR-Schutz (t_1adbc017): sync_combo fuehrt mehrere omasettings-CLI-
@@ -299,9 +312,7 @@ fn sync_all(state: &SettingsState, note: &SyncNote) {
                     eprintln!(
                         "[ao-sync] drift no-op: System-Binds entsprechen bereits den gespeicherten Kürzeln"
                     );
-                    note.set(
-                        "Compositor-Sync aktiv — System-Binds entsprechen den gespeicherten Kürzeln.",
-                    );
+                    note.set(err_key("sync.compositor_noop"));
                 }
                 for o in outcomes {
                     log::info!("hyprland bind sync: {}", o.note);
@@ -468,9 +479,7 @@ pub async fn settings_resolve_uex_username(
         )
     };
     let Some(secret) = secret else {
-        return Err(
-            "Kein persönlicher Secret-Key gesetzt — Username kann nicht ermittelt werden.".into(),
-        );
+        return Err(err_key("error.uex.username_no_secret"));
     };
     let name = uex_client::fetch_username(api_key, &secret)
         .await
@@ -496,7 +505,7 @@ pub fn settings_set_marketplace_confirm(
     mode: String,
 ) -> Result<SettingsSnapshot, String> {
     let confirm = settings::MarketplaceConfirm::from_name(&mode)
-        .ok_or_else(|| format!("unbekannter Bestätigungs-Modus: {mode}"))?;
+        .ok_or_else(|| err_keyp("settings.err_confirm_mode", json!({ "mode": mode })))?;
     let mut s = state.inner.lock().expect("settings lock");
     s.set_marketplace_confirm(confirm);
     state.persist(&s);
@@ -558,7 +567,14 @@ pub fn settings_set_mode_hotkey(
     let key = settings::validate_fkey(&key)?;
     let field_norm = field.trim().to_lowercase();
     if key == settings::MODE_HOTKEY_RESERVED {
-        return Err(format!("{field_norm}: F5 ist für den Resync reserviert"));
+                // T2: Slot-Key ins error_key einbacken (flat, keine Nested-Keys).
+        let slot_param = ["search", "market", "routes", "inventory", "hangar", "settings"]
+            .contains(&field_norm.as_str())
+            .then(|| format!("hotkey.slot_{field_norm}"));
+        return Err(match slot_param {
+            Some(slot) => err_keyp("hotkeys.err_f5", json!({ "slot": slot })),
+            None => err_key("hotkeys.err_f5_noslot"),
+        });
     }
     let mut s = state.inner.lock().expect("settings lock");
     let mut hotkeys = s.mode_hotkeys().clone();
@@ -574,7 +590,7 @@ pub fn settings_set_mode_hotkey(
     }
     hotkeys
         .validate()
-        .map_err(|e| format!("{e} — Belegung unverändert"))?;
+        .map_err(|e| e)?; // Suffix "— Belegung unverändert" macht jetzt die UI (settings.mapping_unchanged)
     s.set_mode_hotkeys(hotkeys);
     state.persist(&s);
     Ok(SettingsSnapshot::from_settings(
@@ -755,7 +771,7 @@ pub fn settings_set_shortcuts_sync(
     if on {
         sync_all(&state, &sync);
     } else {
-        sync.set("Compositor-Sync deaktiviert — gespeicherte Kürzel bleiben aktiv, Systems-Binds werden nicht mehr verändert.");
+        sync.set(err_key("sync.compositor_disabled"));
     }
     let s = state.inner.lock().expect("settings lock");
     SettingsSnapshot::from_settings(
