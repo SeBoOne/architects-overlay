@@ -441,7 +441,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	type ShortcutField = 'toggle' | 'click';
 	// PB (t_1c9bc240, B1): konfigurierbare Mode-Slots — Suche (F1), Marktplatz
 	// (F2) und Einstellungen (F12) bleiben fest belegt.
-	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory';
+	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory' | 'market';
 	let scCapture = $state<ShortcutField | null>(null);
 	let scPreview = $state('');
 	let scNote = $state('');
@@ -565,7 +565,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	const modeHotkeyFields: { id: ModeHotkeyField; label: string }[] = [
 		{ id: 'hangar', label: 'nav.hangar' },
 		{ id: 'routes', label: 'nav.routes_full' },
-		{ id: 'inventory', label: 'nav.inventory' }
+		{ id: 'inventory', label: 'nav.inventory' },
+		{ id: 'market', label: 'hotkey.slot_market' }
 	];
 	let hkCapture: ModeHotkeyField | null = $state(null);
 	let hkNote = $state('');

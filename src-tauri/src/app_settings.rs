@@ -589,6 +589,9 @@ pub fn settings_set_mode_hotkey(
         "hangar" => hotkeys.hangar = key.clone(),
         "routes" => hotkeys.routes = key.clone(),
         "inventory" => hotkeys.inventory = key.clone(),
+        // Sebo: Marktplatz-Mode-Hotkey ist wie die anderen aenderbar (war
+        // bisher fixiert auf F2).
+        "market" => hotkeys.market = key.clone(),
         _ => {
             return Err(err_keyp(
                 "settings.err_fixed_mode",
