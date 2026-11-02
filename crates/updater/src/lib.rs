@@ -14,8 +14,10 @@
 //! - `integrity` SHA256-Datei-Hash + Checksums-Parsing (Umsetzung 5)
 //! - `plan`     Asset-Auswahl nach Plattform/Installationsart (Umsetzung 3/4)
 //! - `download` Streaming-Download mit Größenlimit + Tempfile (Umsetzung 6)
-//! - `perform_download` Windows: setup.exe-Pfad zurückgeben (NSIS
-//!   übernimmt das Selbst-Erstzen); Linux: AppImage atomar ersetzen
+//! - `perform_download` Windows: Installer-Pfad zurückgeben (MSI bevorzugt
+//!   via msiexec — SAC-Fix t_803497b5; NSIS-Setup als Fallback; der
+//!   Installer übernimmt das Selbst-Erstzen); Linux: AppImage atomar
+//!   ersetzen
 
 mod download;
 mod integrity;
@@ -27,7 +29,8 @@ mod version;
 pub use download::{MAX_DOWNLOAD_BYTES, download_asset};
 pub use integrity::{CHECKSUMS_ASSET, parse_checksums, sha256_file};
 pub use plan::{
-    AppKind, Plan, bare_binary_exe, linux_update_dir, plan_for_release, windows_update_dir,
+    AppKind, Plan, bare_binary_exe, linux_update_dir, plan_for_release, windows_plan_for_release,
+    windows_update_dir,
 };
 pub use release_api::{Asset, Release, fetch_latest};
 pub use version::{is_newer, parse_version};
@@ -204,8 +207,9 @@ pub async fn check(
 }
 
 /// Execute the install step of a plan (Umsetzung 3/4). Windows: downloads
-/// setup.exe, verifies SHA256, returns the installer path — the app module
-/// spawns it detached and exits (decision documented in docs/UPDATER.md).
+/// setup.exe (NSIS-Fallback) or the MSI (SAC-Fix t_803497b5), verifies
+/// SHA256 for both, returns the installer path — the app module spawns it
+/// detached and exits (decision documented in docs/UPDATER.md).
 /// Linux AppImage: downloads, verifies, atomically replaces the running
 /// AppImage, returns the new path for a user-consented relaunch. Deb:
 /// never installs (NotSupported) — the UI shows the apt hint instead.
@@ -215,7 +219,15 @@ pub async fn perform_download(plan: &Plan) -> Result<std::path::PathBuf> {
             asset_name,
             asset_url,
             checksum,
+        }
+        | Plan::WindowsMsi {
+            asset_name,
+            asset_url,
+            checksum,
         } => {
+            // MSI wie NSIS: in den Temp-Unterordner laden, SHA256-Pflicht
+            // bleibt (kein Trust-on-Download) — SAC-Fix t_803497b5 ändert
+            // nur die AUSFÜHRUNG (msiexec), nicht die Verifikation.
             let path =
                 download_asset(asset_url, &windows_update_dir()?, MAX_DOWNLOAD_BYTES).await?;
             integrity::verify_or_fail(&path, checksum.as_deref(), asset_name)?;
