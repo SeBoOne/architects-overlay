@@ -95,6 +95,21 @@ pub fn vk_from_char(ch: char) -> Option<u32> {
 /// Kanonischen Combo-String (`"ctrl+shift+u"`, exakt das Persistenzformat)
 /// in die LL-Hook-Normalform übersetzen. Alle Token müssen bekannt sein —
 /// ein Teiltreffer ist `None` (Registrierungsfehler, kein stiller Bug).
+/// WK-R3 (t_ed01e8f7): Token im JS-KeyboardEvent-Format ("KeyU", "Digit1",
+/// "Numpad1") auf den Rohbuchstaben abbilden und dem normalen vk_from_key-
+/// Pfad zuführen — Slot-Settings persistieren auf Windows genau so.
+fn vk_from_token(t: &str) -> Option<u32> {
+    let lower = t.to_ascii_lowercase();
+    for prefix in ["key", "digit", "numpad"] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            if rest.chars().count() == 1 {
+                return vk_from_char(rest.chars().next().expect("count==1"));
+            }
+        }
+    }
+    vk_from_key(t)
+}
+
 pub fn parse_combo(canonical: &str) -> Option<Combo> {
     let mut ctrl = false;
     let mut shift = false;
@@ -111,7 +126,12 @@ pub fn parse_combo(canonical: &str) -> Option<Combo> {
                 let ch = t.chars().next().expect("len==1");
                 vk = Some(vk_from_char(ch)?);
             }
-            t => vk = Some(vk_from_key(t)?),
+            // WK-R3 (t_ed01e8f7): Slot-Settings persistieren auf Windows im
+            // JS-KeyboardEvent-Format ("shift+control+KeyU") — parse_combo
+            // kannte nur "ctrl+shift+u" und warf die Targets stumm weg
+            // (Diag-Befund: 32 Keydowns, 0 Matches). "KeyU"/"Digit1"/
+            // "Numpad1" etc. sind jetzt äquivalent gültig.
+            t => vk = Some(vk_from_token(t)?),
         }
     }
     // Combo ohne Taste („ctrl+shift“) ist ein Validierungsfehler.
@@ -441,5 +461,36 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
         });
 
         pass_through()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WK-R3-Regression (Sebo-Diag-Snapshot): persistierte Combos sind im
+    /// KeyboardEvent.code-Format — der LL-Hook-Matcher muss sie genauso
+    /// auflösen wie das global-shortcut-Plugin, sonst: 32 Keydowns, 0 Matches.
+    #[test]
+    fn parse_combo_accepts_keycode_format() {
+        let c = parse_combo("shift+control+KeyU").expect("KeyU-Combo muss parsen");
+        assert!(c.shift && c.ctrl);
+        assert_eq!(c.vk, 0x55);
+
+        let c2 = parse_combo("ctrl+KeyO").expect("KeyO-Combo muss parsen");
+        assert!(c2.ctrl);
+        assert_eq!(c2.vk, 0x4F);
+
+        let c3 = parse_combo("Digit1").expect("Digit1 muss parsen");
+        assert_eq!(c3.vk, 0x31);
+
+        let c4 = parse_combo("Numpad1").expect("Numpad1 muss parsen");
+        assert_eq!(c4.vk, 0x31);
+    }
+
+    #[test]
+    fn parse_combo_still_rejects_garbage() {
+        assert!(parse_combo("ctrl+NotAKey").is_none());
+        assert!(parse_combo("ctrl+shift").is_none());
     }
 }
