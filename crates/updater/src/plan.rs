@@ -1,13 +1,16 @@
 //! Asset-Auswahl + Installationsplan (Karte Umsetzung 3/4).
 //!
 //! Plattform-Matrix:
-//! - Windows: NSIS-Setup (`*-setup.exe`) — NSIS-Installer übernimmt das
-//!   Selbst-Erstzen (die laufende exe kann sich nicht selbst ersetzen).
-//!   Ausführungsentscheidung (dokumentiert in docs/UPDATER.md): die App
-//!   startet das Setup SILENT (`/S`) als CHILD-PROZESS und beendet sich
-//!   dann sauber selbst; NSIS schließt eine laufende Instanz ab und
-//!   installiert. Kein auto-restart — der Nutzer startet das Overlay
-//!   selbst neu (Startmenü-Eintrag des Setups).
+//! - Windows: MSI-Installer (`*.msi`) BEVORZUGT (SAC-Fix t_803497b5),
+//!   NSIS-Setup (`*-setup.exe`) als Fallback für Releases ohne MSI —
+//!   der Installer übernimmt das Selbst-Erstzen (die laufende exe kann
+//!   sich nicht selbst ersetzen). MSI-Ausführungsentscheidung
+//!   (dokumentiert in docs/UPDATER.md): die App spawnt NICHT die
+//!   heruntergeladene, unsignierte Datei selbst (Smart App Control /
+//!   WDAC blockt das mit `os error 4551`), sondern übergibt die MSI an
+//!   `msiexec.exe /i … /qb` — msiexec ist Microsoft-signiert und
+//!   passiert SAC. NSIS-Fallback: Setup SILENT (`/S /R`) als
+//!   CHILD-PROZESS, dann sauberer App-Exit.
 //! - Linux AppImage (env `APPIMAGE` gesetzt oder `.AppImage`-Pfad): das
 //!   neue AppImage wird an den Pfad der laufenden Datei atomar ersetzt
 //!   (rename old → rename new → exec-Rechte), Nutzerdaten unangetastet.
@@ -30,6 +33,8 @@ use super::release_api::{Asset, Release};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppKind {
     Nsis,
+    /// Windows MSI (SAC-Fix t_803497b5) — läuft über msiexec.exe.
+    Msi,
     AppImage,
     Deb,
     /// Linux Bare-Binary (z. B. cp nach ~/.local/bin) — TH t_df9646a3.
@@ -39,8 +44,16 @@ pub enum AppKind {
 /// Der für diese Plattform passende Update-Plan.
 #[derive(Debug, Clone)]
 pub enum Plan {
-    /// Windows: setup.exe herunterladen, verifizieren, ausführen (NSIS).
+    /// Windows: setup.exe herunterladen, verifizieren, ausführen (NSIS-Fallback).
     WindowsNsis {
+        asset_name: String,
+        asset_url: String,
+        checksum: Option<String>,
+    },
+    /// Windows MSI (SAC-Fix t_803497b5): MSI herunterladen, SHA256
+    /// verifizieren, über `msiexec.exe /i <msi> /qb` ausführen — die
+    /// unsignierte Datei wird NIE direkt gespawnt (Smart App Control).
+    WindowsMsi {
         asset_name: String,
         asset_url: String,
         checksum: Option<String>,
@@ -75,6 +88,7 @@ impl AppKind {
     pub fn as_str(self) -> &'static str {
         match self {
             AppKind::Nsis => "nsis",
+            AppKind::Msi => "msi",
             AppKind::AppImage => "appimage",
             AppKind::Deb => "deb",
             AppKind::LinuxBin => "linux-bin",
@@ -87,6 +101,7 @@ impl Plan {
     pub fn kind(&self) -> AppKind {
         match self {
             Plan::WindowsNsis { .. } => AppKind::Nsis,
+            Plan::WindowsMsi { .. } => AppKind::Msi,
             Plan::LinuxAppImage { .. } => AppKind::AppImage,
             Plan::DebHint { .. } => AppKind::Deb,
             Plan::LinuxBin { .. } => AppKind::LinuxBin,
@@ -97,6 +112,11 @@ impl Plan {
     pub fn asset(&self) -> (&str, &str) {
         match self {
             Plan::WindowsNsis {
+                asset_name,
+                asset_url,
+                ..
+            }
+            | Plan::WindowsMsi {
                 asset_name,
                 asset_url,
                 ..
@@ -122,6 +142,7 @@ impl Plan {
     pub fn checksum(&self) -> Option<&str> {
         match self {
             Plan::WindowsNsis { checksum, .. }
+            | Plan::WindowsMsi { checksum, .. }
             | Plan::LinuxAppImage { checksum, .. }
             | Plan::LinuxBin { checksum, .. } => checksum.as_deref(),
             Plan::DebHint { .. } => None,
@@ -157,6 +178,50 @@ fn find_asset<'a>(release: &'a Release, ends_with: &str) -> Option<&'a Asset> {
         .find(|a| a.name.to_lowercase().ends_with(ends_with))
 }
 
+/// Baue den Windows-Plan — plattformunabhängig (ohne cfg-Gate), damit die
+/// Prioritätslogik auf jedem Runner testbar ist.
+///
+/// Priorität (SAC-Fix t_803497b5): MSI VOR setup.exe. Begründung: Smart
+/// App Control / WDAC blocken das direkte Spawnen der heruntergeladenen,
+/// unsignierten setup.exe (`os error 4551` — „Application Control policy
+/// has blocked this file“, ohne „Trotzdem ausführen“). `msiexec.exe` ist
+/// Microsoft-signiert mit Reputation und passiert SAC, die MSI selbst wird
+/// nie direkt ausgeführt. Fallback auf `-setup.exe` (NSIS) für Releases
+/// ohne MSI. Kein Asset von beiden → `None`.
+pub fn windows_plan_for_release(release: &Release, checksums_text: Option<&str>) -> Option<Plan> {
+    // Wir shippen nur x64: bei mehreren MSI-Assets das mit „x64“ im Namen
+    // bevorzugen (aktuell gibt es genau ein MSI pro Release).
+    if let Some(asset) = find_asset_preferring(release, ".msi", "x64") {
+        return Some(Plan::WindowsMsi {
+            checksum: checksum_for(&asset.name, release, checksums_text),
+            asset_name: asset.name.clone(),
+            asset_url: asset.download_url.clone(),
+        });
+    }
+    let asset = find_asset(release, "-setup.exe")?;
+    Some(Plan::WindowsNsis {
+        checksum: checksum_for(&asset.name, release, checksums_text),
+        asset_name: asset.name.clone(),
+        asset_url: asset.download_url.clone(),
+    })
+}
+
+/// Finde das Asset mit Suffix, bevorzuge eines mit `prefers` im Namen.
+fn find_asset_preferring<'a>(
+    release: &'a Release,
+    ends_with: &str,
+    prefers: &str,
+) -> Option<&'a Asset> {
+    release
+        .assets
+        .iter()
+        .find(|a| {
+            let n = a.name.to_lowercase();
+            n.ends_with(ends_with) && n.contains(prefers)
+        })
+        .or_else(|| find_asset(release, ends_with))
+}
+
 /// Baue den Plan für das laufende System. `checksums_text` ist der Inhalt
 /// des Sidecar-`SHA256SUMS`-Assets (falls das Release eines hat — die
 /// Check-Schicht holt es nur, wenn es existiert) bzw. `None`. Die Prüfung
@@ -165,12 +230,9 @@ fn find_asset<'a>(release: &'a Release, ends_with: &str) -> Option<&'a Asset> {
 /// `NoChecksum` fehl (kein Trust-on-Download ohne Check).
 pub fn plan_for_release(release: &Release, checksums_text: Option<&str>) -> Option<Plan> {
     if cfg!(windows) {
-        let asset = find_asset(release, "-setup.exe")?;
-        return Some(Plan::WindowsNsis {
-            checksum: checksum_for(&asset.name, release, checksums_text),
-            asset_name: asset.name.clone(),
-            asset_url: asset.download_url.clone(),
-        });
+        // SAC-Fix t_803497b5: MSI bevorzugt, NSIS-Fallback (Logik im
+        // plattformunabhängigen Helper, dort getestet).
+        return windows_plan_for_release(release, checksums_text);
     }
     if cfg!(target_os = "linux") {
         if let Some(path) = appimage_path() {
@@ -386,5 +448,95 @@ mod tests {
         if !cfg!(windows) && super::appimage_path().is_none() && !super::deb_like_install() {
             assert!(plan_for_release(&rel, None).is_none());
         }
+    }
+
+    // --- Windows-Asset-Auswahl (SAC-Fix t_803497b5) ---------------------
+    // Der Helper ist plattformunabhängig (kein cfg-Gate) — die Prioritäts-
+    // logik läuft daher auch auf dem Linux-Runner in diesen Tests.
+
+    /// Release wie v0.5.39 real aussieht: MSI + setup.exe + AppImage + deb
+    /// + linux64 + SHA256SUMS.
+    fn full_release(assets: &[(&str, &str)]) -> Release {
+        release(assets)
+    }
+
+    #[test]
+    fn windows_prefers_msi_over_setup_exe() {
+        let rel = full_release(&[
+            ("architects-overlay_0.5.39_x64_en-US.msi", "u-msi"),
+            ("architects-overlay_0.5.39_x64-setup.exe", "u-nsis"),
+            ("architects-overlay_0.5.39_amd64.AppImage", "u-ai"),
+            ("SHA256SUMS", "u-sums"),
+        ]);
+        let plan = windows_plan_for_release(&rel, None).expect("Windows-Plan fehlt");
+        assert!(matches!(plan, Plan::WindowsMsi { .. }));
+        assert_eq!(plan.kind(), AppKind::Msi);
+        assert_eq!(plan.kind().as_str(), "msi");
+        let (name, url) = plan.asset();
+        assert_eq!(name, "architects-overlay_0.5.39_x64_en-US.msi");
+        assert_eq!(url, "u-msi");
+    }
+
+    #[test]
+    fn windows_msi_asset_found_without_setup_exe() {
+        // Nur ein MSI im Release (Future-State) — muss gefunden werden.
+        let rel = full_release(&[("architects-overlay_0.5.40_x64_en-US.msi", "u-msi")]);
+        let plan = windows_plan_for_release(&rel, None).expect("MSI-Asset fehlt");
+        assert!(matches!(plan, Plan::WindowsMsi { .. }));
+        assert_eq!(plan.asset().1, "u-msi");
+    }
+
+    #[test]
+    fn windows_falls_back_to_setup_exe_without_msi() {
+        // Altes Release ohne MSI (pre-MSI-Releases): NSIS-Fallback bleibt.
+        let rel = full_release(&[
+            ("architects-overlay_0.5.14_x64-setup.exe", "u-nsis"),
+            ("SHA256SUMS", "u-sums"),
+        ]);
+        let plan = windows_plan_for_release(&rel, None).expect("setup.exe fehlt");
+        assert!(matches!(plan, Plan::WindowsNsis { .. }));
+        assert_eq!(plan.kind(), AppKind::Nsis);
+        assert_eq!(plan.asset().1, "u-nsis");
+    }
+
+    #[test]
+    fn windows_none_without_windows_asset() {
+        // Nur Linux-Assets → kein Windows-Plan (None, kein Fehlschluss).
+        let rel = full_release(&[
+            ("architects-overlay_0.5.39_amd64.AppImage", "u-ai"),
+            ("architects-overlay_0.5.39_amd64.deb", "u-deb"),
+            ("SHA256SUMS", "u-sums"),
+        ]);
+        assert!(windows_plan_for_release(&rel, None).is_none());
+        assert!(windows_plan_for_release(&full_release(&[]), None).is_none());
+    }
+
+    #[test]
+    fn windows_msi_prefers_x64_name_when_several() {
+        // hypothetisch mehrere MSI: das x64-Asset gewinnt.
+        let rel = full_release(&[
+            ("architects-overlay_0.5.40_arm64_en-US.msi", "u-arm"),
+            ("architects-overlay_0.5.40_x64_en-US.msi", "u-x64"),
+        ]);
+        let plan = windows_plan_for_release(&rel, None).expect("MSI fehlt");
+        assert_eq!(plan.asset().0, "architects-overlay_0.5.40_x64_en-US.msi");
+        assert_eq!(plan.asset().1, "u-x64");
+    }
+
+    #[test]
+    fn windows_msi_checksum_from_sidecar() {
+        // SHA256-Pflicht bleibt für MSI bestehen (kein Trust-on-Download):
+        // die Checksumme muss aus dem Sidecar-Text getroffen werden.
+        let rel = full_release(&[
+            ("architects-overlay_0.5.39_x64_en-US.msi", "u-msi"),
+            ("architects-overlay_0.5.39_x64-setup.exe", "u-nsis"),
+        ]);
+        let hex_msi = "a".repeat(64);
+        let hex_nsis = "b".repeat(64);
+        let sums = format!(
+            "{hex_msi}  architects-overlay_0.5.39_x64_en-US.msi\n{hex_nsis}  architects-overlay_0.5.39_x64-setup.exe\n"
+        );
+        let plan = windows_plan_for_release(&rel, Some(&sums)).expect("Windows-Plan fehlt");
+        assert_eq!(plan.checksum(), Some(hex_msi.as_str()));
     }
 }
