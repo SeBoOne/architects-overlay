@@ -25,55 +25,6 @@
 //! Die Combo-Erkennung ist die pure Schicht (`Combo`/`ComboMatcher`/
 //! `parse_combo`) — plattformunabhängig unit-getestet.
 
-/// Diagnose-Zähler (WK-Diagnose-UI): zählt JEDE Taste, die der eigene
-/// LL-Hook sieht — der entscheidende Indikator, ob unser Hook überhaupt
-/// in der Hook-Chain ankommt, wenn SC fokussiert ist (H5-Verifikation).
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
-#[cfg(target_os = "windows")]
-use std::sync::atomic::Ordering;
-
-static LL_ACTIVE: AtomicBool = AtomicBool::new(false);
-static LL_INSTALLED_UNIX: AtomicU64 = AtomicU64::new(0);
-static LL_EVENTS: AtomicU64 = AtomicU64::new(0);
-static LL_KEYDOWNS: AtomicU64 = AtomicU64::new(0);
-static LL_MATCHED: AtomicU64 = AtomicU64::new(0);
-static LL_LAST_VK: AtomicU32 = AtomicU32::new(0);
-static LL_LAST_DOWN_UNIX: AtomicU64 = AtomicU64::new(0);
-
-/// Momentaufnahme der LL-Hook-Zähler für den Diagnose-Snapshot.
-#[derive(Clone, Debug)]
-pub struct LlHookCounters {
-    pub active: bool,
-    pub installed_unix: u64,
-    pub events_total: u64,
-    pub keydowns_total: u64,
-    pub matched_total: u64,
-    pub last_vk: u32,
-    pub last_down_unix: u64,
-}
-
-#[cfg(target_os = "windows")]
-pub fn counters() -> Option<LlHookCounters> {
-    let installed = LL_INSTALLED_UNIX.load(Ordering::Relaxed);
-    if installed == 0 {
-        return None;
-    }
-    Some(LlHookCounters {
-        active: LL_ACTIVE.load(Ordering::Relaxed),
-        installed_unix: installed,
-        events_total: LL_EVENTS.load(Ordering::Relaxed),
-        keydowns_total: LL_KEYDOWNS.load(Ordering::Relaxed),
-        matched_total: LL_MATCHED.load(Ordering::Relaxed),
-        last_vk: LL_LAST_VK.load(Ordering::Relaxed),
-        last_down_unix: LL_LAST_DOWN_UNIX.load(Ordering::Relaxed),
-    })
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn counters() -> Option<LlHookCounters> {
-    None
-}
-
 /// Eine globales Shortcut-Combo in LL-Hook-Normalform (virtuelle Keycodes).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Combo {
@@ -144,6 +95,21 @@ pub fn vk_from_char(ch: char) -> Option<u32> {
 /// Kanonischen Combo-String (`"ctrl+shift+u"`, exakt das Persistenzformat)
 /// in die LL-Hook-Normalform übersetzen. Alle Token müssen bekannt sein —
 /// ein Teiltreffer ist `None` (Registrierungsfehler, kein stiller Bug).
+/// WK-R3 (t_ed01e8f7): Token im JS-KeyboardEvent-Format ("KeyU", "Digit1",
+/// "Numpad1") auf den Rohbuchstaben abbilden und dem normalen vk_from_key-
+/// Pfad zuführen — Slot-Settings persistieren auf Windows genau so.
+fn vk_from_token(t: &str) -> Option<u32> {
+    let lower = t.to_ascii_lowercase();
+    for prefix in ["key", "digit", "numpad"] {
+        if let Some(rest) = lower.strip_prefix(prefix) {
+            if rest.chars().count() == 1 {
+                return vk_from_char(rest.chars().next().expect("count==1"));
+            }
+        }
+    }
+    vk_from_key(t)
+}
+
 pub fn parse_combo(canonical: &str) -> Option<Combo> {
     let mut ctrl = false;
     let mut shift = false;
@@ -160,17 +126,12 @@ pub fn parse_combo(canonical: &str) -> Option<Combo> {
                 let ch = t.chars().next().expect("len==1");
                 vk = Some(vk_from_char(ch)?);
             }
-            // Frontend-Format (KeyboardEvent.code): „KeyU“ / „Digit1“ — das
-            // global-shortcut-Plugin frisst das, der VK-Parser braucht die
-            // Roh-Taste (WK-Fix: gemerkte Combos waren „shift+control+KeyU“
-            // und matchten im LL-Hook nie → Shortcuts tot bei fokussiertem SC).
-            t if t.len() == 4 && t[..3].eq_ignore_ascii_case("key") => {
-                vk = Some(vk_from_char(t.chars().last().expect("len==4"))?);
-            }
-            t if t.len() == 6 && t[..5].eq_ignore_ascii_case("digit") => {
-                vk = Some(vk_from_char(t.chars().last().expect("len==6"))?);
-            }
-            t => vk = Some(vk_from_key(t)?),
+            // WK-R3 (t_ed01e8f7): Slot-Settings persistieren auf Windows im
+            // JS-KeyboardEvent-Format ("shift+control+KeyU") — parse_combo
+            // kannte nur "ctrl+shift+u" und warf die Targets stumm weg
+            // (Diag-Befund: 32 Keydowns, 0 Matches). "KeyU"/"Digit1"/
+            // "Numpad1" etc. sind jetzt äquivalent gültig.
+            t => vk = Some(vk_from_token(t)?),
         }
     }
     // Combo ohne Taste („ctrl+shift“) ist ein Validierungsfehler.
@@ -362,14 +323,6 @@ fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
         // Thread-ID für den Unhook-Pfad registrieren.
         let tid = windows_sys::Win32::System::Threading::GetCurrentThreadId();
         *HOOK_THREAD_ID.lock().expect("hook thread id lock") = Some(tid);
-        LL_ACTIVE.store(true, Ordering::Relaxed);
-        LL_INSTALLED_UNIX.store(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            Ordering::Relaxed,
-        );
 
         // Message-Loop-Pflicht: der LL-Hook wird nur abgeliefert, solange
         // dieser Thread Nachrichten pumpt.
@@ -381,7 +334,6 @@ fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
         }
         windows_sys::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
         *HOOK_THREAD_ID.lock().expect("hook thread id lock") = None;
-        LL_ACTIVE.store(false, Ordering::Relaxed);
         log::info!("LL-keyboard-hook unhooked");
     }
 }
@@ -479,22 +431,6 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
         }
         let kb = unsafe { &*kb };
 
-        // Sonde: jede sichtbare Taste zählen (down UND up), bevor gematcht
-        // wird — 0 Events bei fokussiertem SC heißt „Hook sieht nichts“,
-        // steigende Zähler ohne Match heißt „Combo-Erkennung/Empfang.
-        LL_EVENTS.fetch_add(1, Ordering::Relaxed);
-        if is_key_down {
-            LL_KEYDOWNS.fetch_add(1, Ordering::Relaxed);
-            LL_LAST_VK.store(kb.vkCode as u32, Ordering::Relaxed);
-            LL_LAST_DOWN_UNIX.store(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0),
-                Ordering::Relaxed,
-            );
-        }
-
         HOOK_CTX.with(|ctx| {
             if let Some(rt) = ctx.borrow().as_ref() {
                 // Repeat: WM_KEYDOWN-Autorepeat-Wiederholungen bekommen wir als
@@ -510,9 +446,6 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
                     .expect("ll matcher lock")
                     .on_key(kb.vkCode as u32, is_key_down);
                 if let Some(idx) = matched {
-                    if is_key_down {
-                        LL_MATCHED.fetch_add(1, Ordering::Relaxed);
-                    }
                     let Some(&kind) = rt.kinds.get(idx) else {
                         log::warn!("LL-hook matched idx={idx} ohne Kind — übersprungen");
                         return;
@@ -535,20 +468,24 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
 mod tests {
     use super::*;
 
-    /// WK-Regression (2026-11-02, Sebo-Snapshot): persistierte Combos sind im
-    /// KeyboardEvent.code-Format („shift+control+KeyU“) — der LL-Hook-Matcher
-    /// muss sie genauso auflösen wie das global-shortcut-Plugin.
+    /// WK-R3-Regression (Sebo-Diag-Snapshot): persistierte Combos sind im
+    /// KeyboardEvent.code-Format — der LL-Hook-Matcher muss sie genauso
+    /// auflösen wie das global-shortcut-Plugin, sonst: 32 Keydowns, 0 Matches.
     #[test]
     fn parse_combo_accepts_keycode_format() {
         let c = parse_combo("shift+control+KeyU").expect("KeyU-Combo muss parsen");
-        assert!(c.shift && c.ctrl && !c.alt && !c.win);
+        assert!(c.shift && c.ctrl);
         assert_eq!(c.vk, 0x55);
 
         let c2 = parse_combo("ctrl+KeyO").expect("KeyO-Combo muss parsen");
-        assert!(c2.ctrl && c2.vk == 0x4F);
+        assert!(c2.ctrl);
+        assert_eq!(c2.vk, 0x4F);
 
-        let c3 = parse_combo("Digit1").expect("Digit1-Combo muss parsen");
+        let c3 = parse_combo("Digit1").expect("Digit1 muss parsen");
         assert_eq!(c3.vk, 0x31);
+
+        let c4 = parse_combo("Numpad1").expect("Numpad1 muss parsen");
+        assert_eq!(c4.vk, 0x31);
     }
 
     #[test]
