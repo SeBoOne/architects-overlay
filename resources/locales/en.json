@@ -990,6 +990,21 @@
     "update.reason_deb_apt": ".deb installations update via apt — the app performs no root actions.",
     "update.reason_no_appimage": "No running AppImage found",
     "update.reason_rate_limit": "Rate limit (429) — check again later",
-    "update.reason_rate_limit_retry": "Rate limit (429) — try again later"
+    "update.reason_rate_limit_retry": "Rate limit (429) — try again later",
+    "settings.hotkeydiag.title": "Hotkey diagnostics",
+    "settings.hotkeydiag.refresh": "Refresh",
+    "settings.hotkeydiag.copy": "Copy as JSON",
+    "settings.hotkeydiag.plugin": "OS hotkey registration",
+    "settings.hotkeydiag.toggle": "Toggle combo",
+    "settings.hotkeydiag.click": "Click-mode combo",
+    "settings.hotkeydiag.last_event": "Last received (OS level)",
+    "settings.hotkeydiag.llhook": "LL-hook fallback active",
+    "settings.hotkeydiag.ll_events": "Keys seen by LL-hook (↓ presses / ⇅ incl. releases)",
+    "settings.hotkeydiag.ll_matched": "LL-hook combo matches",
+    "settings.hotkeydiag.focused": "Focused window",
+    "settings.hotkeydiag.none": "none yet",
+    "settings.hotkeydiag.empty": "Diagnostics not loaded yet — press “Refresh”.",
+    "settings.hotkeydiag.copied": "Copied to clipboard.",
+    "settings.hotkeydiag.hint": "To test: launch SC, focus it, press the toggle combo — if the LL-hook counters stay at zero, our hook receives no keys (→ send the log)."
   }
 }
