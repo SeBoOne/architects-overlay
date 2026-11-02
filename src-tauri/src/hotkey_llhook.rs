@@ -283,7 +283,9 @@ fn hook_thread(app: AppHandle) {
                 targets.into_iter().map(|(c, _)| c).collect(),
             )),
             kinds,
-            app: app.clone(),
+            dispatch: Box::new(move |kind| {
+                shortcut_diag::dispatch_kind(&app, kind);
+            }),
         });
     });
 
@@ -428,13 +430,12 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
                         log::warn!("LL-hook matched idx={idx} ohne Kind — übersprungen");
                         return;
                     };
-                    let app = rt.app.clone();
                     log::info!(
                         "LL-hook matched combo idx={idx} vk={:#04x} (down={is_key_down})",
                         kb.vkCode
                     );
                     // Dedupe gegen den WM_HOTKEY-Normalpfad macht dispatch_kind.
-                    shortcut_diag::dispatch_kind(&app, kind);
+                    (rt.dispatch)(kind);
                 }
             }
         });
