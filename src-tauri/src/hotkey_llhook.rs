@@ -258,20 +258,20 @@ fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
     let targets = read_targets(&app);
     log::info!(
         "LL-keyboard-hook registering for targets: {:?}",
-        targets.iter().map(format_combo).collect::<Vec<_>>()
+        targets
+            .iter()
+            .map(|(c, k)| format!("{:?}={}", k, format_combo(c)))
+            .collect::<Vec<_>>()
     );
+    let kinds: Vec<crate::overlay::ShortcutKind> = targets.iter().map(|(_, k)| *k).collect();
 
-    let app_match = app.clone();
     HOOK_CTX.with(|ctx| {
         *ctx.borrow_mut() = Some(HookRuntime {
-            matcher: std::sync::Mutex::new(ComboMatcher::new(targets.clone())),
-            dispatch: Box::new(move |idx: usize| {
-                let kind = match idx {
-                    0 => crate::overlay::ShortcutKind::Toggle,
-                    _ => crate::overlay::ShortcutKind::ClickThrough,
-                };
-                shortcut_diag::dispatch_kind(&app_match, kind);
-            }),
+            matcher: std::sync::Mutex::new(ComboMatcher::new(
+                targets.into_iter().map(|(c, _)| c).collect(),
+            )),
+            kinds,
+            app: app.clone(),
         });
     });
 
@@ -304,20 +304,44 @@ fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
     }
 }
 
-/// Live-Bindings → LL-Combos (kanonische Strings der Slot-Settings).
+/// Pure Schicht (plattformunabhängig unit-getestet): Slot-Settings in
+/// (Combo, Kind)-Paare überführen. Parsebare Slots behalten IHR Kind —
+/// unparsebare fallen nur als PAAR weg, sodass keine Index-Verrutschung
+/// entsteht (Defekt 2, WK-R1: vorher fielen Combos einzeln raus und der
+/// Hook-Proc riet das Kind aus der Position).
+fn build_targets(
+    slots: [(crate::overlay::ShortcutKind, Option<String>); 2],
+) -> Vec<(Combo, crate::overlay::ShortcutKind)> {
+    slots
+        .into_iter()
+        .filter_map(|(kind, s)| {
+            let s = s?;
+            let combo = parse_combo(&s)?;
+            Some((combo, kind))
+        })
+        .collect()
+}
+
+/// Live-Bindings → (Combo, Kind)-Paare (kanonische Strings der Slot-Settings).
 #[cfg(target_os = "windows")]
-fn read_targets<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<Combo> {
+fn read_targets<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+) -> Vec<(Combo, crate::overlay::ShortcutKind)> {
     use tauri::Manager;
     app.try_state::<crate::overlay::ShortcutBindings>()
         .map(|b| {
-            [
-                b.current(crate::overlay::ShortcutKind::Toggle),
-                b.current(crate::overlay::ShortcutKind::ClickThrough),
-            ]
-            .into_iter()
-            .filter_map(|s| s.map(|s| s.to_string()))
-            .filter_map(|s| parse_combo(&s))
-            .collect()
+            build_targets([
+                (
+                    crate::overlay::ShortcutKind::Toggle,
+                    b.current(crate::overlay::ShortcutKind::Toggle)
+                        .map(|s| s.to_string()),
+                ),
+                (
+                    crate::overlay::ShortcutKind::ClickThrough,
+                    b.current(crate::overlay::ShortcutKind::ClickThrough)
+                        .map(|s| s.to_string()),
+                ),
+            ])
         })
         .unwrap_or_default()
 }
@@ -387,9 +411,9 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
                 .expect("ll matcher lock")
                 .on_key(kb.vkCode as u32, is_key_down);
             if let Some(idx) = matched {
-                let kind = match idx {
-                    0 => crate::overlay::ShortcutKind::Toggle,
-                    _ => crate::overlay::ShortcutKind::ClickThrough,
+                let Some(&kind) = rt.kinds.get(idx) else {
+                    log::warn!("LL-hook matched idx={idx} ohne Kind — übersprungen");
+                    return;
                 };
                 let app = rt.app.clone();
                 log::info!(
@@ -521,5 +545,44 @@ mod tests {
         assert_eq!(vk_from_char('0'), Some(0x30));
         assert_eq!(vk_from_char('9'), Some(0x39));
         assert_eq!(vk_from_char('§'), None);
+    }
+
+    /// Defekt 2 (WK-R1) Probe: unparsebarer Toggle (z. B. Space — kein
+    /// vk_from_key-Token) + parsebarer Click → targets enthält nur den Click,
+    /// MIT ClickThrough-Kind. Der Hook-Proc darf bei matched idx=0 ALSO
+    /// ClickThrough dispatchen, niemals Toggle (alte Positionsraten täten es).
+    #[test]
+    fn build_targets_keeps_kind_with_combo() {
+        use crate::overlay::ShortcutKind;
+        let pairs = build_targets([
+            (ShortcutKind::Toggle, Some("ctrl+shift+space".to_owned())),
+            (ShortcutKind::ClickThrough, Some("ctrl+shift+o".to_owned())),
+        ]);
+        assert_eq!(pairs.len(), 1, "unparsebarer Slot fällt als PAAR weg");
+        assert_eq!(pairs[0].1, ShortcutKind::ClickThrough);
+
+        // Matcher-Index und kinds-Index sind deckungsgleich: idx 0 -> ClickThrough.
+        let combos: Vec<Combo> = pairs.iter().map(|(c, _)| *c).collect();
+        let kinds: Vec<ShortcutKind> = pairs.iter().map(|(_, k)| *k).collect();
+        let mut matcher = ComboMatcher::new(combos);
+        // Ctrl+Shift down, dann O down -> Treffer idx 0.
+        let _ = matcher.on_key(0xA0 /* VK_LSHIFT */, true);
+        let _ = matcher.on_key(0xA2 /* VK_LCONTROL */, true);
+        let hit = matcher.on_key(vk_from_char('o').expect("o"), true);
+        assert_eq!(hit, Some(0));
+        assert_eq!(kinds[hit.unwrap()], ShortcutKind::ClickThrough);
+    }
+
+    /// Beide Slots parsebar -> Reihenfolge + Kinder unverändert.
+    #[test]
+    fn build_targets_full_slots_ordered() {
+        use crate::overlay::ShortcutKind;
+        let pairs = build_targets([
+            (ShortcutKind::Toggle, Some("ctrl+shift+u".to_owned())),
+            (ShortcutKind::ClickThrough, Some("ctrl+shift+o".to_owned())),
+        ]);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].1, ShortcutKind::Toggle);
+        assert_eq!(pairs[1].1, ShortcutKind::ClickThrough);
     }
 }

@@ -263,6 +263,12 @@ mod win {
     }
 }
 
+// Defekt 1 (WK-R1): die Windows-Implementierung lebt in `mod win` — der
+// aufrufende Scope (ShortcutDiagSnapshot + Test) braucht den Re-Export,
+// sonst E0425 `cannot find function focused_window_info` NUR auf Windows.
+#[cfg(target_os = "windows")]
+use win::focused_window_info;
+
 #[cfg(not(target_os = "windows"))]
 fn focused_window_info() -> Option<FocusedWindowInfo> {
     None
