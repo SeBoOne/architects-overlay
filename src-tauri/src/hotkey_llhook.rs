@@ -231,7 +231,7 @@ pub fn install<R: tauri::Runtime>(app: AppHandle<R>) {
     }
     let spawned = std::thread::Builder::new()
         .name("arch-llhotkey".into())
-        .spawn(move || hook_thread(app));
+        .spawn(hook_thread);
     match spawned {
         Ok(_) => log::info!("LL-keyboard-hook thread spawned (SC running)"),
         Err(err) => log::warn!("LL-keyboard-hook thread spawn failed: {err}"),
@@ -261,7 +261,7 @@ pub fn shutdown() {
 }
 
 #[cfg(target_os = "windows")]
-fn hook_thread(app: AppHandle) {
+fn hook_thread() {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetMessageW, MSG, SetWindowsHookExW, WH_KEYBOARD_LL,
