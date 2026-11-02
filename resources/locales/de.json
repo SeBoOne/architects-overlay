@@ -990,6 +990,21 @@
     "update.reason_deb_apt": ".deb-Installationen aktualisieren sich per apt — die App führt keine root-Aktionen aus.",
     "update.reason_no_appimage": "Kein laufendes AppImage gefunden",
     "update.reason_rate_limit": "Rate-Limit (429) — später erneut prüfen",
-    "update.reason_rate_limit_retry": "Rate-Limit (429) — später erneut versuchen"
+    "update.reason_rate_limit_retry": "Rate-Limit (429) — später erneut versuchen",
+    "settings.hotkeydiag.title": "Hotkey-Diagnose",
+    "settings.hotkeydiag.refresh": "Aktualisieren",
+    "settings.hotkeydiag.copy": "Als JSON kopieren",
+    "settings.hotkeydiag.plugin": "OS-Hotkey-Registrierung",
+    "settings.hotkeydiag.toggle": "Toggle-Combo",
+    "settings.hotkeydiag.click": "Klick-Modus-Combo",
+    "settings.hotkeydiag.last_event": "Letzter Empfang (OS-Ebene)",
+    "settings.hotkeydiag.llhook": "LL-Hook-Fallback aktiv",
+    "settings.hotkeydiag.ll_events": "LL-Hook hat Tasten gesehen (↓ Drücke / ⇅ inkl. Loslassen)",
+    "settings.hotkeydiag.ll_matched": "LL-Hook Combo-Treffer",
+    "settings.hotkeydiag.focused": "Fokussiertes Fenster",
+    "settings.hotkeydiag.none": "noch nichts",
+    "settings.hotkeydiag.empty": "Diagnose noch nicht geladen — „Aktualisieren“ drücken.",
+    "settings.hotkeydiag.copied": "In die Zwischenablage kopiert.",
+    "settings.hotkeydiag.hint": "Zum Testen: SC starten, fokussieren, die Toggle-Combo drücken — stehen die LL-Hook-Zähler still, erreicht unser Hook keine Tasten (→ Log schicken)."
   }
 }

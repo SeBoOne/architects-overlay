@@ -108,6 +108,53 @@ pub struct ShortcutDiagSnapshot {
     pub last_event: Option<HotkeyEventRecord>,
     /// Fokussiertes Fenster zum Zeitpunkt des Abrufs.
     pub focused: Option<FocusedWindowInfo>,
+    /// LL-Hook-Fallback-Zähler (Windows): `None` = Hook nie installiert
+    /// (SC-Detektion fehlgeschlagen oder Install-Fehler). Steigende
+    /// `events_total` bei fokussiertem SC = Hook sieht Tasten.
+    pub ll_hook: Option<LlHookDiag>,
+}
+
+/// Diagnose-Mirror der LL-Hook-Zähler (hotkey_llhook::counters).
+#[derive(Clone, Debug, Serialize)]
+pub struct LlHookDiag {
+    pub active: bool,
+    pub installed_at: Option<String>,
+    pub events_total: u64,
+    pub keydowns_total: u64,
+    pub matched_total: u64,
+    pub last_key: Option<String>,
+    pub last_down_at: Option<String>,
+}
+
+/// VK → lesbare Taste (Diagnose-Anzeige; unbekannt = Hex).
+pub fn vk_name(vk: u32) -> String {
+    match vk {
+        0x30..=0x39 | 0x41..=0x5A => char::from_u32(vk).map(|c| c.to_string()).unwrap_or_default(),
+        0x70..=0x7B => format!("F{}", vk - 0x6F),
+        0xA0..=0xA1 => "shift".into(),
+        0xA2..=0xA3 => "ctrl".into(),
+        0xA4..=0xA5 => "alt".into(),
+        0x5B | 0x5C => "win".into(),
+        _ => format!("vk:{vk:#04x}"),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ll_hook_diag() -> Option<LlHookDiag> {
+    crate::hotkey_llhook::counters().map(|c| LlHookDiag {
+        active: c.active,
+        installed_at: (c.installed_unix != 0).then(|| iso8601(c.installed_unix)),
+        events_total: c.events_total,
+        keydowns_total: c.keydowns_total,
+        matched_total: c.matched_total,
+        last_key: (c.last_vk != 0).then(|| vk_name(c.last_vk)),
+        last_down_at: (c.last_down_unix != 0).then(|| iso8601(c.last_down_unix)),
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+fn ll_hook_diag() -> Option<LlHookDiag> {
+    None
 }
 
 /// Runtime-Store für den letzten Empfang (managed Tauri state).
@@ -297,6 +344,7 @@ pub fn shortcut_diag_status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Shor
         last_event: app
             .try_state::<HotkeyDiagState>()
             .and_then(|d| d.last_event.lock().expect("hotkey diag lock").clone()),
+        ll_hook: ll_hook_diag(),
         focused: focused_window_info(),
     }
 }

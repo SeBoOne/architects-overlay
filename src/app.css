@@ -3035,6 +3035,18 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   color: var(--accent);
   margin-top: 4px;
 }
+/* WK-Diagnose (t_ed01e8f7): Label/Wert-Raster für den Shortcut-Status. */
+.hotkeydiag-grid {
+  display: grid;
+  grid-template-columns: minmax(150px, max-content) 1fr;
+  gap: 2px 10px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--fg);
+}
+.hotkeydiag-grid .hd-k {
+  color: var(--dim);
+}
 /* K6 (t_9b385831, P2a): aktive Preisquelle deutlich sichtbar (mehr als der
    kleine Statusbar-Text); Label identisch zur Statusbar ("WIKI+UEX (UEX)"). */
 .cfg-src-active {

@@ -1419,11 +1419,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// PB (t_1c9bc240, B1): Config-Open startet immer sauber.
 		cancelModeHotkeyCapture();
 		inConfig = true;
+		// WK-Diagnose (t_ed01e8f7): Live-Poll, solange die Config offen ist.
+		startHotkeyDiagPoll();
 		if (searchEl) searchEl.blur();
 	}
 
 	function closeConfig() {
 		inConfig = false;
+		// WK-Diagnose (t_ed01e8f7): Polling nur, solange die Config offen ist.
+		stopHotkeyDiagPoll();
 		apiKeyInput = '';
 		apiKeyNote = '';
 		secretKeyInput = '';
@@ -1469,6 +1473,79 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// chooseScale (nie einen Zustand zeigen, den das Backend nicht bestätigt).
 	type LocaleNote = { key: string; params?: Record<string, string | number>; raw?: string };
 	let localeNote = $state<LocaleNote | null>(null);
+
+	// WK-Diagnose (t_ed01e8f7): Live-Status der Shortcut-Verdrahtung —
+	// OS-Ebene (WM_HOTKEY) vs. LL-Hook-Fallback, letzter Empfang, fokussiertes
+	// Fenster. Der Kopieren-Button liefert Sebo das JSON für die Fehleranalyse.
+	type HotkeyDiagEvent = {
+		combo: string;
+		matched: string | null;
+		state: string;
+		at_unix: number;
+		at_iso: string;
+	};
+	type HotkeyDiagSnapshot = {
+		toggle_combo: string | null;
+		click_combo: string | null;
+		plugin_active: boolean;
+		last_event: HotkeyDiagEvent | null;
+		focused: {
+			pid: number;
+			process: string;
+			elevated: boolean;
+			window_class: string;
+			rect: [number, number, number, number];
+			hwnd: number;
+		} | null;
+		ll_hook: {
+			active: boolean;
+			installed_at: string | null;
+			events_total: number;
+			keydowns_total: number;
+			matched_total: number;
+			last_key: string | null;
+			last_down_at: string | null;
+		} | null;
+	};
+	let hotkeyDiag = $state<HotkeyDiagSnapshot | null>(null);
+	let hotkeyDiagNote = $state<string | null>(null);
+	let hotkeyDiagTimer: ReturnType<typeof setInterval> | null = null;
+
+	async function refreshHotkeyDiag(): Promise<void> {
+		if (!isTauri) return;
+		try {
+			hotkeyDiag = await invoke<HotkeyDiagSnapshot>('shortcut_diag_status');
+			hotkeyDiagNote = null;
+		} catch (err) {
+			hotkeyDiagNote = String(err);
+		}
+	}
+
+	function startHotkeyDiagPoll(): void {
+		void refreshHotkeyDiag();
+		if (hotkeyDiagTimer) clearInterval(hotkeyDiagTimer);
+		hotkeyDiagTimer = setInterval(() => void refreshHotkeyDiag(), 2000);
+	}
+
+	function stopHotkeyDiagPoll(): void {
+		if (hotkeyDiagTimer) {
+			clearInterval(hotkeyDiagTimer);
+			hotkeyDiagTimer = null;
+		}
+	}
+
+	async function copyHotkeyDiag(): Promise<void> {
+		if (!hotkeyDiag) {
+			void refreshHotkeyDiag();
+			return;
+		}
+		try {
+			await navigator.clipboard.writeText(JSON.stringify(hotkeyDiag, null, 2));
+			hotkeyDiagNote = $t('settings.hotkeydiag.copied');
+		} catch (err) {
+			hotkeyDiagNote = String(err);
+		}
+	}
 	let localeFileInput: HTMLInputElement | null = $state(null);
 
 	async function chooseLanguage(code: string) {
@@ -5408,6 +5485,59 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{localeNote.raw ?? $t(localeNote.key, localeNote.params)}
 							</div>
 						{/if}
+					</section>
+<!-- WK-Diagnose (t_ed01e8f7): Shortcut-Verdrahtung live prüfen — OS-Ebene
+					     (WM_HOTKEY) vs. LL-Hook-Fallback. Zählt der LL-Hook Tasten,
+					     sieht er die Chain; steigen die Zähler nicht, kommt gar
+					     nichts durch (→ Hook-Reihenfolge/Filter). -->
+					<section class="cfg-sect cfg-sect-hotkeydiag">
+						<div class="h">{$t('settings.hotkeydiag.title')}</div>
+						<div class="cfg-key-row">
+							<button type="button" class="chip" onclick={() => void refreshHotkeyDiag()}>
+								{$t('settings.hotkeydiag.refresh')}
+							</button>
+							<button type="button" class="chip" onclick={() => void copyHotkeyDiag()}>
+								{$t('settings.hotkeydiag.copy')}
+							</button>
+						</div>
+						{#if hotkeyDiag}
+							<div class="cfg-note hotkeydiag-grid">
+								<span class="hd-k">{$t('settings.hotkeydiag.plugin')}</span>
+								<span class="hd-v">{hotkeyDiag.plugin_active ? '✓' : '✗'}</span>
+								<span class="hd-k">{$t('settings.hotkeydiag.toggle')}</span>
+								<span class="hd-v">{hotkeyDiag.toggle_combo ?? '—'}</span>
+								<span class="hd-k">{$t('settings.hotkeydiag.click')}</span>
+								<span class="hd-v">{hotkeyDiag.click_combo ?? '—'}</span>
+								<span class="hd-k">{$t('settings.hotkeydiag.last_event')}</span>
+								<span class="hd-v"
+									>{hotkeyDiag.last_event
+										? `${hotkeyDiag.last_event.combo} (${hotkeyDiag.last_event.matched ?? 'kein Match'}, ${hotkeyDiag.last_event.state}, ${hotkeyDiag.last_event.at_iso})`
+										: $t('settings.hotkeydiag.none')}</span
+								>
+								<span class="hd-k">{$t('settings.hotkeydiag.llhook')}</span>
+								<span class="hd-v">{hotkeyDiag.ll_hook ? (hotkeyDiag.ll_hook.active ? '✓' : '✗') : '—'}</span>
+								<span class="hd-k">{$t('settings.hotkeydiag.ll_events')}</span>
+								<span class="hd-v"
+									>{hotkeyDiag.ll_hook
+										? `${hotkeyDiag.ll_hook.keydowns_total} ↓ / ${hotkeyDiag.ll_hook.events_total} ⇅${hotkeyDiag.ll_hook.last_key ? `, letzte: ${hotkeyDiag.ll_hook.last_key}` : ''}${hotkeyDiag.ll_hook.last_down_at ? ` @ ${hotkeyDiag.ll_hook.last_down_at}` : ''}`
+										: $t('settings.hotkeydiag.none')}</span
+								>
+								<span class="hd-k">{$t('settings.hotkeydiag.ll_matched')}</span>
+								<span class="hd-v">{hotkeyDiag.ll_hook?.matched_total ?? '—'}</span>
+								<span class="hd-k">{$t('settings.hotkeydiag.focused')}</span>
+								<span class="hd-v"
+									>{hotkeyDiag.focused
+										? `${hotkeyDiag.focused.process.split(/[\/]/).pop()}${hotkeyDiag.focused.elevated ? ' ⚠ elevated' : ''}`
+										: $t('settings.hotkeydiag.none')}</span
+								>
+							</div>
+						{:else}
+							<div class="cfg-note">{$t('settings.hotkeydiag.empty')}</div>
+						{/if}
+						{#if hotkeyDiagNote}
+							<div class="cfg-note" role="status">{hotkeyDiagNote}</div>
+						{/if}
+						<div class="cfg-note">{$t('settings.hotkeydiag.hint')}</div>
 					</section>
 <!-- C2 (t_91124322): Plugins — Manifest-Connectors verwalten (Import
 					     lokale Datei, Toggle = Placement erscheint/verschwindet,
