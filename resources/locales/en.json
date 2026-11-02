@@ -1005,6 +1005,7 @@
     "settings.hotkeydiag.none": "none yet",
     "settings.hotkeydiag.empty": "Diagnostics not loaded yet — press “Refresh”.",
     "settings.hotkeydiag.copied": "Copied to clipboard.",
-    "settings.hotkeydiag.hint": "To test: launch SC, focus it, press the toggle combo — if the LL-hook counters stay at zero, our hook receives no keys (→ send the log)."
+    "settings.hotkeydiag.hint": "To test: launch SC, focus it, press the toggle combo — if the LL-hook counters stay at zero, our hook receives no keys (→ send the log).",
+    "settings.hotkeydiag.open_hint": "This block is hidden by default — toggle it with “:d” in the search bar."
   }
 }

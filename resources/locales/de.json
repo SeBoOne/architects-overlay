@@ -1005,6 +1005,7 @@
     "settings.hotkeydiag.none": "noch nichts",
     "settings.hotkeydiag.empty": "Diagnose noch nicht geladen — „Aktualisieren“ drücken.",
     "settings.hotkeydiag.copied": "In die Zwischenablage kopiert.",
-    "settings.hotkeydiag.hint": "Zum Testen: SC starten, fokussieren, die Toggle-Combo drücken — stehen die LL-Hook-Zähler still, erreicht unser Hook keine Tasten (→ Log schicken)."
+    "settings.hotkeydiag.hint": "Zum Testen: SC starten, fokussieren, die Toggle-Combo drücken — stehen die LL-Hook-Zähler still, erreicht unser Hook keine Tasten (→ Log schicken).",
+    "settings.hotkeydiag.open_hint": "Dieser Block ist standardmäßig verborgen — mit »:d« in der Suchleiste ein- und ausschalten."
   }
 }

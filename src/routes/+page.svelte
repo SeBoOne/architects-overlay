@@ -1511,7 +1511,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Diagnose-Sektion ist Standard-aus (Nutzer-Sicht); Freischaltung per
 	// Devtools-Konsole: localStorage.setItem('arch-overlay-hotkey-diag','1')
 	// und Einstellungen neu öffnen.
-	const hotkeyDiagVisible = $state(
+	let hotkeyDiagVisible = $state(
 		typeof localStorage !== 'undefined'
 			&& localStorage.getItem('arch-overlay-hotkey-diag') === '1'
 	);
@@ -3497,6 +3497,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Das HAUPT-Suchfeld treibt beide Modi — im Market-Modus durchsucht es die
 	// Offers (Name/Typ/Terminal/Verkäufer), der Platzhalter wechselt mit.
 	function onInput() {
+		// Support-Haken (WK, t_ed01e8f7): `:d` in der Suchleiste schaltet die
+		// Hotkey-Diagnose an/aus (persistiert). Nötig, weil Devtools im
+		// Release-Build deaktiviert sind — Support/Fehleranalyse braucht einen
+		// Weg ohne Konsole. Offener Diagnose-Block bleibt Standard-aus.
+		if (input.trim().toLowerCase() === ':d') {
+			hotkeyDiagVisible = !hotkeyDiagVisible;
+			try {
+				localStorage.setItem('arch-overlay-hotkey-diag', hotkeyDiagVisible ? '1' : '0');
+			} catch {
+				/* Webview ohne localStorage: Diagnose bleibt dann run-time-only. */
+			}
+			input = '';
+			if (hotkeyDiagVisible) {
+				inConfig = true;
+				startHotkeyDiagPoll();
+			} else {
+				stopHotkeyDiagPoll();
+			}
+			return;
+		}
 		// Platzhalter-Modi (Inventar/Hangar): das Haupt-Suchfeld ist dort inert —
 		// erst zurück im Suche/Market-Modus treibt es wieder Suche/Offers.
 		if (railMode) return;
@@ -5547,6 +5567,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if hotkeyDiagNote}
 							<div class="cfg-note" role="status">{hotkeyDiagNote}</div>
 						{/if}
+						<div class="cfg-note">{$t('settings.hotkeydiag.open_hint')}</div>
 						<div class="cfg-note">{$t('settings.hotkeydiag.hint')}</div>
 					</section>
 					{/if}
