@@ -13,6 +13,12 @@ mod app_settings;
 #[cfg(desktop)]
 mod connector;
 mod hangar;
+/// H5-Fallback (t_ed01e8f7): Low-Level-Keyboard-Hook für Global-Shortcuts,
+/// wenn SC fokussiert ist (Anti-Cheat-Hook verschluckt WM_HOTKEY). Nur die
+/// Windows-Glue-Schicht ist cfg(windows); die Combo-Erkennung ist cross-
+/// platform pure und unit-getestet.
+#[cfg(desktop)]
+mod hotkey_llhook;
 #[cfg(desktop)]
 mod hyprland_sync;
 /// T2 (t_c5904bcb): UI-Fehler als `{"error_key": ..., "params": ...}`-JSON —
@@ -36,6 +42,10 @@ mod providers;
 #[cfg(desktop)]
 mod routes;
 mod scwiki_sync;
+/// Hotkey-Diagnose-Sonden (t_ed01e8f7): WM_HOTKEY-Empfangs-Log +
+/// Status-IPC für die Windows-VM-Probe (fokussiertes Fenster, Elevation).
+#[cfg(desktop)]
+mod shortcut_diag;
 #[cfg(desktop)]
 mod trade;
 #[cfg(desktop)]
@@ -53,6 +63,7 @@ pub fn run() {
             overlay::overlay_get_state,
             overlay::overlay_set_click_through,
             overlay::overlay_set_visible,
+            shortcut_diag::shortcut_diag_status,
             trade::search,
             hangar::hangar_list,
             hangar::hangar_add,
@@ -225,8 +236,17 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while building tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            use tauri::RunEvent;
+            // H5-Fallback (t_ed01e8f7): beim Shutdown den LL-Keyboard-Hook
+            // sauber entfernen (sonst hängt der Hook-Thread im Todesfall).
+            if let RunEvent::Exit = event {
+                #[cfg(target_os = "windows")]
+                crate::hotkey_llhook::shutdown();
+            }
+        });
 }
 
 /// Pin the X11/WM_CLASS window identity to exactly the documented lowercase
