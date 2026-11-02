@@ -198,7 +198,9 @@ struct HookRuntime {
     matcher: std::sync::Mutex<ComboMatcher>,
     /// WK-R1 Defekt 2: Kind am Combo (deckungsgleicher Index), nicht geraten.
     kinds: Vec<crate::overlay::ShortcutKind>,
-    app: AppHandle<tauri::Wry>,
+    /// Das konkrete Handle wird bei `install::<R>` in die Closure gefangen —
+    /// der thread_local-Runtime-Slot kann nicht generisch sein.
+    dispatch: Box<dyn Fn(crate::overlay::ShortcutKind)>,
 }
 
 #[cfg(target_os = "windows")]
@@ -213,7 +215,7 @@ static HOOK_THREAD_ID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(Non
 #[cfg(target_os = "windows")]
 /// Sync mit dem Game-Poller: SC gestartet → Hook installieren (NACH dem
 /// Anti-Cheat-Hook → der sieht unsere Taste zuerst), SC beendet → unhook.
-pub fn sync_game_running(app: &AppHandle, running: bool) {
+pub fn sync_game_running<R: tauri::Runtime>(app: &AppHandle<R>, running: bool) {
     if running {
         install(app.clone());
     } else {
@@ -222,7 +224,7 @@ pub fn sync_game_running(app: &AppHandle, running: bool) {
 }
 
 #[cfg(target_os = "windows")]
-pub fn install(app: AppHandle) {
+pub fn install<R: tauri::Runtime>(app: AppHandle<R>) {
     let already = *HOOK_THREAD_ID.lock().expect("hook thread id lock");
     if already.is_some() {
         return;
