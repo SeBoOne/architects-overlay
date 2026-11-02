@@ -183,11 +183,21 @@ impl ComboMatcher {
 /// Hintergrund parallel feuert) nicht doppelt auslösen — und umgekehrt.
 const DEDUPE_WINDOW: std::time::Duration = std::time::Duration::from_millis(600);
 
+#[cfg(target_os = "windows")]
+use crate::shortcut_diag;
 /// Hook-Laufzeit auf dem Message-Loop-Thread. Der Hook-Proc läuft IM
 /// Kontext dieses Threads — daher die thread_local-Verkabelung.
+// WK-R1: Windows-Scope braucht AppHandle + den Sibling shortcut_diag —
+// auf Linux wird das Modul nie kompiliert, deshalb fielen die fehlenden
+// Imports nur im Windows-Target auf (CI-Check, E0425/E0433).
+#[cfg(target_os = "windows")]
+use tauri::AppHandle;
+
 #[cfg(target_os = "windows")]
 struct HookRuntime {
     matcher: std::sync::Mutex<ComboMatcher>,
+    /// WK-R1 Defekt 2: Kind am Combo (deckungsgleicher Index), nicht geraten.
+    kinds: Vec<crate::overlay::ShortcutKind>,
     app: AppHandle<tauri::Wry>,
 }
 
@@ -374,7 +384,7 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
     // Regelpunkt: KeyEvents NORMAL durchreichen — nur die Combo-Erkennung
     // lauscht mit. Ein Blocken (kein CallNextHookEx) käme einem Tastendiebstahl
     // gleich und wäre exakt der SC-Bug, den wir umgehen.
-    let pass_through = || CallNextHookEx(std::ptr::null(), n_code, w_param, l_param);
+    let pass_through = || CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
     if n_code < 0 {
         return pass_through();
     }
