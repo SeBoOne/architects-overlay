@@ -18,6 +18,7 @@ mod hangar;
 /// Windows-Glue-Schicht ist cfg(windows); die Combo-Erkennung ist cross-
 /// platform pure und unit-getestet.
 #[cfg(desktop)]
+mod game_detection_diag;
 mod hotkey_llhook;
 #[cfg(desktop)]
 mod hyprland_sync;
@@ -64,6 +65,7 @@ pub fn run() {
             overlay::overlay_set_click_through,
             overlay::overlay_set_visible,
             shortcut_diag::shortcut_diag_status,
+            game_detection_diag::game_detection_diag,
             trade::search,
             hangar::hangar_list,
             hangar::hangar_add,

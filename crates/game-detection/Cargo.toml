@@ -1,6 +1,14 @@
 [package]
 name = "game_detection"
 version = "0.1.0"
-description = "Star Citizen process detection (Linux /proc, Windows tasklist)"
+description = "Star Citizen process detection (Linux /proc, Windows Toolhelp32 with tasklist fallback)"
 edition = "2024"
 rust-version = "1.90"
+
+[dependencies]
+# Native Prozess-Aufzählung (Toolhelp32) statt tasklist-Kindprozess:
+# Anwendungssteuerungs-Richtlinien (AppLocker/WDAC/SmartScreen-Policy)
+# blocken das Spawnen von tasklist.exe im Overlay-Prozess — die Erkennung
+# fiel dann still auf "Spiel läuft nicht" zurück (Nutzer-Bug 2026-11-02).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }

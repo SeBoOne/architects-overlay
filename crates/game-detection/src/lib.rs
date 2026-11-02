@@ -7,7 +7,11 @@
 //!   line rather than a single native binary name — the Windows game process
 //!   surfaces as a wine process whose `cmdline` still names `StarCitizen.exe`
 //!   (or the RSI launcher / Spectre).
-//! - Windows: shells out to `tasklist` and matches known image names.
+//! - Windows: native `Toolhelp32` process snapshot (no child process), with
+//!   `tasklist` as fallback. The shell-out was the primary path before
+//!   2026-11-02; application-control policies (AppLocker/WDAC/SmartScreen)
+//!   that block spawning `tasklist.exe` blinded it silently — the overlay
+//!   then behaved like "game not running" (hotkey dead, auto-hide).
 //! - macOS: shells out to `ps -ax -o command=` and matches the same known
 //!   tokens. There is no native macOS Star Citizen client; the branch exists
 //!   so the overlay builds/behaves cleanly on Apple silicon and would still
@@ -129,22 +133,71 @@ fn linux_procs() -> Vec<ProcEntry> {
     out
 }
 
-/// Windows: run `tasklist` and collect the image names.
+/// Windows: native Toolhelp32-Snapshot zuerst, `tasklist` als Fallback.
 ///
+/// Der Toolhelp-Weg spawned KEINEN Kindprozess — Anwendungssteuerungs-
+/// richtlinien (AppLocker/WDAC), die das Starten von `tasklist.exe` aus
+/// unserem GUI-Prozess blocken, können die Erkennung nicht mehr blind
+/// schlagen (Nutzer-Bug 2026-11-02: Hotkey tot + Auto-Hide, obwohl SC lief).
 /// Compiled on every platform (so the Linux dev host type-checks it) but only
 /// *executed* on Windows, where it is selected from `is_game_running` via
 /// `cfg!(target_os = "windows")`.
-/// TODO(ci): a Windows CI test for the tasklist path — the `#[cfg(test)]`
-/// guard below keeps the function inert on Linux; a `#[cfg(target_os =
-/// "windows")]` test spawning a renamed copy of an exe (mirroring
-/// `proc_scan_detects_spawned_star_citizen`) can be added once a Windows
-/// runner exercises the CI workflow.
 fn windows_procs() -> Vec<ProcEntry> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    match toolhelp_procs() {
+        Some(procs) if !procs.is_empty() => procs,
+        // Snapshot leer/fehlgeschlagen → alte tasklist-Route als Rückfalle.
+        _ => tasklist_procs(),
+    }
+}
+
+#[cfg(windows)]
+/// Vollständige Prozessliste per Toolhelp32 (exe-Namen, wie tasklist sie zeigt).
+fn toolhelp_procs() -> Option<Vec<ProcEntry>> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut out: Vec<ProcEntry> = Vec::new();
+        let mut ok = Process32FirstW(snapshot, &mut entry);
+        while ok != 0 {
+            // szExeFile ist ein fixed [u16; 260]-Buffer, NUL-terminiert.
+            let end = entry
+                .szExeFile
+                .iter()
+                .position(|c| *c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+            out.push(ProcEntry { cmdline: name });
+            ok = Process32NextW(snapshot, &mut entry);
+        }
+        CloseHandle(snapshot);
+        Some(out)
+    }
+}
+
+#[cfg(not(windows))]
+/// Kein Toolhelp ohne Windows — der Dispatch auf Nicht-Windows-Plattformen
+/// ruft diese Funktion nie; der Stub hält das Crate plattformneutral kompilierbar.
+fn toolhelp_procs() -> Option<Vec<ProcEntry>> {
+    None
+}
+
+#[cfg(windows)]
+/// Fallback: `tasklist`-Kindprozess (wie vor 2026-11-02 primär).
+fn tasklist_procs() -> Vec<ProcEntry> {
     let mut out: Vec<ProcEntry> = Vec::new();
     // tasklist /FO CSV /NH → `"IMAGE.EXE","PID","SESS","NAME","MEM",...`
-    if cfg!(test) {
-        return out;
-    }
     let mut cmd = Command::new("tasklist");
     cmd.arg("/FO").arg("CSV").arg("/NH");
     hide_console(&mut cmd);
@@ -163,6 +216,13 @@ fn windows_procs() -> Vec<ProcEntry> {
         }
     }
     out
+}
+
+#[cfg(not(windows))]
+/// tasklist-Kindprozess gibt es ohne Windows nicht — Stub für den
+/// plattformneutralen Dispatch in `windows_procs`.
+fn tasklist_procs() -> Vec<ProcEntry> {
+    Vec::new()
 }
 
 /// macOS: run `ps -ax -o command=` and collect the raw command lines.
