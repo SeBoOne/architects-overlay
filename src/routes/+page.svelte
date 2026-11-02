@@ -1508,6 +1508,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} | null;
 	};
 	let hotkeyDiag = $state<HotkeyDiagSnapshot | null>(null);
+	// Diagnose-Sektion ist Standard-aus (Nutzer-Sicht); Freischaltung per
+	// Devtools-Konsole: localStorage.setItem('arch-overlay-hotkey-diag','1')
+	// und Einstellungen neu öffnen.
+	const hotkeyDiagVisible = $state(
+		typeof localStorage !== 'undefined'
+			&& localStorage.getItem('arch-overlay-hotkey-diag') === '1'
+	);
 	let hotkeyDiagNote = $state<string | null>(null);
 	let hotkeyDiagTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -5486,11 +5493,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							</div>
 						{/if}
 					</section>
-<!-- WK-Diagnose (t_ed01e8f7): Shortcut-Verdrahtung live prüfen — OS-Ebene
-					     (WM_HOTKEY) vs. LL-Hook-Fallback. Zählt der LL-Hook Tasten,
-					     sieht er die Chain; steigen die Zähler nicht, kommt gar
-					     nichts durch (→ Hook-Reihenfolge/Filter). -->
-					<section class="cfg-sect cfg-sect-hotkeydiag">
+{#if hotkeyDiagVisible}
+	<!-- WK-Diagnose (t_ed01e8f7): Shortcut-Verdrahtung live prüfen — OS-Ebene
+     (WM_HOTKEY) vs. LL-Hook-Fallback. Zählt der LL-Hook Tasten,
+     sieht er die Chain; steigen die Zähler nicht, kommt gar
+     nichts durch (→ Hook-Reihenfolge/Filter). Standardmäßig
+     verborgen (Nutzer-Frage 2026-11-02) — Freischaltung per
+     Devtools: localStorage.setItem('arch-overlay-hotkey-diag','1'). -->
+	<section class="cfg-sect cfg-sect-hotkeydiag">
 						<div class="h">{$t('settings.hotkeydiag.title')}</div>
 						<div class="cfg-key-row">
 							<button type="button" class="chip" onclick={() => void refreshHotkeyDiag()}>
@@ -5539,6 +5549,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{/if}
 						<div class="cfg-note">{$t('settings.hotkeydiag.hint')}</div>
 					</section>
+					{/if}
 <!-- C2 (t_91124322): Plugins — Manifest-Connectors verwalten (Import
 					     lokale Datei, Toggle = Placement erscheint/verschwindet,
 					     Auth-Felder NUR bei Manifest-Deklaration, maskiert wie der
