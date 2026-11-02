@@ -10,12 +10,18 @@
 //! Bestätigung (Karte Umsetzung 2: nie auto-install ohne Wunsch).
 //!
 //! Ausführungsentscheidung Windows (dokumentiert in docs/UPDATER.md):
-//! die App lädt setup.exe herunter, verifiziert SHA256, startet das Setup
-//! SILENT (`/S`) + `/R` als CHILD-PROZESS (detached, CREATE_NO_WINDOW —
-//! gleiche Mechanik wie der tasklist-Fix t_d323b29e) und beendet sich dann
-//! sauber selbst; NSIS schließt eine laufende Instanz ab, installiert und
-//! startet das Overlay nach Abschluss selbst neu (`/R` — Sebo-Wunsch:
-//! nach dem Update wird das Overlay wieder gestartet).
+//! MSI BEVORZUGT (SAC-Fix t_803497b5): die App lädt die MSI herunter,
+//! verifiziert SHA256 und startet sie über den Microsoft-signierten
+//! `msiexec.exe /i <msi> /qb` — die heruntergeladene, unsignierte Datei
+//! wird NIE selbst gespawnt, denn Smart App Control / WDAC blocken genau
+//! das (`os error 4551` — „Application Control policy has blocked this
+//! file“, ohne „Trotzdem ausführen“). msiexec hat Reputation und passiert
+//! SAC; die UAC-Elevation übernimmt msiexec selbst. Auto-Relaunch nach
+//! Exit-Code 0/3010 via PowerShell-Wrapper (`powershell.exe` ist ebenfalls
+//! signiert — kein selbst-geschriebenes Script). NSIS-Fallback für
+//! Releases ohne MSI: setup.exe SILENT (`/S`) + `/R` als CHILD-PROZESS
+//! (detached, CREATE_NO_WINDOW — gleiche Mechanik wie der
+//! tasklist-Fix t_d323b29e). Danach beendet sich die App sauber selbst.
 //! Linux AppImage: neue Datei atomar am laufenden AppImage-Pfad ersetzen
 //! (alte umbenennen → neue schreiben → exec-Rechte → alte löschen,
 //! Umsetzung 4) und relaunchen. .deb: KEIN Self-Update — Hint mit dem
@@ -67,8 +73,8 @@ pub struct UpdaterStatus {
 #[derive(Debug, Serialize)]
 pub struct AvailableInfo {
     pub version: String,
-    /// "nsis" | "appimage" | "deb" — die UI blendet den Install-Button nur
-    /// für self-update-fähige Kinds ein.
+    /// "nsis" | "msi" | "appimage" | "deb" — die UI blendet den
+    /// Install-Button nur für self-update-fähige Kinds ein.
     pub kind: String,
     pub asset_name: String,
 }
@@ -255,6 +261,59 @@ fn spawn_nsis_silent(installer: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Windows MSI (SAC-Fix t_803497b5): PowerShell-Kommando-Bau für
+/// `Start-Process msiexec.exe -ArgumentList '/i','<msi>','/qb' -Wait
+/// -PassThru` + Auto-Relaunch der Overlay-exe nach Exit-Code 0 ODER 3010
+/// (SUCCESS_REBOOT_REQUIRED — Installation war erfolgreich, Neustart
+/// nötig; das Overlay startet trotzdem neu, der Nutzer rebootet wann es
+/// ihm passt). Plattformunabhängig, damit das Quoting auf jedem Runner
+/// getestet werden kann.
+///
+/// SAC-konsequent: NUR signierte System-Binaries werden gespawnt
+/// (powershell.exe → msiexec.exe). KEIN selbst-geschriebenes
+/// .cmd/.ps1-Script — SAC blockt unsignierte Dateien.
+///
+/// bewusst OHNE cfg(windows): der Bau ist pure String-Logik und wird auf
+/// jedem Runner unit-getestet (Quoting); verwendet wird er nur in
+/// `spawn_msi_install` (cfg windows) — daher allow(dead_code) für
+/// Nicht-Windows-Checks.
+#[allow(dead_code)]
+fn msi_powershell_command(msi: &std::path::Path, current_exe: &std::path::Path) -> String {
+    // PowerShell-Single-Quotes escapen: ' -> ''
+    let q = |p: &std::path::Path| -> String { p.to_string_lossy().replace('\'', "''") };
+    format!(
+        "$p = Start-Process msiexec.exe -ArgumentList '/i','{}','/qb' -Wait -PassThru; if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {{ Start-Process '{}' }}",
+        q(msi),
+        q(current_exe),
+    )
+}
+
+/// Windows: MSI über den Microsoft-signierten msiexec.exe installieren
+/// (SAC-Fix t_803497b5) — detached, CREATE_NO_WINDOW. Die MSI selbst wird
+/// nie direkt ausgeführt (das wäre der os-error-4551-Block durch Smart
+/// App Control). UAC-Elevation übernimmt msiexec selbst.
+#[cfg(windows)]
+fn spawn_msi_install(msi: &std::path::Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let cmd = msi_powershell_command(msi, &current_exe);
+    std::process::Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            cmd.as_str(),
+        ])
+        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        .spawn()
+        .map_err(|e| err_keyp("update.err_spawn_msiexec", json!({ "err": e.to_string() })))?;
+    Ok(())
+}
+
 /// Linux: das neue AppImage atomar am laufenden Pfad ersetzen (alte
 /// umbenennen → neue benennen → exec-Rechte → alte löschen) und das
 /// Overlay relaunchen. Nutzerdaten sind nicht berührt (AppImage-Pfad ≠
@@ -307,9 +366,10 @@ fn install_bare_bin(new_path: &std::path::Path, target: &std::path::Path) -> Res
 }
 
 /// On-demand Install (Karte Umsetzung 3/4): der Button-Klick IST die
-/// Bestätigung. Windows → setup.exe (silent child) + Exit; Linux AppImage →
-/// atomar ersetzen + Relaunch + Exit; Linux Bare-Binary → atomar ersetzen
-/// + Neustart-Hinweis (KEIN Auto-Restart/Exit); .deb → Err mit dem apt-Hint.
+/// Bestätigung. Windows MSI → msiexec-Kind-Prozess + Exit; Windows NSIS
+/// (Fallback) → setup.exe (silent child) + Exit; Linux AppImage → atomar
+/// ersetzen + Relaunch + Exit; Linux Bare-Binary → atomar ersetzen +
+/// Neustart-Hinweis (KEIN Auto-Restart/Exit); .deb → Err mit dem apt-Hint.
 #[tauri::command]
 pub async fn updater_install(
     app: tauri::AppHandle,
@@ -342,6 +402,21 @@ pub async fn updater_install(
         msg
     })?;
     match &avail.plan {
+        Plan::WindowsMsi { .. } => {
+            #[cfg(windows)]
+            {
+                spawn_msi_install(&new_path)?;
+                state.set_note(err_keyp(
+                    "update.note_msi_done",
+                    json!({ "version": avail.version }),
+                ));
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = new_path;
+                return Err(err_key("update.err_windows_only"));
+            }
+        }
         Plan::WindowsNsis { .. } => {
             #[cfg(windows)]
             {
@@ -408,4 +483,44 @@ pub async fn updater_install(
     // in den Webview zurück.
     let settings_state = app.state::<SettingsState>();
     Ok(status(&app, state.inner(), settings_state.inner()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn msi_command_wires_msiexec_qb_and_relaunch() {
+        let cmd = msi_powershell_command(
+            Path::new(
+                r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\app_x64_en-US.msi",
+            ),
+            Path::new(r"C:\Program Files\architects-overlay\architects-overlay.exe"),
+        );
+        assert!(cmd.contains("Start-Process msiexec.exe -ArgumentList '/i'"));
+        assert!(cmd.contains("'/qb' -Wait -PassThru"));
+        assert!(cmd.contains(
+            "'C:\\Users\\sebo\\AppData\\Local\\Temp\\architects-overlay-update\\app_x64_en-US.msi'"
+        ));
+        // Auto-Relaunch nach Exit-Code 0 ODER 3010 (SUCCESS_REBOOT_REQUIRED).
+        assert!(cmd.contains("-eq 0 -or $p.ExitCode -eq 3010"));
+        assert!(cmd.contains(
+            "Start-Process 'C:\\Program Files\\architects-overlay\\architects-overlay.exe'"
+        ));
+    }
+
+    #[test]
+    fn msi_command_escapes_single_quotes() {
+        // PowerShell-Single-Quotes: ' -> '' (Pfad mit Apostroph darf das
+        // Kommando nicht zerschießen).
+        let cmd = msi_powershell_command(
+            Path::new(r"C:\Users\o'brien\app.msi"),
+            Path::new(r"C:\Program Files\architects-overlay\architects-overlay.exe"),
+        );
+        assert!(cmd.contains("'C:\\Users\\o''brien\\app.msi'"));
+        // Nur die vier erwarteten Argument-Quotes um den MSI-Pfad herum
+        // plus die Relaunch-Quotes; das Apostroph selbst ist verdoppelt.
+        assert!(!cmd.contains("o'brien"));
+    }
 }

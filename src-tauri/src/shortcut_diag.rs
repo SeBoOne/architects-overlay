@@ -129,7 +129,9 @@ pub struct LlHookDiag {
 /// VK → lesbare Taste (Diagnose-Anzeige; unbekannt = Hex).
 pub fn vk_name(vk: u32) -> String {
     match vk {
-        0x30..=0x39 | 0x41..=0x5A => char::from_u32(vk).map(|c| c.to_string()).unwrap_or_default(),
+        0x30..=0x39 | 0x41..=0x5A => char::from_u32(vk)
+            .map(|c| c.to_string())
+            .unwrap_or_default(),
         0x70..=0x7B => format!("F{}", vk - 0x6F),
         0xA0..=0xA1 => "shift".into(),
         0xA2..=0xA3 => "ctrl".into(),
