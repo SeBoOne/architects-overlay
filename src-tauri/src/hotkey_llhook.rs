@@ -25,12 +25,12 @@
 //! Die Combo-Erkennung ist die pure Schicht (`Combo`/`ComboMatcher`/
 //! `parse_combo`) — plattformunabhängig unit-getestet.
 
+#[cfg(target_os = "windows")]
+use std::sync::atomic::Ordering;
 /// Diagnose-Zähler (WK-Diagnose-UI): zählt JEDE Taste, die der eigene
 /// LL-Hook sieht — der entscheidende Indikator, ob unser Hook überhaupt
 /// in der Hook-Chain ankommt, wenn SC fokussiert ist (H5-Verifikation).
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
-#[cfg(target_os = "windows")]
-use std::sync::atomic::Ordering;
 
 static LL_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LL_INSTALLED_UNIX: AtomicU64 = AtomicU64::new(0);
