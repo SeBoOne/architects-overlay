@@ -82,7 +82,10 @@ immer mitgeliefert; es wurde nur nie verwendet.
 s. u. — kein Trust-on-Download) → `powershell.exe -NoProfile
 -NonInteractive -WindowStyle Hidden -Command "Start-Process msiexec.exe
 -ArgumentList '/i','<MSI-PFAD>','/qb' -Wait -PassThru; if ($p.ExitCode
--eq 0 -or $p.ExitCode -eq 3010) { Start-Process '<Overlay-EXE>' }"`
+-eq 0 -or $p.ExitCode -eq 3010) { Start-Process '<Overlay-EXE>' } else {
+Set-Content -LiteralPath '<MARKER-DATEI>' -Value ('msiexec exit ' +
+$p.ExitCode + ' ' + (Get-Date).ToUniversalTime().ToString('o'));
+Start-Process '<Overlay-EXE>' }"`
 detached starten (CREATE_NO_WINDOW | DETACHED_PROCESS) → App `exit(0)`.
 
 - **SAC-konsequent:** es werden NUR signierte System-Binaries gespawnt
@@ -94,6 +97,12 @@ detached starten (CREATE_NO_WINDOW | DETACHED_PROCESS) → App `exit(0)`.
   der PowerShell-Wrapper startet die Overlay-EXE neu, nachdem msiexec mit
   Exit-Code 0 ODER 3010 (SUCCESS_REBOOT_REQUIRED — Installation erfolgreich,
   Neustart nötig) endet. Ersetzt das frühere NSIS-`/R`.
+- **Fehlschlag-Zweig (Härtung t_05f86461):** Exit-Code NICHT 0/3010
+  (UAC-Verweigerung → 1223, interne MSI-Fehler → 1603, MSI-Abbruch) —
+  s. Abschnitt „MSI-Fehlschlag“ unten. Auch hier relauncht der Wrapper
+  die Overlay-EXE (die noch installierte alte Version) und schreibt
+  Exit-Code + UTC-Zeitstempel in `msi-install-failure.txt` im
+  Temp-Update-Verzeichnis (`%TEMP%\architects-overlay-update\`).
 - Implementiert in `src-tauri/src/updater.rs` (`spawn_msi_install`,
   Kommando-Bau in `msi_powershell_command` — testbares Quoting,
   PowerShell-Single-Quotes werden verdoppelt).
@@ -162,6 +171,37 @@ nicht ins Frontend.
 - Download fehlgeschlagen: ALTE Version bleibt unangetastet (Windows:
   Setup wird nie gestartet; Linux: `.old`-Rename wird gerollt, bevor die
   neue Datei am Platz ist).
+
+### MSI-Fehlschlag: Spawn-Erfolg != Install-Erfolg (Härtung t_05f86461)
+
+Der Updater meldet Erfolg, sobald der PowerShell-Wrapper **gespawnt** ist
+(`update.note_msi_done`) — die App beendet sich dann (`exit(0)`), BEVOR
+feststeht, ob msiexec die Installation tatsächlich durchführt. Was danach
+schiefgehen kann: UAC-Dialog verweigert (msiexec-Exit 1223), interner
+MSI-Fehler (klassisch 1603), Abbruch. **Spawn-Erfolg ist kein
+Install-Erfolg.** MSI rollt in solchen Fällen normal zurück — die ALTE
+Version ist noch installiert und lauffähig, aber ohne Gegenmaßnahme wäre
+das Overlay beendet und läge nirgends mehr vor (App-Zurück-Lücke).
+
+Daher der else-Zweig im PowerShell-Wrapper (Exit-Code nicht 0/3010):
+
+1. **Relaunch:** `Start-Process '<Overlay-EXE>'` — die noch installierte
+   alte Version liegt danach wieder vor.
+2. **Fehlersichtbarkeit:** Exit-Code + UTC-Zeitstempel werden nach
+   `%TEMP%\architects-overlay-update\msi-install-failure.txt` geschrieben
+   (`msiexec exit <code> <ts>`). Der nächste Check-Lauf der neu gestarteten
+   App (`run_check`) liest die Datei, löscht sie (Note erscheint genau
+   einmal pro Fehlschlag) und setzt die UI-Note `update.note_msi_failed`
+   (de/en) — sichtbar in der Config-View „Aktualisierung“. Ein verfügbares
+   Update bleibt dabei erhalten: Retry über „Jetzt aktualisieren“ möglich.
+3. Ein neuer MSI-Versuch (`spawn_msi_install`) entfernt einen alten Marker
+   vor dem Spawn, damit ein späterer Erfolg nicht vom Fehlschlag-Note-Pfad
+   überdeckt wird.
+
+Grenze: Die Note kommt erst beim nächsten Check im neu gestarteten Overlay —
+die Instanz, die der Fehlschlag beendet hat, kann selbst nichts mehr
+melden. Echte Windows-E2E-Verifikation (1223/1603 herbeiführen) läuft in
+der Sebo-VM, nicht in den Unit-Tests.
 
 ## Komponenten
 

@@ -987,6 +987,7 @@
     "update.note_checking": "Checking for updates …",
     "update.note_downloading": "Update v{version} is being downloaded …",
     "update.note_msi_done": "Update v{version} loaded — installation runs in the background, the overlay will be closed and restarted afterwards.",
+    "update.note_msi_failed": "Installing the update failed (msiexec exit code {code}, {timestamp}) — e.g. UAC denied or MSI error 1603. The previous version was not changed and the overlay was restarted. Check the update log in the app's temp folder; if it fails again, install the update manually from the releases page.",
     "update.note_nsis_done": "Update v{version} loaded — setup runs in the background, the overlay will be closed.",
     "update.note_uptodate": "No update found — v{version} is up to date.",
     "update.reason_deb_apt": ".deb installations update via apt — the app performs no root actions.",
