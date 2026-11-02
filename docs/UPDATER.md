@@ -5,10 +5,11 @@ TG OHNE Releases-API: der Check holt `latest.json` über den Redirect-Pfad
 `https://github.com/SeBoOne/architects-overlay/releases/latest/download/latest.json`
 (NICHT rate-limited — kein API-Endpoint). Fallback für alte Releases ohne
 `latest.json`: Releases-API (`releases/latest`, ohne Auth). + on-demand
-Update aus der
-laufenden App (Windows NSIS + Linux AppImage). Motivation: die unsignierte
-.exe löst bei jedem manuellen Download eine SmartScreen-Warnung aus — der
-Updater lädt/installiert das Update selbst.
+(Windows MSI bevorzugt / NSIS-Fallback + Linux AppImage). Motivation: die
+unsignierte .exe löst bei jedem manuellen Download eine SmartScreen-Warnung
+aus — der Updater lädt/installiert das Update selbst. Seit dem SAC-Fix
+(t_803497b5) läuft Windows zusätzlich über den signierten msiexec, weil
+Smart App Control das direkte Spawnen der unsignierten setup.exe blockt.
 
 ## Update-Check (beide Plattformen)
 
@@ -49,26 +50,64 @@ Updater lädt/installiert das Update selbst.
   ohne Klick auf „Jetzt aktualisieren“ (Karte Umsetzung 2).
 - „Jetzt prüfen“ triggert den Check sofort.
 
-## Windows-Update-Pfad (NSIS) — dokumentierte Entscheidung
+## Windows-Update-Pfad (MSI bevorzugt, NSIS-Fallback) — dokumentierte Entscheidung
 
 Die laufende exe kann sich nicht selbst ersetzen. Zwei Varianten standen
 zur Wahl (Karte Umsetzung 3):
 
 1. App beendet sich, Setup startet danach (kein
    nachgelagerter Prozess möglich).
-2. **App startet das Setup als CHILD-PROZESS mit `/S /R` (silent + Auto-
-   Restart nach der Installation) und beendet sich dann selbst sauber —
-   DAS IST IMPLEMENTIERT.**
+2. **App startet den Installer als CHILD-PROZESS und beendet sich dann
+   selbst sauber — DAS IST IMPLEMENTIERT.**
 
-Ablauf: `setup.exe` herunterladen → SHA256 verifizieren (s. u.) →
+### Warum MSI bevorzugt wird (SAC-Fix t_803497b5)
+
+Windows-Nutzer mit **Smart App Control (SAC)** / WDAC-Regelwerk blockieren
+das direkte Spawnen der heruntergeladenen, **unsignierten** `*-setup.exe`
+mit `os error 4551` („Application Control policy has blocked this file“) —
+ohne „Trotzdem ausführen“-Option. Der NSIS- Weg war für diese Nutzer
+nutzlos. Die MSI dagegen funktioniert: `msiexec.exe` ist
+**Microsoft-signiert mit Reputation** und passiert SAC — die MSI selbst
+wird nie direkt ausgeführt, sondern nur msiexec übergeben.
+
+Daher: **Asset-Auswahl Windows = MSI bevorzugt** (`*.msi`, bei mehreren
+das `x64`-Asset — wir shippen nur x64), **Fallback auf `*-setup.exe`**
+(NSIS) für alte Releases ohne MSI. Die Release-Pipeline unverändert — sie
+hat das MSI-Asset (`architects-overlay_<version>_x64_en-US.msi`) schon
+immer mitgeliefert; es wurde nur nie verwendet.
+
+### Ablauf MSI (implementiert)
+
+`<name>.msi` herunterladen → **SHA256 verifizieren** (Pflicht bleibt,
+s. u. — kein Trust-on-Download) → `powershell.exe -NoProfile
+-NonInteractive -WindowStyle Hidden -Command "Start-Process msiexec.exe
+-ArgumentList '/i','<MSI-PFAD>','/qb' -Wait -PassThru; if ($p.ExitCode
+-eq 0 -or $p.ExitCode -eq 3010) { Start-Process '<Overlay-EXE>' }"`
+detached starten (CREATE_NO_WINDOW | DETACHED_PROCESS) → App `exit(0)`.
+
+- **SAC-konsequent:** es werden NUR signierte System-Binaries gespawnt
+  (`powershell.exe` → `msiexec.exe`). Kein selbst-geschriebenes
+  .cmd/.ps1-Script — SAC blockt unsignierte Dateien.
+- `/qb`: basic UI (Fortschrittsbalken, keine Rückfragen). UAC-Elevation
+  übernimmt msiexec selbst.
+- **Auto-Relaunch** (Sebo-Wunsch: Overlay startet nach dem Update wieder):
+  der PowerShell-Wrapper startet die Overlay-EXE neu, nachdem msiexec mit
+  Exit-Code 0 ODER 3010 (SUCCESS_REBOOT_REQUIRED — Installation erfolgreich,
+  Neustart nötig) endet. Ersetzt das frühere NSIS-`/R`.
+- Implementiert in `src-tauri/src/updater.rs` (`spawn_msi_install`,
+  Kommando-Bau in `msi_powershell_command` — testbares Quoting,
+  PowerShell-Single-Quotes werden verdoppelt).
+
+### NSIS-Fallback (Releases ohne MSI)
+
+Ablauf wie bisher: `setup.exe` herunterladen → SHA256 verifizieren →
 `setup.exe /S /R` detached starten (silent + Reboot-Flag des NSIS-Templates:
 die App wird nach Abschluss der Installation **automatisch neu gestartet**;
 detached, kein Konsolenfenster — gleiche Mechanik wie der hide_console-Fix
 t_d323b29e) → App `exit(0)`. Der NSIS-Installer übernimmt das Selbst-Erstzen
 (Tauri-NSIS schließt eine eventuell noch laufende Instanz ab und ersetzt die
-exe) und startet das Overlay danach selbst wieder — implementiert in
-`src-tauri/src/updater.rs` (`spawn_nsis_silent`, Flags `CREATE_NO_WINDOW |
-DETACHED_PROCESS`).
+exe) — implementiert in `src-tauri/src/updater.rs` (`spawn_nsis_silent`,
+Flags `CREATE_NO_WINDOW | DETACHED_PROCESS`).
 
 ## Linux-Update-Pfad
 
@@ -131,7 +170,8 @@ nicht ins Frontend.
 - `crates/settings/` — `[updater]`-Sektion (`enabled`, `interval_hours`,
   `repo`, `base_url`).
 - `src-tauri/src/updater.rs` — State + `updater_status` / `updater_check_now`
-  / `updater_install` Commands + periodischer Check-Thread.
+  / `updater_install` Commands + periodischer Check-Thread (`spawn_msi_install`
+  SAC-konsequent über msiexec / `spawn_nsis_silent` Fallback).
 - `.github/workflows/build.yml` — TG: Job `latest-json` (latest.json +
   SHA256SUMS an v*-Releases; SHA256-Manifests aus Linux/Windows-Jobs).
 - Frontend: Config-View-Sektion „Aktualisierung“ (Chip + Button + Note).
