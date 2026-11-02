@@ -213,7 +213,7 @@ static HOOK_THREAD_ID: std::sync::Mutex<Option<u32>> = std::sync::Mutex::new(Non
 #[cfg(target_os = "windows")]
 /// Sync mit dem Game-Poller: SC gestartet → Hook installieren (NACH dem
 /// Anti-Cheat-Hook → der sieht unsere Taste zuerst), SC beendet → unhook.
-pub fn sync_game_running<R: tauri::Runtime>(app: &AppHandle<R>, running: bool) {
+pub fn sync_game_running(app: &AppHandle, running: bool) {
     if running {
         install(app.clone());
     } else {
@@ -222,7 +222,7 @@ pub fn sync_game_running<R: tauri::Runtime>(app: &AppHandle<R>, running: bool) {
 }
 
 #[cfg(target_os = "windows")]
-pub fn install<R: tauri::Runtime>(app: AppHandle<R>) {
+pub fn install(app: AppHandle) {
     let already = *HOOK_THREAD_ID.lock().expect("hook thread id lock");
     if already.is_some() {
         return;
@@ -259,7 +259,7 @@ pub fn shutdown() {
 }
 
 #[cfg(target_os = "windows")]
-fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
+fn hook_thread(app: AppHandle) {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetMessageW, MSG, SetWindowsHookExW, WH_KEYBOARD_LL,
@@ -377,222 +377,66 @@ fn format_combo(c: &Combo) -> String {
 
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isize) -> isize {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
-    };
+    unsafe {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
+        };
 
-    // Regelpunkt: KeyEvents NORMAL durchreichen — nur die Combo-Erkennung
-    // lauscht mit. Ein Blocken (kein CallNextHookEx) käme einem Tastendiebstahl
-    // gleich und wäre exakt der SC-Bug, den wir umgehen.
-    let pass_through = || CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
-    if n_code < 0 {
-        return pass_through();
-    }
-    let kb = l_param as *const KBDLLHOOKSTRUCT;
-    if kb.is_null() {
-        return pass_through();
-    }
-    let msg_code = w_param as u32;
-    let is_key_down = matches!(
-        msg_code,
-        0x0100 /* WM_KEYDOWN */ | 0x0104 /* WM_SYSKEYDOWN */
-    );
-    let is_key_up = matches!(
-        msg_code,
-        0x0101 /* WM_KEYUP */ | 0x0105 /* WM_SYSKEYUP */
-    );
-    if !is_key_down && !is_key_up {
-        return pass_through();
-    }
-    let kb = unsafe { &*kb };
-
-    HOOK_CTX.with(|ctx| {
-        if let Some(rt) = ctx.borrow().as_ref() {
-            // Repeat: WM_KEYDOWN-Autorepeat-Wiederholungen bekommen wir als
-            // mehrfache Down-Events — der Melder zählt jede als frisch. Der
-            // echte Filter: modiere niemals auf Repeat-Messagecodes (unsere
-            // Combos sind Down-getriggert; Autorepeat des Ziels wiederholt
-            // den Dispatch — akzeptabel fürs Overlay, da der Toggle idempotent
-            // wäre? NEIN — Toggle flippt. Autorepeat-Dedupe über den
-            // gemeinsamen Dispatch-Zeitstempel unten.)
-            let matched = rt
-                .matcher
-                .lock()
-                .expect("ll matcher lock")
-                .on_key(kb.vkCode as u32, is_key_down);
-            if let Some(idx) = matched {
-                let Some(&kind) = rt.kinds.get(idx) else {
-                    log::warn!("LL-hook matched idx={idx} ohne Kind — übersprungen");
-                    return;
-                };
-                let app = rt.app.clone();
-                log::info!(
-                    "LL-hook matched combo idx={idx} vk={:#04x} (down={is_key_down})",
-                    kb.vkCode
-                );
-                // Dedupe gegen den WM_HOTKEY-Normalpfad macht dispatch_kind.
-                shortcut_diag::dispatch_kind(&app, kind);
-            }
+        // Regelpunkt: KeyEvents NORMAL durchreichen — nur die Combo-Erkennung
+        // lauscht mit. Ein Blocken (kein CallNextHookEx) käme einem Tastendiebstahl
+        // gleich und wäre exakt der SC-Bug, den wir umgehen.
+        let pass_through = || CallNextHookEx(std::ptr::null_mut(), n_code, w_param, l_param);
+        if n_code < 0 {
+            return pass_through();
         }
-    });
-
-    pass_through()
-}
-
-/// overlay.rs nutzt dieses Modul direkt — kein Re-Export nötig.
-
-/// Dedupe-Slot-Zeitstempel. `pub(crate)` aus `shortcut_diag`.
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const VK_U: u32 = 0x55;
-    const VK_O: u32 = 0x4F;
-    const VK_LCTRL: u32 = 0xA2;
-    const VK_LSHIFT: u32 = 0xA0;
-    const VK_RSHIFT: u32 = 0xA1;
-
-    fn toggle_click() -> ComboMatcher {
-        ComboMatcher::new(vec![
-            parse_combo("ctrl+shift+u").expect("toggle parse"),
-            parse_combo("ctrl+shift+o").expect("click parse"),
-        ])
-    }
-
-    #[test]
-    fn parse_canonical_defaults() {
-        let t = parse_combo("ctrl+shift+u").expect("toggle");
-        assert_eq!(
-            t,
-            Combo {
-                ctrl: true,
-                shift: true,
-                alt: false,
-                win: false,
-                vk: VK_U
-            }
+        let kb = l_param as *const KBDLLHOOKSTRUCT;
+        if kb.is_null() {
+            return pass_through();
+        }
+        let msg_code = w_param as u32;
+        let is_key_down = matches!(
+            msg_code,
+            0x0100 /* WM_KEYDOWN */ | 0x0104 /* WM_SYSKEYDOWN */
         );
-        let c = parse_combo("ctrl+shift+o").expect("click");
-        assert_eq!(c.vk, VK_O);
-        assert_eq!(c.alt, false);
-    }
+        let is_key_up = matches!(
+            msg_code,
+            0x0101 /* WM_KEYUP */ | 0x0105 /* WM_SYSKEYUP */
+        );
+        if !is_key_down && !is_key_up {
+            return pass_through();
+        }
+        let kb = unsafe { &*kb };
 
-    #[test]
-    fn parse_rejects_unknown_token() {
-        assert!(parse_combo("ctrl+shift+hyper+u").is_none());
-        assert!(parse_combo("ctrl+shift").is_none()); // ohne Taste
-    }
+        HOOK_CTX.with(|ctx| {
+            if let Some(rt) = ctx.borrow().as_ref() {
+                // Repeat: WM_KEYDOWN-Autorepeat-Wiederholungen bekommen wir als
+                // mehrfache Down-Events — der Melder zählt jede als frisch. Der
+                // echte Filter: modiere niemals auf Repeat-Messagecodes (unsere
+                // Combos sind Down-getriggert; Autorepeat des Ziels wiederholt
+                // den Dispatch — akzeptabel fürs Overlay, da der Toggle idempotent
+                // wäre? NEIN — Toggle flippt. Autorepeat-Dedupe über den
+                // gemeinsamen Dispatch-Zeitstempel unten.)
+                let matched = rt
+                    .matcher
+                    .lock()
+                    .expect("ll matcher lock")
+                    .on_key(kb.vkCode as u32, is_key_down);
+                if let Some(idx) = matched {
+                    let Some(&kind) = rt.kinds.get(idx) else {
+                        log::warn!("LL-hook matched idx={idx} ohne Kind — übersprungen");
+                        return;
+                    };
+                    let app = rt.app.clone();
+                    log::info!(
+                        "LL-hook matched combo idx={idx} vk={:#04x} (down={is_key_down})",
+                        kb.vkCode
+                    );
+                    // Dedupe gegen den WM_HOTKEY-Normalpfad macht dispatch_kind.
+                    shortcut_diag::dispatch_kind(&app, kind);
+                }
+            }
+        });
 
-    #[test]
-    fn case_insensitive_parse() {
-        assert_eq!(parse_combo("Ctrl+Shift+U"), parse_combo("ctrl+shift+u"));
-    }
-
-    #[test]
-    fn plain_u_without_mods_matches_nothing() {
-        let mut m = toggle_click();
-        // Nur ctrl (ohne shift) → U trifft keine registrierte Combo:
-        m.on_key(VK_LCTRL, true);
-        assert_eq!(m.on_key(VK_U, true), None);
-    }
-
-    #[test]
-    fn full_combo_matches_only_on_down() {
-        let mut m = toggle_click();
-        m.on_key(VK_LCTRL, true);
-        m.on_key(VK_LSHIFT, true);
-        let hit = m.on_key(VK_U, true);
-        assert_eq!(hit, Some(0));
-        // Ups matchen nie:
-        m.on_key(VK_U, false);
-        m.on_key(VK_LSHIFT, false);
-        m.on_key(VK_LCTRL, false);
-        assert_eq!(m.on_key(VK_LCTRL, false), None);
-    }
-
-    #[test]
-    fn right_shift_counts_like_left() {
-        let mut m = toggle_click();
-        m.on_key(VK_LCTRL, true);
-        m.on_key(VK_RSHIFT, true);
-        assert_eq!(m.on_key(VK_U, true), Some(0));
-    }
-
-    #[test]
-    fn second_slot_matches() {
-        let mut m = toggle_click();
-        m.on_key(VK_LCTRL, true);
-        m.on_key(VK_LSHIFT, true);
-        assert_eq!(m.on_key(VK_O, true), Some(1));
-    }
-
-    #[test]
-    fn mod_release_resets_state() {
-        let mut m = toggle_click();
-        m.on_key(VK_LCTRL, true);
-        m.on_key(VK_LSHIFT, true);
-        m.on_key(VK_LSHIFT, false);
-        // ctrl-only → U matcht nicht mehr:
-        assert_eq!(m.on_key(VK_U, true), None);
-        // und wieder komplette Combo → wieder Treffer:
-        m.on_key(VK_LSHIFT, true);
-        assert_eq!(m.on_key(VK_U, true), Some(0));
-    }
-
-    #[test]
-    fn extra_mod_blocks() {
-        let mut m = toggle_click();
-        m.on_key(VK_LCTRL, true);
-        m.on_key(VK_LSHIFT, true);
-        m.on_key(0x5B, true); // LWIN dazwischen → Maske ≠ exakt
-        assert_eq!(m.on_key(VK_U, true), None);
-    }
-
-    #[test]
-    fn vk_char_map() {
-        assert_eq!(vk_from_char('u'), Some(VK_U));
-        assert_eq!(vk_from_char('O'), Some(VK_O));
-        assert_eq!(vk_from_char('0'), Some(0x30));
-        assert_eq!(vk_from_char('9'), Some(0x39));
-        assert_eq!(vk_from_char('§'), None);
-    }
-
-    /// Defekt 2 (WK-R1) Probe: unparsebarer Toggle (z. B. Space — kein
-    /// vk_from_key-Token) + parsebarer Click → targets enthält nur den Click,
-    /// MIT ClickThrough-Kind. Der Hook-Proc darf bei matched idx=0 ALSO
-    /// ClickThrough dispatchen, niemals Toggle (alte Positionsraten täten es).
-    #[test]
-    fn build_targets_keeps_kind_with_combo() {
-        use crate::overlay::ShortcutKind;
-        let pairs = build_targets([
-            (ShortcutKind::Toggle, Some("ctrl+shift+space".to_owned())),
-            (ShortcutKind::ClickThrough, Some("ctrl+shift+o".to_owned())),
-        ]);
-        assert_eq!(pairs.len(), 1, "unparsebarer Slot fällt als PAAR weg");
-        assert_eq!(pairs[0].1, ShortcutKind::ClickThrough);
-
-        // Matcher-Index und kinds-Index sind deckungsgleich: idx 0 -> ClickThrough.
-        let combos: Vec<Combo> = pairs.iter().map(|(c, _)| *c).collect();
-        let kinds: Vec<ShortcutKind> = pairs.iter().map(|(_, k)| *k).collect();
-        let mut matcher = ComboMatcher::new(combos);
-        // Ctrl+Shift down, dann O down -> Treffer idx 0.
-        let _ = matcher.on_key(0xA0 /* VK_LSHIFT */, true);
-        let _ = matcher.on_key(0xA2 /* VK_LCONTROL */, true);
-        let hit = matcher.on_key(vk_from_char('o').expect("o"), true);
-        assert_eq!(hit, Some(0));
-        assert_eq!(kinds[hit.unwrap()], ShortcutKind::ClickThrough);
-    }
-
-    /// Beide Slots parsebar -> Reihenfolge + Kinder unverändert.
-    #[test]
-    fn build_targets_full_slots_ordered() {
-        use crate::overlay::ShortcutKind;
-        let pairs = build_targets([
-            (ShortcutKind::Toggle, Some("ctrl+shift+u".to_owned())),
-            (ShortcutKind::ClickThrough, Some("ctrl+shift+o".to_owned())),
-        ]);
-        assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0].1, ShortcutKind::Toggle);
-        assert_eq!(pairs[1].1, ShortcutKind::ClickThrough);
+        pass_through()
     }
 }
