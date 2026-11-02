@@ -160,6 +160,16 @@ pub fn parse_combo(canonical: &str) -> Option<Combo> {
                 let ch = t.chars().next().expect("len==1");
                 vk = Some(vk_from_char(ch)?);
             }
+            // Frontend-Format (KeyboardEvent.code): „KeyU“ / „Digit1“ — das
+            // global-shortcut-Plugin frisst das, der VK-Parser braucht die
+            // Roh-Taste (WK-Fix: gemerkte Combos waren „shift+control+KeyU“
+            // und matchten im LL-Hook nie → Shortcuts tot bei fokussiertem SC).
+            t if t.len() == 4 && t[..3].eq_ignore_ascii_case("key") => {
+                vk = Some(vk_from_char(t.chars().last().expect("len==4"))?);
+            }
+            t if t.len() == 6 && t[..5].eq_ignore_ascii_case("digit") => {
+                vk = Some(vk_from_char(t.chars().last().expect("len==6"))?);
+            }
             t => vk = Some(vk_from_key(t)?),
         }
     }
@@ -518,5 +528,32 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
         });
 
         pass_through()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WK-Regression (2026-11-02, Sebo-Snapshot): persistierte Combos sind im
+    /// KeyboardEvent.code-Format („shift+control+KeyU“) — der LL-Hook-Matcher
+    /// muss sie genauso auflösen wie das global-shortcut-Plugin.
+    #[test]
+    fn parse_combo_accepts_keycode_format() {
+        let c = parse_combo("shift+control+KeyU").expect("KeyU-Combo muss parsen");
+        assert!(c.shift && c.ctrl && !c.alt && !c.win);
+        assert_eq!(c.vk, 0x55);
+
+        let c2 = parse_combo("ctrl+KeyO").expect("KeyO-Combo muss parsen");
+        assert!(c2.ctrl && c2.vk == 0x4F);
+
+        let c3 = parse_combo("Digit1").expect("Digit1-Combo muss parsen");
+        assert_eq!(c3.vk, 0x31);
+    }
+
+    #[test]
+    fn parse_combo_still_rejects_garbage() {
+        assert!(parse_combo("ctrl+NotAKey").is_none());
+        assert!(parse_combo("ctrl+shift").is_none());
     }
 }
