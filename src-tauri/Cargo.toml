@@ -73,7 +73,7 @@ glib = "0.18"
 
 [target.'cfg(windows)'.dependencies]
 # Cursor position (GetCursorPos) for pointer-monitor placement on Windows.
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_Security"] }
 
 # Test-only: enables `tauri::test` (mock runtime) for the overlay unit tests.
 [dev-dependencies]

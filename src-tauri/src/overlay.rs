@@ -18,6 +18,7 @@
 //! No telemetry: nothing is logged or transmitted.
 
 use crate::i18n_err::{err_key, err_keyp};
+use crate::shortcut_diag;
 use serde_json::json;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -161,6 +162,7 @@ pub struct OverlaySnapshot {
 pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     app.manage(OverlayState::new());
     app.manage(ShortcutBindings::new());
+    app.manage(shortcut_diag::HotkeyDiagState::default());
 
     create_spotlight_window(app)?;
     // NOTE: click-through is applied on first *show* (see `apply_visibility`):
@@ -284,18 +286,29 @@ fn register_global_shortcuts<R: Runtime>(app: &tauri::App<R>, toggle: &str, clic
     let mut builder = tauri_plugin_global_shortcut::Builder::new();
     builder = builder.with_handler(
         move |open_app: &AppHandle<R>, shortcut: &Shortcut, event: ShortcutEvent| {
+            // Diagnose-Sonde (t_ed01e8f7): JEDEN Empfang loggen + ablegen,
+            // VOR dem Pressed-Filter — sonst bleibt der „OS-Ebene tot“-Fall
+            // von dem „App-Ebene no-op“-Fall ununterscheidbar.
+            shortcut_diag::record_event(
+                open_app,
+                shortcut.to_string(),
+                open_app
+                    .try_state::<ShortcutBindings>()
+                    .and_then(|b| b.match_kind(shortcut))
+                    .map(|k| shortcut_diag::slot_name(k).to_owned()),
+                format!("{:?}", event.state),
+            );
             if event.state != ShortcutState::Pressed {
                 return;
             }
             let Some(bindings) = open_app.try_state::<ShortcutBindings>() else {
                 return;
             };
-            match bindings.match_kind(shortcut) {
-                Some(ShortcutKind::Toggle) => toggle_visible(open_app),
-                Some(ShortcutKind::ClickThrough) => {
-                    let _ = toggle_click_through(open_app);
-                }
-                None => {}
+            // Dispatch über die gemeinsame Station — der H5-LL-Hook-Fallback
+            // läuft in denselben Pfad, die Dedupe-Station verhindert
+            // Doppel-Toggles zwischen WM_HOTKEY- und Hook-Weg (t_ed01e8f7).
+            if let Some(kind) = bindings.match_kind(shortcut) {
+                shortcut_diag::dispatch_kind(open_app, kind);
             }
         },
     );
@@ -346,6 +359,13 @@ fn register_combo<R: Runtime>(
             json!({ "combo": canonical, "err": err.to_string() }),
         )
     })?;
+    // Diagnose-Sonde (t_ed01e8f7): der ERFOLG muss sichtbar sein — bislang
+    // tauchte nur der Fehlfall im Log auf, ein still geschluckter Register
+    // (H4: zweiter Prozess hält den Combo) blieb unbeobachtbar.
+    log::info!(
+        "global shortcut {canonical:?} ({kind:?}) registered successfully at {}",
+        shortcut_diag::now_record_parts().1
+    );
     if let Some(bindings) = app.try_state::<ShortcutBindings>() {
         bindings.set(kind, Some(shortcut));
     }
@@ -526,6 +546,13 @@ fn effective_visible(st: &OverlayState) -> bool {
 pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
     if let Some(st) = app.try_state::<OverlayState>() {
         let was = st.game_running.swap(running, Ordering::Release);
+        if was != running {
+            // H5-Fallback (t_ed01e8f7): den LL-Keyboard-Hook-Lifecycle an
+            // den Game-Status koppeln — SC-Start → (re)installieren (NACH
+            // dem Anti-Cheat-Hook), SC-Ende → unhook. Kein-Op ohne Windows.
+            #[cfg(target_os = "windows")]
+            crate::hotkey_llhook::sync_game_running(app, running);
+        }
         if was != running {
             // Smoke mode (ARCH_OVERLAY_SMOKE=1, debug builds only) keeps the
             // overlay visible for screenshotting even when the game flaps in
