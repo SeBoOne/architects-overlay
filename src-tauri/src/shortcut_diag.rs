@@ -185,7 +185,6 @@ pub fn slot_name(kind: crate::overlay::ShortcutKind) -> &'static str {
 #[cfg(target_os = "windows")]
 mod win {
     use super::FocusedWindowInfo;
-    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
     use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_ELEVATION, TokenElevation};
     use windows_sys::Win32::System::Threading::{
         OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
@@ -247,7 +246,7 @@ mod win {
             }
             let mut rect = [0i32; 4];
             let mut r = std::mem::zeroed();
-            if GetWindowRect(hwnd, &mut r) == ERROR_SUCCESS {
+            if GetWindowRect(hwnd, &mut r) != 0 {
                 rect = [r.left, r.top, r.right, r.bottom];
             }
             windows_sys::Win32::Foundation::CloseHandle(handle);
