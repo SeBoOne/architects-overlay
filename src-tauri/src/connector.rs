@@ -43,6 +43,17 @@ pub use connector::MAX_MANIFEST_BYTES;
 /// derselbe Wert (Refresh vor Ablauf = cachefrisch, Force = echte Abfrage).
 const DEFAULT_POLL_SECONDS: u64 = 300;
 
+/// Cache-TTL in ms aus `poll_seconds` (Härtung t_3cfc7842 Finding 1): die
+/// Multiply war unchecked — ein Remote-gesteuertes Manifest mit absurdem
+/// poll_seconds panikte im Debug-Profil (`u64 Mul overflow`) und lief im
+/// Release-Profil still wrapped (TTL-Bedingung damit falsch). saturating_mul
+/// macht den Deckel dicht: der Cache bleibt dann praktisch unbegrenzt gültig
+/// (force erzwang immer den Frischlauf); der Validator (check_scan /
+/// check_view / check_flows) lehnt poll_seconds > 10^7 s ohnehin ab.
+fn poll_ttl_ms(poll_secs: u64) -> u64 {
+    poll_secs.saturating_mul(1000)
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ConnectorEntry {
     pub id: String,
@@ -764,7 +775,7 @@ pub(crate) async fn scan_inner(
     if !force {
         let cache = state.cache.lock().expect("cache lock");
         if let Some(c) = cache.get(&cache_key) {
-            if now_ms.saturating_sub(c.fetched_at_ms) < poll_secs * 1000 {
+            if now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs) {
                 let cached_items: Vec<ScannedRaffle> = attach_saved(
                     c.body
                         .get("items")
@@ -828,7 +839,59 @@ pub(crate) async fn scan_inner(
 
     // 2. Kandidaten: alle offen + die letzten done_cap erledigte (Liste ist
     //    neueste-zuerst, cut auf die ersten done_cap Treffer).
-    let candidates = select_scan_candidates(list, &scan.done_field, scan.done_cap);
+    let raw_candidates = select_scan_candidates(list, &scan.done_field, scan.done_cap);
+    // 2a. Härtung (t_3cfc7842 Findings 2+3, Reviewer-Sonden am Head 5530a54):
+    //   - sid-Dedup: eine ferne Liste kann denselben `id_field`-Wert twice
+    //     liefern (Reviewer-Fixture: sids ["D1","D1"]) -> doppelte Keys im
+    //     Svelte {#each ... (it.sid)}. Ersten Auftritt behalten (Liste ist
+    //     neueste-zuerst), Duplikat überspringen — spart zudem den zweiten
+    //     Detail-Fetch.
+    //   - code-Feld-Sanitisierung: der code-Wert kommt aus der FERNEN Liste
+    //     und wird roh in den Detail-Endpfad gefüllt (Reviewer-Sonde:
+    //     join_code="../../admin?x=1" -> Server sah /admin?x=1). Zulässig ist
+    //     nur der Code-Zeichenvorrat [A-Za-z0-9_-]; alles andere: Skip + warn
+    //     (percent-Encoding allein würde `/` und `..` unverändert durchlassen).
+    let mut seen_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut candidates: Vec<usize> = Vec::with_capacity(raw_candidates.len());
+    // Von der Vorfilterung verworfene Kandidaten (dupes/unsafe Kaputter codes)
+    // zählen in den skipped-Zähler hinein — die UI soll sehen, dass die ferne
+    // Liste nicht vollständig verarbeitbar war.
+    let mut pre_skipped = 0usize;
+    for idx in raw_candidates {
+        let item = &list[idx];
+        let sid_ok = match list_field_string(item, &scan.id_field) {
+            Some(sid) => seen_ids.insert(sid),
+            None => true, // ohne sid keine {#each}-Key-Kollision; Detail-Pfad hängt nicht an sid
+        };
+        if !sid_ok {
+            log::warn!(
+                "connector scan '{}': skip candidate #{idx} (duplicate id_field '{}' value)",
+                scan.id,
+                scan.id_field
+            );
+            pre_skipped += 1;
+            continue;
+        }
+        match list_field_string(item, &scan.code_field) {
+            Some(code) if scan_code_is_safe(&code) => candidates.push(idx),
+            Some(_) => {
+                log::warn!(
+                    "connector scan '{}': skip candidate #{idx} (code_field '{}' carries unsafe characters)",
+                    scan.id,
+                    scan.code_field
+                );
+                pre_skipped += 1;
+            }
+            None => {
+                log::warn!(
+                    "connector scan '{}': skip candidate #{idx} (missing code field '{}')",
+                    scan.id,
+                    scan.code_field
+                );
+                pre_skipped += 1;
+            }
+        }
+    }
 
     // 3. Detail-Fetches parallel, begrenzt (Spec: concurrency 6, harte Klammer
     //    16). Fehler einer Detail-Session: überspringen + log::warn — die Liste
@@ -841,10 +904,8 @@ pub(crate) async fn scan_inner(
             let item = list[idx].clone();
             let settings_auth = auth_header_opt(&manifest, settings_state, id);
             async move {
-                let code = match list_field_string(&item, &scan.code_field) {
-                    Some(c) => c,
-                    None => return (idx, Err("missing code field".to_owned())),
-                };
+                // code_field ist hier bereits presence+charset-geprüft (2a).
+                let code = list_field_string(&item, &scan.code_field).unwrap_or_default();
                 let mut params: BTreeMap<String, String> = BTreeMap::new();
                 params.insert("code".to_owned(), code);
                 let r = fetch_request(
@@ -862,7 +923,8 @@ pub(crate) async fn scan_inner(
         .collect()
         .await;
 
-    let mut skipped = 0usize;
+    // Vorfilterung (2a) + Detail-Fehler zusammen in skipped (UI-Hinweis #5).
+    let mut skipped = pre_skipped;
     let mut hit_idx: Vec<usize> = Vec::new();
     for (idx, res) in detail_results {
         match res {
@@ -987,7 +1049,7 @@ pub async fn connector_fetch(
     if !force {
         let cache = state.cache.lock().expect("cache lock");
         if let Some(c) = cache.get(&cache_key) {
-            if now_ms.saturating_sub(c.fetched_at_ms) < poll_secs * 1000 {
+            if now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs) {
                 let mapped = map_view(&view, &c.body)?;
                 return Ok(FetchResult {
                     status: c.status,
@@ -1410,6 +1472,19 @@ fn percent_encode(s: &str) -> String {
         }
     }
     out
+}
+
+/// Code-Zeichenvorrat für fern-gelieferte `code_field`-Werte im Scan
+/// (Härtung t_3cfc7842 Finding 2): nur [A-Za-z0-9_-], nicht leer. Der Wert
+/// landet ungeteilt im Detail-Endpfad (`/api/session/{code}`) — `/`, `..`,
+/// `?`, `#` oder Whitespace würden einen fremden Endpunkt ansteuern
+/// (Reviewer-Sonde: Server sah /admin?x=1). Header-Inject (CRLF) ist damit
+/// gleichfalls ausgeschlossen.
+fn scan_code_is_safe(code: &str) -> bool {
+    !code.is_empty()
+        && code
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// Stabile Cache-Schlüssel-Ordnung (BTreeMap ist bereits sortiert).
@@ -2300,5 +2375,325 @@ mod tests {
         // Der Username wird getrimmt in den Schlüssel — " Semih " und "Semih"
         // sind derselbe Cache-Raum (sondert: UI kann Whitespace enthalten).
         assert_eq!(key_for(" Semih ".trim()), key_for("Semih"));
+    }
+    // ---- Härtung t_3cfc7842 (Reviewer-Findings aus t_90382459, Kommentar 609) ----
+    // Muster aus der Review-Kopie prev_reviewer_probe.rs übernommen: gezählte
+    // Fake-API (std TcpListener) statt von Hand gelegtem Cache. Die Sonden des
+    // Reviewers bewiesen den Fehler (nur eprintln); die Tests hier nehmen
+    // dieselben adversatorischen Fixtures mit eigenen Literalen und asserten
+    // das gehärtete Verhalten.
+    mod hardening {
+        use super::*;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
+
+        struct Mock {
+            port: u16,
+            list: AtomicUsize,
+            detail: AtomicUsize,
+            codes: Mutex<Vec<String>>,
+            all_paths: Mutex<Vec<String>>,
+        }
+
+        fn route(m: &Mock, path: &str) -> (u16, String) {
+            match path {
+                "/api/list_traversal" => {
+                    m.list.fetch_add(1, Ordering::SeqCst);
+                    // Reviewer-Fixture (eigenes Literal): join_code trägt
+                    // Pfad-Traversal — remote-gesteuert.
+                    m.codes.lock().unwrap().push("../../admin?x=1".into());
+                    (
+                        200,
+                        r#"[{"id":"T1","name":"Traversal","raffle_done":false,"join_code":"../../admin?x=1"}]"#.to_string(),
+                    )
+                }
+                "/api/list_dupes" => {
+                    m.list.fetch_add(1, Ordering::SeqCst);
+                    // Reviewer-Fixture (eigenes Literal): gleicher sid twice
+                    // -> doppelte {#each}-Keys in der Svelte-Liste.
+                    m.codes.lock().unwrap().push("C1".into());
+                    (
+                        200,
+                        r#"[{"id":"D1","name":"Erste","raffle_done":false,"join_code":"C1"},
+                          {"id":"D1","name":"Zweiter gleicher sid","raffle_done":false,"join_code":"C1"}]"#
+                            .to_string(),
+                    )
+                }
+                "/api/session/C1" => {
+                    m.detail.fetch_add(1, Ordering::SeqCst);
+                    (
+                        200,
+                        r#"{"id":"D1","participants":[{"name":"Semih"}]}"#.to_string(),
+                    )
+                }
+                "/__counts" => (
+                    200,
+                    format!(
+                        "{{\"list\":{},\"detail\":{},\"codes\":{},\"all_paths\":{}}}",
+                        m.list.load(Ordering::SeqCst),
+                        m.detail.load(Ordering::SeqCst),
+                        serde_json::to_string(&m.codes.lock().unwrap().clone()).unwrap_or_default(),
+                        serde_json::to_string(&m.all_paths.lock().unwrap().clone())
+                            .unwrap_or_default()
+                    ),
+                ),
+                _ => {
+                    // Jeder fremde Pfad (z. B. ein aus dem code-Feld gesteuerter)
+                    // zählt als Detail-Versuch — Traversal bleibt sichtbar.
+                    if path.starts_with("/api/session/") {
+                        m.detail.fetch_add(1, Ordering::SeqCst);
+                    }
+                    (404, r#"{"error":"nf"}"#.to_string())
+                }
+            }
+        }
+
+        /// Jeder Test bekommt eigenen Server + eigene Zähler (Tests laufen parallel).
+        fn mock() -> &'static Mock {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let m: &'static Mock = Box::leak(Box::new(Mock {
+                port,
+                list: AtomicUsize::new(0),
+                detail: AtomicUsize::new(0),
+                codes: Mutex::new(Vec::new()),
+                all_paths: Mutex::new(Vec::new()),
+            }));
+            thread::spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { continue };
+                    thread::spawn(move || {
+                        let mut buf = [0u8; 4096];
+                        let n = stream.read(&mut buf).unwrap_or(0);
+                        let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                        let path = head.split_whitespace().nth(1).unwrap_or("/").to_string();
+                        m.all_paths.lock().unwrap().push(path.clone());
+                        let (status, body) = route(m, &path);
+                        let reply = format!(
+                            "HTTP/1.0 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                            body.len(),
+                            body
+                        );
+                        let _ = stream.write_all(reply.as_bytes());
+                        let _ = stream.flush();
+                    });
+                }
+            });
+            m
+        }
+
+        fn counts(base: &str) -> serde_json::Value {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                reqwest::Client::new()
+                    .get(format!("{base}/__counts"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .json::<serde_json::Value>()
+                    .await
+                    .unwrap()
+            })
+        }
+
+        fn hardening_manifest(
+            base: &str,
+            list_endpoint: &str,
+            poll_seconds: u64,
+        ) -> connector::ConnectorManifest {
+            let text = format!(
+                r#"{{
+                    "manifest_version": 1, "id": "sclm", "name": {{"de": "S", "en": "S"}},
+                    "base_url": "{base}",
+                    "placement": {{"kind": "own", "label": {{"de": "S", "en": "S"}}}},
+                    "settings_fields": [{{"key": "sclm_username", "label": {{"de": "L", "en": "L"}}, "type": "text"}}],
+                    "scan": {{
+                        "id": "hard_scan",
+                        "title": {{"de": "H", "en": "H"}},
+                        "list_endpoint": "{list_endpoint}",
+                        "done_field": "raffle_done",
+                        "code_field": "join_code",
+                        "id_field": "id",
+                        "name_field": "name",
+                        "detail_endpoint": "/api/session/{{code}}",
+                        "match_path": "participants[].name",
+                        "match_setting_key": "sclm_username",
+                        "done_cap": 2,
+                        "concurrency": 2,
+                        "poll_seconds": {poll_seconds}
+                    }},
+                    "views": []
+                }}"#
+            );
+            connector::ConnectorManifest::parse(text.as_bytes()).expect("hardening manifest")
+        }
+
+        fn scan_case(
+            manifest: &connector::ConnectorManifest,
+            tmp: &tempfile::TempDir,
+        ) -> (ConnectorState, crate::app_settings::SettingsState) {
+            let conn_dir = tmp.path().join("connectors");
+            std::fs::create_dir_all(&conn_dir).unwrap();
+            std::fs::write(
+                conn_dir.join("sclm.json"),
+                serde_json::to_string_pretty(manifest).unwrap(),
+            )
+            .unwrap();
+            let state = ConnectorState::load(conn_dir);
+            let mut settings = settings::Settings::with_path(tmp.path().join("config.toml"));
+            settings.set_connector_setting_value("sclm", "sclm_username", Some("Semih".into()));
+            let settings_state = crate::app_settings::SettingsState {
+                inner: Mutex::new(settings),
+            };
+            (state, settings_state)
+        }
+
+        // ---- Finding 2: code_field-Sanitisierung ------------------------------------
+        #[test]
+        fn scan_code_is_safe_literals() {
+            // legale Literal-Muster (SCLM-Codeformat)
+            assert!(scan_code_is_safe("AB-9_z"));
+            assert!(scan_code_is_safe("c1"));
+            assert!(scan_code_is_safe("K9x-2_Q"));
+            // Reviewer-Sonden-Literal + Varianten, die der Deckel abfängt
+            assert!(!scan_code_is_safe("../../admin?x=1"));
+            assert!(!scan_code_is_safe("C1/../admin"));
+            assert!(!scan_code_is_safe("C1%2F..%2Fadmin")); // doppelt encodiert
+            assert!(!scan_code_is_safe("C 1"));
+            assert!(!scan_code_is_safe("C1#frag"));
+            assert!(!scan_code_is_safe("C1\r\nX-Evil: 1")); // Header-Inject
+            assert!(!scan_code_is_safe("C1ünïcode"));
+            assert!(!scan_code_is_safe(""));
+        }
+
+        #[test]
+        fn scan_hardening_code_field_traversal_is_skipped() {
+            let m = mock();
+            let base = format!("http://127.0.0.1:{}", m.port);
+            let manifest = hardening_manifest(&base, "/api/list_traversal", 300);
+            let scan = manifest.scan.clone().unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let (state, settings_state) = scan_case(&manifest, &tmp);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt
+                .block_on(scan_inner(
+                    &state,
+                    &settings_state,
+                    &manifest,
+                    &scan,
+                    "sclm",
+                    false,
+                    5_000,
+                ))
+                .unwrap();
+            let c = counts(&base);
+            let all: Vec<String> = c["all_paths"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap_or_default().to_string())
+                .collect();
+            // Reviewer-Sonde sah /admin?x=1 auf Serverseite — jetzt: nie.
+            assert!(!all.iter().any(|p| p.contains("admin")), "{all:?}");
+            assert!(
+                all.iter()
+                    .all(|p| p.starts_with("/api/list_traversal") || p == "/__counts"),
+                "Detail-Fetch trotz unsafe code_field: {all:?}"
+            );
+            // Skip + warn: Kandidat zählt als skipped, Liste bleibt leer.
+            assert_eq!(out.skipped, 1, "{out:?}");
+            assert!(out.items.is_empty(), "{out:?}");
+            assert_eq!(c["detail"].as_u64(), Some(0), "{c}");
+        }
+
+        // ---- Finding 3: sid-Dedup ----------------------------------------------------
+        #[test]
+        fn scan_hardening_duplicate_sid_is_deduped() {
+            let m = mock();
+            let base = format!("http://127.0.0.1:{}", m.port);
+            let manifest = hardening_manifest(&base, "/api/list_dupes", 300);
+            let scan = manifest.scan.clone().unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let (state, settings_state) = scan_case(&manifest, &tmp);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let out = rt
+                .block_on(scan_inner(
+                    &state,
+                    &settings_state,
+                    &manifest,
+                    &scan,
+                    "sclm",
+                    false,
+                    7_000,
+                ))
+                .unwrap();
+            let sids: Vec<String> = out.items.iter().map(|i| i.sid.clone()).collect();
+            // Reviewer-Sonde lieferte ["D1","D1"] (doppelte {#each}-Keys) — jetzt genau einmal.
+            assert_eq!(sids, vec!["D1".to_string()], "{out:?}");
+            // Das Duplikat zählt als skipped (UI-Hinweis: Liste nicht voll verarbeitbar).
+            assert_eq!(out.skipped, 1, "{out:?}");
+            // Dedup greift bereits in der Kandidatenauswahl -> nur ein Detail-Fetch.
+            let c = counts(&base);
+            assert_eq!(c["detail"].as_u64(), Some(1), "{c}");
+        }
+
+        // ---- Finding 1: poll_seconds-Deckel ------------------------------------------
+        #[test]
+        fn scan_hardening_poll_overflow_does_not_panic() {
+            let m = mock();
+            let base = format!("http://127.0.0.1:{}", m.port);
+            // Reviewer-Sonden-Literal: u64::MAX / 500 * 1000 überläuft unchecked.
+            let manifest = hardening_manifest(&base, "/api/list_dupes", u64::MAX / 500);
+            let scan = manifest.scan.clone().unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let (state, settings_state) = scan_case(&manifest, &tmp);
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let first = rt
+                .block_on(scan_inner(
+                    &state,
+                    &settings_state,
+                    &manifest,
+                    &scan,
+                    "sclm",
+                    false,
+                    5_000,
+                ))
+                .unwrap();
+            assert!(!first.cached, "erster Lauf muss fresh sein: {first:?}");
+            // Zweiter Aufruf trifft den Cache-Zweig — dort panizierte die
+            // Debug-Multiply (connector.rs:767 am Head 5530a54).
+            let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                rt.block_on(scan_inner(
+                    &state,
+                    &settings_state,
+                    &manifest,
+                    &scan,
+                    "sclm",
+                    false,
+                    6_000,
+                ))
+            }));
+            match second {
+                Err(_) => panic!("poll_ttl_ms überläuft weiterhin im Debug-Profil"),
+                Ok(Ok(o)) => {
+                    assert!(o.cached, "saturating-TTL verweigert Cache-Treffer: {o:?}");
+                    assert_eq!(o.fetched_at_ms, 5_000, "{o:?}");
+                }
+                Ok(Err(e)) => panic!("zweiter Scan-Aufruf fehlschlägt: {e}"),
+            }
+        }
+
+        #[test]
+        fn poll_ttl_ms_is_saturating_not_wrapping() {
+            // Reviewer-Sonden-Literal u64::MAX/500: unchecked *1000 wrapte im
+            // Release-Profil -> TTL-Bedingung falsch. saturating: klemmt auf MAX.
+            assert_eq!(poll_ttl_ms(u64::MAX / 500), u64::MAX);
+            assert_eq!(poll_ttl_ms(u64::MAX), u64::MAX);
+            // normales Intervall bleibt exakt.
+            assert_eq!(poll_ttl_ms(300), 300_000);
+        }
     }
 }
