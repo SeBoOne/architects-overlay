@@ -18,8 +18,15 @@
 //! file“, ohne „Trotzdem ausführen“). msiexec hat Reputation und passiert
 //! SAC; die UAC-Elevation übernimmt msiexec selbst. Auto-Relaunch nach
 //! Exit-Code 0/3010 via PowerShell-Wrapper (`powershell.exe` ist ebenfalls
-//! signiert — kein selbst-geschriebenes Script). NSIS-Fallback für
-//! Releases ohne MSI: setup.exe SILENT (`/S`) + `/R` als CHILD-PROZESS
+//! signiert — kein selbst-geschriebenes Script). Elevations-Sichtbarkeit
+//! (t_0087dea5): der Wrapper wird OHNE DETACHED_process-Flag gespawnt,
+//! damit der UAC-Elevation-Prompt und die Installer-UI den sichtbaren
+//! interaktiven Desktop erreichen (VM-Evidenz: silent stall aus dem
+//! hidden/detached Pfad vs. Erfolg bei interaktiver Ausführung); msiexec
+//! schreibt `/l*v` nach `%TEMP%\architects-overlay-update\msi-update.log`
+//! und der Wrapper überwacht mit 15-Minuten-Timeout (Kill +
+//! Fehler-Marker) — Timeout statt unbegrenzter Stillstand. NSIS-Fallback
+//! für Releases ohne MSI: setup.exe SILENT (`/S`) + `/R` als CHILD-PROZESS
 //! (detached, CREATE_NO_WINDOW — gleiche Mechanik wie der
 //! tasklist-Fix t_d323b29e). Danach beendet sich die App sauber selbst.
 //! Linux AppImage: neue Datei atomar am laufenden AppImage-Pfad ersetzen
@@ -272,6 +279,10 @@ fn spawn_nsis_silent(installer: &std::path::Path) -> Result<(), String> {
 /// sie und zeigt die Note `update.note_msi_failed`.
 const MSI_FAILURE_MARKER: &str = "msi-install-failure.txt";
 
+/// Name des msiexec-Verbose-Logs (t_0087dea5): `/l*v` des Updater-Wrappers
+/// — Diagnose-Pfad für Support-Fälle (z. B. MSI_LUA-Elevation, 1603).
+const MSI_UPDATE_LOG: &str = "msi-update.log";
+
 /// Pfad des Fehler-Markers: Temp-Update-Verzeichnis (identisch zum
 /// MSI-Download-Verzeichnis aus `updater::windows_update_dir()`), Datei
 /// `msi-install-failure.txt`. Plattformneutral gebaut (auf Nicht-Windows
@@ -287,9 +298,23 @@ fn msi_failure_marker_path() -> std::path::PathBuf {
         .join(MSI_FAILURE_MARKER)
 }
 
+/// Pfad des msiexec-Verbose-Logs (t_0087dea5): gleiches Temp-Update-
+/// Verzeichnis wie der Fehler-Marker, Datei `msi-update.log`. Bewusst
+/// OHNE cfg(windows): identische Begründung wie bei
+/// `msi_failure_marker_path` — Pfadlogik unit-getestet, verwendet nur in
+/// `spawn_msi_install` (cfg windows).
+#[allow(dead_code)]
+fn msi_update_log_path() -> std::path::PathBuf {
+    std::env::temp_dir()
+        .join("architects-overlay-update")
+        .join(MSI_UPDATE_LOG)
+}
+
 /// Liest den Fehler-Marker (Härtung t_05f86461) und meldet ihn als
 /// UI-Note `update.note_msi_failed` (Exit-Code + Zeitstempel aus dem
-/// Dateiinhalt `msiexec exit <code> <ts>`). Kein Marker → false (nichts zu
+/// Dateiinhalt `msiexec exit <code> <ts> [log=<pfad>]` — t_0087dea5:
+/// optionales log-Feld, `<code>` kann auch das Literal `timeout` sein).
+/// Kein Marker → false (nichts zu
 /// melden). Der Marker wird NACH dem Lesen gelöscht: die Note erscheint
 /// genau einmal pro Fehlschlag (der Fehlschlag selbst hat die App-Instance
 /// bereits beendet; sichtbar wird sie im neu gestarteten Overlay der alten
@@ -314,7 +339,11 @@ fn consume_msi_failure_marker(marker_path: &std::path::Path, state: &UpdaterStat
     let Ok(content) = std::fs::read_to_string(marker_path) else {
         return false;
     };
-    // Format-Zeile: "msiexec exit 1603 2026-11-03T12:00:00Z"
+    // Format-Zeile: "msiexec exit 1603 2026-11-03T12:00:00Z" oder mit
+    // Diagnose-Log (t_0087dea5) "msiexec exit 1603 <ts> log=<pfad>" bzw.
+    // Timeout-Fall "msiexec exit timeout <ts> log=<pfad>". Code ist immer
+    // Wort 3, Zeitstempel Wort 4; zusätzliche Felder (log=…) werden
+    // bewusst ignoriert — der Note-Key bleibt unverändert.
     let words: Vec<&str> = content.split_whitespace().collect();
     let exit_code = words.get(2).copied().unwrap_or("unbekannt").to_owned();
     let timestamp = words.get(3).unwrap_or(&"").to_string();
@@ -331,12 +360,25 @@ fn consume_msi_failure_marker(marker_path: &std::path::Path, state: &UpdaterStat
 }
 
 /// Windows MSI (SAC-Fix t_803497b5): PowerShell-Kommando-Bau für
-/// `Start-Process msiexec.exe -ArgumentList '/i','<msi>','/qb' -Wait
-/// -PassThru` + Auto-Relaunch der Overlay-exe nach Exit-Code 0 ODER 3010
-/// (SUCCESS_REBOOT_REQUIRED — Installation war erfolgreich, Neustart
-/// nötig; das Overlay startet trotzdem neu, der Nutzer rebootet wann es
-/// ihm passt). Plattformunabhängig, damit das Quoting auf jedem Runner
-/// getestet werden kann.
+/// `Start-Process msiexec.exe -ArgumentList '/i','<msi>','/qb','/l*v','<log>' -PassThru`
+/// + `$p.WaitForExit(900000)` (15 min) + Auto-Relaunch der Overlay-exe
+/// nach Exit-Code 0 ODER 3010 (SUCCESS_REBOOT_REQUIRED — Installation war
+/// erfolgreich, Neustart nötig; das Overlay startet trotzdem neu, der
+/// Nutzer rebootet wann es ihm passt). Plattformunabhängig, damit das
+/// Quoting auf jedem Runner getestet werden kann.
+///
+/// Timeout statt Stillstand (t_0087dea5): VM-Evidenz 2026-11-03 zeigte
+/// einen Dauer-Stillstand — maschinen-verwaltetes Produkt, MSI_LUA
+/// braucht Credential-Prompt, Prompt erreichte den sichtbaren Desktop aus
+/// dem hidden/detached Spawn nicht, Installation stand unbegrenzt. Der
+/// Wrapper wartet daher zeitlich begrenzt: `WaitForExit(900000)` false →
+/// `$p.Kill()` + Fehler-Marker mit Code `timeout` + Relaunch der alten
+/// Version. Nie ein unbegrenzter Stillstand.
+///
+/// Diagnose-Log (t_0087dea5): msiexec schreibt selbst Verbose `/l*v` nach
+/// `<log>` (msi-update.log im Temp-Update-Verzeichnis); der Failure-Marker
+/// trägt den Log-Pfad zusätzlich (`log=<pfad>`), damit Support-Fälle den
+/// Log direkt finden.
 ///
 /// Fehlschlag-Zweig (Härtung t_05f86461): Exit-Code NICHT 0/3010 (UAC
 /// verweigert → 1223, interne 1603-Fehler, MSI-Abbruch) — die App hat
@@ -361,34 +403,53 @@ fn msi_powershell_command(
     msi: &std::path::Path,
     current_exe: &std::path::Path,
     failure_marker: &std::path::Path,
+    install_log: &std::path::Path,
 ) -> String {
     // PowerShell-Single-Quotes escapen: ' -> ''
     let q = |p: &std::path::Path| -> String { p.to_string_lossy().replace('\'', "''") };
     format!(
-        "$p = Start-Process msiexec.exe -ArgumentList '/i','{}','/qb' -Wait -PassThru; if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {{ Start-Process '{}' }} else {{ Set-Content -LiteralPath '{}' -Value ('msiexec exit ' + $p.ExitCode + ' ' + (Get-Date).ToUniversalTime().ToString('o')); Start-Process '{}' }}",
+        "$p = Start-Process msiexec.exe -ArgumentList '/i','{}','/qb','/l*v','{}' -PassThru; if ($p.WaitForExit(900000)) {{ if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {{ Start-Process '{}' }} else {{ Set-Content -LiteralPath '{}' -Value ('msiexec exit ' + $p.ExitCode + ' ' + (Get-Date).ToUniversalTime().ToString('o') + ' log={}'); Start-Process '{}' }} }} else {{ $p.Kill(); Set-Content -LiteralPath '{}' -Value ('msiexec exit timeout ' + (Get-Date).ToUniversalTime().ToString('o') + ' log={}'); Start-Process '{}' }}",
         q(msi),
+        q(install_log),
         q(current_exe),
         q(failure_marker),
+        q(install_log),
+        q(current_exe),
+        q(failure_marker),
+        q(install_log),
         q(current_exe),
     )
 }
 
 /// Windows: MSI über den Microsoft-signierten msiexec.exe installieren
-/// (SAC-Fix t_803497b5) — detached, CREATE_NO_WINDOW. Die MSI selbst wird
-/// nie direkt ausgeführt (das wäre der os-error-4551-Block durch Smart
-/// App Control). UAC-Elevation übernimmt msiexec selbst.
+/// (SAC-Fix t_803497b5) — CREATE_NO_WINDOW, aber bewusst OHNE
+/// DETACHED_PROCESS (t_0087dea5). Die MSI selbst wird nie direkt
+/// ausgeführt (das wäre der os-error-4551-Block durch Smart App Control).
+/// UAC-Elevation übernimmt msiexec selbst.
+///
+/// DETACHED_PROCESS war entfernt, weil der Elevations-Antrag (MSI_LUA
+/// Credential-Prompt) und die Installer-UI den sichtbaren interaktiven
+/// Desktop erreichen müssen. VM-Evidenz 2026-11-03: aus dem
+/// hidden/detached Spawn erreichte der UAC-Prompt den Desktop NICHT —
+/// maschinen-verwaltetes Produkt (früher elevated installiert) blieb mit
+/// Stillstand stehen, App war beendet; dieselbe MSI manuell interaktiv
+/// gestartet: Prompt sichtbar, Update SUCCESS. CREATE_NO_WINDOW bleibt für
+/// powershell.exe selbst (kein Konsolen-Fenster des Wrappers); die
+/// relevanten Dialoge kommen von msiexec/consent als eigene Fenster.
 #[cfg(windows)]
 fn spawn_msi_install(msi: &std::path::Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
     let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
     // Härtung t_05f86461: alter Fehler-Marker einer früheren fehlgeschlagenen
     // Installation wird vor dem neuen Versuch entfernt — sonst würde ein
     // Erfolgsmarker-Fehlen fälschlich als frischer Fehlschlag gelesen.
     let marker = msi_failure_marker_path();
     let _ = std::fs::remove_file(&marker);
-    let cmd = msi_powershell_command(msi, &current_exe, &marker);
+    // t_0087dea5: msiexec-Verbose-Log im selben Temp-Update-Verzeichnis —
+    // `/l*v` überschreibt bei jedem Versuch; kein Pre-Clean nötig.
+    let log = msi_update_log_path();
+    let cmd = msi_powershell_command(msi, &current_exe, &marker, &log);
     std::process::Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -398,7 +459,9 @@ fn spawn_msi_install(msi: &std::path::Path) -> Result<(), String> {
             "-Command",
             cmd.as_str(),
         ])
-        .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
+        // KEIN DETACHED_PROCESS (t_0087dea5, s. o.): Elevation-Prompt +
+        // Installer-UI müssen den interaktiven Desktop erreichen.
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| err_keyp("update.err_spawn_msiexec", json!({ "err": e.to_string() })))?;
     Ok(())
@@ -581,7 +644,7 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn msi_command_wires_msiexec_qb_and_relaunch() {
+    fn msi_command_wires_msiexec_qb_log_and_relaunch() {
         let cmd = msi_powershell_command(
             Path::new(
                 r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\app_x64_en-US.msi",
@@ -590,9 +653,19 @@ mod tests {
             Path::new(
                 r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\msi-install-failure.txt",
             ),
+            Path::new(r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\msi-update.log"),
         );
         assert!(cmd.contains("Start-Process msiexec.exe -ArgumentList '/i'"));
-        assert!(cmd.contains("'/qb' -Wait -PassThru"));
+        // /qb bleibt; /l*v + Logpfad kommen hinzu (t_0087dea5).
+        assert!(cmd.contains("'/qb','/l*v'"));
+        assert!(cmd.contains(
+            "'C:\\Users\\sebo\\AppData\\Local\\Temp\\architects-overlay-update\\msi-update.log'"
+        ));
+        // Kein -Wait mehr: -PassThru + begrenztes WaitForExit (Timeout statt
+        // Stillstand, t_0087dea5 — 15 min).
+        assert!(cmd.contains("-PassThru"));
+        assert!(!cmd.contains(" -Wait "));
+        assert!(cmd.contains("$p.WaitForExit(900000)"));
         assert!(cmd.contains(
             "'C:\\Users\\sebo\\AppData\\Local\\Temp\\architects-overlay-update\\app_x64_en-US.msi'"
         ));
@@ -607,8 +680,8 @@ mod tests {
     fn msi_command_failure_branch_relaunches_and_marks_error() {
         // Härtung t_05f86461: Exit-Code NICHT 0/3010 (UAC verweigert 1223,
         // 1603, MSI-Abbruch) — else-Zweig schreibt Exit-Code + Zeitstempel
-        // in die Marker-Datei UND relauncht die Overlay-exe (die noch
-        // installierte alte Version liegt danach wieder vor).
+        // + Log-Pfad in die Marker-Datei UND relauncht die Overlay-exe (die
+        // noch installierte alte Version liegt danach wieder vor).
         let exe = r"C:\Program Files\architects-overlay\architects-overlay.exe";
         let cmd = msi_powershell_command(
             Path::new(
@@ -618,19 +691,39 @@ mod tests {
             Path::new(
                 r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\msi-install-failure.txt",
             ),
+            Path::new(r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\msi-update.log"),
         );
         // else-Zweig vorhanden …
         assert!(cmd.contains("} else {"));
-        // … schreibt Exit-Code + UTC-Zeitstempel in den Marker …
+        // … schreibt Exit-Code + UTC-Zeitstempel + log=<pfad> in den Marker …
         assert!(cmd.contains("Set-Content -LiteralPath 'C:\\Users\\sebo\\AppData\\Local\\Temp\\architects-overlay-update\\msi-install-failure.txt'"));
         assert!(cmd.contains("$p.ExitCode"));
         assert!(cmd.contains("ToUniversalTime"));
-        // … und relauncht die Overlay-exe (zweites Start-Process im else).
+        assert!(cmd.contains("' log="));
+        // … und relauncht die Overlay-exe. Relaunch vorkommt in Erfolgs-,
+        // Exit-Code-Fehlschlag- UND Timeout-Zweig (t_0087dea5): 3x.
         let relaunch = format!("Start-Process '{exe}'");
         assert!(
-            cmd.matches(&relaunch).count() == 2,
-            "Erfolgs- UND Fehlschlag-Zweig müssen die Overlay-exe relaunchen: {cmd}"
+            cmd.matches(&relaunch).count() == 3,
+            "Erfolgs-, Fehlschlag- und Timeout-Zweig müssen die Overlay-exe relaunchen: {cmd}"
         );
+    }
+
+    #[test]
+    fn msi_command_timeout_branch_kills_and_marks() {
+        // t_0087dea5: WaitForExit(900000) false → $p.Kill() + Marker
+        // 'msiexec exit timeout <ts> log=<pfad>' + Relaunch der alten
+        // Version. Kein unbegrenzter Stillstand.
+        let cmd = msi_powershell_command(
+            Path::new(r"C:\Temp\app.msi"),
+            Path::new(r"C:\Program Files\architects-overlay\architects-overlay.exe"),
+            Path::new(r"C:\Temp\msi-install-failure.txt"),
+            Path::new(r"C:\Temp\msi-update.log"),
+        );
+        assert!(cmd.contains("} else { $p.Kill();"));
+        assert!(cmd.contains("'msiexec exit timeout ' + (Get-Date).ToUniversalTime()"));
+        // Timeout-Marker trägt denselben Log-Pfad wie der Exit-Code-Marker.
+        assert!(cmd.contains("' log=C:\\Temp\\msi-update.log'"));
     }
 
     #[test]
@@ -655,6 +748,55 @@ mod tests {
     }
 
     #[test]
+    fn failure_marker_accepts_log_field_and_timeout_code() {
+        // t_0087dea5: neue Marker-Formate werden vom bestehenden Parser
+        // sauber verarbeitet (kein Rückfall der 0.5.41-Kette):
+        // (1) Exit-Code-Marker mit angehängtem log=<pfad>-Feld — code +
+        //     timestamp unverändert, log-Feld wird ignoriert;
+        // (2) Timeout-Marker 'msiexec exit timeout <ts> log=<pfad>' —
+        //     code ist das Literal 'timeout'.
+        let dir = std::env::temp_dir().join(format!("ao-updater-test-log-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let logp = dir.join(MSI_UPDATE_LOG);
+
+        let marker1 = dir.join(MSI_FAILURE_MARKER);
+        std::fs::write(
+            &marker1,
+            format!(
+                "msiexec exit 1603 2026-11-03T12:34:56Z log={}",
+                logp.display()
+            ),
+        )
+        .unwrap();
+        let state = UpdaterState::default();
+        assert!(consume_msi_failure_marker(&marker1, &state));
+        let note: serde_json::Value =
+            serde_json::from_str(&state.note()).expect("note must be key-JSON");
+        assert_eq!(note["error_key"], "update.note_msi_failed");
+        assert_eq!(note["params"]["code"], "1603");
+        assert_eq!(note["params"]["timestamp"], "2026-11-03T12:34:56Z");
+
+        let marker2 = dir.join(MSI_FAILURE_MARKER);
+        std::fs::write(
+            &marker2,
+            format!(
+                "msiexec exit timeout 2026-11-03T13:00:00Z log={}",
+                logp.display()
+            ),
+        )
+        .unwrap();
+        let state2 = UpdaterState::default();
+        assert!(consume_msi_failure_marker(&marker2, &state2));
+        let note2: serde_json::Value =
+            serde_json::from_str(&state2.note()).expect("note must be key-JSON");
+        assert_eq!(note2["error_key"], "update.note_msi_failed");
+        assert_eq!(note2["params"]["code"], "timeout");
+        assert_eq!(note2["params"]["timestamp"], "2026-11-03T13:00:00Z");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn failure_marker_absent_is_silent() {
         let state = UpdaterState::default();
         state.set_note("baseline");
@@ -673,9 +815,14 @@ mod tests {
             Path::new(r"C:\Users\o'brien\app.msi"),
             Path::new(r"C:\Program Files\architects-overlay\architects-overlay.exe"),
             Path::new(r"C:\Users\o'brien\msi-install-failure.txt"),
+            Path::new(r"C:\Users\o'brien\msi-update.log"),
         );
         assert!(cmd.contains("'C:\\Users\\o''brien\\app.msi'"));
         assert!(cmd.contains("'C:\\Users\\o''brien\\msi-install-failure.txt'"));
+        // Log-Pfad im ArgumentList und im Marker-log=-Ffeld: überall
+        // korrekt gescaped (t_0087dea5).
+        assert!(cmd.contains("'/l*v','C:\\Users\\o''brien\\msi-update.log'"));
+        assert!(cmd.contains("' log=C:\\Users\\o''brien\\msi-update.log'"));
         // Nur die erwarteten Argument-Quotes um die Pfade; das Apostroph
         // selbst ist jeweils verdoppelt.
         assert!(!cmd.contains("o'brien"));

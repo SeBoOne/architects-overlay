@@ -80,19 +80,31 @@ immer mitgeliefert; es wurde nur nie verwendet.
 
 `<name>.msi` herunterladen → **SHA256 verifizieren** (Pflicht bleibt,
 s. u. — kein Trust-on-Download) → `powershell.exe -NoProfile
--NonInteractive -WindowStyle Hidden -Command "Start-Process msiexec.exe
--ArgumentList '/i','<MSI-PFAD>','/qb' -Wait -PassThru; if ($p.ExitCode
--eq 0 -or $p.ExitCode -eq 3010) { Start-Process '<Overlay-EXE>' } else {
+-NonInteractive -WindowStyle Hidden -Command "$p = Start-Process
+msiexec.exe -ArgumentList '/i','<MSI-PFAD>','/qb','/l*v','<LOG-PFAD>'
+-PassThru; if ($p.WaitForExit(900000)) { if ($p.ExitCode -eq 0 -or
+$p.ExitCode -eq 3010) { Start-Process '<Overlay-EXE>' } else {
 Set-Content -LiteralPath '<MARKER-DATEI>' -Value ('msiexec exit ' +
-$p.ExitCode + ' ' + (Get-Date).ToUniversalTime().ToString('o'));
-Start-Process '<Overlay-EXE>' }"`
-detached starten (CREATE_NO_WINDOW | DETACHED_PROCESS) → App `exit(0)`.
+$p.ExitCode + ' ' + (Get-Date).ToUniversalTime().ToString('o') +
+' log=<LOG-PFAD>'); Start-Process '<Overlay-EXE>' } } else { $p.Kill();
+Set-Content -LiteralPath '<MARKER-DATEI>' -Value ('msiexec exit timeout '
++ (Get-Date).ToUniversalTime().ToString('o') + ' log=<LOG-PFAD>');
+Start-Process '<Overlay-EXE>' }"` starten (nur CREATE_NO_WINDOW — **kein
+DETACHED_PROCESS**, s. Abschnitt „Maschinen-verwaltete Installationen
+brauchen UAC“ unten) → App `exit(0)`.
+`<LOG-PFAD>` = `%TEMP%\architects-overlay-update\msi-update.log`.
 
 - **SAC-konsequent:** es werden NUR signierte System-Binaries gespawnt
   (`powershell.exe` → `msiexec.exe`). Kein selbst-geschriebenes
   .cmd/.ps1-Script — SAC blockt unsignierte Dateien.
 - `/qb`: basic UI (Fortschrittsbalken, keine Rückfragen). UAC-Elevation
-  übernimmt msiexec selbst.
+  übernimmt msiexec selbst. `/l*v`: Verbose-Log des Updater-Wrappers
+  (t_0087dea5) — Diagnose-Pfad für Support-Fälle.
+- **Timeout statt Stillstand** (t_0087dea5): kein `-Wait` mehr —
+  `-PassThru` + `$p.WaitForExit(900000)` (15 min). Läuft msiexec nicht
+  ab (z. B. Elevations-Prompt hängt), wird der Prozess gekillt und der
+  Fehlschlag-Marker mit Code `timeout` geschrieben; die alte Version
+  relauncht wie im Exit-Code-Fehlschlag-Zweig.
 - **Auto-Relaunch** (Sebo-Wunsch: Overlay startet nach dem Update wieder):
   der PowerShell-Wrapper startet die Overlay-EXE neu, nachdem msiexec mit
   Exit-Code 0 ODER 3010 (SUCCESS_REBOOT_REQUIRED — Installation erfolgreich,
@@ -101,8 +113,9 @@ detached starten (CREATE_NO_WINDOW | DETACHED_PROCESS) → App `exit(0)`.
   (UAC-Verweigerung → 1223, interne MSI-Fehler → 1603, MSI-Abbruch) —
   s. Abschnitt „MSI-Fehlschlag“ unten. Auch hier relauncht der Wrapper
   die Overlay-EXE (die noch installierte alte Version) und schreibt
-  Exit-Code + UTC-Zeitstempel in `msi-install-failure.txt` im
-  Temp-Update-Verzeichnis (`%TEMP%\architects-overlay-update\`).
+  Exit-Code + UTC-Zeitstempel + `log=<LOG-PFAD>` in
+  `msi-install-failure.txt` im Temp-Update-Verzeichnis
+  (`%TEMP%\architects-overlay-update\`).
 - Implementiert in `src-tauri/src/updater.rs` (`spawn_msi_install`,
   Kommando-Bau in `msi_powershell_command` — testbares Quoting,
   PowerShell-Single-Quotes werden verdoppelt).
@@ -187,9 +200,11 @@ Daher der else-Zweig im PowerShell-Wrapper (Exit-Code nicht 0/3010):
 
 1. **Relaunch:** `Start-Process '<Overlay-EXE>'` — die noch installierte
    alte Version liegt danach wieder vor.
-2. **Fehlersichtbarkeit:** Exit-Code + UTC-Zeitstempel werden nach
+2. **Fehlersichtbarkeit:** Exit-Code + UTC-Zeitstempel (+ `log=<Log-Pfad>`,
+   t_0087dea5) werden nach
    `%TEMP%\architects-overlay-update\msi-install-failure.txt` geschrieben
-   (`msiexec exit <code> <ts>`). Der nächste Check-Lauf der neu gestarteten
+   (`msiexec exit <code> <ts> [log=<pfad>]`; Timeout-Fall: Code `timeout`).
+   Der nächste Check-Lauf der neu gestarteten
    App (`run_check`) liest die Datei, löscht sie (Note erscheint genau
    einmal pro Fehlschlag) und setzt die UI-Note `update.note_msi_failed`
    (de/en) — sichtbar in der Config-View „Aktualisierung“. Ein verfügbares
@@ -202,6 +217,50 @@ Grenze: Die Note kommt erst beim nächsten Check im neu gestarteten Overlay —
 die Instanz, die der Fehlschlag beendet hat, kann selbst nichts mehr
 melden. Echte Windows-E2E-Verifikation (1223/1603 herbeiführen) läuft in
 der Sebo-VM, nicht in den Unit-Tests.
+
+## Maschinen-verwaltete Installationen brauchen UAC (t_0087dea5)
+
+Tauris MSI-Default ist **perUser/currentUser** — eine solche Installation
+braucht bei Update/Repair **keine** Elevation. Wird die MSI aber einmal
+**elevated** installiert (Kontextmenü „Als Administrator installieren“ oder
+ein elevated laufendes Overlay), wird daraus ein **maschinen-verwaltetes
+Produkt**: Der Product-Eintrag liegt im HKLM-Hive, LocalSystem besitzt den
+Publish-Key. msiexec-Log-Belege dafür:
+
+```text
+Determined that existing product ... is installed per-machine.
+Product {E10C7D97-...} is admin assigned: LocalSystem owns the publish key.
+MSI_LUA: Credential prompt required later as the user is running repair/uninstall
+```
+
+Ein maschinen-verwaltetes Produkt **muss** bei Update/Repair einen
+Credential-Prompt (UAC) zeigen — das ist kein Fehler, sondern Pflicht.
+
+**VM-Evidenz 2026-11-03 (0.5.40 → 0.5.41):** Overlay exitet, MSI landet
+korrekt in `%TEMP%\architects-overlay-update`, msiexec startet — aber der
+UAC-Prompt erreichte den sichtbaren Desktop **nicht**, die Installation
+stand still, die App blieb beendet. Dieselbe MSI manuell interaktiv
+gestartet: Prompt erscheint, bestätigt, Update SUCCESS.
+
+**Sichtbarkeitsprinzip:** Ein Elevations-/Credential-Request aus einem
+hidden/detached Spawn-Kontext (`CREATE_NO_WINDOW | DETACHED_PROCESS`) kann
+den interaktiven Desktop nicht zuverlässig erreichen. Der Updater-Wrapper
+wird daher nur noch mit `CREATE_NO_WINDOW` gespawnt (kein Konsolenfenster
+des Wrappers selbst), **ohne** `DETACHED_PROCESS` — UAC-Prompt
+(consent.exe) und Installer-UI (`/qb`-Fortschrittsfenster von msiexec) sind
+eigene Fenster und landen sichtbar auf dem Desktop.
+
+**Timeout statt Stillstand:** Zusätzlich begrenzt der Wrapper das Warten
+auf `$p.WaitForExit(900000)` (15 min). Hängt die Installation (z. B.
+Prompt unsichtbar in einer anderen Session), killt der Wrapper msiexec und
+schreibt den Fehlschlag-Marker mit Code `timeout` — die alte Version
+relauncht, der Zustand ist nicht mehr unbegrenzt still.
+
+**Diagnose-Log für Support-Fälle:** Der Updater-Wrapper übergibt msiexec
+`/l*v '%TEMP%\architects-overlay-update\msi-update.log'`. Bei
+Support-/Fehlermeldungen ist dieses Verbose-Log die primäre Beweisquelle
+(Elevation-Entscheidung, 1603-Ursache, Rollback). Der Fehlschlag-Marker
+trägt den Log-Pfad zusätzlich im Feld `log=<pfad>`.
 
 ## Komponenten
 
