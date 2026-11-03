@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "architects-overlay",
-  "version": "0.5.41",
+  "version": "0.5.42",
   "identifier": "com.sebo.architects-overlay",
   "build": {
     "frontendDist": "../build",
