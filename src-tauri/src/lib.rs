@@ -153,6 +153,7 @@ pub fn run() {
             connector::connector_fetch,
             connector::connector_form_submit,
             connector::connector_screen_action,
+            connector::connector_flow_open,
             // SCLM v2 Karte A: Settings-Felder (Spec 5.1) + Session-Keystore (5.2)
             connector::connector_set_setting_field,
             connector::connector_get_settings_fields,

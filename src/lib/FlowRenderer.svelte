@@ -28,6 +28,7 @@
 		applyAutofill,
 		resolvePlaceholders,
 		isNavigationAction,
+		actionEnabled,
 		loadFlowPins,
 		saveFlowPin,
 		type ConnectorEntry,
@@ -96,6 +97,11 @@
 	// SF2-R1 D3: Action-Eingabefelder (z. B. pcode-Claim beim ersten
 	// Wishes-Save) — Werte fließen als {key}-Binding in die Action.
 	let actionInputs: Record<string, string> = $state({});
+	// SCLM v2 Karte C (Requirement 9): enabled_if — one-way-Flags
+	// (collected/waived) deaktivieren die zugehörige Aktion.
+	function actionIsEnabled(a: ScreenActionDTO): boolean {
+		return actionEnabled(a, fstate);
+	}
 	// SF3: Copy-Hinweis pro Detail-Zeile (Codes einsehen/kopieren — generisch
 	// für alle Detail-Screens, keine Connector-Logik).
 	let copiedKey: string | null = $state(null);
@@ -133,6 +139,17 @@
 		res.data?.mapped && !Array.isArray(res.data.mapped)
 			? (res.data.mapped as Record<string, unknown>)
 			: null
+	);
+	// SCLM v2 Karte C (Spec Abschnitt 3): result_for liefert 200 mit
+	// {result: null}, solange keine Ziehung lief — alle mapped-Felder leer
+	// → Hinweis „Ergebnis noch offen“ (null-safe, nicht nur Status).
+	const resultsPending = $derived(
+		shown?.type === 'results' &&
+			res.data !== null &&
+			!Array.isArray(res.data.mapped) &&
+			Object.values((res.data.mapped as Record<string, unknown> | null) ?? {}).every(
+				(v) => v === null || v === undefined
+			)
 	);
 	// SF2: Write-Action eines Multi-Screens = Confirm-Button.
 	const confirmAction = $derived(
@@ -202,9 +219,14 @@
 		if (!isTauri || !s || s.type === 'form' || !s.endpoint) return;
 		const missing = (s.params ?? []).find((p) => !(String(fstate[p.key] ?? '')).trim());
 		if (missing) {
+			// SCLM v2 Karte C (Requirement 1): Flows mit open-Block haben
+			// keinen manuellen Code-Eingabe-Screen mehr — ohne vorgemergten
+			// Zustand (flow_open) gehört der Code in die Suchzeile.
 			res = {
 				data: null,
-				error: tr('error.connector.param_required', { key: labelOf(missing.label, lang) }),
+				error: flow.open
+					? tr('connector.flow.open_via_search')
+					: tr('error.connector.param_required', { key: labelOf(missing.label, lang) }),
 				loading: false
 			};
 			return;
@@ -294,11 +316,14 @@
 	}
 
 	// ---- Poll-Regeln (wait: poll_seconds + exit-condition) -----------------
+	// SCLM v2 Karte C (Requirement 7): results-Screens mit poll_seconds
+	// pollen weiter (null-Pfad „Ergebnis noch offen“ → wait-Verhalten).
 	function schedulePolling() {
 		if (timer) clearInterval(timer);
 		timer = null;
 		const s = shown;
-		if (!s || s.type !== 'wait') return;
+		if (!s) return;
+		if (s.type !== 'wait' && !(s.type === 'results' && s.poll_seconds)) return;
 		const secs = Math.max(s.poll_seconds ?? 15, 5);
 		timer = setInterval(() => void load(false), secs * 1000);
 	}
@@ -513,6 +538,8 @@
 			if (a.goto) go(a.goto);
 			return;
 		}
+		// enabled_if (one-way-Flags): deaktivierte Aktionen laufen nicht.
+		if (!actionIsEnabled(a)) return;
 		// SF2-R1 D3: Pflicht-Action-Felder (z. B. pcode-Claim) vor dem Write
 		// prüfen — fehlende Werte laufen sonst als 403/400 beim Server an.
 		for (const f of a.fields ?? []) {
@@ -629,7 +656,7 @@
 	const fieldActions = $derived.by(() => {
 		const s = shown;
 		if (!s) return [];
-		return (s.actions ?? []).filter((a) => (a.fields?.length ?? 0) > 0);
+		return (s.actions ?? []).filter((a) => (a.fields?.length ?? 0) > 0 && actionIsEnabled(a));
 	});
 
 	onDestroy(() => {
@@ -642,6 +669,10 @@
 		<div class="ftitle">
 			<span class="fname">{flowTitle}</span>
 			{#if shown}
+				<!-- SCLM v2 Karte C: der deklarierte Screen-Titel ist die
+				     Schritt-Orientierung im linearen Flow (de/en aus dem
+				     Manifest) — ohne ihn sähe der Nutzer nur "Step n". -->
+				<span class="fscreentitle">{labelOf(shown.title, lang)}</span>
 				<span class="fstep">
 					{tr('connector.flow.step', {
 						n: String(flow.screens.findIndex((x) => x.id === shown.id) + 1),
@@ -661,16 +692,22 @@
 	{#if shown === null}
 		<p class="fempty">{tr('error.connector.flow_screen_missing')}</p>
 	{:else}
-		<nav class="ftabs">
-			{#each flow.screens as s (s.id)}
-				<button
-					class="ftab"
-					class:is-on={s.id === shown.id}
-					type="button"
-					onclick={() => go(s.id)}
-				>{labelOf(s.title, lang)}</button>
-			{/each}
-		</nav>
+		<!-- SCLM v2 Karte C (Requirement 9): Flows mit open-Block sind
+		     strikt linear — Flow-Schritte sind KEINE Tabs (keine
+		     pill-artige Schritt-Navigation). Legacy-Flows ohne open-Block
+		     (z. B. creator) behalten ihre Screen-Navigation. -->
+		{#if !flow.open}
+			<nav class="ftabs">
+				{#each flow.screens as s (s.id)}
+					<button
+						class="ftab"
+						class:is-on={s.id === shown.id}
+						type="button"
+						onclick={() => go(s.id)}
+					>{labelOf(s.title, lang)}</button>
+				{/each}
+			</nav>
+		{/if}
 
 		<div class="fbody">
 			{#if res.loading && shown.type !== 'code_entry' && shown.type !== 'form'}
@@ -763,6 +800,13 @@
 						<li class="fempty">{$t('connector.empty')}</li>
 					{/each}
 				</ul>
+			{:else if resultsPending}
+				<!-- Spec Abschnitt 3: 200 {result: null} abfangen (nicht nur
+				     Status) — Hinweis + Poll-Verhalten wie wait (poll unten). -->
+				<p class="fwait">{tr('connector.flow.result_open')}</p>
+				{#if shown.poll_seconds}
+					<p class="fwait">{tr('connector.flow.wait_poll', { s: String(shown.poll_seconds) })}</p>
+				{/if}
 			{:else}
 				<dl class="fdetail">
 					{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
@@ -802,7 +846,7 @@
 						<button
 							class="fbtn fsubmit"
 							type="button"
-							disabled={actionBusy || marked.length === 0}
+							disabled={actionBusy || marked.length === 0 || !actionIsEnabled(confirmAction)}
 							onclick={() => void confirmMulti()}
 						>
 							{labelOf(confirmAction.title, lang)}
@@ -810,14 +854,23 @@
 					{/if}
 					{#each screenActions as a (a.id)}
 						{#if isNavigationAction(a)}
-							<button class="fbtn" type="button" onclick={() => void runAction(a)}>
+							<button
+								class="fbtn"
+								type="button"
+								disabled={!actionIsEnabled(a)}
+								onclick={() => void runAction(a)}
+							>
 								{labelOf(a.title, lang)}
 							</button>
 						{:else}
+							<!-- enabled_if (Requirement 9): bereits gesetzte
+							     one-way-Flags (collected/waived) rendern die
+							     Aktion deaktiviert. -->
 							<button
 								class="fbtn fsubmit"
 								type="button"
-								disabled={actionBusy}
+								disabled={actionBusy || !actionIsEnabled(a)}
+								title={actionIsEnabled(a) ? '' : $t('connector.flow.action_done')}
 								onclick={() => void runAction(a)}
 							>
 								{labelOf(a.title, lang)}
@@ -836,6 +889,7 @@
 	.fhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 	.ftitle { display: flex; flex-direction: column; gap: 2px; }
 	.fname { font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+	.fscreentitle { font-weight: 600; font-size: 13px; opacity: 0.95; }
 	.fstep { font-size: 11px; opacity: 0.7; }
 	.fnav { display: flex; gap: 6px; }
 	.fbtn {

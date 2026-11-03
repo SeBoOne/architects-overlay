@@ -15,7 +15,9 @@ pub mod manifest;
 pub mod mapping;
 pub mod validate;
 
-pub use flow::{AutocompleteRule, CondOp, Condition, Flow, Screen, ScreenType};
+pub use flow::{
+    AutocompleteRule, CondOp, Condition, Flow, FlowOpen, Screen, ScreenAction, ScreenType,
+};
 pub use manifest::{AuthType, ConnectorManifest, ScanSpec, View, ViewType};
 pub use mapping::{DotPathError, dot_path};
 pub use validate::{MAX_MANIFEST_BYTES, Report, validate_manifest};

@@ -41,6 +41,8 @@ i18n-err = { path = "../crates/i18n-err" }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# Client-seitige pcode-Generatur (SCLM v2 Flow-Öffnung): CSPRNG-Füllung.
+getrandom = "0.3"
 log = "0.4"
 # Remote-Override für die manuelle Modul-Zuweisung (S3/D2): Gitea-Raw-Fetch.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

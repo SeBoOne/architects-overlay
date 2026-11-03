@@ -25,8 +25,11 @@
 		type ConnectorEntry,
 		type FetchResultDTO,
 		type FlowDTO,
+		type FlowOpenOutcomeDTO,
 		type ScanOutcomeDTO,
-		type ViewDTO
+		type SessionEntryDTO,
+		type ViewDTO,
+		openFlowOf
 		} from './connector';
 
 	type Result = { data: FetchResultDTO | null; error: string; loading: boolean };
@@ -41,9 +44,9 @@
 		entry: ConnectorEntry;
 		embedded?: boolean;
 		onexit?: () => void;
-		/** SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — Flow + Start-Screen. */
-		initialFlow?: { flowId: string; screenId: string } | null;
-		/** SF2-R1 D1: vorgemergter Flow-Zustand des Suchleisten-Prefetch. */
+		/** SCLM v2 Karte C: Flow-Start von außen (Suchleisten-Code-Eingabe) — Flow + Start-Screen. */
+		initialFlow?: { flowId: string; screenId: string; nonce?: number } | null;
+		/** SCLM v2: vorgemergter Flow-Zustand aus connector_flow_open. */
 		initialFlowState?: Record<string, unknown> | null;
 	} = $props();
 
@@ -75,10 +78,25 @@
 	function activeFlowRef(): FlowDTO | null {
 		return flowId ? (flows.find((f) => f.id === flowId) ?? null) : null;
 	}
-	// SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — aktiviert den
-	// Ziel-Flow und überspringt bis zum gewünschten Start-Screen.
+	// SCLM v2 Karte C (t_cce3a5ea): Flow-Start — von außen (Suchleisten-Code,
+	// initialFlow) ODER intern (Öffnen-Button der Landliste). flowStart trägt
+	// Start-Screen + vorgemergten Zustand an den FlowRenderer; der nonce
+	// zwingt pro Öffnung ein Remount (flowKey), sonst bliebe der Zustand des
+	// letzten Öffnens stehen.
+	let flowStart = $state<{
+		screenId: string | null;
+		state: Record<string, unknown> | null;
+		nonce: number;
+	} | null>(null);
 	$effect(() => {
-		if (initialFlow) flowId = initialFlow.flowId;
+		if (initialFlow) {
+			flowId = initialFlow.flowId;
+			flowStart = {
+				screenId: initialFlow.screenId ?? null,
+				state: initialFlowState ?? null,
+				nonce: initialFlow.nonce ?? 1
+			};
+		}
 	});
 	// Erster View als Start-Auswahl (einmalig beim Mount).
 	let res = $state<Result>({ data: null, error: '', loading: false });
@@ -102,7 +120,7 @@
 	// vorherigen Flows stehen („Flow is missing its entry screen“).
 	const flowKey = $derived(
 		activeFlow
-			? `${activeFlow.id}:${initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? '') : ''}`
+			? `${activeFlow.id}:${flowStart ? `${flowStart.nonce}:${flowStart.screenId ?? ''}` : ''}`
 			: ''
 	);
 	const lang = $derived(currentLang());
@@ -168,6 +186,7 @@
 	function selectFlow(id: string) {
 		if (id === flowId) return;
 		flowId = id;
+		flowStart = null; // manuelles Flow-Tab: Start am Flow-Einstieg
 		formValues = {};
 		formNote = '';
 		paramValues = {};
@@ -245,8 +264,48 @@
 	/** Tabs-Leiste: zurück zur Landliste (Flow/View-Selektion aufheben). */
 	function backToLanding() {
 		flowId = null;
+		flowStart = null;
 		viewId = '';
 		void loadScan(false);
+	}
+
+	// SCLM v2 Karte C (Requirements 5/6): „Öffnen“-Button der Landliste —
+	// derselbe Weg wie der Suchleisten-Code: join_code liegt bereits im
+	// Session-Keystore (sonst gäbe es keinen Button) → connector_flow_open
+	// (Auto-Beitritt/Claim/pcode in Rust) → Flow startet am gemeldeten Screen.
+	const openFlow = $derived(openFlowOf(entry.manifest));
+	let openBusy = $state(false);
+	let openNote = $state('');
+	async function openRaffle(sid: string) {
+		const fl = openFlow;
+		if (!fl || !isTauri || openBusy) return;
+		openBusy = true;
+		openNote = '';
+		try {
+			const found = await invoke<SessionEntryDTO | null>('connector_keystore_find', {
+				id: entry.id,
+				sid
+			});
+			const code = (found?.join_code ?? '').trim();
+			if (!code) {
+				openNote = tr('error.connector.param_required', { key: 'join_code' });
+			} else {
+				const out = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
+					id: entry.id,
+					flow_id: fl.id,
+					code
+				});
+				flowId = out.flow_id;
+				flowStart = {
+					screenId: out.screen,
+					state: out.state,
+					nonce: Date.now() // Öffnungen sind user-getriggert — Zeitstempel genügt als Unique-Key
+				};
+			}
+		} catch (err) {
+			openNote = trError(err);
+		}
+		openBusy = false;
 	}
 
 	async function submitForm() {
@@ -371,14 +430,14 @@
 				<button
 					type="button"
 					role="tab"
-					class="ctab"
-					class:is-on={flowId === fl.id}
 					aria-selected={flowId === fl.id}
+					class="chip"
+					class:is-on={flowId === fl.id}
 					onclick={() => selectFlow(fl.id)}
 				>{labelOf(fl.title, lang)}</button>
 			{/each}
 			{#if scan && flowId}
-				<button type="button" class="ctab ctab-back" onclick={backToLanding}>
+				<button type="button" class="chip chip-back" onclick={backToLanding}>
 					← {$t('connector.scan_back')}
 				</button>
 			{/if}
@@ -390,16 +449,16 @@
 				<button
 					type="button"
 					role="tab"
-					class="ctab"
-					class:is-on={v.id === viewId}
 					aria-selected={v.id === viewId}
+					class="chip"
+					class:is-on={v.id === viewId}
 					onclick={() => selectView(v.id)}
 				>
 					{labelOf(v.title, lang)}
 				</button>
 			{/each}
 			{#if scan && viewId}
-				<button type="button" class="ctab ctab-back" onclick={backToLanding}>
+				<button type="button" class="chip chip-back" onclick={backToLanding}>
 					← {$t('connector.scan_back')}
 				</button>
 			{/if}
@@ -472,8 +531,8 @@
 			{entry}
 			flow={activeFlow}
 			onexit={onexit}
-			initial={initialFlow?.flowId === activeFlow.id ? (initialFlow.screenId ?? null) : null}
-			initialState={initialFlow?.flowId === activeFlow.id ? initialFlowState : null}
+			initial={flowStart?.screenId ?? null}
+			initialState={flowStart?.state ?? null}
 		/>
 		{/key}
 	{:else if scan && showLanding}
@@ -499,6 +558,9 @@
 				{$t('common.refresh')}
 			</button>
 		</div>
+		{#if openNote}
+			<div class="cerror" role="alert">{openNote}</div>
+		{/if}
 		{#if scanError}
 			<div class="cerror" role="alert">{scanError}</div>
 		{:else if scanLoading && !scanData}
@@ -528,7 +590,18 @@
 									? $t('connector.scan_status_done')
 									: $t('connector.scan_status_pending')}
 							</span>
-							{#if it.has_saved_code}
+							{#if it.has_saved_code && openFlow}
+								<!-- SCLM v2 Karte C (Req. 5/6): Öffnen startet denselben
+								     Weg wie der Suchleisten-Code (gespeicherter join_code). -->
+								<button
+									type="button"
+									class="btn"
+									disabled={openBusy}
+									title={$t('connector.scan_open_tip')}
+									onclick={() => void openRaffle(it.sid)}
+								>{$t('connector.scan_open')}</button>
+							{:else if it.has_saved_code}
+								<!-- Manifest ohne open-Block: Button bleibt Platzhalter. -->
 								<button
 									type="button"
 									class="btn"
@@ -676,21 +749,6 @@
 		display: flex;
 		gap: 4px;
 		flex-wrap: wrap;
-	}
-	.ctab {
-		background: transparent;
-		border: 1px solid currentColor;
-		border-color: color-mix(in srgb, currentColor 25%, transparent);
-		color: inherit;
-		border-radius: 6px;
-		padding: 3px 10px;
-		font-size: 12px;
-		cursor: pointer;
-	}
-	.ctab.is-on {
-		border-color: currentColor;
-		background: color-mix(in srgb, currentColor 12%, transparent);
-		font-weight: 600;
 	}
 	.connector-tools {
 		display: flex;
@@ -846,8 +904,9 @@
 		font: inherit;
 	}
 	/* Karte B: Scan-Landliste (globale .mlist/.mrow/.chip-Klassen werden
-	   nur minimal ergänzt — keine neue CSS-Welt). */
-	.ctab-back {
+	   nur minimal ergänzt — keine neue CSS-Welt). Tab-Leiste nutzt das
+	   globale Chip-Muster (Requirement 10). */
+	.chip-back {
 		opacity: 0.75;
 	}
 	.cscan-spacer {

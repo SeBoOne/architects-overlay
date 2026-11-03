@@ -167,12 +167,26 @@ export type ScreenActionDTO = {
 	pins_map?: Record<string, string> | null;
 	/** Eingabefelder der Action (z. B. pcode-Claim beim ersten Wishes-Save). */
 	fields?: ParamDTO[] | null;
+	/** Ein-Regel (SCLM v2 Req. 9): Action nur aktiv, wenn die Bedingung gegen
+	 *  den Flow-Zustand wahr ist (one-way-Flags wie collected/waived). */
+	enabled_if?: ConditionDTO | null;
 	goto?: string | null;
 };
 
 /** Aktion ohne `method` = reine Navigation (Validator erzwingt goto). */
 export function isNavigationAction(a: ScreenActionDTO): boolean {
 	return !a.method;
+}
+
+/**
+ * Ein-Regel einer Aktion auswerten (SCLM v2 Req. 9, generisch): fehlende
+ * enabled_if = immer aktiv. Zustands-Feld fehlt → not_equals gilt als wahr
+ * (Flag nie gesetzt = Aktion ausführbar; Backend erzwingt one-way trotzdem).
+ */
+export function actionEnabled(a: ScreenActionDTO, state: Record<string, unknown>): boolean {
+	const c = a.enabled_if;
+	if (!c) return true;
+	return evaluateCondition(c, state);
 }
 
 export type ScreenDTO = {
@@ -193,6 +207,28 @@ export type ScreenDTO = {
 	autocomplete?: AutocompleteRuleDTO[] | null;
 	multi?: MultiSpecDTO | null;
 	actions?: ScreenActionDTO[] | null;
+	/** Screen-Antwort → Session-Keystore (SCLM v2 Spec 5.2): Spalten-Keys
+	 *  (join_code|name|participant_id|pcode|result_id) → gemappte Zustands-Keys. */
+	keystore_fields?: Record<string, string> | null;
+};
+
+/** Code-Einstieg eines Flows (SCLM v2 Spec 5.4): die Suchzeile (oder der
+ *  Öffnen-Button) übergibt nur den Session-Code — der Core öffnet, joined
+ *  automatisch und nennt den Start-Screen. */
+export type FlowOpenDTO = {
+	param: string;
+	session_endpoint: string;
+	headers?: Record<string, string> | null;
+	mapping: Record<string, string>;
+	match_path: string;
+	id_path: string;
+	match_setting_key: string;
+	join_endpoint: string;
+	join_body?: unknown | null;
+	join_headers?: Record<string, string> | null;
+	open_screen: string;
+	done_screen: string;
+	done_path: string;
 };
 
 export type FlowDTO = {
@@ -200,7 +236,24 @@ export type FlowDTO = {
 	title: LocalizedText;
 	entry: string;
 	screens: ScreenDTO[];
+	open?: FlowOpenDTO | null;
 };
+
+/** Antwort von connector_flow_open (Auto-Beitritt, Spec 5.4). */
+export type FlowOpenOutcomeDTO = {
+	flow_id: string;
+	screen: string;
+	state: Record<string, unknown>;
+	joined: boolean;
+	claimed: boolean;
+	pcode_generated: boolean;
+	status: number;
+};
+
+/** Der Flow mit Code-Einstieg (Suchzeilen-Einstieg), falls vorhanden. */
+export function openFlowOf(manifest: ConnectorManifestDTO): FlowDTO | null {
+	return (manifest.flows ?? []).find((f) => f.open) ?? null;
+}
 
 export type ConnectorEntry = {
 	id: string;

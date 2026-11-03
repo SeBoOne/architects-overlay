@@ -102,3 +102,17 @@ Jeweils: Builder auf eigenem Branch, Reviewer-Review, Omar merged --no-ff. Kein 
 - Ersteller-/Admin-Verbesserungen (bestehende Manifest-Views bleiben unangetastet)
 - Mehrere SCLM-Instanzen pro Overlay (base_url bleibt pro Manifest)
 - pcode-Sync über Geräte hinweg (Key export/import später, wenn Sebo es will)
+
+## 8. Merge-Status 2026-11-04 (main, Omar)
+
+- A+B+Härtung bereits in main (76bf179, bebc158, bd860e4); Karte C (Participant-Flow v2)
+  folgt mit diesem Merge.
+- Frontend-Grundlage ist durchgängig **C**: Karte Bs provisorische Scan-Landliste wurde
+  durch C's Flow-Listen ersetzt; die Rust-Seite von B (scan_command, Poll-Cache) bleibt
+  als Backend erhalten und gehärtet (poll_seconds-Deckel, code_field-Sanitiserung,
+  sid-Dedup — aus t_3cfc7842).
+- Tabs 'Warten auf Ziehung' / 'Mein Gewinn' sind entfallen (Sebo): ein Flow, kein
+  manueller Reiter-Wechsel; Hotkey-Dialog-Subtabs bleiben unberührt.
+- Nach Merge + Gates (fmt, clippy --workspace --all-targets, cargo test --workspace,
+  pnpm check) folgt Release 0.5.43 nur mit Sebo (Tag + MSI-Build + Doku-Check);
+  danach VM-Gegentest mit der Testerin (SAC-Rechner).

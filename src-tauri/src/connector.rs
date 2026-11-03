@@ -1012,13 +1012,33 @@ pub async fn connector_fetch(
     force: bool,
     params: Option<BTreeMap<String, String>>,
 ) -> Result<FetchResult, String> {
-    let mut params = params.unwrap_or_default();
+    fetch_inner(
+        &state,
+        &settings_state,
+        &id,
+        &view_id,
+        force,
+        params.unwrap_or_default(),
+    )
+    .await
+}
+
+/// Fetch-Kern (tauri-frei, testbar — gleiche Semantik wie das Command):
+/// Settings-Injektion, TTL-Cache, HTTP, Mapping, Keystore-Write.
+pub(crate) async fn fetch_inner(
+    state: &ConnectorState,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+    view_id: &str,
+    force: bool,
+    mut params: BTreeMap<String, String>,
+) -> Result<FetchResult, String> {
     // Settings-Feld-Werte (Spec 5.1) als Basis-Platzhalter-Injektion:
     // deklarierte `{key}`-Platzhalter (z. B. {sclm_username}) resolven aus
     // den Settings; explizit übergebene params haben Vorrang. Secrets
     // (secret:true) resolven HIER weiter mit — sie werden nur fürs request-
     // Ziel verwendet und nie ans Frontend ausgegeben (Secret-Vertrag).
-    for (k, v) in settings_field_values(&state, &settings_state, &id, true) {
+    for (k, v) in settings_field_values(state, settings_state, id, true) {
         params.entry(k).or_insert(v);
     }
     let (manifest, view) = {
@@ -1026,7 +1046,7 @@ pub async fn connector_fetch(
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
             return Err(err_key("error.connector.unknown"));
         };
-        let view = resolve_fetch_view(&st.manifest, &view_id, &params)?;
+        let view = resolve_fetch_view(&st.manifest, view_id, &params)?;
         (st.manifest.clone(), view)
     };
     if view.view_type == connector::ViewType::Form {
@@ -1043,7 +1063,7 @@ pub async fn connector_fetch(
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let cache_key = (
-        id.clone(),
+        id.to_owned(),
         format!("{view_id}?{}", canonical_params(&params)),
     );
     if !force {
@@ -1051,6 +1071,7 @@ pub async fn connector_fetch(
         if let Some(c) = cache.get(&cache_key) {
             if now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs) {
                 let mapped = map_view(&view, &c.body)?;
+                write_screen_keystore(state, &manifest, view_id, &params, &mapped);
                 return Ok(FetchResult {
                     status: c.status,
                     body: c.body.clone(),
@@ -1068,7 +1089,7 @@ pub async fn connector_fetch(
         &view.endpoint,
         &view.headers.clone().unwrap_or_default(),
         &params,
-        auth_header_opt(&manifest, &settings_state, &id),
+        auth_header_opt(&manifest, settings_state, id),
     )
     .await?;
     let mapped = map_view(&view, &body)?;
@@ -1083,6 +1104,7 @@ pub async fn connector_fetch(
             },
         );
     }
+    write_screen_keystore(state, &manifest, view_id, &params, &mapped);
     Ok(FetchResult {
         status,
         body,
@@ -1090,6 +1112,77 @@ pub async fn connector_fetch(
         cached: false,
         fetched_at_ms: now_ms,
     })
+}
+
+/// SCLM v2 (Spec 5.2): Flow-Screens mit `keystore_fields` schreiben ihren
+/// gemappten Wert in die Keystore-Spalte, sobald der Fetch einen eindeutigen
+/// Treffer liefert (z. B. results-Screen → result_id). sid-Convention:
+/// `params["sid"]` (derselbe Platzhalter, den die Write-Endpunkte nutzen).
+/// Fehlende/leere Werte schreiben NICHTS (null-safe: `result: null` lässt
+/// die Spalte leer).
+fn write_screen_keystore(
+    state: &ConnectorState,
+    manifest: &connector::ConnectorManifest,
+    view_id: &str,
+    params: &BTreeMap<String, String>,
+    mapped: &serde_json::Value,
+) {
+    let Some(screen) = find_flow_screen(manifest, view_id) else {
+        return;
+    };
+    let cols = match &screen.keystore_fields {
+        Some(c) if !c.is_empty() => c,
+        _ => return,
+    };
+    let sid = params
+        .get("sid")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("");
+    if sid.is_empty() {
+        log::warn!(
+            "connector keystore_fields: screen '{view_id}' ohne sid-Param — Keystore-Write übersprungen"
+        );
+        return;
+    }
+    // Eindeutiger Treffer: Detail-Objekt oder Table mit GENAU einer Zeile.
+    // Mehrzeilige Listen sind nie ein Eintrag für den Session-Keystore.
+    // `result: null` → leere Zeilenliste → nichts geschrieben (null-safe).
+    let row: Option<&serde_json::Map<String, serde_json::Value>> = match mapped {
+        serde_json::Value::Object(o) => Some(o),
+        serde_json::Value::Array(a) if a.len() == 1 => a[0].as_object(),
+        _ => None,
+    };
+    let Some(row) = row else { return };
+    let file = keystore_paths(state).file(&manifest.id);
+    for (col, state_key) in cols {
+        let value = match row.get(state_key.as_str()) {
+            Some(serde_json::Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_owned()),
+            Some(serde_json::Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        };
+        let Some(value) = value else { continue };
+        match col.as_str() {
+            "join_code" => {
+                keystore_upsert(&file, sid, Some(value), None, None, None, None);
+            }
+            "name" => {
+                keystore_upsert(&file, sid, None, Some(value), None, None, None);
+            }
+            "participant_id" => {
+                keystore_upsert(&file, sid, None, None, Some(value), None, None);
+            }
+            "pcode" => {
+                keystore_upsert(&file, sid, None, None, None, Some(value), None);
+            }
+            "result_id" => {
+                keystore_upsert(&file, sid, None, None, None, None, Some(value));
+            }
+            other => {
+                log::warn!("connector keystore_fields: unbekannte Spalte '{other}' (übersprungen)")
+            }
+        }
+    }
 }
 
 /// Header-Auth-Header aus den Settings (Wert verlässt das Backend nie bis
@@ -1365,32 +1458,51 @@ pub async fn connector_screen_action(
     action_id: String,
     values: BTreeMap<String, serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-    let manifest = {
+    let (manifest, action) = {
         let entries = state.entries.lock().expect("connector entries lock");
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
             return Err(err_key("error.connector.unknown"));
         };
-        st.manifest.clone()
-    };
-    let action = {
+        let manifest = st.manifest.clone();
         let screen = find_flow_screen(&manifest, &screen_id)
             .ok_or_else(|| err_key("error.connector.view_unknown"))?;
-        screen
+        let action = screen
             .actions
             .iter()
             .flatten()
             .find(|a| a.id == action_id)
             .cloned()
-            .ok_or_else(|| err_key("error.connector.view_unknown"))?
+            .ok_or_else(|| err_key("error.connector.view_unknown"))?;
+        (manifest, action)
     };
+    let (status, resp_body) =
+        screen_action_core(&manifest, &action, values, &settings_state, &id).await?;
+    // Writes invalidieren den Cache des Connectors.
+    state.cache.lock().expect("cache lock").clear();
+    Ok(json!({ "status": status, "body": resp_body }))
+}
+
+/// Kern des Screen-Action-Submits (tauri-frei, testbar): method+path aus der
+/// Deklaration, Body JSON-bewusst gefüllt, Header-Templates aufgelöst.
+/// pcode-Vertrag (Spec Abschnitt 3): deklarierte Codes wandern als Body-Werte
+/// in die API — Header-Templates der Action enthalten bewusst KEINE pcode-
+/// Platzhalter (der Kern erzwingt das nicht, aber die Manifests tun es).
+pub(crate) async fn screen_action_core(
+    manifest: &connector::ConnectorManifest,
+    action: &connector::flow::ScreenAction,
+    values: BTreeMap<String, serde_json::Value>,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+) -> Result<(u16, serde_json::Value), String> {
     let method = action
         .method
         .ok_or_else(|| err_key("error.connector.form_not_fetchable"))?;
     let path_template = action
         .path
+        .as_deref()
         .ok_or_else(|| err_key("error.connector.form_not_fetchable"))?;
     // Pfad: ROHE Werte einsetzen (wie Formular-Submit).
-    let path = fill_form_path(&path_template, &values)
+    let path = fill_form_path(path_template, &values)
         .map_err(|k| err_keyp("error.connector.param_required", json!({ "key": k })))?;
     // Body: JSON-bewusst einsetzen (Listen bleiben strukturiert), unfüllte
     // Keys entfernen.
@@ -1408,7 +1520,7 @@ pub async fn connector_screen_action(
     }
     // Settings-Feld-Werte (Spec 5.1) als Basis für Header-/Pfad-Platzhalter
     // (Vorrang: aus dem Flow-Zustand übergebene Werte).
-    for (k, v) in declared_setting_values(&manifest, &settings_state, &id) {
+    for (k, v) in declared_setting_values(manifest, settings_state, id) {
         string_values.entry(k).or_insert(v);
     }
     let mut headers: Vec<(String, String)> = Vec::new();
@@ -1417,18 +1529,378 @@ pub async fn connector_screen_action(
             .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
         headers.push((name.clone(), value));
     }
-    let (status, resp_body) = submit_form_request(
-        &manifest,
+    submit_form_request(
+        manifest,
         method,
         &path,
         &body,
         &headers,
-        auth_header_opt(&manifest, &settings_state, &id),
+        auth_header_opt(manifest, settings_state, id),
+    )
+    .await
+}
+
+// ───────────────────────────────────── Flow-Öffnung / Auto-Beitritt (SCLM v2, Spec 5.4)
+
+/// Ergebnis einer Flow-Öffnung (`connector_flow_open`).
+#[derive(Debug, Clone, Serialize)]
+pub struct FlowOpenOutcome {
+    pub flow_id: String,
+    /// Startscreen für den Renderer: `done_screen` wenn das Event bereits
+    /// gelaufen ist (auto-Ergebnis), sonst `open_screen`.
+    pub screen: String,
+    /// Flow-Zustand: open.mapping-Werte + Einstiegs-Code + participant_id +
+    /// pcode (als Pins für nachfolgende Screens).
+    pub state: BTreeMap<String, serde_json::Value>,
+    /// true: Teilnehmer wurde neu per POST angelegt (Server-pcode erhalten).
+    pub joined: bool,
+    /// true: 409-Weg — Name schon vorhanden, id aus Fehlerbody übernommen.
+    pub claimed: bool,
+    /// true: pcode wurde beim Öffnen NEU erzeugt (Claim herrenloser Teilnehmer
+    /// ohne Keystore-pcode); er bindet beim ersten wishes/raffle-Body.
+    pub pcode_generated: bool,
+    /// Statuscode der Session-Lastung (Diagnose, kein Geheimnis).
+    pub status: u16,
+}
+
+/// Codes (join/pcode) dürfen nur alphanumerische Zeichen + `-`/`_` tragen —
+/// Guardrail gegen Einschleusung in Endpunkt-Pfade (kein SCLM-Wissen nötig).
+fn safe_code_shape(v: &str) -> bool {
+    !v.is_empty()
+        && v.len() <= 64
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn value_to_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) if !s.trim().is_empty() => Some(s.trim().to_owned()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Client-seitig erzeugter pcode (Spec 6): ≥16 Zeichen, url-safe,
+/// verwechslungsfrei geschrieben (kein l/1/I/O/0). 24 Zeichen aus CSPRNG.
+fn generate_pcode() -> String {
+    const ALPHA: &[u8] = b"abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    let mut buf = [0u8; 24];
+    if getrandom::fill(&mut buf).is_err() {
+        // Notlage (CSPRNG nicht verfügbar — praktisch unmöglich): Zeit-/Prozess-
+        // Entropie pro Zeichen verstreut. Kein Default-RNG, keine Vorhersagekette.
+        use std::hash::{Hash, Hasher};
+        let seed = {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            std::time::SystemTime::now().hash(&mut h);
+            std::process::id().hash(&mut h);
+            h.finish()
+        };
+        for (i, b) in buf.iter_mut().enumerate() {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (seed, i).hash(&mut h);
+            *b = (h.finish() & 0xff) as u8;
+        }
+    }
+    buf.iter()
+        .map(|b| ALPHA[(*b as usize) % ALPHA.len()] as char)
+        .collect()
+}
+
+/// ci-EXAKTER Name-Vergleich gegen die Teilnehmerliste derselben Session
+/// (gleiche Semantik wie die Landlisten-Zuordnung, Spec 5.4 Punkt 2).
+pub(crate) fn flow_participant_match(
+    detail: &serde_json::Value,
+    match_path: &str,
+    id_path: &str,
+    username: &str,
+) -> Option<String> {
+    let user = username.trim().to_lowercase();
+    if user.is_empty() {
+        return None;
+    }
+    let names = connector::dot_path(detail, match_path).ok()?;
+    let ids = connector::dot_path(detail, id_path).ok()?;
+    for (n, id) in names.iter().zip(ids.iter()) {
+        if let Some(s) = n.as_str() {
+            if s.trim().to_lowercase() == user {
+                if let Some(i) = value_to_string(id) {
+                    return Some(i);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// open.mapping → Flow-Zustand: ein Treffer → Skalar, mehrere → echtes Array,
+/// kein Treffer → null (null-safe, Spec Abschnitt 3).
+fn map_open_state(
+    body: &serde_json::Value,
+    mapping: &BTreeMap<String, String>,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut out = BTreeMap::new();
+    for (k, path) in mapping {
+        match connector::dot_path(body, path) {
+            Ok(hits) if hits.len() == 1 => {
+                out.insert(k.clone(), hits[0].clone());
+            }
+            Ok(hits) if !hits.is_empty() => {
+                out.insert(
+                    k.clone(),
+                    serde_json::Value::Array(hits.into_iter().cloned().collect()),
+                );
+            }
+            _ => {
+                out.insert(k.clone(), serde_json::Value::Null);
+            }
+        }
+    }
+    out
+}
+
+/// Auto-Beitritt-Kern (tauri-frei, testbar). Ablauf nach Spec 5.4:
+/// 1. Username-Check VOR jedem Request (fehlender Name → Abbruch, keine
+///    Requests, kein Rate-Schaden).
+/// 2. Session-Lastung via session_endpoint + Headers ({param}/{sid}/Settings).
+/// 3. mapping → Flow-Zustand (sid Pflicht).
+/// 4. Keystore-Upsert join_code+sid+Sessionname (Karte-A-Mechanik).
+/// 5. ci-Vergleich participants → id übernehmen, sonst POST (join_body-Default
+///    {"name": "{match_setting_key}"}); 409 → id aus Fehlerbody (Claim).
+/// 6. pcode: Keystore-Wert wiederverwenden; fehlt er → generieren (≥16 url-safe).
+///    pcode wandert NIE in Header — er liegt im Keystore/state und geht erst
+///    in wishes/raffle-BODYS (Manifest-Vertrag).
+/// 7. done_path wahr → done_screen (auto-Ergebnis), sonst open_screen.
+pub(crate) async fn flow_open_core(
+    manifest: &connector::ConnectorManifest,
+    flow: &connector::flow::Flow,
+    keystore_file: &std::path::Path,
+    code: &str,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+) -> Result<FlowOpenOutcome, String> {
+    let o = flow
+        .open
+        .as_ref()
+        .ok_or_else(|| err_key("error.connector.flow_no_open"))?;
+    let settings_values = declared_setting_values(manifest, settings_state, id);
+    let username = settings_values
+        .get(&o.match_setting_key)
+        .cloned()
+        .unwrap_or_default();
+    if username.trim().is_empty() {
+        // Spec 6 Punkt 4: klar abbrechen, KEIN Request, keine leeren POSTs.
+        return Err(err_key("error.connector.flow_username_missing"));
+    }
+    let code = code.trim();
+    if !safe_code_shape(code) {
+        return Err(err_keyp(
+            "error.connector.param_invalid",
+            json!({ "key": o.param }),
+        ));
+    }
+
+    // 1) Session lasten
+    let mut params = settings_values.clone();
+    params.insert(o.param.clone(), code.to_owned());
+    let (status, body) = fetch_request(
+        manifest,
+        &o.session_endpoint,
+        &o.headers.clone().unwrap_or_default(),
+        &params,
+        auth_header_opt(manifest, settings_state, id),
     )
     .await?;
-    // Writes invalidieren den Cache des Connectors.
-    state.cache.lock().expect("cache lock").clear();
-    Ok(json!({ "status": status, "body": resp_body }))
+    if status == 404 {
+        return Err(err_key("error.connector.flow_session_not_found"));
+    }
+    if status >= 400 {
+        return Err(err_keyp(
+            "error.connector.http",
+            json!({ "detail": format!("session: HTTP {status}") }),
+        ));
+    }
+
+    // 2) mapping → Flow-Zustand
+    let mut state = map_open_state(&body, &o.mapping);
+    let sid = state.get("sid").and_then(value_to_string).ok_or_else(|| {
+        err_keyp(
+            "error.connector.mapping",
+            json!({ "detail": "open mapping ohne sid" }),
+        )
+    })?;
+    let session_name = body
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_owned();
+    state.insert(o.param.clone(), serde_json::Value::String(code.to_owned()));
+
+    // 3) Keystore: join_code+sid+Sessionname merken (Spalte sid = Schlüssel).
+    let entry = keystore_upsert(
+        keystore_file,
+        &sid,
+        Some(code.to_owned()),
+        Some(session_name),
+        None,
+        None,
+        None,
+    );
+
+    // 4) Auto-Beitritt
+    let mut vals = params.clone();
+    vals.insert("sid".to_owned(), sid.clone());
+    let mut joined = false;
+    let mut claimed = false;
+    let mut resp_pcode: Option<String> = None;
+    let pid =
+        if let Some(found) = flow_participant_match(&body, &o.match_path, &o.id_path, &username) {
+            found
+        } else {
+            // Selbst eintragen (POST). Body-Default: {"name": "{match_setting_key}"}.
+            let mut jbody = o
+                .join_body
+                .clone()
+                .unwrap_or_else(|| json!({ "name": format!("{{{}}}", o.match_setting_key) }));
+            let jvalues: BTreeMap<String, serde_json::Value> = vals
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            apply_fill(&mut jbody, &jvalues);
+            strip_unfilled(&mut jbody);
+            let path = fill_form_path(&o.join_endpoint, &jvalues)
+                .map_err(|k| err_keyp("error.connector.param_required", json!({ "key": k })))?;
+            let mut headers: Vec<(String, String)> = Vec::new();
+            for (name, template) in o.join_headers.iter().flatten() {
+                let value = fill_params(template, &vals)
+                    .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
+                headers.push((name.clone(), value));
+            }
+            let (jstatus, jresp) = submit_form_request(
+                manifest,
+                connector::manifest::HttpMethod::Post,
+                &path,
+                &jbody,
+                &headers,
+                auth_header_opt(manifest, settings_state, id),
+            )
+            .await?;
+            if jstatus == 409 {
+                // Duplikat: id aus dem Fehlerbody (Spec Abschnitt 3) → Claim-Pfad.
+                claimed = true;
+                jresp
+                    .get("id")
+                    .and_then(value_to_string)
+                    .ok_or_else(|| err_keyp("error.connector.flow_claim_id_missing", json!({})))?
+            } else if jstatus < 400 {
+                joined = true;
+                resp_pcode = jresp.get("pcode").and_then(value_to_string);
+                jresp.get("id").and_then(value_to_string).ok_or_else(|| {
+                    err_keyp(
+                        "error.connector.mapping",
+                        json!({ "detail": "join-antwort ohne id" }),
+                    )
+                })?
+            } else {
+                return Err(err_keyp(
+                    "error.connector.http",
+                    json!({ "detail": format!("participants: HTTP {jstatus}") }),
+                ));
+            }
+        };
+
+    // 5) pcode-Regel (Spec 3/6): Keystore-Wert hat Vorrang (dauerhaft),
+    //    Server-pcode bei Neuerstellung danach, sonst frisch erzeugen.
+    let mut pcode_generated = false;
+    let pcode = if joined {
+        match resp_pcode.or_else(|| entry.pcode.clone()) {
+            Some(p) if !p.trim().is_empty() => p,
+            _ => {
+                pcode_generated = true;
+                generate_pcode()
+            }
+        }
+    } else if entry
+        .pcode
+        .as_deref()
+        .map(|p| !p.trim().is_empty())
+        .unwrap_or(false)
+    {
+        entry.pcode.clone().unwrap_or_default()
+    } else {
+        pcode_generated = true;
+        generate_pcode()
+    };
+
+    // 6) Keystore: participant_id + pcode (partielles Upsert).
+    let _ = keystore_upsert(
+        keystore_file,
+        &sid,
+        None,
+        None,
+        Some(pid.clone()),
+        Some(pcode.clone()),
+        None,
+    );
+
+    state.insert("participant_id".to_owned(), serde_json::Value::String(pid));
+    state.insert("pcode".to_owned(), serde_json::Value::String(pcode));
+
+    // 7) Auto-Weiche: Event schon gelaufen → direkt Ergebnis-Screen.
+    let done = truthy_flag(state.get(&o.done_path).unwrap_or(&serde_json::Value::Null));
+    let screen = if done {
+        o.done_screen.clone()
+    } else {
+        o.open_screen.clone()
+    };
+
+    Ok(FlowOpenOutcome {
+        flow_id: flow.id.clone(),
+        screen,
+        state,
+        joined,
+        claimed,
+        pcode_generated,
+        status,
+    })
+}
+
+/// Flow per Session-Code öffnen + Auto-Beitritt (SCLM v2, Spec 5.4/Requirement 6).
+/// Frontend ruft das nach der Suchzeilen-Eingabe (einziger Einstieg) oder über
+/// den Öffnen-Button der Landliste (Saved-join_code aus dem Keystore).
+#[tauri::command]
+pub async fn connector_flow_open(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    id: String,
+    flow_id: String,
+    code: String,
+) -> Result<FlowOpenOutcome, String> {
+    let (manifest, flow) = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
+            return Err(err_key("error.connector.unknown"));
+        };
+        let Some(flow) = st
+            .manifest
+            .flows
+            .iter()
+            .flatten()
+            .find(|f| f.id == flow_id && f.open.is_some())
+            .cloned()
+        else {
+            return Err(err_key("error.connector.flow_no_open"));
+        };
+        (st.manifest.clone(), flow)
+    };
+    flow_open_core(
+        &manifest,
+        &flow,
+        &keystore_paths(&state).file(&id),
+        &code,
+        &settings_state,
+        &id,
+    )
+    .await
 }
 
 /// `{param}`-Platzhalter in einem String auflösen. Fehlt der Wert → Err(key).
@@ -1852,6 +2324,7 @@ mod tests {
                 autocomplete: None,
                 multi: None,
                 actions: None,
+                keystore_fields: None,
             })
             .collect();
         connector::ConnectorManifest {
@@ -1884,6 +2357,7 @@ mod tests {
                 },
                 entry: screen_ids.first().copied().unwrap_or("").into(),
                 screens,
+                open: None,
             }]),
         }
     }
@@ -1931,6 +2405,7 @@ mod tests {
                 s.endpoint = Some("/api/other/{code}".into());
                 s
             }],
+            open: None,
         };
         m.flows.as_mut().unwrap().push(second);
         // qualified → creator-Screen
@@ -2695,5 +3170,881 @@ mod tests {
             // normales Intervall bleibt exakt.
             assert_eq!(poll_ttl_ms(300), 300_000);
         }
+    }
+
+    // ---- SCLM v2 Karte C (Spec 5.4): Flow-Öffnung / Auto-Beitritt ----------
+
+    #[test]
+    fn examples_sclm_manifest_validates_with_open_flow() {
+        // Karte C hat den participant-Flow umgeschrieben (open-Block,
+        // enabled_if, keystore_fields, wait-Aktion): das Beispiel muss dem
+        // echten Manifest-Validator standhalten (demGate von connector_import).
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/sclm.json");
+        let raw = std::fs::read(path).expect("examples/sclm.json ist lesbar");
+        let report = connector::validate_manifest(&raw);
+        assert!(
+            report.errors.is_empty(),
+            "Manifest-Fehler: {:?}",
+            report.errors
+        );
+        // v2-Struktur ist wirklich drin (nicht nur "irgendein" grünes Manifest):
+        let m = connector::ConnectorManifest::parse(&raw).expect("parst");
+        let part = m
+            .flows
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|f| f.id == "participant")
+            .expect("participant-Flow");
+        let o = part.open.as_ref().expect("open-Block am participant-Flow");
+        assert_eq!(o.match_setting_key, "sclm_username");
+        assert_eq!(o.done_screen, "results");
+        let ids: Vec<&str> = part.screens.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["wishes", "wait", "results"],
+            "code_entry/list-entry Screens raus (Requirement 1)"
+        );
+        let results = part.screens.iter().find(|s| s.id == "results").unwrap();
+        assert_eq!(
+            results
+                .keystore_fields
+                .as_ref()
+                .and_then(|k| k.get("result_id"))
+                .map(String::as_str),
+            Some("rid"),
+            "result_id-Keystore-Schalter am results-Screen"
+        );
+        let acts: Vec<&connector::flow::ScreenAction> =
+            results.actions.as_ref().unwrap().iter().collect();
+        for a in acts {
+            assert!(
+                a.enabled_if.is_some(),
+                "collect/waive sind one-way geschaltet (enabled_if)"
+            );
+        }
+        let wait = part.screens.iter().find(|s| s.id == "wait").unwrap();
+        assert!(
+            wait.actions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|a| a.goto.as_deref() == Some("wishes")),
+            "wait trägt „Wünsche ändern“ (Requirement 8)"
+        );
+    }
+
+    /// reqwest braucht einen Tokio-Reactor (net+time) — reine futures::block_on
+    /// reicht für HTTP-Tests nicht. Eigene Current-Thread-Runtime pro Test.
+    fn block_on_async<T: Send + 'static>(fut: impl std::future::Future<Output = T> + Send) -> T {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        rt.block_on(fut)
+    }
+
+    /// Minimal-HTTP-Fixture: antwortet auf (method, path) mit fixem
+    /// status+body und protokolliert jeden Treffer (headers/body). Prüft
+    /// Join/Claim-Logik und die pcode-Body-Regel gegen echten reqwest-
+    /// Durchlauf — nicht nur gegen nachgebaute Logik.
+    struct MockHit {
+        method: String,
+        path: String,
+        headers: Vec<(String, String)>,
+        body: String,
+    }
+
+    fn start_mock_api(
+        routes: Vec<(&str, &str, u16, &str)>,
+    ) -> (String, std::sync::mpsc::Receiver<MockHit>) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::thread;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("mock bind");
+        let port = listener.local_addr().unwrap().port();
+        let routes: Vec<(String, String, u16, String)> = routes
+            .into_iter()
+            .map(|(m, p, s, b)| (m.to_owned(), p.to_owned(), s, b.to_owned()))
+            .collect();
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().expect("mock clone"));
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    continue;
+                }
+                let mut parts = line.split_whitespace();
+                let method = parts.next().unwrap_or("").to_owned();
+                let path = parts.next().unwrap_or("").to_owned();
+                let mut headers: Vec<(String, String)> = Vec::new();
+                let mut content_length = 0usize;
+                loop {
+                    let mut h = String::new();
+                    if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = h.split_once(':') {
+                        if k.trim().eq_ignore_ascii_case("content-length") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                        headers.push((k.trim().to_owned(), v.trim().to_owned()));
+                    }
+                }
+                let mut body = String::new();
+                if content_length > 0 {
+                    let mut buf = vec![0u8; content_length];
+                    let _ = reader.read_exact(&mut buf);
+                    body = String::from_utf8_lossy(&buf).to_string();
+                }
+                let _ = tx.send(MockHit {
+                    method: method.clone(),
+                    path: path.clone(),
+                    headers,
+                    body,
+                });
+                let (status, resp) = routes
+                    .iter()
+                    .find(|(m, p, _, _)| *m == method && *p == path)
+                    .map(|(_, _, s, b)| (*s, b.clone()))
+                    .unwrap_or((500, r#"{"error":"no route"}"#.to_owned()));
+                let head = format!(
+                    "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    resp.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    fn mock_hits(rx: &std::sync::mpsc::Receiver<MockHit>) -> Vec<MockHit> {
+        let mut out = Vec::new();
+        while let Ok(h) = rx.try_recv() {
+            out.push(h);
+        }
+        out
+    }
+
+    ///participant-Flow-Fixture im v2-Schema (open-Block + wishes/wait/results),
+    /// base_url zeigt auf die Mock-API. Bewusst identische Feldstruktur wie
+    /// examples/sclm.json (Entwurksnah, aber test-fix).
+    fn open_flow_manifest_fixture(base: &str) -> connector::ConnectorManifest {
+        // Aus Python-dict generiertes, valides JSON ({BASE} wird Injektionsort).
+        let text = r#"{
+ "manifest_version": 1,
+ "id": "sclm",
+ "name": {
+  "de": "S",
+  "en": "S"
+ },
+ "base_url": "{BASE}",
+ "placement": {
+  "kind": "own",
+  "label": {
+   "de": "SCLM",
+   "en": "SCLM"
+  }
+ },
+ "settings_fields": [
+  {
+   "key": "sclm_username",
+   "label": {
+    "de": "N",
+    "en": "N"
+   },
+   "type": "text"
+  }
+ ],
+ "views": [],
+ "flows": [
+  {
+   "id": "participant",
+   "title": {
+    "de": "T",
+    "en": "T"
+   },
+   "entry": "wishes",
+   "open": {
+    "session_endpoint": "/api/session/{code}",
+    "headers": {
+     "X-SCLM-Code": "{code}"
+    },
+    "mapping": {
+     "sid": "id",
+     "name": "name",
+     "max_wishes": "max_wishes",
+     "raffle_mode": "raffle_mode",
+     "raffle_done": "raffle_done"
+    },
+    "match_path": "participants[].name",
+    "id_path": "participants[].id",
+    "match_setting_key": "sclm_username",
+    "join_endpoint": "/api/session/{sid}/participants",
+    "join_headers": {
+     "X-SCLM-Code": "{code}"
+    },
+    "open_screen": "wishes",
+    "done_screen": "results"
+   },
+   "screens": [
+    {
+     "id": "wishes",
+     "type": "list",
+     "title": {
+      "de": "w",
+      "en": "w"
+     },
+     "endpoint": "/api/session/{code}",
+     "params": [
+      {
+       "key": "code",
+       "label": {
+        "de": "c",
+        "en": "c"
+       }
+      }
+     ],
+     "multi": {
+      "max_path": "max_wishes"
+     },
+     "pins": [
+      "loot_id"
+     ],
+     "actions": [
+      {
+       "id": "confirm",
+       "title": {
+        "de": "k",
+        "en": "k"
+       },
+       "method": "post",
+       "path": "/api/session/{sid}/wishes",
+       "params": [
+        {
+         "key": "code",
+         "label": {
+          "de": "c",
+          "en": "c"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{code}"
+       },
+       "body_template": {
+        "participant_id": "{participant_id}",
+        "loot_ids": "{loot_id}",
+        "mode": "{raffle_mode}",
+        "pcode": "{pcode}"
+       },
+       "goto": "wait"
+      }
+     ]
+    },
+    {
+     "id": "wait",
+     "type": "wait",
+     "title": {
+      "de": "w",
+      "en": "w"
+     },
+     "params": [
+      {
+       "key": "sid",
+       "label": {
+        "de": "s",
+        "en": "s"
+       }
+      }
+     ],
+     "exit": {
+      "on": "raffle_done",
+      "op": "equals",
+      "value": true,
+      "then": "results"
+     },
+     "poll_seconds": 15,
+     "actions": [
+      {
+       "id": "edit_wishes",
+       "title": {
+        "de": "Ändern",
+        "en": "Edit"
+       },
+       "goto": "wishes"
+      }
+     ]
+    },
+    {
+     "id": "results",
+     "type": "results",
+     "title": {
+      "de": "r",
+      "en": "r"
+     },
+     "endpoint": "/api/session/{sid}/raffle/result_for/{participant_id}",
+     "params": [
+      {
+       "key": "sid",
+       "label": {
+        "de": "s",
+        "en": "s"
+       }
+      },
+      {
+       "key": "participant_id",
+       "label": {
+        "de": "p",
+        "en": "p"
+       }
+      }
+     ],
+     "mapping": {
+      "rid": "result.id",
+      "won": "result.won",
+      "waived": "result.waived",
+      "collected": "result.collected",
+      "item_name": "result.item_name"
+     },
+     "keystore_fields": {
+      "result_id": "rid"
+     },
+     "poll_seconds": 60,
+     "actions": [
+      {
+       "id": "collect",
+       "title": {
+        "de": "Abgeholt",
+        "en": "Collected"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/raffle/{rid}",
+       "params": [
+        {
+         "key": "sid",
+         "label": {
+          "de": "s",
+          "en": "s"
+         }
+        },
+        {
+         "key": "rid",
+         "label": {
+          "de": "r",
+          "en": "r"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{sid}"
+       },
+       "body_template": {
+        "collected": true,
+        "pcode": "{pcode}"
+       },
+       "enabled_if": {
+        "on": "collected",
+        "op": "not_equals",
+        "value": true
+       }
+      },
+      {
+       "id": "waive",
+       "title": {
+        "de": "Verzichten",
+        "en": "Waive"
+       },
+       "method": "patch",
+       "path": "/api/session/{sid}/raffle/{rid}",
+       "params": [
+        {
+         "key": "sid",
+         "label": {
+          "de": "s",
+          "en": "s"
+         }
+        },
+        {
+         "key": "rid",
+         "label": {
+          "de": "r",
+          "en": "r"
+         }
+        }
+       ],
+       "headers": {
+        "X-SCLM-Code": "{sid}"
+       },
+       "body_template": {
+        "waived": true,
+        "pcode": "{pcode}"
+       },
+       "enabled_if": {
+        "on": "waived",
+        "op": "not_equals",
+        "value": true
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}"#
+        .replace("{BASE}", base);
+        serde_json::from_str(&text).expect("fixture parst")
+    }
+
+    fn tmp_keystore_file(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("ao-c-flow-{tag}-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        dir.join("connector_keystore.json")
+    }
+
+    fn open_flow_of(m: &connector::ConnectorManifest) -> connector::flow::Flow {
+        m.flows.as_ref().unwrap()[0].clone()
+    }
+
+    fn flow_open_block(m: &connector::ConnectorManifest) -> String {
+        // Convenience: open_block directly via core (keeps tests terse).
+        let _ = open_flow_of(m);
+        String::new()
+    }
+
+    #[test]
+    fn flow_open_new_join_stores_keystore_and_state() {
+        let (base, rx) = start_mock_api(vec![
+            (
+                "GET",
+                "/api/session/ABC123",
+                200,
+                r#"{"id":"sid9","name":"Jumptown #4","max_wishes":3,"raffle_mode":"wish","raffle_done":false,"participants":[]}"#,
+            ),
+            (
+                "POST",
+                "/api/session/sid9/participants",
+                201,
+                r#"{"id":"p7","pcode":"srvpc123"}"#,
+            ),
+        ]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("join");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect("open läuft durch");
+        assert!(out.joined);
+        assert!(!out.claimed);
+        assert!(!out.pcode_generated, "Server-pcode hat Vorrang");
+        assert_eq!(out.screen, "wishes");
+        assert_eq!(out.state["sid"], json!("sid9"));
+        assert_eq!(out.state["participant_id"], json!("p7"));
+        assert_eq!(out.state["pcode"], json!("srvpc123"));
+        assert_eq!(out.state["code"], json!("ABC123"));
+        assert_eq!(out.state["max_wishes"], json!(3));
+        assert_eq!(out.state["raffle_mode"], json!("wish"));
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 2, "GET dann POST");
+        assert_eq!(hits[1].method, "POST");
+        // Join-Body trägt den Settings-Namen (Default-Body).
+        let jbody: serde_json::Value = serde_json::from_str(&hits[1].body).unwrap();
+        assert_eq!(jbody["name"], json!("Semih"));
+        // pcode-Regel (Spec 3): nie im Header/URL — nur potenziell im Body.
+        let pcode_leaks = hits[1]
+            .headers
+            .iter()
+            .any(|(k, v)| k.to_lowercase().contains("pcode") || v == "srvpc123")
+            || hits[1].path.contains("srvpc123");
+        assert!(!pcode_leaks, "pcode nie in Header/URL");
+        // Session-GET trägt den Einstiegs-Code als Header.
+        assert!(
+            hits[0]
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("x-sclm-code") && v == "ABC123")
+        );
+        assert_eq!(
+            hits[1].path, "/api/session/sid9/participants",
+            "sid aus mapping"
+        );
+        // Keystore (Karte-A-Mechanik): join_code+sid+Name+participant_id+pcode.
+        let e = keystore_find(&keystore_load(&file), "sid9").expect("Eintrag");
+        assert_eq!(e.join_code, "ABC123");
+        assert_eq!(e.name, "Jumptown #4");
+        assert_eq!(e.participant_id.as_deref(), Some("p7"));
+        assert_eq!(e.pcode.as_deref(), Some("srvpc123"));
+    }
+
+    #[test]
+    fn flow_open_registered_participant_no_post_ci_match() {
+        // ci-EXAKT: Settings "  SeBo  " trifft Teilnehmer "sebo" — kein POST.
+        let (base, rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":false,
+              "participants":[{"id":"pZ","name":"OTHER"},{"id":"pX","name":"sebo"}]}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "  SeBo  ")]);
+        let file = tmp_keystore_file("reg");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect("open läuft durch");
+        assert!(!out.joined && !out.claimed);
+        assert_eq!(out.state["participant_id"], json!("pX"));
+        assert!(out.pcode_generated, "Keystore-pcode fehlt → selbst erzeugt");
+        let gen_pcode = out.state["pcode"].as_str().unwrap();
+        assert!(gen_pcode.len() >= 16, "generierter pcode ≥16 Zeichen");
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1, "bestehender Name → kein POST");
+        // Erzeugter pcode ist gespeichert (Wiederverwendung beim nächsten Öffnen).
+        let e = keystore_find(&keystore_load(&file), "sid9").expect("Eintrag");
+        assert_eq!(e.pcode.as_deref(), Some(gen_pcode));
+        assert_eq!(e.participant_id.as_deref(), Some("pX"));
+    }
+
+    #[test]
+    fn flow_open_409_claim_takes_id_and_reuses_keystore_pcode() {
+        let (base, rx) = start_mock_api(vec![
+            (
+                "GET",
+                "/api/session/ABC123",
+                200,
+                r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":false,"participants":[]}"#,
+            ),
+            (
+                "POST",
+                "/api/session/sid9/participants",
+                409,
+                r#"{"error":"Name already exists","id":"pY"}"#,
+            ),
+        ]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("claim");
+        let flow = open_flow_of(&m);
+        let out1 = block_on_async(flow_open_core(&m, &flow, &file, "ABC123", &st, "sclm"))
+            .expect("Claim-Pfad läuft durch");
+        assert!(out1.claimed && !out1.joined);
+        assert_eq!(
+            out1.state["participant_id"],
+            json!("pY"),
+            "id aus 409-Fehlerbody"
+        );
+        assert!(out1.pcode_generated);
+        let gen_pcode = out1.state["pcode"].as_str().unwrap().to_owned();
+        assert!(gen_pcode.len() >= 16);
+        assert_eq!(out1.screen, "wishes");
+        // Zweites Öffnen derselben Session: pcode wird wiederverwendet.
+        let out2 = block_on_async(flow_open_core(&m, &flow, &file, "ABC123", &st, "sclm"))
+            .expect("zweiter open");
+        assert_eq!(out2.state["pcode"].as_str().unwrap(), gen_pcode);
+        assert!(
+            !out2.pcode_generated,
+            "Keystore-pcode gewinnt, kein Neu-Generieren"
+        );
+        let hits = mock_hits(&rx);
+        assert_eq!(
+            hits.len(),
+            4,
+            "zwei Öffnungen = 2 GET + 2 POST (jedes Mal 409)"
+        );
+        assert!(hits[1].path.contains("/participants"));
+        assert!(
+            !hits[1].path.contains(&gen_pcode),
+            "generierter pcode nie in URL/Header"
+        );
+        assert!(hits[1].headers.iter().all(|(_, v)| v != &gen_pcode));
+    }
+
+    #[test]
+    fn flow_open_missing_username_aborts_without_requests() {
+        // Spec 6 Punkt 4: kein Rate-Schaden, keine leeren POSTs.
+        let (base, rx) = start_mock_api(vec![]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "   ")]);
+        let file = tmp_keystore_file("nouser");
+        let err = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect_err("fehlender Username → Abbruch");
+        assert!(err.contains("flow_username_missing"), "{err}");
+        assert!(mock_hits(&rx).is_empty(), "null HTTP-Requests");
+        assert!(!file.exists(), "kein Keystore-Schaden");
+    }
+
+    #[test]
+    fn flow_open_rejects_bad_code_shape_without_requests() {
+        let (base, rx) = start_mock_api(vec![]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("badcode");
+        for bad in ["../admin", "abc 123", "", &"x".repeat(80)[..]] {
+            let err = block_on_async(flow_open_core(
+                &m,
+                &open_flow_of(&m),
+                &file,
+                bad,
+                &st,
+                "sclm",
+            ))
+            .expect_err("Form-Guardrail greift");
+            assert!(err.contains("param_invalid"), "{bad}: {err}");
+        }
+        assert!(mock_hits(&rx).is_empty(), "Guardrail vor jedem Request");
+    }
+
+    #[test]
+    fn flow_open_raffle_done_opens_results_directly() {
+        // Auto-Ergebnis (Requirement 7): schon gelaufene Ziehung → done_screen.
+        let (base, _rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":true,
+              "participants":[{"id":"pX","name":"Semih"}]}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("done");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect("open läuft durch");
+        assert_eq!(out.screen, "results");
+        assert!(!out.joined);
+    }
+
+    #[test]
+    fn flow_open_session_404_maps_to_clear_error() {
+        let (base, rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/NOPE99",
+            404,
+            r#"{"error":"not found"}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("404");
+        let err = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "NOPE99",
+            &st,
+            "sclm",
+        ))
+        .expect_err("404 → Fehler");
+        assert!(err.contains("flow_session_not_found"), "{err}");
+        let hits = mock_hits(&rx);
+        assert_eq!(
+            hits.len(),
+            1,
+            "nur die Session-Lastung, kein Join-POST danach"
+        );
+        assert!(!file.exists(), "unbekannte Session → kein Keystore-Eintrag");
+    }
+
+    #[test]
+    fn wishes_action_sends_real_array_and_pcode_only_in_body() {
+        // Akzeptanz "wishes-Array-Typ" + "pcode nie im Header, immer Body".
+        let (base, rx) = start_mock_api(vec![(
+            "POST",
+            "/api/session/sid9/wishes",
+            201,
+            r#"{"ok":true,"wishes":[{"id":"w1","loot_id":"L1"}]}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let action = m.flows.as_ref().unwrap()[0].screens[0]
+            .actions
+            .as_ref()
+            .unwrap()[0]
+            .clone();
+        let st = settings_state_with("sclm", &[]);
+        let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values.insert("sid".into(), json!("sid9"));
+        values.insert("code".into(), json!("ABC123"));
+        values.insert("participant_id".into(), json!("p7"));
+        values.insert("raffle_mode".into(), json!("no_interest"));
+        values.insert("pcode".into(), json!("genPcode23456789abcdef"));
+        values.insert("loot_id".into(), json!(["L1", "L2", "L3"]));
+        let (status, _body) = block_on_async(screen_action_core(&m, &action, values, &st, "sclm"))
+            .expect("action läuft durch");
+        assert_eq!(status, 201);
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1);
+        let sent: serde_json::Value = serde_json::from_str(&hits[0].body).unwrap();
+        assert_eq!(
+            sent["loot_ids"],
+            json!(["L1", "L2", "L3"]),
+            "echtes JSON-Array, keine Stringified-Liste"
+        );
+        assert_eq!(
+            sent["mode"],
+            json!("no_interest"),
+            "mode folgt dem Session-raffle_mode"
+        );
+        assert_eq!(sent["pcode"], json!("genPcode23456789abcdef"));
+        assert!(
+            !hits[0].path.contains("genPcode23456789abcdef"),
+            "pcode nicht in URL"
+        );
+        assert!(
+            hits[0].headers.iter().all(|(k, v)| {
+                !k.to_lowercase().contains("pcode") && v != "genPcode23456789abcdef"
+            }),
+            "pcode nicht in Headern"
+        );
+        assert!(
+            hits[0]
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("x-sclm-code") && v == "ABC123")
+        );
+    }
+
+    #[test]
+    fn fetch_inner_keystore_fields_writes_result_id_on_unique_hit() {
+        // Spec 5.2: results-Screen schreibt result_id in die Keystore-Spalte,
+        // sobald der Fetch einen eindeutigen Treffer liefert.
+        let (base, _rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/sid9/raffle/result_for/p7",
+            200,
+            r#"{"result":{"id":"r9","won":true,"waived":false,"collected":false,"item_name":"Cutlass Black"}}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[]);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("ao-c-fetch-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let cs = ConnectorState {
+            dir: dir.join("connectors"),
+            entries: std::sync::Mutex::new(vec![StoredConnector {
+                raw: String::new(),
+                manifest: m.clone(),
+                value: serde_json::Value::Null,
+            }]),
+            cache: std::sync::Mutex::new(HashMap::new()),
+        };
+        let mut params: BTreeMap<String, String> = BTreeMap::new();
+        params.insert("sid".into(), "sid9".into());
+        params.insert("participant_id".into(), "p7".into());
+        params.insert("code".into(), "ABC123".into());
+        let res = block_on_async(fetch_inner(
+            &cs,
+            &st,
+            "sclm",
+            "participant:results",
+            true,
+            params.clone(),
+        ))
+        .expect("fetch läuft durch");
+        let rows = res.mapped.as_array().expect("results gemappt als Zeilen");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["rid"], json!("r9"));
+        let file = keystore_paths(&cs).file("sclm");
+        let e = keystore_find(&keystore_load(&file), "sid9").expect("Eintrag");
+        assert_eq!(e.result_id.as_deref(), Some("r9"));
+    }
+
+    #[test]
+    fn fetch_inner_keystore_fields_null_result_writes_nothing() {
+        // result_for → 200 {\"result\": null}: Spalte bleibt leer (null-safe).
+        let (base, _rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/sid9/raffle/result_for/p7",
+            200,
+            r#"{"result":null}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[]);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("ao-c-fetch-null-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let cs = ConnectorState {
+            dir: dir.join("connectors"),
+            entries: std::sync::Mutex::new(vec![StoredConnector {
+                raw: String::new(),
+                manifest: m.clone(),
+                value: serde_json::Value::Null,
+            }]),
+            cache: std::sync::Mutex::new(HashMap::new()),
+        };
+        let mut params: BTreeMap<String, String> = BTreeMap::new();
+        params.insert("sid".into(), "sid9".into());
+        params.insert("participant_id".into(), "p7".into());
+        let res = block_on_async(fetch_inner(
+            &cs,
+            &st,
+            "sclm",
+            "participant:results",
+            true,
+            params,
+        ))
+        .expect("fetch läuft durch");
+        assert_eq!(
+            res.mapped.as_array().map(|a| a.len()),
+            Some(0),
+            "kein Ergebnis → keine Zeile"
+        );
+        let file = keystore_paths(&cs).file("sclm");
+        assert!(
+            !file.exists() || keystore_find(&keystore_load(&file), "sid9").is_none(),
+            "null-Ergebnis schreibt nichts"
+        );
+    }
+
+    #[test]
+    fn generate_pcode_is_long_urlsafe_and_unique() {
+        let a = generate_pcode();
+        let b = generate_pcode();
+        assert!(a.len() >= 16 && b.len() >= 16);
+        assert_ne!(a, b, "CSPRNG, keine Kette");
+        assert!(
+            a.chars()
+                .all(|c| c.is_ascii_alphanumeric() && !matches!(c, 'l' | '1' | 'I' | 'O' | '0'))
+        );
     }
 }

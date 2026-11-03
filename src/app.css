@@ -3789,3 +3789,18 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .hmod-name:hover {
   color: var(--accent);
 }
+
+/* SCLM v2 Karte C (t_cce3a5ea): Abbruch-Note des Suchzeilen-Einstiegs
+   (connector_flow_open-Fehler, z. B. fehlender Benutzername). */
+.own-flow-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  padding: 8px 12px;
+  background: var(--panel2);
+  border: 1px solid var(--alert);
+  border-radius: 4px;
+  font: 11.5px/1.45 var(--font-sans);
+  color: var(--alert);
+}
