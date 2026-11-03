@@ -19,7 +19,7 @@
 //! SAC; die UAC-Elevation übernimmt msiexec selbst. Auto-Relaunch nach
 //! Exit-Code 0/3010 via PowerShell-Wrapper (`powershell.exe` ist ebenfalls
 //! signiert — kein selbst-geschriebenes Script). Elevations-Sichtbarkeit
-//! (t_0087dea5): der Wrapper wird OHNE DETACHED_process-Flag gespawnt,
+//! (t_0087dea5): der Wrapper wird OHNE DETACHED_PROCESS-Flag gespawnt,
 //! damit der UAC-Elevation-Prompt und die Installer-UI den sichtbaren
 //! interaktiven Desktop erreichen (VM-Evidenz: silent stall aus dem
 //! hidden/detached Pfad vs. Erfolg bei interaktiver Ausführung); msiexec
@@ -427,7 +427,7 @@ fn msi_powershell_command(
 /// ausgeführt (das wäre der os-error-4551-Block durch Smart App Control).
 /// UAC-Elevation übernimmt msiexec selbst.
 ///
-/// DETACHED_PROCESS war entfernt, weil der Elevations-Antrag (MSI_LUA
+/// DETACHED_PROCESS wurde entfernt, weil der Elevations-Antrag (MSI_LUA
 /// Credential-Prompt) und die Installer-UI den sichtbaren interaktiven
 /// Desktop erreichen müssen. VM-Evidenz 2026-11-03: aus dem
 /// hidden/detached Spawn erreichte der UAC-Prompt den Desktop NICHT —
