@@ -309,8 +309,31 @@ fn check_scan(m: &ConnectorManifest, report: &mut Report) {
             s.concurrency
         ));
     }
-    if s.poll_seconds == Some(0) {
-        report.warn(format!("{tag}: poll_seconds=0 — floody polling"));
+    check_poll_bounds(report, &tag, s.poll_seconds);
+}
+
+/// poll_seconds-Deckel (Härtung t_3cfc7842 Finding 1): untere Grenze war
+/// schon gewarnt, obere fehlte — ein Remote-gesteuertes Manifest konnte
+/// poll_seconds = u64::MAX setzen und damit den Poll-Cache praktisch
+/// unbegrenzt machen (TTL nie ablaufbar, nur force half). Warnung ab einem
+/// Tag, Fehler ab ~10^7 s (115 Tage — kein plausibles Poll-Intervall).
+/// Der Runtime-Deckel (poll_ttl_ms = saturating_mul) fängt zusätzlich
+/// bereits gespeicherte Manifeste aus älteren Ständen ab.
+fn check_poll_bounds(report: &mut Report, tag: &str, poll_seconds: Option<u64>) {
+    const POLL_WARN_SECONDS: u64 = 86_400;
+    const POLL_MAX_SECONDS: u64 = 10_000_000;
+    if let Some(p) = poll_seconds {
+        if p == 0 {
+            report.warn(format!("{tag}: poll_seconds=0 — floody polling"));
+        } else if p > POLL_MAX_SECONDS {
+            report.error(format!(
+                "{tag}: poll_seconds {p} > {POLL_MAX_SECONDS} — Poll-Cache wäre praktisch unbegrenzt (remote-gesteuerte Manifeste)"
+            ));
+        } else if p > POLL_WARN_SECONDS {
+            report.warn(format!(
+                "{tag}: poll_seconds {p} > {POLL_WARN_SECONDS} (1 Tag) — sehr träge Poll-Liste"
+            ));
+        }
     }
 }
 
@@ -499,11 +522,11 @@ fn check_screen(
     if s.mapping.is_empty() && s.screen_type != ScreenType::Form {
         report.warn(format!("flow '{flow_id}': screen '{sid}' without mapping"));
     }
-    if s.poll_seconds == Some(0) {
-        report.warn(format!(
-            "flow '{flow_id}': screen '{sid}': poll_seconds=0 — floody polling"
-        ));
-    }
+    check_poll_bounds(
+        report,
+        &format!("flow '{flow_id}': screen '{sid}'"),
+        s.poll_seconds,
+    );
     if let Some(c) = &s.when {
         check_condition_refs(flow_id, "display", c, ids, report);
         if c.then.is_some() || c.otherwise.is_some() {
@@ -810,9 +833,7 @@ fn check_view(v: &View, report: &mut Report) {
             v.id
         ));
     }
-    if v.poll_seconds == Some(0) {
-        report.warn(format!("view '{}': poll_seconds=0 — floody polling", v.id));
-    }
+    check_poll_bounds(report, &format!("view '{}'", v.id), v.poll_seconds);
     // Endpoint-Platzhalter: jeder `{param}` muss deklariert sein (Error —
     // sonst bricht der Fetch zur Laufzeit).
     let param_keys: std::collections::BTreeSet<&str> =
@@ -1785,5 +1806,69 @@ mod tests {
             r.errors.iter().any(|e| e.contains("collides with view id")),
             "{r:?}"
         );
+    }
+    // ---- Härtung t_3cfc7842 Finding 1: poll_seconds-Obergrenzen -------------------
+    #[test]
+    fn scan_poll_seconds_upper_bounds() {
+        // Reviewer-Sonden-Literal (u64::MAX/500) + plausibler Überdehnungsfall.
+        let huge = patched_scan(r#""poll_seconds": 300"#, r#""poll_seconds": 10000001"#);
+        assert!(
+            huge.errors.iter().any(|e| e.contains("poll_seconds")),
+            "{huge:?}"
+        );
+        assert!(!huge.is_ok(), "{huge:?}");
+        let max = patched_scan(
+            r#""poll_seconds": 300"#,
+            &(r#""poll_seconds": "#.to_string() + &(u64::MAX / 500).to_string()),
+        );
+        assert!(
+            max.errors.iter().any(|e| e.contains("poll_seconds")),
+            "{max:?}"
+        );
+        // Warn-Grenze: > 1 Tag, aber unterhalb der Fehlergrenze.
+        let warny = patched_scan(r#""poll_seconds": 300"#, r#""poll_seconds": 86401"#);
+        assert!(warny.is_ok(), "{warny:?}");
+        assert!(
+            warny.warnings.iter().any(|w| w.contains("poll_seconds")),
+            "{warny:?}"
+        );
+        // Grenzwerte: exakt 10^7 ist noch erlaubt (aber Warnung > 1 Tag),
+        // 10^7+1 kippt in den Fehler; exakt 86400 (1 Tag) ist warnfrei.
+        let edge = patched_scan(r#""poll_seconds": 300"#, r#""poll_seconds": 10000000"#);
+        assert!(edge.is_ok(), "{edge:?}");
+        assert!(
+            edge.warnings.iter().any(|w| w.contains("poll_seconds")),
+            "{edge:?}"
+        );
+        let over = patched_scan(r#""poll_seconds": 300"#, r#""poll_seconds": 10000001"#);
+        assert!(!over.is_ok(), "{over:?}");
+        let day = patched_scan(r#""poll_seconds": 300"#, r#""poll_seconds": 86400"#);
+        assert!(
+            !day.warnings.iter().any(|w| w.contains("poll_seconds")),
+            "{day:?}"
+        );
+    }
+
+    #[test]
+    fn view_and_flow_screen_get_poll_bounds_too() {
+        // view: Obergrenze greift wie beim scan (Fehler).
+        let bad_view = r#""views": [{"id": "sessions", "type": "table", "title": {"de": "T", "en": "T"}, "endpoint": "/api/sessions", "mapping": {"name": "[].name"}, "poll_seconds": 10000001}]"#;
+        let v = validate_manifest(SCAN_OK.replace(r#""views": []"#, bad_view).as_bytes());
+        assert!(
+            v.errors
+                .iter()
+                .any(|e| e.contains("poll_seconds") && e.contains("sessions")),
+            "{v:?}"
+        );
+        // flow-Warte-Screen: Warn-Grenze (> 1 Tag).
+        let flow_json = r#""views": [{"id": "sessions", "type": "table", "title": {"de": "T", "en": "T"}, "endpoint": "/api/sessions", "mapping": {"name": "[].name"}}], "flows": [{"id": "f1", "title": {"de": "F", "en": "F"}, "entry": "code", "screens": [{"id": "code", "type": "wait", "title": {"de": "W", "en": "W"}, "endpoint": "/api/wait", "mapping": {"raffle_done": "raffle_done"}, "poll_seconds": 86401, "exit": {"on": "raffle_done", "op": "equals", "value": true, "then": "code"}}]}]"#;
+        let f = validate_manifest(SCAN_OK.replace(r#""views": []"#, flow_json).as_bytes());
+        assert!(
+            f.warnings
+                .iter()
+                .any(|w| w.contains("poll_seconds") && w.contains("code")),
+            "{f:?}"
+        );
+        assert!(f.is_ok(), "{f:?}");
     }
 }
