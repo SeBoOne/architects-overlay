@@ -81,6 +81,61 @@ pub struct AutocompleteRule {
     pub fill: BTreeMap<String, String>,
 }
 
+/// Code-Einstieg eines Flows (SCLM v2 / Spec 5.4): der Client übergibt einen
+/// Session-Code (Suchzeile oder Öffnen-Button), der Core öffnet die Session,
+/// joined den Teilnehmer automatisch (Auto-Join/Claim) und liefert den
+/// Start-Screen. Alles SCLM-spezifische bleibt im Manifest — dieser Block
+/// ist generisch Wohlgeformtheit-geprüft, der Kern kennt keine Connector-IDs.
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowOpen {
+    /// Param-Key, unter dem der eingegebene Code in den Flow-Zustand pinnt
+    /// (Default `code`).
+    #[serde(default = "default_open_param")]
+    pub param: String,
+    /// GET-Endpunkt mit genau einem `{param}`-Platzhalter (Session laden).
+    pub session_endpoint: String,
+    /// Header-Templates fürs Session-GET (`{param}` erlaubt).
+    pub headers: Option<BTreeMap<String, String>>,
+    /// Dot-Paths in der Session-Antwort → Flow-Zustand (muss `sid` enthalten
+    /// — `join_endpoint` braucht ihn; weitere üblich: name, max_wishes,
+    /// raffle_done, raffle_mode).
+    pub mapping: BTreeMap<String, String>,
+    /// Dot-Path in der Session-Antwort, der Teilnehmernamen liefert
+    /// (ci-EXAKTER Vergleich gegen `match_setting_key`).
+    pub match_path: String,
+    /// Dot-Path mit den zugehörigen Teilnehmer-IDs (indexparallel zu
+    /// `match_path`).
+    pub id_path: String,
+    /// settings_fields-Key mit dem gespeicherten Benutzernamen.
+    pub match_setting_key: String,
+    /// POST-Endpunkt der Selbst-Anlage (`{sid}`-Platzhalter Pflicht).
+    pub join_endpoint: String,
+    /// Body der Selbst-Anlage; `{param}` und Settings-Keys werden gefüllt
+    /// (Default `{"name": "{match_setting_key}"}` — POST nur, wenn der Name
+    /// NICHT bereits in der Teilnehmerliste steht).
+    pub join_body: Option<Value>,
+    /// Header-Templates fürs Join-POST (Session-Code als Header; pcode hat
+    /// hier nichts verloren — pcode ist ausschließlich Body, Spec Abschnitt 3).
+    pub join_headers: Option<BTreeMap<String, String>>,
+    /// Start-Screen, solange die Ziehung offen ist (Normalpfad).
+    pub open_screen: String,
+    /// Start-Screen, wenn `raffle_done` beim Öffnen schon true ist — der
+    /// Client landet direkt im Ergebnis.
+    pub done_screen: String,
+    /// Dot-Path im Session-Objekt auf das Done-Flag (Default `raffle_done`).
+    #[serde(default = "default_done_path")]
+    pub done_path: String,
+}
+
+fn default_open_param() -> String {
+    "code".to_owned()
+}
+
+fn default_done_path() -> String {
+    "raffle_done".to_owned()
+}
+
 /// Multi-Select-Liste (SF2): Zeilen sind markierbar (Checkboxen), der
 /// Confirm führt die Screen-Action aus. `max_path` ist ein Dot-Path in den
 /// Flow-Zustand mit dem Maximum (z. B. `max_wishes`) — fehlt er, gilt
@@ -118,6 +173,12 @@ pub struct ScreenAction {
     /// Wert fließt als `{key}`-Binding in Body/Path/Headers. Bereits
     /// gepinnte Werte werden vorgeseedet (User-Input gewinnt).
     pub fields: Option<Vec<Param>>,
+    /// Ein-Regel (SCLM v2 Requirement 9/one-way-Flags): Action nur aktiv,
+    /// wenn die Bedingung gegen den Flow-Zustand wahr ist (z. B.
+    /// `enabled_if: {on: "collected", op: "not_equals", value: true}` →
+    /// „Als abgeholt markieren“ ist nach dem Setzen deaktiviert). Fehlende
+    /// Felder gelten bei not_equals als wahr (Flag nie gesetzt = actionell).
+    pub enabled_if: Option<Condition>,
     /// Ziel-Screen nach der Action (ohne `method`: reine Navigation).
     pub goto: Option<String>,
 }
@@ -167,6 +228,11 @@ pub struct Screen {
     pub multi: Option<MultiSpec>,
     /// Generische Aktionen (Buttons) unter dem Screen-Inhalt.
     pub actions: Option<Vec<ScreenAction>>,
+    /// Screen-Antwort → Session-Keystore (Spec 5.2): `{"result_id": "rid"}`
+    /// = Keystore-Spalte `result_id` aus Flow-Zustands-Key `rid`. Der Core
+    /// schreibt die Spalte, sobald der Screen einen eindeutigen Treffer liefert
+    /// (first-write wins, partielles Upsert wie bei Karte A).
+    pub keystore_fields: Option<BTreeMap<String, String>>,
 }
 
 /// Benannter Flow: Einstieg + Kette von Screens.
@@ -178,6 +244,10 @@ pub struct Flow {
     /// Entry-Screen-ID (muss in `screens` existieren).
     pub entry: String,
     pub screens: Vec<Screen>,
+    /// Code-Einstieg (SCLM v2 / Spec 5.4): Session-Code → Auto-Join →
+    /// Start-Screen. Optional: Flows ohne `open` haben manuellen Einstieg
+    /// (Rückwärtskompatibilität).
+    pub open: Option<FlowOpen>,
 }
 
 impl Flow {
@@ -409,6 +479,7 @@ mod tests {
             autocomplete: None,
             multi: None,
             actions: None,
+            keystore_fields: None,
         }
     }
 
@@ -444,6 +515,7 @@ mod tests {
             },
             entry: "start".into(),
             screens: vec![s, screen("list", ScreenType::List)],
+            open: None,
         };
         assert_eq!(f.entry_screen().map(|x| x.id.as_str()), Some("start"));
         assert_eq!(
@@ -611,5 +683,70 @@ mod tests {
         let pm = actions[0].pins_map.as_ref().unwrap();
         assert_eq!(pm.get("pcode"), Some(&"pcode".to_string()));
         assert_eq!(pm.get("participant_id"), Some(&"id".to_string()));
+    }
+
+    // ---- SCLM v2 (Spec 5.4): open-Block, enabled_if, keystore_fields -------
+
+    #[test]
+    fn flow_open_block_parses_with_defaults() {
+        let text = r#"{
+            "id": "participant", "title": {"de": "T", "en": "T"},
+            "entry": "wishes",
+            "open": {
+                "session_endpoint": "/api/session/{code}",
+                "headers": {"X-SCLM-Code": "{code}"},
+                "mapping": {"sid": "id", "raffle_done": "raffle_done"},
+                "match_path": "participants[].name",
+                "id_path": "participants[].id",
+                "match_setting_key": "sclm_username",
+                "join_endpoint": "/api/session/{sid}/participants",
+                "open_screen": "wishes",
+                "done_screen": "results"
+            },
+            "screens": []
+        }"#;
+        let f: Flow = serde_json::from_str(text).unwrap();
+        let o = f.open.expect("open block");
+        assert_eq!(o.param, "code"); // Default
+        assert_eq!(o.done_path, "raffle_done"); // Default
+        assert!(o.join_body.is_none()); // Core füllt Default-Body
+        // Tippfer im open-Block scheitert (deny_unknown_fields)
+        let bad: Result<Flow, _> =
+            serde_json::from_str(text.replace("open_screen", "open_scrn").as_str());
+        assert!(bad.is_err());
+        // Flow ohne open bleibt gültig (Rückwärtskompatibilität)
+        let plain: Flow = serde_json::from_str(
+            r#"{"id":"f","title":{"de":"T","en":"T"},"entry":"a","screens":[]}"#,
+        )
+        .unwrap();
+        assert!(plain.open.is_none());
+    }
+
+    #[test]
+    fn enabled_if_and_keystore_fields_parse() {
+        let text = r#"{
+            "id": "results", "type": "results",
+            "title": {"de": "Mein Gewinn", "en": "My Win"},
+            "endpoint": "/api/x",
+            "keystore_fields": {"result_id": "rid"},
+            "actions": [{
+                "id": "collect", "title": {"de": "C", "en": "C"},
+                "method": "patch", "path": "/api/r/{rid}",
+                "enabled_if": {"on": "collected", "op": "not_equals", "value": true}
+            }]
+        }"#;
+        let s: Screen = serde_json::from_str(text).unwrap();
+        assert_eq!(
+            s.keystore_fields.as_ref().unwrap().get("result_id"),
+            Some(&"rid".to_string())
+        );
+        let a = &s.actions.unwrap()[0];
+        let c = a.enabled_if.as_ref().unwrap();
+        assert_eq!(c.on, "collected");
+        assert_eq!(c.op, CondOp::NotEquals);
+        assert_eq!(c.value, Some(json!(true)));
+        // enabled_if ist Bedingung wie when/exit — deny_unknown_fields gilt
+        let bad: Result<Screen, _> = serde_json::from_str(&text.replace("enabled_if", "enabledif"));
+        assert!(bad.is_err());
     }
 }

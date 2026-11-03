@@ -74,6 +74,7 @@ dependencies = [
  "futures",
  "game_detection",
  "gdk-sys",
+ "getrandom 0.3.4",
  "glib",
  "i18n-err",
  "log",

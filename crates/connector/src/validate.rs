@@ -341,7 +341,7 @@ fn check_flows(m: &ConnectorManifest, report: &mut Report) {
                 }
             }
         }
-        check_flow(flow, report);
+        check_flow(flow, m, report);
     }
 }
 
@@ -352,7 +352,7 @@ fn seen_insert<'a>(set: &mut std::collections::BTreeSet<&'a str>, id: &'a str) -
     set.insert(id)
 }
 
-fn check_flow(flow: &Flow, report: &mut Report) {
+fn check_flow(flow: &Flow, m: &ConnectorManifest, report: &mut Report) {
     let fid = &flow.id;
     if flow.screens.is_empty() {
         report.error(format!("flow '{fid}': no screens"));
@@ -382,6 +382,148 @@ fn check_flow(flow: &Flow, report: &mut Report) {
             "flow '{fid}': entry '{}' is not a screen",
             flow.entry
         ));
+    }
+    // SCLM v2 (Spec 5.4): optionaler Code-Einstieg-Block `open`.
+    if let Some(o) = &flow.open {
+        check_flow_open(fid, o, &ids, m, report);
+    }
+}
+
+fn ascii_key(key: &str) -> bool {
+    !key.trim().is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Regeln für `flow.open` (SCLM v2 / Spec 5.4): generischer Code-Einstieg —
+/// Endpunkt-Regeln, sid-Mapping-Pflicht (join-POST braucht die Session-ID),
+/// Match-Key muss deklariert sein (sonst gibt es keinen Benutzernamen),
+/// Start-Screens müssen existieren. Der Kern prüft Wohlgeformtheit, keinen
+/// Connector-Sprech.
+fn check_flow_open(
+    flow_id: &str,
+    o: &crate::flow::FlowOpen,
+    ids: &std::collections::BTreeSet<&str>,
+    m: &ConnectorManifest,
+    report: &mut Report,
+) {
+    let tag = format!("flow '{flow_id}' open");
+    if !ascii_key(&o.param) {
+        report.error(format!(
+            "{tag}: param '{}' must be ASCII [A-Za-z0-9_-]",
+            o.param
+        ));
+    }
+    if !o.session_endpoint.starts_with('/') || o.session_endpoint.contains("file://") {
+        report.error(format!(
+            "{tag}: session_endpoint must be a '/'-relative path"
+        ));
+    }
+    let ep_params = extract_params(&o.session_endpoint);
+    if ep_params != vec![o.param.clone()] {
+        report.error(format!(
+            "{tag}: session_endpoint must contain exactly one placeholder {{{}}} (got {:?})",
+            o.param, ep_params
+        ));
+    }
+    if !o.mapping.contains_key("sid") {
+        report.error(format!(
+            "{tag}: mapping must contain a 'sid' key — the join endpoint needs {{sid}}"
+        ));
+    }
+    for (what, val) in [
+        ("match_path", &o.match_path),
+        ("id_path", &o.id_path),
+        ("done_path", &o.done_path),
+    ] {
+        if val.trim().is_empty() {
+            report.error(format!("{tag}: {what} is empty"));
+        }
+    }
+    let key = o.match_setting_key.trim();
+    if !ascii_key(key) {
+        report.error(format!(
+            "{tag}: match_setting_key '{}' must be ASCII [A-Za-z0-9_-]",
+            o.match_setting_key
+        ));
+    } else if !m.settings_fields.iter().any(|f| f.key == key) {
+        report.error(format!(
+            "{tag}: match_setting_key '{}' is not declared in settings_fields",
+            key
+        ));
+    }
+    if !o.join_endpoint.starts_with('/') || o.join_endpoint.contains("file://") {
+        report.error(format!("{tag}: join_endpoint must be a '/'-relative path"));
+    }
+    // Erlaubte Platzhalter im open-Block: Einstiegs-Param, sid, deklarierte
+    // Settings-Keys (username-Platzhalter im join_body).
+    let setting_keys: std::collections::BTreeSet<&str> =
+        m.settings_fields.iter().map(|f| f.key.as_str()).collect();
+    let allowed = |p: &str| p == o.param.as_str() || p == "sid" || setting_keys.contains(p);
+    let check_templates: Vec<(&str, Option<&std::collections::BTreeMap<String, String>>)> = vec![
+        ("headers", o.headers.as_ref()),
+        ("join_headers", o.join_headers.as_ref()),
+    ];
+    if let Some(tpl) = &o.join_body {
+        let mut texts = Vec::new();
+        collect_json_strings(tpl, &mut texts);
+        let joined = texts.join(" ");
+        for p in extract_params(&joined) {
+            if !allowed(&p) {
+                report.error(format!(
+                    "{tag}: join_body placeholder '{{{p}}}' is unbound (allowed: {{{}}}, {{sid}}, settings keys)",
+                    o.param
+                ));
+            }
+        }
+    }
+    for (what, headers) in check_templates {
+        if let Some(map) = headers {
+            for (name, template) in map {
+                if name.trim().is_empty() {
+                    report.error(format!("{tag}: {what} has empty header name"));
+                }
+                for p in extract_params(template) {
+                    if !allowed(&p) {
+                        report.error(format!(
+                            "{tag}: {what} template '{{{p}}}' is unbound (allowed: {{{}}}, {{sid}}, settings keys)",
+                            o.param
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    for (what, target) in [
+        ("open_screen", &o.open_screen),
+        ("done_screen", &o.done_screen),
+    ] {
+        if target.trim().is_empty() {
+            report.error(format!("{tag}: {what} is empty"));
+        } else if !ids.contains(target.as_str()) {
+            report.error(format!(
+                "{tag}: {what} references unknown screen '{target}'"
+            ));
+        }
+    }
+}
+
+/// Alle Strings in einem JSON-Wert einsammeln (join_body-Platzhalterprüfung).
+fn collect_json_strings(v: &serde_json::Value, out: &mut Vec<String>) {
+    match v {
+        serde_json::Value::String(s) => out.push(s.clone()),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_json_strings(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for val in map.values() {
+                collect_json_strings(val, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -498,6 +640,23 @@ fn check_screen(
     }
     if s.mapping.is_empty() && s.screen_type != ScreenType::Form {
         report.warn(format!("flow '{flow_id}': screen '{sid}' without mapping"));
+    }
+    // SCLM v2 (Spec 5.2): Screen-Antwort → Session-Keystore. Spalten sind
+    // fest (Teil der Keystore-Tabelle), Werte sind Flow-Zustands-Keys.
+    for (col, state_key) in s.keystore_fields.iter().flatten() {
+        if !matches!(
+            col.as_str(),
+            "join_code" | "name" | "participant_id" | "pcode" | "result_id"
+        ) {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': keystore_fields column '{col}' unknown (allowed: join_code, name, participant_id, pcode, result_id)"
+            ));
+        }
+        if state_key.trim().is_empty() {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': keystore_fields value for '{col}' is empty"
+            ));
+        }
     }
     if s.poll_seconds == Some(0) {
         report.warn(format!(
@@ -656,6 +815,24 @@ fn check_screen(
                 report.error(format!(
                     "flow '{flow_id}': screen '{sid}': action '{}': duplicate field/param key '{}'",
                     a.id, f.key
+                ));
+            }
+        }
+        // SCLM v2: enabled_if ist Bedingung wie when/exit — Referenzen müssen
+        // existieren, then/otherwise ist hier sinnlos (Error, kein Warnpfad:
+        // die Regel steuert nur die Button-Aktivierung).
+        if let Some(c) = &a.enabled_if {
+            check_condition_refs(
+                flow_id,
+                &format!("action '{}' enabled_if", a.id),
+                c,
+                ids,
+                report,
+            );
+            if c.then.is_some() || c.otherwise.is_some() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': action '{}': enabled_if must not use then/otherwise",
+                    a.id
                 ));
             }
         }
@@ -1785,5 +1962,117 @@ mod tests {
             r.errors.iter().any(|e| e.contains("collides with view id")),
             "{r:?}"
         );
+    }
+
+    // ---- SCLM v2 (Spec 5.4): open-Block, enabled_if, keystore_fields --------
+
+    fn manifest_with_open_flow(flow: &str) -> String {
+        format!(
+            r#"{{"manifest_version": 1, "id": "sclm", "name": {{"de": "SCLM", "en": "SCLM"}}, "base_url": "https://sclm.site", "placement": {{"kind": "own", "label": {{"de": "SCLM", "en": "SCLM"}}, "hotkey_slot": true}}, "views": [], "settings_fields": [{{"key": "sclm_username", "label": {{"de": "Name", "en": "Name"}}, "type": "text", "required": true}}], "flows": [{flow}]}}"#
+        )
+    }
+
+    const OPEN_OK: &str = r#""open": {
+        "param": "code",
+        "session_endpoint": "/api/session/{code}",
+        "headers": {"X-SCLM-Code": "{code}"},
+        "mapping": {"sid": "id", "max_wishes": "settings.max_wishes", "raffle_done": "raffle_done"},
+        "match_path": "participants[].name",
+        "id_path": "participants[].id",
+        "match_setting_key": "sclm_username",
+        "join_endpoint": "/api/session/{sid}/participants",
+        "join_headers": {"X-SCLM-Code": "{code}"},
+        "open_screen": "a",
+        "done_screen": "d"
+    }"#;
+
+    const FLOW_HEAD: &str =
+        r#"{"id": "participant", "title": {"de": "T", "en": "T"}, "entry": "a", "#;
+
+    const SCREENS_OK: &str = r#""screens": [
+        {"id": "a", "type": "form", "title": {"de": "a", "en": "a"}, "form": {"fields": [{"key": "sclm_username", "label": {"de": "x", "en": "x"}, "type": "text", "required": true, "default_source": "sclm_username"}], "method": "post", "path": "/api/x", "body_template": {"name": "{sclm_username}"}}},
+        {"id": "d", "type": "results", "title": {"de": "d", "en": "d"}, "endpoint": "/api/r/{rid}", "params": [{"key": "rid", "label": {"de": "r", "en": "r"}}]}
+    ]}"#;
+
+    fn open_flow(open: &str) -> String {
+        FLOW_HEAD.to_string() + open + ", " + SCREENS_OK
+    }
+
+    #[test]
+    fn flow_open_block_valid_and_defaults_apply() {
+        let m = manifest_with_open_flow(&open_flow(OPEN_OK));
+        let r = validate_manifest(m.as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn flow_open_block_rules() {
+        // mapping ohne sid → Error (join-POST braucht {sid})
+        let no_sid = OPEN_OK.replace(
+            r#""mapping": {"sid": "id", "max_wishes": "settings.max_wishes", "raffle_done": "raffle_done"}"#,
+            r#""mapping": {"max_wishes": "settings.max_wishes"}"#,
+        );
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&no_sid)).as_bytes());
+        assert!(r.errors.iter().any(|e| e.contains("'sid' key")), "{r:?}");
+        // Match-Key nicht in settings_fields deklariert → Error
+        let ghost = OPEN_OK.replace("\"sclm_username\"", "\"sclm_ghost\"");
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&ghost)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("not declared in settings_fields")),
+            "{r:?}"
+        );
+        // done_screen zeigt auf unbekannten Screen → Error
+        let ghost_screen = OPEN_OK.replace(r#""done_screen": "d""#, r#""done_screen": "d nope""#);
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&ghost_screen)).as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("unknown screen")),
+            "{r:?}"
+        );
+        // session_endpoint mit fremdem Platzhalter → Error
+        let wrong_ph = OPEN_OK.replace("/api/session/{code}", "/api/session/{sid}");
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&wrong_ph)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("exactly one placeholder")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn flow_open_action_guardrails() {
+        // enabled_if mit then/otherwise → Error (nur Aktivierungsregel);
+        // unbekannte Keystore-Spalte → Error. Reine String-Konkatenation —
+        // JSON-Klammern dürfen nicht durch format!-Interpolation laufen.
+        let bad_screens = r#""screens": [
+            {"id": "a", "type": "form", "title": {"de": "a", "en": "a"}, "form": {"fields": [{"key": "sclm_username", "label": {"de": "x", "en": "x"}, "type": "text", "required": true, "default_source": "sclm_username"}], "method": "post", "path": "/api/x", "body_template": {"name": "{sclm_username}"}}},
+            {"id": "d", "type": "results", "title": {"de": "d", "en": "d"}, "endpoint": "/api/r/{rid}", "params": [{"key": "rid", "label": {"de": "r", "en": "r"}}],
+             "keystore_fields": {"bogus_col": "rid"},
+             "actions": [{"id": "collect", "title": {"de": "c", "en": "c"}, "method": "patch", "path": "/api/r/{rid}",
+                 "enabled_if": {"on": "collected", "op": "not_equals", "value": true, "then": "a"}}]}
+        ]}"#;
+        let flow = FLOW_HEAD.to_string() + OPEN_OK + ", " + bad_screens;
+        let r = validate_manifest(manifest_with_open_flow(&flow).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("enabled_if must not use")),
+            "{r:?}"
+        );
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("keystore_fields column 'bogus_col'")),
+            "{r:?}"
+        );
+        // saubere Variante: enabled_if ohne then, erlaubte Keystore-Spalte
+        let clean = bad_screens
+            .replace(r#", "then": "a""#, "")
+            .replace(r#""bogus_col": "rid""#, r#""result_id": "rid""#);
+        let flow_clean = FLOW_HEAD.to_string() + OPEN_OK + ", " + &clean;
+        let r = validate_manifest(manifest_with_open_flow(&flow_clean).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
     }
 }
