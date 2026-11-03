@@ -283,6 +283,34 @@ pub fn locale_import(app: tauri::AppHandle, text: String) -> Result<LocaleMeta, 
 mod tests {
     use super::*;
 
+    /// Locale-Parität (de/en): die Repo-Baseline der beiden Builtin-Dateien
+    /// muss denselben Key-Bestand haben — fehlende Übersetzung = Build-Fehler
+    /// im Test statt stiller Fallback-Kette im Feld (SCLM v2 Karte A Gate).
+    #[test]
+    fn builtin_locales_have_parity() {
+        let read_keys = |name: &str| -> std::collections::BTreeSet<String> {
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../resources/locales")
+                .join(name);
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+            let raw: RawLocaleFile = serde_json::from_str(&text).expect("valid locale json");
+            raw.strings
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(k, _)| k)
+                .collect::<std::collections::BTreeSet<String>>()
+        };
+        let de = read_keys("de.json");
+        let en = read_keys("en.json");
+        let only_de: Vec<&String> = de.difference(&en).collect();
+        let only_en: Vec<&String> = en.difference(&de).collect();
+        assert!(
+            only_de.is_empty() && only_en.is_empty(),
+            "locale parity broken — only de: {only_de:?} / only en: {only_en:?}"
+        );
+    }
+
     const EXAMPLE: &str = r#"{
         "meta": { "code": "fr", "name": "Français" },
         "strings": { "settings.language.title": "Langue", "nav.trade": "Commerce" }

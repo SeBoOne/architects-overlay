@@ -12,6 +12,10 @@ use std::sync::Arc;
 mod app_settings;
 #[cfg(desktop)]
 mod connector;
+/// SCLM v2 Karte A (Spec 5.2): Session-Keystore pro Connector (tauri-freier,
+/// unit-getesteter Kern; genutzt von `connector`).
+#[cfg(desktop)]
+mod connector_keystore;
 mod hangar;
 /// H5-Fallback (t_ed01e8f7): Low-Level-Keyboard-Hook für Global-Shortcuts,
 /// wenn SC fokussiert ist (Anti-Cheat-Hook verschluckt WM_HOTKEY). Nur die
@@ -149,6 +153,12 @@ pub fn run() {
             connector::connector_fetch,
             connector::connector_form_submit,
             connector::connector_screen_action,
+            // SCLM v2 Karte A: Settings-Felder (Spec 5.1) + Session-Keystore (5.2)
+            connector::connector_set_setting_field,
+            connector::connector_get_settings_fields,
+            connector::connector_keystore_upsert,
+            connector::connector_keystore_list,
+            connector::connector_keystore_find,
             overlay::overlay_config_closed,
         ]);
     }

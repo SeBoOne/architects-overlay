@@ -65,8 +65,9 @@ function keyActivate(e: KeyboardEvent) {
 		saveFlowPin,
 		branchTarget,
 		type ConnectorEntry,
-		type FetchResultDTO
-	} from '../lib/connector';
+		type FetchResultDTO,
+		type SettingsFieldDTO
+} from '../lib/connector';
 	// PB (t_1c9bc240, B1): Mode-Hotkeys — Defaults, Validação e Lookup em UM módulo.
 	import {
 		DEFAULT_MODE_HOTKEYS,
@@ -3966,6 +3967,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let pluginNote = $state<{ raw?: string; key?: string; params?: Record<string, string> } | null>(null);
 	let pluginWarn = $state<{ text: string; msg: string } | null>(null);
 	let authDraft = $state<Record<string, string>>({});
+	let pluginFieldDraft = $state<Record<string, string>>({});
 	let connHkCapture = $state<string | null>(null);
 	let connHkNote = $state('');
 
@@ -4040,6 +4042,29 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	function authDraftKey(c: ConnectorEntry): string {
 		return `${c.id}:${c.manifest.auth?.value_source ?? ''}`;
+	}
+
+	// SCLM v2 Karte A (Spec 5.1): Settings-Feld-Gruppe je Connector mit
+	// deklarierten settings_fields — Speichern sofort, Label lokalisiert.
+	function settingDraftKey(c: ConnectorEntry, f: SettingsFieldDTO): string {
+		return `${c.id}:${f.key}`;
+	}
+
+	async function savePluginSetting(c: ConnectorEntry, f: SettingsFieldDTO, clear: boolean) {
+		try {
+			connectors = await invoke<ConnectorEntry[]>('connector_set_setting_field', {
+				id: c.id,
+				key: f.key,
+				value: clear ? null : (pluginFieldDraft[settingDraftKey(c, f)] || null)
+			});
+			pluginFieldDraft = { ...pluginFieldDraft, [settingDraftKey(c, f)]: '' };
+			pluginNote = {
+				key: clear ? 'settings.plugins_field_cleared' : 'settings.plugins_field_saved',
+				params: { label: labelOf(f.label, currentLang()) }
+			};
+		} catch (e) {
+			pluginNote = { raw: trError(e) };
+		}
 	}
 
 	async function saveAuth(c: ConnectorEntry, clear: boolean) {
@@ -5629,9 +5654,36 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 									<span class="cfg-note">
 										{$t(c.auth_set[c.manifest.auth.value_source] ? 'settings.plugins_auth_set' : 'settings.plugins_auth_not_set')}
 									</span>
-								</div>
-							{/if}
-							{#if c.manifest.placement.kind === 'own'}
+									</div>
+									{/if}
+										<!-- SCLM v2 Karte A (Spec 5.1): generische Plugin-Einstellungsgruppe —
+										je Connector mit deklarierten settings_fields eine Felder-Gruppe,
+										Label lokalisiert (de/en aus dem Manifest), Speichern sofort. -->
+										{#if c.manifest.settings_fields?.length}
+										{#each c.manifest.settings_fields as f (f.key)}
+										<div class="cfg-key-row cfg-plugin-field-row">
+											<span class="cfg-plugin-field-label">{labelOf(f.label, currentLang())}</span>
+											<input
+												type={f.secret ? 'password' : 'text'}
+												autocomplete="off"
+												placeholder={c.settings_set[f.key] ? $t('settings.plugins_field_set') : $t('settings.plugins_field_empty')}
+												bind:value={pluginFieldDraft[settingDraftKey(c, f)]}
+											/>
+											<button type="button" class="chip" onclick={() => void savePluginSetting(c, f, false)}>
+												{$t('settings.plugins_field_save')}
+											</button>
+											{#if c.settings_set[f.key]}
+												<button type="button" class="chip" onclick={() => void savePluginSetting(c, f, true)}>
+													{$t('settings.plugins_field_clear')}
+												</button>
+											{/if}
+											<span class="cfg-note">
+												{$t(c.settings_set[f.key] ? 'settings.plugins_field_set_hint' : 'settings.plugins_field_not_set')}
+											</span>
+										</div>
+										{/each}
+										{/if}
+									{#if c.manifest.placement.kind === 'own'}
 								<div class="cfg-key-row">
 									<button
 										type="button"

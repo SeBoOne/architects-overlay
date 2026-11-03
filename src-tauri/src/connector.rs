@@ -29,6 +29,12 @@ use serde_json::json;
 use crate::i18n_err::{err_key, err_keyp};
 use crate::locale::LocaleError;
 
+pub use crate::connector_keystore::{
+    KeystorePaths, SessionEntry, find_entry as keystore_find, list_entries as keystore_list,
+    load_sessions as keystore_load, upsert_and_save as keystore_upsert,
+    upsert_entry as keystore_upsert_entry,
+};
+
 /// Connector-Manifeste sind klein; 1 MiB Obergrenze (gleiche Geist wie
 /// Locale-Importe — verhindern, dass ein Riesen-Manifest Boot/Poll verstopft).
 pub use connector::MAX_MANIFEST_BYTES;
@@ -49,6 +55,9 @@ pub struct ConnectorEntry {
     pub auth_set: BTreeMap<String, bool>,
     /// Konfigurierter Hotkey-Slot (nur placement.kind=own relevant).
     pub hotkey: Option<String>,
+    /// Pro deklariertem `settings_fields`-Key: ist ein Wert gesetzt? Der Wert
+    /// selbst verlässt das Backend nie (Auth-Feld-Mechanik, Spec 5.1).
+    pub settings_set: BTreeMap<String, bool>,
 }
 
 impl ConnectorEntry {
@@ -69,6 +78,7 @@ impl ConnectorEntry {
             manifest: manifest.clone(),
             enabled: s.connector_enabled(id),
             auth_set,
+            settings_set: s.connector_setting_values_set(id),
             hotkey: s.connector_hotkey(id).map(str::to_owned),
         }
     }
@@ -255,6 +265,7 @@ pub async fn connector_remove(
     };
     if removed {
         let _ = std::fs::remove_file(state.dir.join(format!("{id}.json")));
+        let _ = std::fs::remove_file(keystore_paths(&state).file(&id));
     }
     {
         let mut s = settings_state.inner.lock().expect("settings lock");
@@ -365,6 +376,201 @@ pub async fn connector_set_hotkey(
     Ok(list_cmd_inner(&state, &settings_state))
 }
 
+/// Settings-Feld-Werte eines Connectors (spec 5.1): nur deklarierte Keys aus
+/// `settings_fields` bekommen gespeicherte Werte (Platzhalter-Auflösung im
+/// Flow-Kontext wie params). Leere Map bei unbekanntem Connector/ohne Felder.
+/// `include_secrets`: true nur für Backend-Platzhalter-Injektion (Werte
+/// verlassen den Rust-Kern nie nach außen); false für jede Ausgabe ans
+/// Frontend — Felder mit `secret:true` werden dann gefiltert (Secret-Vertrag:
+/// das Frontend sieht nie Klartwerte, nur `_set`-Booles).
+pub(crate) fn settings_field_values(
+    state: &ConnectorState,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+    include_secrets: bool,
+) -> BTreeMap<String, String> {
+    let declared: Vec<(String, bool)> = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        entries
+            .iter()
+            .find(|e| e.manifest.id == id)
+            .map(|e| {
+                e.manifest
+                    .settings_fields
+                    .iter()
+                    .map(|f| (f.key.clone(), f.secret))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let s = settings_state.inner.lock().expect("settings lock");
+    declared
+        .iter()
+        .filter_map(|(k, secret)| {
+            if !include_secrets && *secret {
+                return None;
+            }
+            s.connector_setting_value(id, k)
+                .map(|v| (k.clone(), v.to_owned()))
+        })
+        .collect()
+}
+
+/// Manifest-gefiltert: gespeicherte Werte der deklarierten settings_fields
+/// (tauri-frei, testbar — Spec 5.1 Placeholder-Basis für Flow/Formular).
+pub(crate) fn declared_setting_values(
+    manifest: &connector::ConnectorManifest,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+) -> BTreeMap<String, String> {
+    let s = settings_state.inner.lock().expect("settings lock");
+    manifest
+        .settings_fields
+        .iter()
+        .filter_map(|f| {
+            s.connector_setting_value(id, &f.key)
+                .map(|v| (f.key.clone(), v.to_owned()))
+        })
+        .collect()
+}
+
+/// Deklariert das Manifest den Key als settings_fields-Eintrag?
+fn setting_field_declared(state: &ConnectorState, id: &str, key: &str) -> bool {
+    let entries = state.entries.lock().expect("connector entries lock");
+    entries
+        .iter()
+        .find(|e| e.manifest.id == id)
+        .is_some_and(|e| e.manifest.settings_fields.iter().any(|f| f.key == key))
+}
+
+/// Keystore-Pfade des Connectors (Geschwister-Ordner des Manifest-Stores).
+fn keystore_paths(state: &ConnectorState) -> KeystorePaths {
+    KeystorePaths::from_manifest_dir(&state.dir)
+}
+
+/// Settings-Feld-Wert eines Connectors setzen/löschen (Key MUSS vom Manifest
+/// deklariert sein — kein wilder Settings-Schmuggel, gleiche Regel wie Auth).
+#[tauri::command]
+pub async fn connector_set_setting_field(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    id: String,
+    key: String,
+    value: Option<String>,
+) -> Result<Vec<ConnectorEntry>, String> {
+    {
+        let entries = state.entries.lock().expect("connector entries lock");
+        if !entries.iter().any(|e| e.manifest.id == id) {
+            return Err(err_key("error.connector.unknown"));
+        }
+    }
+    if !setting_field_declared(&state, &id, &key) {
+        return Err(err_key("error.connector.setting_field_undeclared"));
+    }
+    {
+        let mut s = settings_state.inner.lock().expect("settings lock");
+        s.set_connector_setting_value(&id, &key, value.filter(|v| !v.trim().is_empty()));
+        crate::app_settings::persist_settings(&s);
+    }
+    Ok(list_cmd_inner(&state, &settings_state))
+}
+
+/// Mindestziel aus Spec 5.1: `{key: value}` der gespeicherten Settings-Felder
+/// (Karte B/C bauen daraus die `{key}`-Placeholder im Flow-Kontext).
+/// Secret-Vertrag (Review R1): Felder mit `secret:true` werden aus der
+/// Command-Ausgabe gefiltert — Klartwerte verlassen das Backend nie; die
+/// Backend-seitige `{key}`-Platzhalter-Injektion (fetch/flow/form) resolviert
+/// Secrets weiterhin intern über `include_secrets = true`.
+#[tauri::command]
+pub async fn connector_get_settings_fields(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    connector_id: String,
+) -> Result<BTreeMap<String, String>, String> {
+    {
+        let entries = state.entries.lock().expect("connector entries lock");
+        if !entries.iter().any(|e| e.manifest.id == connector_id) {
+            return Err(err_key("error.connector.unknown"));
+        }
+    }
+    Ok(settings_field_values(
+        &state,
+        &settings_state,
+        &connector_id,
+        false,
+    ))
+}
+
+/// Session-Keystore (Spec 5.2): Eintrag upserten — PARTIELL (None-Felder
+/// bleiben, wie bei Form-Teilupdates). sid ist Pflicht (Identität).
+#[tauri::command]
+pub async fn connector_keystore_upsert(
+    state: tauri::State<'_, ConnectorState>,
+    id: String,
+    sid: String,
+    join_code: Option<String>,
+    name: Option<String>,
+    participant_id: Option<String>,
+    pcode: Option<String>,
+    result_id: Option<String>,
+) -> Result<SessionEntry, String> {
+    {
+        let entries = state.entries.lock().expect("connector entries lock");
+        if !entries.iter().any(|e| e.manifest.id == id) {
+            return Err(err_key("error.connector.unknown"));
+        }
+    }
+    if sid.trim().is_empty() {
+        return Err(err_key("error.connector.keystore_sid_missing"));
+    }
+    Ok(keystore_upsert(
+        &keystore_paths(&state).file(&id),
+        &sid,
+        join_code,
+        name,
+        participant_id,
+        pcode,
+        result_id,
+    ))
+}
+
+/// Session-Keystore: alle Einträge (neueste zuerst).
+#[tauri::command]
+pub async fn connector_keystore_list(
+    state: tauri::State<'_, ConnectorState>,
+    id: String,
+) -> Result<Vec<SessionEntry>, String> {
+    {
+        let entries = state.entries.lock().expect("connector entries lock");
+        if !entries.iter().any(|e| e.manifest.id == id) {
+            return Err(err_key("error.connector.unknown"));
+        }
+    }
+    Ok(keystore_list(&keystore_load(
+        &keystore_paths(&state).file(&id),
+    )))
+}
+
+/// Session-Keystore: find by sid — Basis des „Öffnen"-Buttons (Spec 5.2:
+/// Eintrag vorhanden = join_code/Claim-Werte kennen).
+#[tauri::command]
+pub async fn connector_keystore_find(
+    state: tauri::State<'_, ConnectorState>,
+    id: String,
+    sid: String,
+) -> Result<Option<SessionEntry>, String> {
+    {
+        let entries = state.entries.lock().expect("connector entries lock");
+        if !entries.iter().any(|e| e.manifest.id == id) {
+            return Err(err_key("error.connector.unknown"));
+        }
+    }
+    Ok(keystore_find(
+        &keystore_load(&keystore_paths(&state).file(&id)),
+        &sid,
+    ))
+}
+
 #[derive(Debug, Serialize)]
 pub struct FetchResult {
     pub status: u16,
@@ -384,7 +590,15 @@ pub async fn connector_fetch(
     force: bool,
     params: Option<BTreeMap<String, String>>,
 ) -> Result<FetchResult, String> {
-    let params = params.unwrap_or_default();
+    let mut params = params.unwrap_or_default();
+    // Settings-Feld-Werte (Spec 5.1) als Basis-Platzhalter-Injektion:
+    // deklarierte `{key}`-Platzhalter (z. B. {sclm_username}) resolven aus
+    // den Settings; explizit übergebene params haben Vorrang. Secrets
+    // (secret:true) resolven HIER weiter mit — sie werden nur fürs request-
+    // Ziel verwendet und nie ans Frontend ausgegeben (Secret-Vertrag).
+    for (k, v) in settings_field_values(&state, &settings_state, &id, true) {
+        params.entry(k).or_insert(v);
+    }
     let (manifest, view) = {
         let entries = state.entries.lock().expect("connector entries lock");
         let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
@@ -603,6 +817,13 @@ pub(crate) async fn form_submit_core(
     settings_state: &crate::app_settings::SettingsState,
     id: &str,
 ) -> Result<(u16, serde_json::Value), String> {
+    // Settings-Feld-Werte (Spec 5.1) als Füll-Basis: `{key}`-Platzhalter in
+    // Pfad/Body resolven aus den Settings (Vorrang: explizit gesendete Werte).
+    for (k, v) in declared_setting_values(manifest, settings_state, id) {
+        values
+            .entry(k)
+            .or_insert_with(|| serde_json::Value::String(v));
+    }
     // `default_source`-Felder werden VOR der Pflichtprüfung aus der
     // Settings-Whitelist gefüllt (z. B. Beitreten mit dem Standard-
     // Benutzername) — leeres Feld ist also KEIN Fehler, wenn die Quelle
@@ -762,6 +983,11 @@ pub async fn connector_screen_action(
         } else if !v.is_null() {
             string_values.insert(k.clone(), v.to_string());
         }
+    }
+    // Settings-Feld-Werte (Spec 5.1) als Basis für Header-/Pfad-Platzhalter
+    // (Vorrang: aus dem Flow-Zustand übergebene Werte).
+    for (k, v) in declared_setting_values(&manifest, &settings_state, &id) {
+        string_values.entry(k).or_insert(v);
     }
     let mut headers: Vec<(String, String)> = Vec::new();
     for (name, template) in action.headers.iter().flatten() {
@@ -1210,6 +1436,7 @@ mod tests {
             },
             views: views,
             sync: None,
+            settings_fields: Vec::new(),
             flows: Some(vec![connector::flow::Flow {
                 id: "participant".into(),
                 title: connector::manifest::LocalizedText {
@@ -1421,5 +1648,134 @@ mod tests {
             fill_form_path("/api/session/{rid}", &values).unwrap_err(),
             "rid"
         );
+    }
+
+    // ---- SCLM v2 Karte A (Spec 5.1): deklarierte Settings-Werte ---------------
+
+    fn settings_state_with(id: &str, pairs: &[(&str, &str)]) -> crate::app_settings::SettingsState {
+        let tmp = tempfile::tempdir().unwrap();
+        // path auf tmp ziehen: persist_settings würde sonst die echte Nutzer-
+        // config treffen — in Tests bleibt es bei In-Memory-Setzung.
+        let mut s = settings::Settings::with_path(tmp.path().join("config.toml"));
+        for (k, v) in pairs {
+            s.set_connector_setting_value(id, k, Some((*v).to_owned()));
+        }
+        crate::app_settings::SettingsState {
+            inner: std::sync::Mutex::new(s),
+        }
+    }
+
+    /// Manifest-Ziegel mit settings_fields (nur Felder relevant).
+    fn manifest_with_setting_fields(fields: &[&str]) -> connector::ConnectorManifest {
+        manifest_with_secret_setting_fields(&fields.iter().map(|k| (*k, false)).collect::<Vec<_>>())
+    }
+
+    /// Manifest-Ziegel mit settings_fields inkl. secret-Flag je Key.
+    fn manifest_with_secret_setting_fields(
+        fields: &[(&str, bool)],
+    ) -> connector::ConnectorManifest {
+        let text = format!(
+            r#"{{"manifest_version":1,"id":"sclm","name":{{"de":"S","en":"S"}},
+                "base_url":"https://sclm.site",
+                "placement":{{"kind":"own","label":{{"de":"S","en":"S"}}}},
+                "settings_fields": [{}],
+                "views": []}}"#,
+            fields
+                .iter()
+                .map(|(k, secret)| {
+                    format!(
+                        r#"{{"key":"{k}","label":{{"de":"L","en":"L"}},"type":"text","secret":{secret}}}"#
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        connector::ConnectorManifest::parse(text.as_bytes()).expect("valid fixture manifest")
+    }
+
+    /// ConnectorState-Ziegel nur mit Manifest-Einträgen (settings_field_values
+    /// liest ausschließlich entries + settings, kein IO).
+    fn test_connector_state(manifests: Vec<connector::ConnectorManifest>) -> ConnectorState {
+        ConnectorState {
+            dir: std::env::temp_dir(),
+            entries: std::sync::Mutex::new(
+                manifests
+                    .into_iter()
+                    .map(|m| StoredConnector {
+                        raw: String::new(),
+                        manifest: m,
+                        value: serde_json::Value::Null,
+                    })
+                    .collect(),
+            ),
+            cache: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn settings_field_values_filters_secrets_for_frontend_and_keeps_for_backend() {
+        // Review R1-Sonde: secret:true-Wert darf nicht in die Command-Ausgabe
+        // (connector_get_settings_fields nutzt include_secrets=false),
+        // Backend-Platzhalter-Injektion (fetch/flow, include_secrets=true)
+        // resolviert Secrets weiterhin intern.
+        let m = manifest_with_secret_setting_fields(&[("sclm_username", false), ("tok", true)]);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih"), ("tok", "s3cret")]);
+        let cs = test_connector_state(vec![m]);
+
+        // Frontend-Sicht (Command-Mindestziel {key: value} für Nicht-Secrets):
+        let out = settings_field_values(&cs, &st, "sclm", false);
+        assert_eq!(out.len(), 1, "nur das Nicht-Secret-Feld");
+        assert_eq!(out["sclm_username"], "Semih");
+        assert!(!out.contains_key("tok"), "secret:true-Wert gefiltert");
+        assert!(
+            !out.values().any(|v| v == "s3cret"),
+            "Klartext des Secrets nirgends in der Ausgabe"
+        );
+
+        // Backend-Sicht (Platzhalter-Injektion bleibt funktional):
+        let in_backend = settings_field_values(&cs, &st, "sclm", true);
+        assert_eq!(in_backend.len(), 2);
+        assert_eq!(in_backend["tok"], "s3cret");
+        assert_eq!(in_backend["sclm_username"], "Semih");
+    }
+
+    #[test]
+    fn declared_setting_values_only_returns_declared_keys() {
+        let m = manifest_with_setting_fields(&["sclm_username"]);
+        let st = settings_state_with(
+            "sclm",
+            &[("sclm_username", "Semih"), ("wild_key", "geschmuggelt")],
+        );
+        let out = declared_setting_values(&m, &st, "sclm");
+        assert_eq!(out.len(), 1, "nur deklarierte Keys");
+        assert_eq!(out["sclm_username"], "Semih");
+        assert!(!out.contains_key("wild_key"));
+        // Anderer Connector → keine Werte.
+        assert!(declared_setting_values(&m, &st, "anders").is_empty());
+        // Deklariert, aber nie gesetzt → fehlt (leer startend).
+        let m2 = manifest_with_setting_fields(&["sclm_username", "andere"]);
+        let out2 = declared_setting_values(&m2, &st, "sclm");
+        assert_eq!(out2.len(), 1);
+        assert!(!out2.contains_key("andere"));
+    }
+
+    #[test]
+    fn keystore_core_reachable_via_connector_reexports() {
+        // Commands nutzen den keystore-Einstieg über connector.rs (Re-Export) —
+        // Compile-/Rauchnachweis, dass die Bridges stimmen.
+        let mut sessions = Vec::new();
+        let e = keystore_upsert_entry(
+            &mut sessions,
+            "sid",
+            Some("JC".into()),
+            None,
+            None,
+            None,
+            None,
+            7,
+        );
+        assert_eq!(e.join_code, "JC");
+        assert_eq!(keystore_find(&sessions, "sid").unwrap().added, 7);
+        assert_eq!(keystore_list(&sessions).len(), 1);
     }
 }

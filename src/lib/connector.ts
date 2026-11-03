@@ -42,6 +42,17 @@ export type ParamDTO = {
 	required?: boolean | null;
 };
 
+/** Manifest-deklariertes Settings-Feld (SCLM v2 Karte A, Spec 5.1): Wert pro
+ * Connector in den Overlay-Einstellungen; im Flow als `{key}` nutzbar. */
+export type SettingsFieldDTO = {
+	key: string;
+	label: LocalizedText;
+	type: 'text';
+	required?: boolean;
+	/** true: Wert wie Secret behandeln (nur `_set` im Frontend, maskiertes Feld). */
+	secret?: boolean;
+};
+
 export type ViewDTO = {
 	id: string;
 	type: 'table' | 'cards' | 'detail' | 'calendar' | 'form';
@@ -69,6 +80,8 @@ export type ConnectorManifestDTO = {
 	placement: PlacementDTO;
 	views: ViewDTO[];
 	flows?: FlowDTO[] | null;
+	/** Generische Plugin-Settings-Felder (Karte A) — Settings-UI-Gruppe. */
+	settings_fields?: SettingsFieldDTO[] | null;
 	sync?: unknown;
 };
 
@@ -151,7 +164,22 @@ export type ConnectorEntry = {
 	manifest: ConnectorManifestDTO;
 	enabled: boolean;
 	auth_set: Record<string, boolean>;
+	/** Pro deklariertem settings_fields-Key: Wert gesetzt? (Werte selbst
+	 * verlassen das Backend nie — Auth-Mechanik, Spec 5.1). */
+	settings_set: Record<string, boolean>;
 	hotkey: string | null;
+};
+
+/** Session-Keystore-Eintrag (Spiegel zu connector_keystore.rs, Spec 5.2) —
+ * Karte B/C (UI/Flow) greifen über connector_keystore_list/-find darauf zu. */
+export type SessionEntryDTO = {
+	sid: string;
+	join_code: string;
+	name: string;
+	participant_id?: string | null;
+	pcode?: string | null;
+	result_id?: string | null;
+	added: number;
 };
 
 export type FetchResultDTO = {
