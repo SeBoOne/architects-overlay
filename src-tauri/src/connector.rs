@@ -379,12 +379,17 @@ pub async fn connector_set_hotkey(
 /// Settings-Feld-Werte eines Connectors (spec 5.1): nur deklarierte Keys aus
 /// `settings_fields` bekommen gespeicherte Werte (Platzhalter-Auflösung im
 /// Flow-Kontext wie params). Leere Map bei unbekanntem Connector/ohne Felder.
+/// `include_secrets`: true nur für Backend-Platzhalter-Injektion (Werte
+/// verlassen den Rust-Kern nie nach außen); false für jede Ausgabe ans
+/// Frontend — Felder mit `secret:true` werden dann gefiltert (Secret-Vertrag:
+/// das Frontend sieht nie Klartwerte, nur `_set`-Booles).
 pub(crate) fn settings_field_values(
     state: &ConnectorState,
     settings_state: &crate::app_settings::SettingsState,
     id: &str,
+    include_secrets: bool,
 ) -> BTreeMap<String, String> {
-    let declared: Vec<String> = {
+    let declared: Vec<(String, bool)> = {
         let entries = state.entries.lock().expect("connector entries lock");
         entries
             .iter()
@@ -393,7 +398,7 @@ pub(crate) fn settings_field_values(
                 e.manifest
                     .settings_fields
                     .iter()
-                    .map(|f| f.key.clone())
+                    .map(|f| (f.key.clone(), f.secret))
                     .collect()
             })
             .unwrap_or_default()
@@ -401,7 +406,10 @@ pub(crate) fn settings_field_values(
     let s = settings_state.inner.lock().expect("settings lock");
     declared
         .iter()
-        .filter_map(|k| {
+        .filter_map(|(k, secret)| {
+            if !include_secrets && *secret {
+                return None;
+            }
             s.connector_setting_value(id, k)
                 .map(|v| (k.clone(), v.to_owned()))
         })
@@ -469,6 +477,10 @@ pub async fn connector_set_setting_field(
 
 /// Mindestziel aus Spec 5.1: `{key: value}` der gespeicherten Settings-Felder
 /// (Karte B/C bauen daraus die `{key}`-Placeholder im Flow-Kontext).
+/// Secret-Vertrag (Review R1): Felder mit `secret:true` werden aus der
+/// Command-Ausgabe gefiltert — Klartwerte verlassen das Backend nie; die
+/// Backend-seitige `{key}`-Platzhalter-Injektion (fetch/flow/form) resolviert
+/// Secrets weiterhin intern über `include_secrets = true`.
 #[tauri::command]
 pub async fn connector_get_settings_fields(
     state: tauri::State<'_, ConnectorState>,
@@ -485,6 +497,7 @@ pub async fn connector_get_settings_fields(
         &state,
         &settings_state,
         &connector_id,
+        false,
     ))
 }
 
@@ -580,8 +593,10 @@ pub async fn connector_fetch(
     let mut params = params.unwrap_or_default();
     // Settings-Feld-Werte (Spec 5.1) als Basis-Platzhalter-Injektion:
     // deklarierte `{key}`-Platzhalter (z. B. {sclm_username}) resolven aus
-    // den Settings; explizit übergebene params haben Vorrang.
-    for (k, v) in settings_field_values(&state, &settings_state, &id) {
+    // den Settings; explizit übergebene params haben Vorrang. Secrets
+    // (secret:true) resolven HIER weiter mit — sie werden nur fürs request-
+    // Ziel verwendet und nie ans Frontend ausgegeben (Secret-Vertrag).
+    for (k, v) in settings_field_values(&state, &settings_state, &id, true) {
         params.entry(k).or_insert(v);
     }
     let (manifest, view) = {
@@ -1652,6 +1667,13 @@ mod tests {
 
     /// Manifest-Ziegel mit settings_fields (nur Felder relevant).
     fn manifest_with_setting_fields(fields: &[&str]) -> connector::ConnectorManifest {
+        manifest_with_secret_setting_fields(&fields.iter().map(|k| (*k, false)).collect::<Vec<_>>())
+    }
+
+    /// Manifest-Ziegel mit settings_fields inkl. secret-Flag je Key.
+    fn manifest_with_secret_setting_fields(
+        fields: &[(&str, bool)],
+    ) -> connector::ConnectorManifest {
         let text = format!(
             r#"{{"manifest_version":1,"id":"sclm","name":{{"de":"S","en":"S"}},
                 "base_url":"https://sclm.site",
@@ -1660,11 +1682,61 @@ mod tests {
                 "views": []}}"#,
             fields
                 .iter()
-                .map(|k| format!(r#"{{"key":"{k}","label":{{"de":"L","en":"L"}},"type":"text"}}"#))
+                .map(|(k, secret)| {
+                    format!(
+                        r#"{{"key":"{k}","label":{{"de":"L","en":"L"}},"type":"text","secret":{secret}}}"#
+                    )
+                })
                 .collect::<Vec<_>>()
                 .join(",")
         );
         connector::ConnectorManifest::parse(text.as_bytes()).expect("valid fixture manifest")
+    }
+
+    /// ConnectorState-Ziegel nur mit Manifest-Einträgen (settings_field_values
+    /// liest ausschließlich entries + settings, kein IO).
+    fn test_connector_state(manifests: Vec<connector::ConnectorManifest>) -> ConnectorState {
+        ConnectorState {
+            dir: std::env::temp_dir(),
+            entries: std::sync::Mutex::new(
+                manifests
+                    .into_iter()
+                    .map(|m| StoredConnector {
+                        raw: String::new(),
+                        manifest: m,
+                        value: serde_json::Value::Null,
+                    })
+                    .collect(),
+            ),
+            cache: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn settings_field_values_filters_secrets_for_frontend_and_keeps_for_backend() {
+        // Review R1-Sonde: secret:true-Wert darf nicht in die Command-Ausgabe
+        // (connector_get_settings_fields nutzt include_secrets=false),
+        // Backend-Platzhalter-Injektion (fetch/flow, include_secrets=true)
+        // resolviert Secrets weiterhin intern.
+        let m = manifest_with_secret_setting_fields(&[("sclm_username", false), ("tok", true)]);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih"), ("tok", "s3cret")]);
+        let cs = test_connector_state(vec![m]);
+
+        // Frontend-Sicht (Command-Mindestziel {key: value} für Nicht-Secrets):
+        let out = settings_field_values(&cs, &st, "sclm", false);
+        assert_eq!(out.len(), 1, "nur das Nicht-Secret-Feld");
+        assert_eq!(out["sclm_username"], "Semih");
+        assert!(!out.contains_key("tok"), "secret:true-Wert gefiltert");
+        assert!(
+            !out.values().any(|v| v == "s3cret"),
+            "Klartext des Secrets nirgends in der Ausgabe"
+        );
+
+        // Backend-Sicht (Platzhalter-Injektion bleibt funktional):
+        let in_backend = settings_field_values(&cs, &st, "sclm", true);
+        assert_eq!(in_backend.len(), 2);
+        assert_eq!(in_backend["tok"], "s3cret");
+        assert_eq!(in_backend["sclm_username"], "Semih");
     }
 
     #[test]
