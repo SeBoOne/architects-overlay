@@ -447,6 +447,9 @@ struct ConnectorsSection {
     enabled: std::collections::BTreeMap<String, bool>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     auth: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    /// SCLM v2 Karte A: Settings-Feld-Werte (settings_fields.key → Wert).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     hotkeys: std::collections::BTreeMap<String, String>,
 }
@@ -675,6 +678,12 @@ pub struct Settings {
     /// C2: Auth-Werte pro Connector (value_source-Key → Secret). Secrets —
     /// verlassen das Backend nie (gleiche Auflage wie uex_secret_key).
     connectors_auth: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+    /// SCLM v2 Karte A (Spec 5.1): deklarierte Settings-Feld-Werte pro
+    /// Connector (settings_fields.key → Wert). Nicht-secret-Werte; das
+    /// Frontend sieht daraus nur `_set`-Booles, die Werte selbst bleiben im
+    /// Backend (wie Auth) und dienen u. a. als `{key}`-Placeholder im Flow.
+    connectors_settings:
+        std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
     /// C2: Mode-Hotkey-Slots für `placement.kind=own`-Connectors (ID → F-Key).
     connectors_hotkeys: std::collections::BTreeMap<String, String>,
     palette: Palette,
@@ -711,6 +720,7 @@ impl Default for Settings {
             uex_username: None,
             connectors_enabled: Default::default(),
             connectors_auth: Default::default(),
+            connectors_settings: Default::default(),
             connectors_hotkeys: Default::default(),
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
@@ -858,6 +868,11 @@ impl Settings {
                 .as_ref()
                 .map(|c| c.auth.clone())
                 .unwrap_or_default(),
+            connectors_settings: raw
+                .connectors
+                .as_ref()
+                .map(|c| c.fields.clone())
+                .unwrap_or_default(),
             connectors_hotkeys: raw
                 .connectors
                 .as_ref()
@@ -891,6 +906,7 @@ impl Settings {
             uex_username: None,
             connectors_enabled: Default::default(),
             connectors_auth: Default::default(),
+            connectors_settings: Default::default(),
             connectors_hotkeys: Default::default(),
             palette: Palette::default(),
             detail_variant: DetailVariant::default(),
@@ -982,6 +998,45 @@ impl Settings {
         }
     }
 
+    /// Wert eines deklarierten Settings-Felds (settings_fields.key). Secret-
+    /// behaftete Felder bleiben ebenfalls im Backend — Snapshot/Logs zeigen
+    /// nie die Werte, nur die `_set`-Booles (connector_setting_values_set).
+    pub fn connector_setting_value(&self, id: &str, key: &str) -> Option<&str> {
+        self.connectors_settings
+            .get(id)?
+            .get(key)
+            .map(String::as_str)
+    }
+
+    /// Set/entfernt (None) einen Settings-Feld-Wert; leere Rest-Maps abräumen
+    /// (identische Mechanik wie set_connector_auth_value).
+    pub fn set_connector_setting_value(&mut self, id: &str, key: &str, value: Option<String>) {
+        let entry = self.connectors_settings.entry(id.to_owned()).or_default();
+        match value {
+            Some(v) => {
+                entry.insert(key.to_owned(), v);
+            }
+            None => {
+                entry.remove(key);
+                if entry.is_empty() {
+                    self.connectors_settings.remove(id);
+                }
+            }
+        }
+    }
+
+    /// `_set`-Ansicht der Settings-Werte für die Frontend-Liste (Booles statt
+    /// Werte — Werte verlassen das Backend nie).
+    pub fn connector_setting_values_set(
+        &self,
+        id: &str,
+    ) -> std::collections::BTreeMap<String, bool> {
+        self.connectors_settings
+            .get(id)
+            .map(|m| m.keys().map(|k| (k.clone(), true)).collect())
+            .unwrap_or_default()
+    }
+
     /// Konfigurierter Hotkey-Slot eines own-Connectors.
     pub fn connector_hotkey(&self, id: &str) -> Option<&str> {
         self.connectors_hotkeys.get(id).map(String::as_str)
@@ -1005,6 +1060,7 @@ impl Settings {
     pub fn remove_connector_state(&mut self, id: &str) {
         self.connectors_enabled.remove(id);
         self.connectors_auth.remove(id);
+        self.connectors_settings.remove(id);
         self.connectors_hotkeys.remove(id);
     }
 
@@ -1176,6 +1232,7 @@ impl Settings {
             connectors: Some(ConnectorsSection {
                 enabled: self.connectors_enabled.clone(),
                 auth: self.connectors_auth.clone(),
+                fields: self.connectors_settings.clone(),
                 hotkeys: self.connectors_hotkeys.clone(),
             }),
         };
@@ -1254,6 +1311,60 @@ pub fn set_uex_username(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// SCLM v2 Karte A (Spec 5.1): Settings-Feld-Werte pro Connector —
+    /// TOML-Roundtrip (Persist+Load), `_set`-Ansicht und Remove-Räumen.
+    #[test]
+    fn connector_settings_values_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        let mut s = Settings::with_path(path.clone());
+        s.set_connector_setting_value("sclm", "sclm_username", Some("Semih".into()));
+        s.set_connector_setting_value("sclm", "other_key", Some("x".into()));
+        s.save().expect("save");
+
+        let loaded = Settings::load_from(&path).expect("load");
+        assert_eq!(
+            loaded.connector_setting_value("sclm", "sclm_username"),
+            Some("Semih")
+        );
+        assert_eq!(
+            loaded.connector_setting_value("sclm", "other_key"),
+            Some("x")
+        );
+        assert_eq!(loaded.connector_setting_value("sclm", "ghost"), None);
+        assert_eq!(
+            loaded.connector_setting_value("other", "sclm_username"),
+            None
+        );
+        let mut expect = std::collections::BTreeMap::new();
+        expect.insert("other_key".to_string(), true);
+        expect.insert("sclm_username".to_string(), true);
+        assert_eq!(loaded.connector_setting_values_set("sclm"), expect);
+
+        // None löscht; leere Rest-Map wird abgeräumt (wie auth).
+        let mut s2 = loaded.clone();
+        s2.set_connector_setting_value("sclm", "other_key", None);
+        s2.save().expect("save2");
+        let loaded2 = Settings::load_from(&path).expect("load2");
+        assert_eq!(loaded2.connector_setting_value("sclm", "other_key"), None);
+        assert_eq!(
+            loaded2.connector_setting_value("sclm", "sclm_username"),
+            Some("Semih")
+        );
+
+        // Remove Connector räumt Settings-Werte mit.
+        let mut s3 = loaded2.clone();
+        s3.remove_connector_state("sclm");
+        s3.save().expect("save3");
+        let loaded3 = Settings::load_from(&path).expect("load3");
+        assert_eq!(
+            loaded3.connector_setting_value("sclm", "sclm_username"),
+            None
+        );
+        assert!(loaded3.connector_setting_values_set("sclm").is_empty());
+    }
 
     fn tmp_path(tmp: &tempfile::TempDir, name: &str) -> PathBuf {
         tmp.path().join("nested").join(name)

@@ -156,6 +156,53 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
     }
     // Flows (SF1): eindeutige IDs, gültige Screen-Referenzen, Typ-Regeln.
     check_flows(m, report);
+    // Settings-Felder (Karte A / Spec 5.1): generische Plugin-Einstellungsgruppe.
+    check_settings_fields(m, report);
+}
+
+/// Regeln für `settings_fields` (SCLM v2 Karte A): Key-Format wie Auth-
+/// `value_source` (ASCII-Stamm für die Settings-Speicherung), eindeutige Keys,
+/// keine Kollision mit der Auth-Quelle. Label-de/en werden bereits durch das
+/// Schema erzwungen (LocalizedText ist Pflicht) — leere Strings hier nachgeprüft.
+fn check_settings_fields(m: &ConnectorManifest, report: &mut Report) {
+    let auth_source = m
+        .auth
+        .as_ref()
+        .and_then(|a| a.value_source.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let mut seen = std::collections::BTreeSet::new();
+    for f in &m.settings_fields {
+        let key = f.key.trim();
+        if key.is_empty() {
+            report.error("settings_fields: field key empty");
+            continue;
+        }
+        let key_ok = key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        if !key_ok {
+            report.error(format!(
+                "settings_fields: key '{}' must be ASCII [A-Za-z0-9_-]",
+                f.key
+            ));
+        }
+        if !seen.insert(key) {
+            report.error(format!("settings_fields: duplicate key '{}'", key));
+        }
+        if f.label.de.trim().is_empty() {
+            report.error(format!("settings_fields: key '{}': label.de is empty", key));
+        }
+        if f.label.en.trim().is_empty() {
+            report.error(format!("settings_fields: key '{}': label.en is empty", key));
+        }
+        if auth_source == Some(key) {
+            report.error(format!(
+                "settings_fields: key '{}' collides with auth.value_source",
+                key
+            ));
+        }
+    }
 }
 
 /// Flow-Regeln (SF1): IDs eindeutig, Entry existiert, Screen-Referenzen
@@ -1301,6 +1348,160 @@ mod tests {
             r.errors.iter().any(|e| e.contains("duplicate action id")),
             "{r:?}"
         );
+    }
+
+    // ---- SCLM v2 Karte A: settings_fields --------------------------------------
+
+    /// Manifest mit settings_fields (an VALID angehängt, vor `sync`-lose Klammer).
+    fn with_settings_fields(base: &str, fields: &str) -> String {
+        base.replace(
+            r#""views": ["#,
+            &format!(r#""settings_fields": [{fields}], "views": ["#),
+        )
+    }
+
+    #[test]
+    fn manifest_without_settings_fields_stays_valid() {
+        // Rückwärtskompatibilität: bestehende Manifeste haben keine Felder.
+        let r = validate_manifest(VALID.as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        assert!(r.warnings.is_empty(), "{r:?}");
+        let m = connector_manifest_of(VALID);
+        assert!(m.settings_fields.is_empty());
+    }
+
+    fn connector_manifest_of(text: &str) -> crate::manifest::ConnectorManifest {
+        crate::manifest::ConnectorManifest::parse(text.as_bytes()).expect("valid")
+    }
+
+    #[test]
+    fn settings_fields_valid_and_persisted_shape() {
+        let m = with_settings_fields(
+            VALID,
+            r#"{"key": "sclm_username", "label": {"de": "SCLM-Benutzername", "en": "SCLM username"}, "type": "text", "required": false, "secret": false}"#,
+        );
+        let r = validate_manifest(m.as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        assert!(r.warnings.is_empty(), "{r:?}");
+        let parsed = connector_manifest_of(&m);
+        assert_eq!(parsed.settings_fields.len(), 1);
+        let f = &parsed.settings_fields[0];
+        assert_eq!(f.key, "sclm_username");
+        assert_eq!(f.label.de, "SCLM-Benutzername");
+        assert!(!f.required);
+        assert!(!f.secret);
+        // Defaults: required/secret fehlen → false.
+        let d = with_settings_fields(
+            VALID,
+            r#"{"key": "k", "label": {"de": "K", "en": "K"}, "type": "text"}"#,
+        );
+        assert!(
+            validate_manifest(d.as_bytes()).is_ok(),
+            "{:?}",
+            validate_manifest(d.as_bytes())
+        );
+        assert!(!connector_manifest_of(&d).settings_fields[0].required);
+    }
+
+    #[test]
+    fn settings_fields_rejects_missing_or_empty_label() {
+        // fehlendes label-Objekt → Schema-Error
+        let no_label = with_settings_fields(VALID, r#"{"key": "sclm_username", "type": "text"}"#);
+        let r = validate_manifest(no_label.as_bytes());
+        assert!(!r.is_ok(), "{r:?}");
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("schema validation failed") && e.contains("label")),
+            "{r:?}"
+        );
+
+        // fehlendes en (nur de) → Schema-Error
+        let no_en = with_settings_fields(
+            VALID,
+            r#"{"key": "sclm_username", "label": {"de": "Name"}, "type": "text"}"#,
+        );
+        let r = validate_manifest(no_en.as_bytes());
+        assert!(!r.is_ok(), "{r:?}");
+
+        // label present, aber leerer String → struktureller Error
+        let empty_en = with_settings_fields(
+            VALID,
+            r#"{"key": "sclm_username", "label": {"de": "Name", "en": "  "}, "type": "text"}"#,
+        );
+        let r = validate_manifest(empty_en.as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("label.en is empty")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn settings_fields_rejects_bad_key_and_unknown_type() {
+        // Key mit Leerzeichen/Umlaut → Error
+        let bad_key = with_settings_fields(
+            VALID,
+            r#"{"key": "sclm nutzer", "label": {"de": "N", "en": "N"}, "type": "text"}"#,
+        );
+        let r = validate_manifest(bad_key.as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("must be ASCII")),
+            "{r:?}"
+        );
+
+        // doppelter Key → Error
+        let dup = with_settings_fields(
+            VALID,
+            r#"{"key": "k", "label": {"de": "N", "en": "N"}, "type": "text"}, {"key": "k", "label": {"de": "M", "en": "M"}, "type": "text"}"#,
+        );
+        let r = validate_manifest(dup.as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("duplicate key")),
+            "{r:?}"
+        );
+
+        // Kollision mit auth.value_source → Error (VALID-Auth-Quelle)
+        let clash = with_settings_fields(
+            VALID,
+            r#"{"key": "connector.sclm.code", "label": {"de": "N", "en": "N"}, "type": "text"}"#,
+        );
+        let r = validate_manifest(clash.as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("collides with auth")),
+            "{r:?}"
+        );
+
+        // type != text (v1 nur text) → Schema-Error
+        let number = with_settings_fields(
+            VALID,
+            r#"{"key": "k", "label": {"de": "N", "en": "N"}, "type": "number"}"#,
+        );
+        assert!(!validate_manifest(number.as_bytes()).is_ok());
+
+        // unbekanntes Feld im settings_field → Schema-Error (deny_unknown_fields)
+        let typo = with_settings_fields(
+            VALID,
+            r#"{"key": "k", "label": {"de": "N", "en": "N"}, "type": "text", "typo": true}"#,
+        );
+        assert!(!validate_manifest(typo.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn shipped_sclm_manifest_declares_settings_fields() {
+        // examples/sclm.json deklariert den dedizierten SCLM-Benutzernamen
+        // (leer startend, KEIN uex-Pre-fill — keine default_source-Whitelist).
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sclm.json");
+        let text = std::fs::read_to_string(&path).expect("examples/sclm.json exists");
+        let m = connector_manifest_of(&text);
+        assert_eq!(
+            m.settings_fields
+                .iter()
+                .map(|f| f.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["sclm_username"]
+        );
+        assert!(!m.settings_fields[0].secret);
     }
 
     #[test]

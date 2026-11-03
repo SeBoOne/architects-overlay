@@ -3095,6 +3095,16 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   font-size: 10px;
   margin-left: 6px;
 }
+/* SCLM v2 Karte A (Spec 5.1): Settings-Feld-Gruppe je Connector mit
+   deklarierten settings_fields (Label + Input + Save/Clear wie Auth-Zeile). */
+.cfg-plugin-field-row {
+  padding-left: 10px;
+}
+.cfg-plugin-field-label {
+  font-size: 12px;
+  color: var(--fgdim);
+  min-width: 120px;
+}
 /* C2 replace-Chip in der ersetzten Sektion. */
 .hangar-note-chip {
   font-size: 10px;

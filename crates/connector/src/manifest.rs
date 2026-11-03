@@ -139,6 +139,33 @@ pub enum FieldType {
     Select,
 }
 
+/// Manifest-deklariertes Settings-Feld (SCLM v2 Karte A / Spec 5.1): generische
+/// Plugin-Einstellungsgruppe in den Overlay-Einstellungen — der Wert wird pro
+/// Connector persistiert (analog der Auth-Feld-Mechanik) und ist im Flow-Kontext
+/// als `{key}`-Placeholder verfügbar. v1 unterstützt nur `type: "text"`.
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsField {
+    /// Settings-Key (ASCII [A-Za-z0-9_-]), z. B. `sclm_username`.
+    pub key: String,
+    pub label: LocalizedText,
+    /// v1: nur text (serde erzwingt den String "text").
+    #[serde(rename = "type")]
+    pub field_type: SettingsFieldType,
+    #[serde(default)]
+    pub required: bool,
+    /// true: Wert wie ein Secret behandeln — verlässt das Frontend nie
+    /// (nur `_set`-Booles), Maskierung in der UI.
+    #[serde(default)]
+    pub secret: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+pub enum SettingsFieldType {
+    #[serde(rename = "text")]
+    Text,
+}
+
 /// L2-Sync (für AAWA später): Master-Richtung + Strategie pro Connector.
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -204,6 +231,11 @@ pub struct ConnectorManifest {
     /// Screen-Flows (SF1): benannte Screen-Ketten — z. B. SCLM
     /// Teilnehmer-/Ersteller-Flow. Optional: Flows sind additiv zu Views.
     pub flows: Option<Vec<Flow>>,
+    /// Generische Settings-Felder des Plugins (Karte A): erscheinen in den
+    /// Overlay-Einstellungen je aktivem Connector. Optional — Manifeste ohne
+    /// Felder bleiben gültig (Rückwärtskompatibilität).
+    #[serde(default)]
+    pub settings_fields: Vec<SettingsField>,
     pub sync: Option<Sync>,
 }
 
