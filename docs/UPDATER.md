@@ -14,7 +14,11 @@ Smart App Control das direkte Spawnen der unsignierten setup.exe blockt.
 ## Update-Check (beide Plattformen)
 
 - Beim Start + alle N Stunden (`[updater] interval_hours`, Default **6 h**,
-  Clamp 1..24 h). Genau **EIN GET** auf `latest.json`
+  Clamp 1..24 h) — aber nur wenn eingeschaltet: Auto-Check ist **opt-in**,
+  Default `enabled` ist **aus** (t_6dc427a8). Neue/settings-lose
+  Installationen prüfen nichts von selbst; der Nutzer schaltet Auto-Check in
+  der Config-View ein. Bereits explizit persistierte `enabled`-Werte bleiben
+  beim Upgrade unberührt (wer an hatte, bleibt an). Genau **EIN GET** auf `latest.json`
   (`releases/latest/download/latest.json` — kein API-Call; jede
   Release-Pipeline hängt die Datei als Asset an, CI-Job `latest-json`).
   Fallback: fehlt die Datei (alte Releases vor TG), EIN GET auf die
@@ -24,7 +28,7 @@ Smart App Control das direkte Spawnen der unsignierten setup.exe blockt.
   direkt in `config.toml`:
   ```toml
   [updater]
-  enabled = true
+  enabled = false          # Standard: aus (opt-in — hier auf true einschalten)
   interval_hours = 6
   repo = "SeBoOne/architects-overlay"
   base_url = "https://api.github.com"
@@ -43,12 +47,14 @@ Smart App Control das direkte Spawnen der unsignierten setup.exe blockt.
 
 ## UI (Config-View „Aktualisierung“)
 
-- Auto-Check an/aus + Intervall-Chips (2/6/12/24 h).
+- Auto-Check an/aus (Standard: **aus** — opt-in, t_6dc427a8) + Intervall-Chips
+  (2/6/12/24 h).
 - Nach einem Check: Note „Kein Update gefunden — v{aktuell} ist aktuell.“
   oder „Update v{neu} verfügbar.“ + Button „Jetzt aktualisieren“.
 - **On-demand only:** nichts wird geladen, installiert oder neu gestartet
   ohne Klick auf „Jetzt aktualisieren“ (Karte Umsetzung 2).
-- „Jetzt prüfen“ triggert den Check sofort.
+- „Jetzt prüfen“ triggert den Check sofort — unabhängig davon, ob der
+  Auto-Check ein- oder ausgeschaltet ist.
 
 ## Windows-Update-Pfad (MSI bevorzugt, NSIS-Fallback) — dokumentierte Entscheidung
 

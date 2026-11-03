@@ -715,7 +715,7 @@
     "settings.update_module_assignments": "Modul-Zuordnungen aktualisieren",
     "settings.update_now_version": "Jetzt aktualisieren (v{version})",
     "settings.updater": "Aktualisierung",
-    "settings.updater_note": "Overlay {version} · geprüft gegen das GitHub-Release (alle {hours} h, nur ein GET — keine Telemetrie).",
+    "settings.updater_note": "Overlay {version} · Auto-Check ist Standard aus (einschaltbar); wenn an: Prüfung gegen das GitHub-Release (alle {hours} h, nur ein GET — keine Telemetrie).",
     "settings.username_detect_failed": "Username konnte nicht ermittelt werden: {msg}",
     "settings.username_detected": "UEX-Username automatisch ermittelt: {user}",
     "settings.username_detecting": "Benutzername wird ermittelt …",
