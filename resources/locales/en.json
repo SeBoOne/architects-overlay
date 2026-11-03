@@ -715,7 +715,7 @@
     "settings.update_module_assignments": "Update module assignments",
     "settings.update_now_version": "Update now (v{version})",
     "settings.updater": "Update",
-    "settings.updater_note": "Overlay {version} · checked against the GitHub release (every {hours} h, a single GET — no telemetry).",
+    "settings.updater_note": "Overlay {version} · auto-check is off by default (opt-in); if on: checked against the GitHub release (every {hours} h, a single GET — no telemetry).",
     "settings.username_detect_failed": "Username could not be detected: {msg}",
     "settings.username_detected": "UEX username auto-detected: {user}",
     "settings.username_detecting": "Detecting username …",

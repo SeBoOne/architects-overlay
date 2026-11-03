@@ -694,7 +694,8 @@ pub struct Settings {
     /// PB (t_1c9bc240, B1): Mode-Hotkeys (F1–F12 der In-App-Modi). Fehlend in
     /// der Config = neue Defaults (Migrationspfad, siehe ShortcutsSection).
     mode_hotkeys: ModeHotkeys,
-    /// UC t_d323be7e: Update-Check (Default an, 6 h, Default-Repo/Instanz).
+    /// UC t_d323be7e: Update-Check (Default aus — opt-in, t_6dc427a8; 6 h,
+    /// Default-Repo/Instanz; explizit persistierte Werte bleiben erhalten).
     updater_enabled: bool,
     updater_interval_hours: u32,
     updater_repo: String,
@@ -720,7 +721,7 @@ impl Default for Settings {
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
             mode_hotkeys: ModeHotkeys::default(),
-            updater_enabled: true,
+            updater_enabled: false,
             updater_interval_hours: UPDATER_INTERVAL_DEFAULT,
             updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
@@ -810,7 +811,11 @@ impl Settings {
                     }
                 })
                 .unwrap_or_default(),
-            updater_enabled: raw.updater.as_ref().and_then(|u| u.enabled).unwrap_or(true),
+            updater_enabled: raw
+                .updater
+                .as_ref()
+                .and_then(|u| u.enabled)
+                .unwrap_or(false),
             updater_interval_hours: raw
                 .updater
                 .as_ref()
@@ -896,7 +901,7 @@ impl Settings {
             shortcut_click_through: DEFAULT_CLICK_SHORTCUT.to_owned(),
             shortcut_sync_omarchy: false,
             mode_hotkeys: ModeHotkeys::default(),
-            updater_enabled: true,
+            updater_enabled: false,
             updater_interval_hours: UPDATER_INTERVAL_DEFAULT,
             updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
@@ -1101,7 +1106,8 @@ impl Settings {
         self.mode_hotkeys = hotkeys.normalize();
     }
 
-    /// UC t_d323be7e: Update-Check konfiguriert? (Default: ja.)
+    /// UC t_d323be7e: Update-Check konfiguriert? (Default: nein — opt-in,
+    /// t_6dc427a8. Explizit persistierte Werte bleiben beim Upgrade erhalten.)
     pub fn updater_enabled(&self) -> bool {
         self.updater_enabled
     }
@@ -1293,14 +1299,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp_path(&tmp, "config.toml");
 
-        // Defaults ohne [updater]-Sektion: an, 6 h, Default-Repo/Instanz.
+        // Defaults ohne [updater]-Sektion: aus (opt-in), 6 h, Default-Repo/Instanz.
         let s = Settings::load_from(&path).unwrap();
-        assert!(s.updater_enabled());
+        assert!(!s.updater_enabled());
         assert_eq!(s.updater_interval_hours(), UPDATER_INTERVAL_DEFAULT);
         assert_eq!(s.updater_repo(), UPDATER_REPO_DEFAULT);
         assert_eq!(s.updater_base_url(), UPDATER_BASE_URL_DEFAULT);
 
+        // Opt-in: explicit eingeschaltet -> persistiert true und überlebt Reload.
         let mut s = Settings::with_path(path.clone());
+        s.set_updater_enabled(true);
+        s.save().unwrap();
+        let opted_in = Settings::load_from(&path).unwrap();
+        assert!(opted_in.updater_enabled());
+
+        // Opt-out danach explizit persistiert (false) — Rundfunks-Check bleibt aus.
+        let mut s = Settings::load_from(&path).unwrap();
         s.set_updater_enabled(false);
         s.set_updater_interval_hours(12);
         s.save().unwrap();
