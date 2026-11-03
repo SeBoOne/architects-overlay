@@ -71,6 +71,7 @@ dependencies = [
  "async-trait",
  "cache",
  "connector",
+ "futures",
  "game_detection",
  "gdk-sys",
  "glib",

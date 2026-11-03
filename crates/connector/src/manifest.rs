@@ -166,6 +166,60 @@ pub enum SettingsFieldType {
     Text,
 }
 
+/// „Meine Verlosungen“-Scan (SCLM v2 Karte B / Spec 5.3): generische,
+/// Manifest-deklarierte Sessionsuche — der Core kennt KEIN SCLM, alle
+/// Endpunkte/Feldnamen/Match-Pfade kommen aus dem Manifest:
+/// 1. `list_endpoint` lesen (neueste zuerst erwartet),
+/// 2. Kandidaten = alle offen (`done_field` falsch) + die ersten `done_cap`
+///    erledigten,
+/// 3. pro Kandidat `detail_endpoint` mit `{code}` (= Wert von `code_field`),
+///    darin `match_path`-Namen ci gegen den gespeicherten Wert von
+///    `match_setting_key` (settings_fields) vergleichen.
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanSpec {
+    /// Eindeutige Scan-ID (ASCII [A-Za-z0-9_-]).
+    pub id: String,
+    pub title: LocalizedText,
+    /// Listen-Endpunkt (relativ zu base_url, ohne `{param}`-Platzhalter).
+    pub list_endpoint: String,
+    /// Feldname im Listen-Item: „bereits erledigt?“ (bool/0/1).
+    pub done_field: String,
+    /// Feldname im Listen-Item: Wert für den `{code}`-Platzhalter des
+    /// Detail-Endpunkts (z. B. `join_code`).
+    pub code_field: String,
+    /// Feldname im Listen-Item: Session-Kennung (Keystore-Identität `sid`).
+    pub id_field: String,
+    /// Feldname im Listen-Item: Eventname für die Anzeige.
+    pub name_field: String,
+    /// Detail-Endpunkt mit genau einem `{code}`-Platzhalter.
+    pub detail_endpoint: String,
+    /// Dot-Path in der Detail-Antwort, der die Teilnehmernamen liefert
+    /// (z. B. `participants[].name`).
+    pub match_path: String,
+    /// settings_fields-Key, dessen gespeicherter Wert ci verglichen wird.
+    pub match_setting_key: String,
+    /// optionale Header-Templates fürs Detail (`{code}` erlaubt).
+    pub headers: Option<BTreeMap<String, String>>,
+    /// Obergrenze für Detail-Fetches erledigter Sessions (Spec: letzte 20).
+    #[serde(default = "default_done_cap")]
+    pub done_cap: usize,
+    /// max. parallele Detail-Fetches.
+    #[serde(default = "default_scan_concurrency")]
+    pub concurrency: usize,
+    /// Poll-Intervall (Sekunden). Default 300 (gleiche Regel wie Views).
+    #[serde(default)]
+    pub poll_seconds: Option<u64>,
+}
+
+fn default_done_cap() -> usize {
+    20
+}
+
+fn default_scan_concurrency() -> usize {
+    6
+}
+
 /// L2-Sync (für AAWA später): Master-Richtung + Strategie pro Connector.
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -236,6 +290,10 @@ pub struct ConnectorManifest {
     /// Felder bleiben gültig (Rückwärtskompatibilität).
     #[serde(default)]
     pub settings_fields: Vec<SettingsField>,
+    /// Sessionscan „Meine …“-Landliste (Karte B / Spec 5.3). Optional —
+    /// Manifeste ohne Scan verhalten sich wie bisher.
+    #[serde(default)]
+    pub scan: Option<ScanSpec>,
     pub sync: Option<Sync>,
 }
 

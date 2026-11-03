@@ -159,6 +159,7 @@ pub fn run() {
             connector::connector_keystore_upsert,
             connector::connector_keystore_list,
             connector::connector_keystore_find,
+            connector::connector_scan_match,
             overlay::overlay_config_closed,
         ]);
     }

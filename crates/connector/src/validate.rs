@@ -158,6 +158,8 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
     check_flows(m, report);
     // Settings-Felder (Karte A / Spec 5.1): generische Plugin-Einstellungsgruppe.
     check_settings_fields(m, report);
+    // Sessionscan (Karte B / Spec 5.3): „Meine …“-Landliste.
+    check_scan(m, report);
 }
 
 /// Regeln für `settings_fields` (SCLM v2 Karte A): Key-Format wie Auth-
@@ -202,6 +204,113 @@ fn check_settings_fields(m: &ConnectorManifest, report: &mut Report) {
                 key
             ));
         }
+    }
+}
+
+/// Regeln für `scan` (SCLM v2 Karte B / Spec 5.3): generischer Sessionscan.
+/// Der Core ist generisch — geprüft wird nur Wohlgeformtheit: ID-Format,
+/// Endpunkt-Regeln (relativ, Liste ohne Platzhalter, Detail genau `{code}`),
+/// Header-Templates nur gegen `{code}`, Match-Key MUSS in settings_fields
+/// deklariert sein (sonst gibt es nichts zu vergleichen), Kappen-Grenzen.
+fn check_scan(m: &ConnectorManifest, report: &mut Report) {
+    let Some(s) = &m.scan else { return };
+    let tag = format!("scan '{}'", s.id);
+    let id_ok = !s.id.trim().is_empty()
+        && s.id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !id_ok {
+        report.error(format!(
+            "scan: id '{}' must be non-empty ASCII [A-Za-z0-9_-]",
+            s.id
+        ));
+    }
+    if m.views.iter().any(|v| v.id == s.id) {
+        report.error(format!("{tag}: collides with view id"));
+    }
+    if s.title.de.trim().is_empty() || s.title.en.trim().is_empty() {
+        report.error(format!("{tag}: title.de/en must not be empty"));
+    }
+    for (what, target) in [
+        ("list_endpoint", s.list_endpoint.as_str()),
+        ("detail_endpoint", s.detail_endpoint.as_str()),
+    ] {
+        if target.trim().is_empty() || !target.starts_with('/') {
+            report.error(format!("{tag}: {what} must be a path starting with '/'"));
+        }
+        if target.contains("file://") || target.starts_with("http") {
+            report.error(format!("{tag}: {what} must stay base_url-relative"));
+        }
+    }
+    // Listen-Endpunkt hat keine Parameter; Detail-Endpunkt genau `{code}`.
+    if !extract_params(&s.list_endpoint).is_empty() {
+        report.error(format!(
+            "{tag}: list_endpoint must not contain placeholders"
+        ));
+    }
+    let detail_params = extract_params(&s.detail_endpoint);
+    if detail_params != vec!["code".to_owned()] {
+        report.error(format!(
+            "{tag}: detail_endpoint must contain exactly one placeholder {{code}} (got {:?})",
+            detail_params
+        ));
+    }
+    for (name, template) in s.headers.iter().flatten() {
+        if name.trim().is_empty() {
+            report.error(format!("{tag}: empty header name"));
+        }
+        for param in extract_params(template) {
+            if param != "code" {
+                report.error(format!(
+                    "{tag}: header template '{{{param}}}' is not bound — only {{code}} is available"
+                ));
+            }
+        }
+    }
+    for (what, val) in [
+        ("done_field", &s.done_field),
+        ("code_field", &s.code_field),
+        ("id_field", &s.id_field),
+        ("name_field", &s.name_field),
+        ("match_path", &s.match_path),
+    ] {
+        if val.trim().is_empty() {
+            report.error(format!("{tag}: {what} is empty"));
+        }
+    }
+    let key = s.match_setting_key.trim();
+    let key_ok = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if !key_ok {
+        report.error(format!(
+            "{tag}: match_setting_key '{}' must be ASCII [A-Za-z0-9_-]",
+            s.match_setting_key
+        ));
+    } else if !m.settings_fields.iter().any(|f| f.key == key) {
+        report.error(format!(
+            "{tag}: match_setting_key '{}' is not declared in settings_fields",
+            s.match_setting_key
+        ));
+    }
+    if s.done_cap == 0 {
+        report.error(format!("{tag}: done_cap must be >= 1"));
+    } else if s.done_cap > 100 {
+        report.error(format!(
+            "{tag}: done_cap > 100 — scan would flood detail fetches"
+        ));
+    }
+    if s.concurrency == 0 {
+        report.error(format!("{tag}: concurrency must be >= 1"));
+    } else if s.concurrency > 16 {
+        report.warn(format!(
+            "{tag}: concurrency {} clamped to 16 at runtime",
+            s.concurrency
+        ));
+    }
+    if s.poll_seconds == Some(0) {
+        report.warn(format!("{tag}: poll_seconds=0 — floody polling"));
     }
 }
 
@@ -1525,6 +1634,155 @@ mod tests {
             r.errors
                 .iter()
                 .any(|e| e.contains("empty 'default_source'")),
+            "{r:?}"
+        );
+    }
+
+    // ---- SCLM v2 Karte B (Spec 5.3): scan-Block-Validierung ---------------
+
+    /// VALID + settings_fields(sclm_username) + wohlgeformter scan.
+    const SCAN_OK: &str = r#"{
+        "manifest_version": 1,
+        "id": "sclm",
+        "name": {"de": "SCLM", "en": "SCLM"},
+        "base_url": "https://sclm.site",
+        "auth": {"type": "none"},
+        "placement": {"kind": "own", "label": {"de": "SCLM", "en": "SCLM"}, "hotkey_slot": true},
+        "settings_fields": [
+            {"key": "sclm_username", "label": {"de": "N", "en": "N"}, "type": "text"}
+        ],
+        "scan": {
+            "id": "my_raffles",
+            "title": {"de": "Meine Verlosungen", "en": "My Raffles"},
+            "list_endpoint": "/api/sessions",
+            "done_field": "raffle_done",
+            "code_field": "join_code",
+            "id_field": "id",
+            "name_field": "name",
+            "detail_endpoint": "/api/session/{code}",
+            "match_path": "participants[].name",
+            "match_setting_key": "sclm_username",
+            "done_cap": 20,
+            "concurrency": 6,
+            "poll_seconds": 300
+        },
+        "views": []
+    }"#;
+
+    fn patched_scan(find: &str, repl: &str) -> Report {
+        validate_manifest(SCAN_OK.replace(find, repl).as_bytes())
+    }
+
+    #[test]
+    fn scan_valid_manifest_passes() {
+        let r = validate_manifest(SCAN_OK.as_bytes());
+        // views:[] ist bewusst leer (Fokus scan) -> generische view-Warnung ist
+        // okay; der scan selbst darf keine Fehler/Warnungen erzeugen.
+        assert!(r.is_ok(), "{r:?}");
+        assert!(
+            !r.errors.iter().any(|e| e.contains("scan"))
+                && !r.warnings.iter().any(|w| w.contains("scan")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn scan_requires_declared_match_setting_key() {
+        let r = patched_scan(
+            r#""match_setting_key": "sclm_username""#,
+            r#""match_setting_key": "wild_key""#,
+        );
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("not declared in settings_fields")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn scan_detail_endpoint_needs_exactly_code_placeholder() {
+        let no_ph = patched_scan(r#""/api/session/{code}""#, r#""/api/session""#);
+        assert!(
+            no_ph
+                .errors
+                .iter()
+                .any(|e| e.contains("exactly one placeholder {code}")),
+            "{no_ph:?}"
+        );
+        let other_ph = patched_scan(r#""/api/session/{code}""#, r#""/api/session/{sid}""#);
+        assert!(
+            other_ph
+                .errors
+                .iter()
+                .any(|e| e.contains("exactly one placeholder {code}")),
+            "{other_ph:?}"
+        );
+        // Listen-Endpunkt darf KEINE Platzhalter haben.
+        let list_ph = patched_scan(
+            r#""list_endpoint": "/api/sessions""#,
+            r#""list_endpoint": "/api/sessions?u={code}""#,
+        );
+        assert!(
+            list_ph
+                .errors
+                .iter()
+                .any(|e| e.contains("must not contain placeholders")),
+            "{list_ph:?}"
+        );
+    }
+
+    #[test]
+    fn scan_header_templates_only_bind_code() {
+        // {code}-Header ist okay (keine scan-Fehler):
+        let ok = SCAN_OK.replace(
+            r#""match_setting_key": "sclm_username","#,
+            r#""match_setting_key": "sclm_username", "headers": {"X-Test": "{code}"},"#,
+        );
+        let r = validate_manifest(ok.as_bytes());
+        assert!(r.errors.is_empty(), "{r:?}");
+        // Jeder andere Platzhalter ist ungebunden → Error.
+        let bad = SCAN_OK.replace(
+            r#""match_setting_key": "sclm_username","#,
+            r#""match_setting_key": "sclm_username", "headers": {"X-Test": "{was}"},"#,
+        );
+        let bad = validate_manifest(bad.as_bytes());
+        assert!(
+            bad.errors
+                .iter()
+                .any(|e| e.contains("only {code} is available")),
+            "{bad:?}"
+        );
+    }
+
+    #[test]
+    fn scan_caps_and_id_collisions_are_errors() {
+        let zero = patched_scan(r#""done_cap": 20"#, r#""done_cap": 0"#);
+        assert!(
+            zero.errors.iter().any(|e| e.contains("done_cap")),
+            "{zero:?}"
+        );
+        let huge = patched_scan(r#""done_cap": 20"#, r#""done_cap": 500"#);
+        assert!(huge.errors.iter().any(|e| e.contains("flood")), "{huge:?}");
+        let conc0 = patched_scan(r#""concurrency": 6"#, r#""concurrency": 0"#);
+        assert!(
+            conc0.errors.iter().any(|e| e.contains("concurrency")),
+            "{conc0:?}"
+        );
+        let conc_hi = patched_scan(r#""concurrency": 6"#, r#""concurrency": 40"#);
+        assert!(
+            conc_hi.warnings.iter().any(|e| e.contains("clamped")),
+            "{conc_hi:?}"
+        );
+        assert!(conc_hi.is_ok(), "{conc_hi:?}");
+        // Scan-ID kollidiert mit View-ID (Render-/Cache-Namespace).
+        let coll = SCAN_OK.replace(r#""id": "my_raffles""#, r#""id": "sessions""#).replace(
+            r#""views": []"#,
+            r#""views": [{"id": "sessions", "type": "table", "title": {"de": "T", "en": "T"}, "endpoint": "/api/sessions", "mapping": {"name": "[].name"}}]"#,
+        );
+        let r = validate_manifest(coll.as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("collides with view id")),
             "{r:?}"
         );
     }
