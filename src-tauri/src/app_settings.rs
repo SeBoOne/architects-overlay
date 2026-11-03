@@ -605,7 +605,7 @@ pub fn settings_set_mode_hotkey(
             ));
         }
     }
-    hotkeys.validate().map_err(|e| e)?; // Suffix "— Belegung unverändert" macht jetzt die UI (settings.mapping_unchanged)
+    hotkeys.validate()?; // Suffix "— Belegung unverändert" macht jetzt die UI (settings.mapping_unchanged)
     s.set_mode_hotkeys(hotkeys);
     state.persist(&s);
     Ok(SettingsSnapshot::from_settings(

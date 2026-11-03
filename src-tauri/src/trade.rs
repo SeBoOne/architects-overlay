@@ -612,13 +612,13 @@ pub fn math_eval(expr: String) -> Result<String, String> {
     // deutschen Klartext-Fehler werden hier an der Seam auf error_key +
     // params gemappt; unbekannte Muster fallen als Rohstring durch.
     fn map_eval_err(e: String) -> String {
-        if let Some(rest) = e.strip_prefix("Unerwartetes Zeichen '") {
-            if let Some(ch) = rest.strip_suffix("'") {
-                return crate::i18n_err::err_keyp(
-                    "calc.err_unexpected_char",
-                    serde_json::json!({ "ch": ch }),
-                );
-            }
+        if let Some(rest) = e.strip_prefix("Unerwartetes Zeichen '")
+            && let Some(ch) = rest.strip_suffix("'")
+        {
+            return crate::i18n_err::err_keyp(
+                "calc.err_unexpected_char",
+                serde_json::json!({ "ch": ch }),
+            );
         }
         match e.as_str() {
             "Leerer Ausdruck" => crate::i18n_err::err_key("calc.err_empty"),

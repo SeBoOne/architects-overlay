@@ -361,7 +361,7 @@ fn consume_msi_failure_marker(marker_path: &std::path::Path, state: &UpdaterStat
 
 /// Windows MSI (SAC-Fix t_803497b5): PowerShell-Kommando-Bau für
 /// `Start-Process msiexec.exe -ArgumentList '/i','<msi>','/qb','/l*v','<log>' -PassThru`
-/// + `$p.WaitForExit(900000)` (15 min) + Auto-Relaunch der Overlay-exe
+/// plus `$p.WaitForExit(900000)` (15 min) und Auto-Relaunch der Overlay-exe
 /// nach Exit-Code 0 ODER 3010 (SUCCESS_REBOOT_REQUIRED — Installation war
 /// erfolgreich, Neustart nötig; das Overlay startet trotzdem neu, der
 /// Nutzer rebootet wann es ihm passt). Plattformunabhängig, damit das

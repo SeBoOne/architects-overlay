@@ -281,7 +281,7 @@ pub fn evaluate(condition: &Condition, state: &Value) -> bool {
             // auch die Zahl-Äquivalente (1==true, 0==false). Sonst feuert
             // `raffle_done equals true` nie gegen `raffle_done: 1`.
             let eq = match (value.as_bool(), first) {
-                (Some(b), Some(&Value::Number(ref n))) => {
+                (Some(b), Some(Value::Number(n))) => {
                     n.as_f64().map(|f| (f != 0.0) == b).unwrap_or(false)
                 }
                 _ => first == Some(value),

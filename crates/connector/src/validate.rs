@@ -355,13 +355,12 @@ fn check_flows(m: &ConnectorManifest, report: &mut Report) {
             continue;
         }
         for s in &flow.screens {
-            if let Some(prev) = screen_owners.insert(s.id.as_str(), flow.id.as_str()) {
-                if prev != flow.id.as_str() {
-                    report.warn(format!(
-                        "screen id '{}' reused across flows ('{}' and '{}') — renderer resolves qualified '<flow>:<screen>'",
-                        s.id, prev, flow.id
-                    ));
-                }
+            match screen_owners.insert(s.id.as_str(), flow.id.as_str()) {
+                Some(prev) if prev != flow.id.as_str() => report.warn(format!(
+                    "screen id '{}' reused across flows ('{}' and '{}') — renderer resolves qualified '<flow>:<screen>'",
+                    s.id, prev, flow.id
+                )),
+                _ => {}
             }
         }
         check_flow(flow, m, report);
@@ -751,19 +750,21 @@ fn check_screen(
                 "flow '{flow_id}': screen '{sid}': multi list needs an action with method (confirm)"
             ));
         }
-        if let Some(mp) = &multi.max_path {
-            if mp.trim().is_empty() {
-                report.error(format!(
-                    "flow '{flow_id}': screen '{sid}': multi.max_path is empty"
-                ));
-            }
+        if multi
+            .max_path
+            .as_deref()
+            .is_some_and(|mp| mp.trim().is_empty())
+        {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': multi.max_path is empty"
+            ));
         }
     }
     // SF2: Actions — eindeutige IDs, method/path-Paarigkeit, goto-Referenzen,
     // Header-Templates gegen die deklarierten Action-Params.
     let mut action_ids = std::collections::BTreeSet::new();
     for a in s.actions.iter().flatten() {
-        if !seen_insert(&mut action_ids, &a.id.as_str()) {
+        if !seen_insert(&mut action_ids, a.id.as_str()) {
             report.error(format!(
                 "flow '{flow_id}': screen '{sid}': duplicate action id '{}'",
                 a.id

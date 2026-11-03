@@ -170,7 +170,7 @@ pub fn find_entry(sessions: &[SessionEntry], sid: &str) -> Option<SessionEntry> 
 /// list — neueste zuerst (added absteigend; stabile Reihenfolge für UI).
 pub fn list_entries(sessions: &[SessionEntry]) -> Vec<SessionEntry> {
     let mut out = sessions.to_vec();
-    out.sort_by(|a, b| b.added.cmp(&a.added));
+    out.sort_by_key(|e| std::cmp::Reverse(e.added));
     out
 }
 

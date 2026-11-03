@@ -127,6 +127,9 @@ pub struct LlHookDiag {
 }
 
 /// VK → lesbare Taste (Diagnose-Anzeige; unbekannt = Hex).
+/// Wird nur im Windows-Hook-Zweig gebaut (ll_hook_diag); auf anderen OS toter,
+/// aber dokumentierender Helfer — daher explizit erlaubt statt toter Code.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub fn vk_name(vk: u32) -> String {
     match vk {
         0x30..=0x39 | 0x41..=0x5A => char::from_u32(vk)

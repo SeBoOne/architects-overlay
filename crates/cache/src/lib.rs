@@ -2332,6 +2332,10 @@ impl Cache {
 
     /// Submit-Payload eines frisch angelegten Listings lokal speichern
     /// (Status „wartet auf Freigabe" + Zeitstempel).
+    // 8 Params: Angebot-Metadaten (Titel/Operation/Preis/Währung/Einheit/Menge/
+    // Ort). Zu einer Offer-Struktur zusammenzufassen wäre ein eigener Refactor
+    // über alle Call-Stellen — bewusst als Nit überbrückt, nachziehbar.
+    #[allow(clippy::too_many_arguments)]
     pub fn store_pending_offer(
         &self,
         title: &str,

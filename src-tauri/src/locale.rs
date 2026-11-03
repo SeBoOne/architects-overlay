@@ -210,7 +210,7 @@ pub fn list_locales(dir: &std::path::Path) -> Vec<LocaleFileEntry> {
     let mut paths: Vec<PathBuf> = entries
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |x| x == "json"))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     paths.sort();
     for path in paths {
@@ -225,7 +225,6 @@ pub fn list_locales(dir: &std::path::Path) -> Vec<LocaleFileEntry> {
 }
 
 /// ---- Tauri-Commands ------------------------------------------------------
-
 /// Lokale Sprachdateien listet + Strings (das Frontend ergänzt die Built-ins
 /// statisch). Ohne Tauri (SSR/dev) wird der Command nicht gerufen.
 #[tauri::command]

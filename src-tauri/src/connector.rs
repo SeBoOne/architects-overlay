@@ -78,10 +78,10 @@ impl ConnectorEntry {
     ) -> ConnectorEntry {
         // Auth-Deklaration aus dem Manifest lesen (value_source-Keys).
         let mut auth_set = BTreeMap::new();
-        if let Some(auth) = manifest.get("auth").and_then(|a| a.get("value_source")) {
-            if let Some(key) = auth.as_str() {
-                auth_set.insert(key.to_owned(), s.connector_auth_value(id, key).is_some());
-            }
+        if let Some(auth) = manifest.get("auth").and_then(|a| a.get("value_source"))
+            && let Some(key) = auth.as_str()
+        {
+            auth_set.insert(key.to_owned(), s.connector_auth_value(id, key).is_some());
         }
         ConnectorEntry {
             id: id.to_owned(),
@@ -513,6 +513,8 @@ pub async fn connector_get_settings_fields(
 
 /// Session-Keystore (Spec 5.2): Eintrag upserten — PARTIELL (None-Felder
 /// bleiben, wie bei Form-Teilupdates). sid ist Pflicht (Identität).
+/// Tauri-Command-Signatur = API-Vertrag zum Frontend (flache Params).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn connector_keystore_upsert(
     state: tauri::State<'_, ConnectorState>,
@@ -774,43 +776,42 @@ pub(crate) async fn scan_inner(
     };
     if !force {
         let cache = state.cache.lock().expect("cache lock");
-        if let Some(c) = cache.get(&cache_key) {
-            if now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs) {
-                let cached_items: Vec<ScannedRaffle> = attach_saved(
-                    c.body
-                        .get("items")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .map(|it| {
-                                    (
-                                        it.get("sid")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or_default()
-                                            .to_owned(),
-                                        it.get("name")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or_default()
-                                            .to_owned(),
-                                        truthy_flag(
-                                            it.get("raffle_done")
-                                                .unwrap_or(&serde_json::Value::Null),
-                                        ),
-                                    )
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                );
-                return Ok(ScanOutcome {
-                    scan_id: scan.id.clone(),
-                    username_set: true,
-                    skipped: c.body.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                    items: cached_items,
-                    cached: true,
-                    fetched_at_ms: c.fetched_at_ms,
-                });
-            }
+        if let Some(c) = cache.get(&cache_key)
+            && now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs)
+        {
+            let cached_items: Vec<ScannedRaffle> = attach_saved(
+                c.body
+                    .get("items")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|it| {
+                                (
+                                    it.get("sid")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    it.get("name")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default()
+                                        .to_owned(),
+                                    truthy_flag(
+                                        it.get("raffle_done").unwrap_or(&serde_json::Value::Null),
+                                    ),
+                                )
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            );
+            return Ok(ScanOutcome {
+                scan_id: scan.id.clone(),
+                username_set: true,
+                skipped: c.body.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                items: cached_items,
+                cached: true,
+                fetched_at_ms: c.fetched_at_ms,
+            });
         }
     }
 
@@ -897,7 +898,8 @@ pub(crate) async fn scan_inner(
     //    16). Fehler einer Detail-Session: überspringen + log::warn — die Liste
     //    bleibt verfügbar (Spec 5.3 #5).
     let conc = scan.concurrency.clamp(1, 16);
-    let detail_results: Vec<(usize, Result<(u16, serde_json::Value), String>)> =
+    type DetailOutcome = (usize, Result<(u16, serde_json::Value), String>);
+    let detail_results: Vec<DetailOutcome> =
         futures::stream::iter(candidates.into_iter().map(|idx| {
             let manifest = manifest.clone();
             let scan = scan.clone();
@@ -1068,18 +1070,18 @@ pub(crate) async fn fetch_inner(
     );
     if !force {
         let cache = state.cache.lock().expect("cache lock");
-        if let Some(c) = cache.get(&cache_key) {
-            if now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs) {
-                let mapped = map_view(&view, &c.body)?;
-                write_screen_keystore(state, &manifest, view_id, &params, &mapped);
-                return Ok(FetchResult {
-                    status: c.status,
-                    body: c.body.clone(),
-                    mapped,
-                    cached: true,
-                    fetched_at_ms: c.fetched_at_ms,
-                });
-            }
+        if let Some(c) = cache.get(&cache_key)
+            && now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs)
+        {
+            let mapped = map_view(&view, &c.body)?;
+            write_screen_keystore(state, &manifest, view_id, &params, &mapped);
+            return Ok(FetchResult {
+                status: c.status,
+                body: c.body.clone(),
+                mapped,
+                cached: true,
+                fetched_at_ms: c.fetched_at_ms,
+            });
         }
     }
 
@@ -1403,10 +1405,9 @@ pub(crate) async fn form_submit_core(
             .as_deref()
             .map(str::trim)
             .filter(|h| !h.is_empty())
+            && let Some(v) = values.get(&field.key).and_then(|v| v.as_str())
         {
-            if let Some(v) = values.get(&field.key).and_then(|v| v.as_str()) {
-                field_headers.push((name.to_owned(), v.to_owned()));
-            }
+            field_headers.push((name.to_owned(), v.to_owned()));
         }
     }
     submit_form_request(
@@ -1621,12 +1622,11 @@ pub(crate) fn flow_participant_match(
     let names = connector::dot_path(detail, match_path).ok()?;
     let ids = connector::dot_path(detail, id_path).ok()?;
     for (n, id) in names.iter().zip(ids.iter()) {
-        if let Some(s) = n.as_str() {
-            if s.trim().to_lowercase() == user {
-                if let Some(i) = value_to_string(id) {
-                    return Some(i);
-                }
-            }
+        if let Some(s) = n.as_str()
+            && s.trim().to_lowercase() == user
+            && let Some(i) = value_to_string(id)
+        {
+            return Some(i);
         }
     }
     None
@@ -1907,8 +1907,7 @@ pub async fn connector_flow_open(
 fn fill_params(template: &str, params: &BTreeMap<String, String>) -> Result<String, String> {
     let mut out = template.to_owned();
     let mut rest = template;
-    loop {
-        let Some(start) = rest.find('{') else { break };
+    while let Some(start) = rest.find('{') {
         let after = &rest[start + 1..];
         let Some(end) = after.find('}') else { break };
         let key = &after[..end];
@@ -1998,20 +1997,19 @@ fn apply_fill(target: &mut serde_json::Value, values: &BTreeMap<String, serde_js
     match target {
         serde_json::Value::String(s) => {
             let whole = s.strip_prefix('{').and_then(|r| r.strip_suffix('}'));
-            if let Some(key) = whole {
-                if key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                    if let Some(v) = values.get(key) {
-                        let parsed = match v {
-                            serde_json::Value::String(raw) => {
-                                serde_json::from_str::<serde_json::Value>(raw)
-                                    .unwrap_or(serde_json::Value::String(raw.to_owned()))
-                            }
-                            other => other.clone(),
-                        };
-                        *target = parsed;
-                        return;
+            if let Some(key) = whole
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && let Some(v) = values.get(key)
+            {
+                let parsed = match v {
+                    serde_json::Value::String(raw) => {
+                        serde_json::from_str::<serde_json::Value>(raw)
+                            .unwrap_or(serde_json::Value::String(raw.to_owned()))
                     }
-                }
+                    other => other.clone(),
+                };
+                *target = parsed;
+                return;
             }
             let mut out = s.clone();
             for (k, v) in values {
@@ -2345,7 +2343,7 @@ mod tests {
                 hotkey_slot: true,
                 target: None,
             },
-            views: views,
+            views,
             sync: None,
             settings_fields: Vec::new(),
             scan: None,
@@ -2396,7 +2394,7 @@ mod tests {
     #[test]
     fn flow_qualified_screen_id_resolves_right_flow() {
         let mut m = flow_manifest(&["sessions"], &["code"]);
-        let mut second = connector::flow::Flow {
+        let second = connector::flow::Flow {
             id: "creator".into(),
             title: m.flows.as_ref().unwrap()[0].title.clone(),
             entry: "code".into(),
@@ -3616,11 +3614,8 @@ mod tests {
         m.flows.as_ref().unwrap()[0].clone()
     }
 
-    fn flow_open_block(m: &connector::ConnectorManifest) -> String {
-        // Convenience: open_block directly via core (keeps tests terse).
-        let _ = open_flow_of(m);
-        String::new()
-    }
+    // flow_open_block-Helper entfernt (tote Test-Bequemlichkeit ohne Aufrufer;
+    // die Flow-Tests bauen ihre Manifeste direkt über flow_manifest-Builder).
 
     #[test]
     fn flow_open_new_join_stores_keystore_and_state() {

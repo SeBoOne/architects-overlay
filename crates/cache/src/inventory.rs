@@ -125,9 +125,9 @@ const COLS: &str = "id, entity_kind, entity_id, name, quality, location_id, loca
 /// mandatory field), name and location must carry text.
 fn validate(new: &NewInventoryEntry) -> Result<()> {
     if new.quality > 1000 {
-        return Err(CacheError::Query(
-            i18n_err::err_key("inventory.err_quality").into(),
-        ));
+        return Err(CacheError::Query(i18n_err::err_key(
+            "inventory.err_quality",
+        )));
     }
     if new.name.trim().is_empty() {
         return Err(CacheError::Query(i18n_err::err_key("inventory.err_name")));

@@ -883,13 +883,13 @@ impl Settings {
         // schreiben, damit der alte Gitea-Eintrag dauerhaft verschwindet.
         // Persist-Fehler sind nicht fatal — der gemigrierte Wert ist
         // ohnehin im Speicher aktiv.
-        let had_legacy = raw.updater.as_ref().map_or(false, |u| {
-            u.base_url.as_deref().map_or(false, |b| {
-                !b.trim().is_empty() && is_legacy_gitea_base_url(b)
-            }) || u
-                .repo
+        let had_legacy = raw.updater.as_ref().is_some_and(|u| {
+            u.base_url
                 .as_deref()
-                .map_or(false, |r| !r.trim().is_empty() && is_legacy_updater_repo(r))
+                .is_some_and(|b| !b.trim().is_empty() && is_legacy_gitea_base_url(b))
+                || u.repo
+                    .as_deref()
+                    .is_some_and(|r| !r.trim().is_empty() && is_legacy_updater_repo(r))
         });
         if had_legacy {
             let _ = settings.save();
@@ -1483,7 +1483,7 @@ mod tests {
             let path = tmp.path().join("config.toml");
             std::fs::write(
                 &path,
-                &format!("[updater]\nrepo = \"{legacy}\"\nbase_url = \"https://api.github.com\"\n"),
+                format!("[updater]\nrepo = \"{legacy}\"\nbase_url = \"https://api.github.com\"\n"),
             )
             .unwrap();
             let s = Settings::load_from(&path).unwrap();

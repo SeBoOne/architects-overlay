@@ -150,10 +150,10 @@ pub fn vk_from_char(ch: char) -> Option<u32> {
 fn vk_from_token(t: &str) -> Option<u32> {
     let lower = t.to_ascii_lowercase();
     for prefix in ["key", "digit", "numpad"] {
-        if let Some(rest) = lower.strip_prefix(prefix) {
-            if rest.chars().count() == 1 {
-                return vk_from_char(rest.chars().next().expect("count==1"));
-            }
+        if let Some(rest) = lower.strip_prefix(prefix)
+            && rest.chars().count() == 1
+        {
+            return vk_from_char(rest.chars().next().expect("count==1"));
         }
     }
     vk_from_key(t)

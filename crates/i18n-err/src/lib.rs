@@ -22,10 +22,8 @@ pub fn err_key(key: &str) -> String {
 /// frontend must not see them double-wrapped. Non-JSON errors get the given
 /// context key with the raw text as `err` param.
 pub fn err_wrap(context_key: &str, raw: String) -> String {
-    if let Ok(v) = serde_json::from_str::<Value>(&raw) {
-        if v.get("error_key").is_some() {
-            return raw;
-        }
+    if matches!(serde_json::from_str::<Value>(&raw), Ok(v) if v.get("error_key").is_some()) {
+        return raw;
     }
     err_keyp(context_key, json!({ "err": raw }))
 }
