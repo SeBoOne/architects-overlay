@@ -25,6 +25,7 @@
 		type ConnectorEntry,
 		type FetchResultDTO,
 		type FlowDTO,
+		type ScanOutcomeDTO,
 		type ViewDTO
 		} from './connector';
 
@@ -57,6 +58,23 @@
 	const hasFlows = $derived(flows.length > 0);
 	let viewId = $state<string>('');
 	let flowId = $state<string | null>(null);
+
+	// SCLM v2 Karte B (Spec 5.3): Manifest-deklarierter Scan → Landliste des
+	// own-Modes („Meine Verlosungen“). Flows bleiben über Tabs wählbar, werden
+	// aber NICHT mehr automatisch aktiviert; die Liste ist der Startzustand.
+	// Generisch — kein SCLM-Wissen hier: alles kommt aus dem scan-Block.
+	const scan = $derived(entry.manifest.scan ?? null);
+	const showLanding = $derived(scan !== null && !activeFlowRef() && viewId === '');
+	let scanData = $state<ScanOutcomeDTO | null>(null);
+	let scanError = $state('');
+	let scanLoading = $state(false);
+	let scanTimer: ReturnType<typeof setInterval> | null = null;
+
+	// aktiver Flow (für showLanding) — identisch zur activeFlow-Derived unten,
+	// aber als Funktion earlier auflösbar (Deklarationsreihenfolge).
+	function activeFlowRef(): FlowDTO | null {
+		return flowId ? (flows.find((f) => f.id === flowId) ?? null) : null;
+	}
 	// SF2: Flow-Start von außen (Suchleisten-Code-Eingabe) — aktiviert den
 	// Ziel-Flow und überspringt bis zum gewünschten Start-Screen.
 	$effect(() => {
@@ -181,6 +199,56 @@
 		return s < 90 ? `${s}s` : `${Math.floor(s / 60)}min`;
 	}
 
+	// ---- Scan-Landliste (Karte B) ------------------------------------------------
+	// Polling analog zu Views (scan.poll_seconds, Default 300 — läuft auch im
+	// Flow-Zweig weiter; der Rust-TTL-Cache verhindert doppelte HTTP-Läufe).
+	const scanLabel = $derived.by(() => {
+		if (!scan) return '';
+		const f = (entry.manifest.settings_fields ?? []).find(
+			(x) => x.key === scan.match_setting_key
+		);
+		return f ? labelOf(f.label, lang) : scan.match_setting_key;
+	});
+
+	async function loadScan(force = false) {
+		if (!isTauri || !scan) return;
+		scanLoading = true;
+		try {
+			scanData = await invoke<ScanOutcomeDTO>('connector_scan_match', {
+				id: entry.id,
+				force
+			});
+			scanError = '';
+		} catch (err) {
+			scanError = trError(err);
+		}
+		scanLoading = false;
+	}
+
+	function scheduleScanPolling() {
+		if (scanTimer) {
+			clearInterval(scanTimer);
+			scanTimer = null;
+		}
+		if (!scan || !isTauri) return;
+		const secs = Math.max(scan.poll_seconds ?? 300, 30);
+		scanTimer = setInterval(() => void loadScan(false), secs * 1000);
+	}
+
+	function scanAge(): string {
+		const ms = scanData?.fetched_at_ms ?? 0;
+		if (!ms) return '';
+		const s = Math.max(0, Math.floor((Date.now() - ms) / 1000));
+		return s < 90 ? `${s}s` : `${Math.floor(s / 60)}min`;
+	}
+
+	/** Tabs-Leiste: zurück zur Landliste (Flow/View-Selektion aufheben). */
+	function backToLanding() {
+		flowId = null;
+		viewId = '';
+		void loadScan(false);
+	}
+
 	async function submitForm() {
 		const v = view;
 		if (!v?.form) return;
@@ -224,19 +292,31 @@
 		formBusy = false;
 	}
 
+	let scanPollInit = ''; // plain let: Mount-Marker, kein Tracking (Loop-Schutz)
 	$effect(() => {
 		// Bei View-/Entry-Wechsel: Pins laden, Polling neu aufsetzen, initial
 		// laden (fehlende Pflicht-Parameter zeigen den Eingabe-Prompt). Die
 		// Pin-Loads laufen UNTRACKED — der Effect hängt nur an viewId; die
 		// paramValues-Writes dürfen ihn nicht neu triggern (Loop-Schutz).
+		// Karte B: existiert ein scan, bleibt die Landliste der Startzustand —
+		// kein automatischer Flow-/View-Select; Scan-Polling startet einmal.
+		const skey = scan ? `${entry.id}:${scan.id}` : '';
+		if (skey && scanPollInit !== skey) {
+			scanPollInit = skey;
+			untrack(() => {
+				void loadScan(false);
+				scheduleScanPolling();
+			});
+		}
 		if (hasFlows) {
 			// SF4: Flow-Modus — kein View-Auto-Select, kein View-Polling; der
 			// FlowRenderer steuert seine eigenen Fetches. Start = erster Flow
-			// (oder initialFlow aus der Suchleiste).
-			if (!flowId && !initialFlow && flows.length) flowId = flows[0].id;
+			// (oder initialFlow aus der Suchleiste). Mit scan-Block: kein
+			// Flow-Auto-Select — Landliste ist Start, Flows wählbar per Tab.
+			if (!scan && !flowId && !initialFlow && flows.length) flowId = flows[0].id;
 			return;
 		}
-		if (!viewId && views.length) viewId = views[0].id;
+		if (!scan && !viewId && views.length) viewId = views[0].id;
 		const id = viewId;
 		if (id && !paramLoaded) {
 			paramLoaded = true;
@@ -251,6 +331,7 @@
 	});
 	onDestroy(() => {
 		if (timer) clearInterval(timer);
+		if (scanTimer) clearInterval(scanTimer);
 	});
 
 	function pinParam(key: string) {
@@ -282,7 +363,9 @@
 
 	{#if hasFlows}
 		<!-- SF4: Tab-Leiste = Flow-Auswahl (nur Flows). Interne Screens sind
-		     Flow-Zustände (ZURÜCK/Weiter im FlowRenderer) — niemals Tabs. -->
+		     Flow-Zustände (ZURÜCK/Weiter im FlowRenderer) — niemals Tabs.
+		     Karte B: Landliste ist Startzustand (scan) → „Zurück zur Liste“
+		     als Chip, wenn ein Flow angewählt ist. -->
 		<div class="connector-tabs" role="tablist" aria-label={title}>
 			{#each flows as fl (fl.id)}
 				<button
@@ -294,6 +377,11 @@
 					onclick={() => selectFlow(fl.id)}
 				>{labelOf(fl.title, lang)}</button>
 			{/each}
+			{#if scan && flowId}
+				<button type="button" class="ctab ctab-back" onclick={backToLanding}>
+					← {$t('connector.scan_back')}
+				</button>
+			{/if}
 		</div>
 	{:else if views.length > 1}
 		<!-- Fallback (Manifests ohne flows, z. B. AAWA später): views als Tabs. -->
@@ -310,6 +398,11 @@
 					{labelOf(v.title, lang)}
 				</button>
 			{/each}
+			{#if scan && viewId}
+				<button type="button" class="ctab ctab-back" onclick={backToLanding}>
+					← {$t('connector.scan_back')}
+				</button>
+			{/if}
 		</div>
 	{/if}
 
@@ -383,6 +476,76 @@
 			initialState={initialFlow?.flowId === activeFlow.id ? initialFlowState : null}
 		/>
 		{/key}
+	{:else if scan && showLanding}
+		<!-- SCLM v2 Karte B (Spec 5.3): „Meine …“-Landliste — Listenstil wie
+		     Trade-Routen/Suchergebnisse (globale .mlist/.mrow-Klassen, kein
+		     table, keine neue CSS-Welt). Status als Chip-Markierung.
+		     Einträge sind NICHT anklickbar; „Öffnen“ gibt es nur, wenn die
+		     sid im Session-Keystore liegt — bis Karte C den Flow anbindet,
+		     disabled mit Tooltip (bewusste Entscheidung, im Task-Kommentar
+		     dokumentiert: Button visible = Feature ankündigen statt
+		     unsichtbare Funktion). -->
+		<div class="connector-tools">
+			<span class="connector-title">{labelOf(scan.title, lang)}</span>
+			<span class="cscan-spacer"></span>
+			{#if scanLoading}
+				<span class="cstate">{$t('common.loading')}</span>
+			{:else if scanData}
+				<span class="cstate" title={$t('connector.ttl_title')}>
+					{scanData.cached ? $t('connector.cached') : $t('connector.fresh')} · {scanAge()}
+				</span>
+			{/if}
+			<button type="button" class="btn-ghost" onclick={() => void loadScan(true)}>
+				{$t('common.refresh')}
+			</button>
+		</div>
+		{#if scanError}
+			<div class="cerror" role="alert">{scanError}</div>
+		{:else if scanLoading && !scanData}
+			<div class="center" style="padding: 28px 16px">
+				<span class="spin"></span>
+				<div class="sm" style="margin-top: 10px">{$t('common.loading')}</div>
+			</div>
+		{:else if !scanData}
+			<div class="row-empty" style="padding: 28px 16px">{$t('connector.scan_none')}</div>
+		{:else if !scanData.username_set}
+			<div class="row-empty" style="padding: 28px 16px">
+				{tr('connector.scan_need_username', { label: scanLabel })}
+			</div>
+		{:else if !scanData.items.length}
+			<div class="row-empty" style="padding: 28px 16px">{$t('connector.scan_none')}</div>
+		{:else}
+			<div class="mlist">
+				{#each scanData.items as it (it.sid)}
+					<div class="mrow rrow">
+						<div class="m-main">
+							<div class="m-title">{it.name}</div>
+							<div class="m-sub">{it.sid}</div>
+						</div>
+						<div class="m-right">
+							<span class="chip cscan-status" class:cscan-done={it.raffle_done}>
+								{it.raffle_done
+									? $t('connector.scan_status_done')
+									: $t('connector.scan_status_pending')}
+							</span>
+							{#if it.has_saved_code}
+								<button
+									type="button"
+									class="btn"
+									disabled
+									title={$t('connector.scan_flow_follows')}
+								>{$t('connector.scan_open')}</button>
+							{/if}
+						</div>
+					</div>
+				{/each}
+			</div>
+			{#if scanData.skipped > 0}
+				<div class="cscan-note">
+					{tr('connector.scan_skipped', { n: String(scanData.skipped) })}
+				</div>
+			{/if}
+		{/if}
 	{:else if res.error}
 		<div class="cerror" role="alert">{res.error}</div>
 	{:else if view?.type === 'form'}
@@ -681,5 +844,24 @@
 		border-radius: 6px;
 		padding: 5px 8px;
 		font: inherit;
+	}
+	/* Karte B: Scan-Landliste (globale .mlist/.mrow/.chip-Klassen werden
+	   nur minimal ergänzt — keine neue CSS-Welt). */
+	.ctab-back {
+		opacity: 0.75;
+	}
+	.cscan-spacer {
+		flex: 1;
+	}
+	.cscan-status {
+		margin-right: 8px;
+	}
+	.cscan-done {
+		opacity: 0.6;
+	}
+	.cscan-note {
+		font-size: 11px;
+		opacity: 0.7;
+		padding: 4px 2px;
 	}
 </style>

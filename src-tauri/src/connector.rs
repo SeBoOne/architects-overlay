@@ -32,7 +32,6 @@ use crate::locale::LocaleError;
 pub use crate::connector_keystore::{
     KeystorePaths, SessionEntry, find_entry as keystore_find, list_entries as keystore_list,
     load_sessions as keystore_load, upsert_and_save as keystore_upsert,
-    upsert_entry as keystore_upsert_entry,
 };
 
 /// Connector-Manifeste sind klein; 1 MiB Obergrenze (gleiche Geist wie
@@ -569,6 +568,367 @@ pub async fn connector_keystore_find(
         &keystore_load(&keystore_paths(&state).file(&id)),
         &sid,
     ))
+}
+
+// ---- SCLM v2 Karte B (Spec 5.3): „Meine …“-Sessionscan ---------------------
+
+/// Ein Scan-Treffer (Landlisten-Eintrag). `has_saved_code` wird pro Aufruf
+/// frisch aus dem Keystore berechnet (nicht cached): die Liste zeigt den
+/// aktuellen Keystore-Stand, auch wenn die Sitzungsdaten noch cached sind.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScannedRaffle {
+    pub sid: String,
+    pub name: String,
+    pub raffle_done: bool,
+    pub has_saved_code: bool,
+}
+
+/// Antwort des Scan-Commands. `skipped` = Detail-Fetch-Fehler (Spec 5.3 #5:
+/// Session überspringen + log::warn, Liste bleibt verfügbar).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ScanOutcome {
+    pub scan_id: String,
+    /// false = Match-Key hat keinen gespeicherten Wert → UI zeigt
+    /// Leerzustand-Hinweis (Items leer, kein HTTP-Lauf).
+    pub username_set: bool,
+    pub items: Vec<ScannedRaffle>,
+    pub skipped: usize,
+    pub cached: bool,
+    pub fetched_at_ms: u64,
+}
+
+/// Flag-Truthiness wie der Flow-Condition-Core (SQLite-/JSON-Toleranz):
+/// bool true, Zahl ≠ 0, Strings "1"/"true" gelten als erledigt.
+pub(crate) fn truthy_flag(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Bool(b) => *b,
+        serde_json::Value::Number(n) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
+        serde_json::Value::String(s) => matches!(s.as_str(), "1" | "true" | "True"),
+        _ => false,
+    }
+}
+
+/// Kandidaten-Auswahl (Spec 5.3): alle offenen (`done_field` falsch — auch
+/// bei fehlendem Feld) + die ersten `done_cap` erledigten. Eingangsreihenfolge
+/// (neueste zuerst) bleibt erhalten. Gibt Listen-Indizes zurück.
+pub(crate) fn select_scan_candidates(
+    items: &[serde_json::Value],
+    done_field: &str,
+    done_cap: usize,
+) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut done_taken = 0usize;
+    for (i, item) in items.iter().enumerate() {
+        if truthy_flag(item.get(done_field).unwrap_or(&serde_json::Value::Null)) {
+            if done_taken < done_cap {
+                done_taken += 1;
+                out.push(i);
+            }
+        } else {
+            out.push(i);
+        }
+    }
+    out
+}
+
+/// ci-EXAKTER Name-Vergleich (Entscheidung „Name-Match exakt ci“): trim +
+/// Unicode-lowercase; kein substring, kein Präfix. Non-String-Namen ignorieren,
+/// kaputter Dot-Path = kein Treffer (detail-Fehler wird ohnehin übersprungen).
+pub(crate) fn scan_name_matches(
+    detail: &serde_json::Value,
+    match_path: &str,
+    username: &str,
+) -> bool {
+    let user = username.trim().to_lowercase();
+    if user.is_empty() {
+        return false;
+    }
+    let hits = match connector::dot_path(detail, match_path) {
+        Ok(h) => h,
+        Err(_) => return false,
+    };
+    hits.iter()
+        .filter_map(|v| v.as_str())
+        .any(|n| n.trim().to_lowercase() == user)
+}
+
+/// String-Wert eines Listen-Felds (Zahlen werden String-belegt — sids sind
+/// bei SCLM Strings, aber API-Formen variieren).
+fn list_field_string(item: &serde_json::Value, field: &str) -> Option<String> {
+    match item.get(field)? {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+fn scan_cache_body(items: &[ScannedRaffle], skipped: usize) -> serde_json::Value {
+    json!({
+        "items": items.iter().map(|it| json!({"sid": it.sid, "name": it.name, "raffle_done": it.raffle_done})).collect::<Vec<_>>(),
+        "skipped": skipped
+    })
+}
+
+/// Landliste des own-Modes: Manifest-Scan ausführen (TTL-Cache analog zu
+/// Views — Username-Wert Teil des Cache-Schlüssels, Username-Änderung =
+/// Miss). username_set=false → Leerzustand ohne jeden HTTP-Lauf.
+#[tauri::command]
+pub async fn connector_scan_match(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    id: String,
+    force: bool,
+) -> Result<ScanOutcome, String> {
+    let manifest = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
+            return Err(err_key("error.connector.unknown"));
+        };
+        st.manifest.clone()
+    };
+    let scan = manifest
+        .scan
+        .clone()
+        .ok_or_else(|| err_key("error.connector.scan_missing"))?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    scan_inner(
+        &state,
+        &settings_state,
+        &manifest,
+        &scan,
+        &id,
+        force,
+        now_ms,
+    )
+    .await
+}
+
+/// Kern des Scans (tauri-frei, mit injectierter Uhr testbar).
+pub(crate) async fn scan_inner(
+    state: &ConnectorState,
+    settings_state: &crate::app_settings::SettingsState,
+    manifest: &connector::ConnectorManifest,
+    scan: &connector::ScanSpec,
+    id: &str,
+    force: bool,
+    now_ms: u64,
+) -> Result<ScanOutcome, String> {
+    use futures::StreamExt;
+
+    // Match-Wert aus den Settings (Backend-Sicht: auch secret:true-Werte sind
+    // vergleichbar — der Wert selbst verlässt das Backend nie, nur verglichen
+    // wird er, ausgegeben wird er nie).
+    let username = settings_field_values(state, settings_state, id, true)
+        .get(&scan.match_setting_key)
+        .cloned()
+        .unwrap_or_default();
+    if username.trim().is_empty() {
+        return Ok(ScanOutcome {
+            scan_id: scan.id.clone(),
+            username_set: false,
+            items: Vec::new(),
+            skipped: 0,
+            cached: false,
+            fetched_at_ms: now_ms,
+        });
+    }
+
+    // Poll-Cache (Akzeptanzkarte B): zweite Anfrage innerhalb des Intervalls
+    // läuft ohne neuen HTTP-Lauf. Username im Schlüssel: geänderter Name
+    // erzwingt Miss. has_saved_code wird NIE aus dem Cache gelesen (Keystore
+    // kann sich zwischen Polls ändern) — immer frisch berechnet.
+    let poll_secs = scan.poll_seconds.unwrap_or(DEFAULT_POLL_SECONDS).max(30);
+    let cache_key = (
+        id.to_owned(),
+        format!("scan:{}?u={}", scan.id, username.trim()),
+    );
+    let keystore_sids: std::collections::BTreeSet<String> =
+        keystore_load(&keystore_paths(state).file(id))
+            .into_iter()
+            .map(|e| e.sid)
+            .collect();
+    let attach_saved = |items: Vec<(String, String, bool)>| -> Vec<ScannedRaffle> {
+        items
+            .into_iter()
+            .map(|(sid, name, raffle_done)| ScannedRaffle {
+                has_saved_code: keystore_sids.contains(&sid),
+                sid,
+                name,
+                raffle_done,
+            })
+            .collect()
+    };
+    if !force {
+        let cache = state.cache.lock().expect("cache lock");
+        if let Some(c) = cache.get(&cache_key) {
+            if now_ms.saturating_sub(c.fetched_at_ms) < poll_secs * 1000 {
+                let cached_items: Vec<ScannedRaffle> = attach_saved(
+                    c.body
+                        .get("items")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|it| {
+                                    (
+                                        it.get("sid")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .to_owned(),
+                                        it.get("name")
+                                            .and_then(|v| v.as_str())
+                                            .unwrap_or_default()
+                                            .to_owned(),
+                                        truthy_flag(
+                                            it.get("raffle_done")
+                                                .unwrap_or(&serde_json::Value::Null),
+                                        ),
+                                    )
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                );
+                return Ok(ScanOutcome {
+                    scan_id: scan.id.clone(),
+                    username_set: true,
+                    skipped: c.body.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                    items: cached_items,
+                    cached: true,
+                    fetched_at_ms: c.fetched_at_ms,
+                });
+            }
+        }
+    }
+
+    // 1. Listen-Endpunkt (ohne Session-Auth; Manifest-Header-Auth greift wie
+    //    bei Views, wenn der Connector sie deklariert).
+    let (status, list_body) = fetch_request(
+        manifest,
+        &scan.list_endpoint,
+        &Default::default(),
+        &Default::default(),
+        auth_header_opt(manifest, settings_state, id),
+    )
+    .await?;
+    if status >= 400 {
+        return Err(err_keyp(
+            "error.connector.http",
+            json!({ "detail": format!("list endpoint: HTTP {status}") }),
+        ));
+    }
+    let list: &Vec<serde_json::Value> = list_body.as_array().ok_or_else(|| {
+        err_keyp(
+            "error.connector.mapping",
+            json!({"detail": "scan list endpoint must return a JSON array"}),
+        )
+    })?;
+
+    // 2. Kandidaten: alle offen + die letzten done_cap erledigte (Liste ist
+    //    neueste-zuerst, cut auf die ersten done_cap Treffer).
+    let candidates = select_scan_candidates(list, &scan.done_field, scan.done_cap);
+
+    // 3. Detail-Fetches parallel, begrenzt (Spec: concurrency 6, harte Klammer
+    //    16). Fehler einer Detail-Session: überspringen + log::warn — die Liste
+    //    bleibt verfügbar (Spec 5.3 #5).
+    let conc = scan.concurrency.clamp(1, 16);
+    let detail_results: Vec<(usize, Result<(u16, serde_json::Value), String>)> =
+        futures::stream::iter(candidates.into_iter().map(|idx| {
+            let manifest = manifest.clone();
+            let scan = scan.clone();
+            let item = list[idx].clone();
+            let settings_auth = auth_header_opt(&manifest, settings_state, id);
+            async move {
+                let code = match list_field_string(&item, &scan.code_field) {
+                    Some(c) => c,
+                    None => return (idx, Err("missing code field".to_owned())),
+                };
+                let mut params: BTreeMap<String, String> = BTreeMap::new();
+                params.insert("code".to_owned(), code);
+                let r = fetch_request(
+                    &manifest,
+                    &scan.detail_endpoint,
+                    &scan.headers.clone().unwrap_or_default(),
+                    &params,
+                    settings_auth,
+                )
+                .await;
+                (idx, r)
+            }
+        }))
+        .buffer_unordered(conc)
+        .collect()
+        .await;
+
+    let mut skipped = 0usize;
+    let mut hit_idx: Vec<usize> = Vec::new();
+    for (idx, res) in detail_results {
+        match res {
+            Ok((status, body)) if status < 400 => {
+                if scan_name_matches(&body, &scan.match_path, &username) {
+                    hit_idx.push(idx);
+                }
+            }
+            Ok((status, _)) => {
+                log::warn!(
+                    "connector scan '{}': skip candidate #{idx} (HTTP {status})",
+                    scan.id
+                );
+                skipped += 1;
+            }
+            Err(e) => {
+                log::warn!("connector scan '{}': skip candidate #{idx} ({e})", scan.id);
+                skipped += 1;
+            }
+        }
+    }
+    hit_idx.sort(); // Kandidatenreihenfolge (neueste zuerst) wiederherstellen
+
+    // 4. Treffer-Liste bauen + Cache füllen.
+    let mut plain: Vec<(String, String, bool)> = Vec::new();
+    for &idx in &hit_idx {
+        let item = &list[idx];
+        let sid = match list_field_string(item, &scan.id_field) {
+            Some(s) => s,
+            None => {
+                log::warn!(
+                    "connector scan '{}': candidate #{idx} missing id_field '{}'",
+                    scan.id,
+                    scan.id_field
+                );
+                skipped += 1;
+                continue;
+            }
+        };
+        let name = list_field_string(item, &scan.name_field).unwrap_or_default();
+        let done = truthy_flag(
+            item.get(&scan.done_field)
+                .unwrap_or(&serde_json::Value::Null),
+        );
+        plain.push((sid, name, done));
+    }
+    let items = attach_saved(plain.clone());
+    {
+        let mut cache = state.cache.lock().expect("cache lock");
+        cache.insert(
+            cache_key,
+            CachedFetch {
+                fetched_at_ms: now_ms,
+                status: 200,
+                body: scan_cache_body(&items, skipped),
+            },
+        );
+    }
+    Ok(ScanOutcome {
+        scan_id: scan.id.clone(),
+        username_set: true,
+        items,
+        skipped,
+        cached: false,
+        fetched_at_ms: now_ms,
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -1342,6 +1702,9 @@ fn map_view(view: &connector::View, body: &serde_json::Value) -> Result<serde_js
 #[cfg(test)]
 mod tests {
     use super::*;
+    // upsert_entry wird nur in Tests gebraucht — bewusst nicht als Re-Export
+    // in connector.rs (sonst unused-import-Warnung im Nicht-Test-Build).
+    use crate::connector_keystore::upsert_entry as keystore_upsert_entry;
     use serde_json::json;
 
     fn view(t: connector::ViewType, mapping: &[(&str, &str)]) -> connector::View {
@@ -1437,6 +1800,7 @@ mod tests {
             views: views,
             sync: None,
             settings_fields: Vec::new(),
+            scan: None,
             flows: Some(vec![connector::flow::Flow {
                 id: "participant".into(),
                 title: connector::manifest::LocalizedText {
@@ -1777,5 +2141,164 @@ mod tests {
         assert_eq!(e.join_code, "JC");
         assert_eq!(keystore_find(&sessions, "sid").unwrap().added, 7);
         assert_eq!(keystore_list(&sessions).len(), 1);
+    }
+
+    // ---- SCLM v2 Karte B (Spec 5.3): „Meine …“-Scan --------------------------
+    // Fake-Sessionfixtures statt HTTP: Cache-Treffer- und Leerzustand-Pfad
+    // erreichen scan_inner ohne jeden Netzwerkzugriff (Return VOR fetch_request).
+
+    /// Manifest-Ziegel mit deklariertem scan (identische Feldnamen wie
+    /// examples/sclm.json — aber Test-fix, keine Live-API).
+    fn scan_manifest_fixture() -> (connector::ConnectorManifest, connector::ScanSpec) {
+        let text = r#"{
+            "manifest_version": 1, "id": "sclm", "name": {"de": "S", "en": "S"},
+            "base_url": "https://sclm.site",
+            "placement": {"kind": "own", "label": {"de": "S", "en": "S"}},
+            "settings_fields": [{"key": "sclm_username", "label": {"de": "L", "en": "L"}, "type": "text"}],
+            "scan": {
+                "id": "my_raffles",
+                "title": {"de": "Meine Verlosungen", "en": "My Raffles"},
+                "list_endpoint": "/api/sessions",
+                "done_field": "raffle_done",
+                "code_field": "join_code",
+                "id_field": "id",
+                "name_field": "name",
+                "detail_endpoint": "/api/session/{code}",
+                "match_path": "participants[].name",
+                "match_setting_key": "sclm_username",
+                "done_cap": 2,
+                "concurrency": 6,
+                "poll_seconds": 300
+            },
+            "views": []
+        }"#;
+        let m =
+            connector::ConnectorManifest::parse(text.as_bytes()).expect("scan fixture manifest");
+        let scan = m.scan.clone().expect("scan block");
+        (m, scan)
+    }
+
+    #[test]
+    fn scan_truthy_flag_tolerates_json_forms() {
+        for raw in ["true", "1", "\"1\"", "\"true\"", "\"True\"", "2"] {
+            let v: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert!(truthy_flag(&v), "{raw} muss als erledigt gelten");
+        }
+        for raw in ["false", "0", "\"0\"", "\"false\"", "null", "\"\"", "{}"] {
+            let v: serde_json::Value = serde_json::from_str(raw).unwrap();
+            assert!(!truthy_flag(&v), "{raw} muss als offen gelten");
+        }
+    }
+
+    #[test]
+    fn scan_candidates_keep_all_open_and_cut_done_at_cap() {
+        // Eingangsreihenfolge neueste zuerst, done_cap = 2:
+        // idx0 offen, idx1 erledigt, idx2 offen (fehlendes Feld = offen),
+        // idx3 erledigt (2. genommener), idx4+5 erledigt → abgeschnitten.
+        let list: Vec<serde_json::Value> = vec![
+            json!({"id": "A", "raffle_done": false}),
+            json!({"id": "B", "raffle_done": true}),
+            json!({"id": "C"}),
+            json!({"id": "D", "raffle_done": "1"}),
+            json!({"id": "E", "raffle_done": true}),
+            json!({"id": "F", "raffle_done": 1}),
+        ];
+        let got = select_scan_candidates(&list, "raffle_done", 2);
+        assert_eq!(got, vec![0, 1, 2, 3]);
+        // done_cap=0 ist invalid (Validator), aber defensively: nur Offene.
+        assert_eq!(select_scan_candidates(&list, "raffle_done", 0), vec![0, 2]);
+    }
+
+    #[test]
+    fn scan_name_match_is_ci_exact_not_substring() {
+        let detail = json!({"participants": [
+            {"name": "Semih"},
+            {"name": " OTHER "},
+            {"name": 42},
+            {"nick": "Semih"}
+        ]});
+        assert!(scan_name_matches(&detail, "participants[].name", "semih"));
+        assert!(scan_name_matches(
+            &detail,
+            "participants[].name",
+            "  SEMIH  "
+        ));
+        assert!(scan_name_matches(&detail, "participants[].name", "other"));
+        assert!(!scan_name_matches(&detail, "participants[].name", "semi"));
+        assert!(!scan_name_matches(&detail, "participants[].name", "semih2"));
+        assert!(!scan_name_matches(&detail, "participants[].name", ""));
+        // Kaputter Dot-Path = kein Treffer (Detail-Fehler wird ohnehin übersprungen).
+        assert!(!scan_name_matches(&detail, "participants[].nope", "semih"));
+    }
+
+    #[test]
+    fn scan_empty_username_returns_without_http() {
+        let (m, scan) = scan_manifest_fixture();
+        let state = test_connector_state(vec![m.clone()]);
+        let settings = settings_state_with("sclm", &[]);
+        let out = futures::executor::block_on(scan_inner(
+            &state, &settings, &m, &scan, "sclm", false, 1_000,
+        ))
+        .expect("leerer Username ist kein Fehler");
+        assert!(!out.username_set);
+        assert!(out.items.is_empty());
+        assert!(!out.cached);
+        // Kein HTTP: Cache bleibt leer (kein fetch_request erreicht wurde).
+        assert!(state.cache.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn scan_cache_hit_within_poll_skips_http() {
+        let (m, scan) = scan_manifest_fixture();
+        let state = test_connector_state(vec![m.clone()]);
+        let settings = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        // Erster Scan wurde bei 10_000 ms geladen (Cache-Body wie scan_cache_body).
+        {
+            let mut cache = state.cache.lock().unwrap();
+            cache.insert(
+                ("sclm".to_owned(), "scan:my_raffles?u=Semih".to_owned()),
+                CachedFetch {
+                    fetched_at_ms: 10_000,
+                    status: 200,
+                    body: json!({
+                        "items": [{"sid": "S1", "name": "Event", "raffle_done": true}],
+                        "skipped": 1
+                    }),
+                },
+            );
+        }
+        let out = futures::executor::block_on(scan_inner(
+            &state,
+            &settings,
+            &m,
+            &scan,
+            "sclm",
+            false,
+            10_000 + 299_000,
+        ))
+        .expect("Cache-Treffer");
+        assert!(out.cached);
+        assert_eq!(out.fetched_at_ms, 10_000);
+        assert_eq!(out.skipped, 1);
+        assert_eq!(out.items.len(), 1);
+        assert_eq!(out.items[0].sid, "S1");
+        assert!(out.items[0].raffle_done);
+        // has_saved_code kommt NIE aus dem Cache (Keystore leer → fresh false).
+        assert!(!out.items[0].has_saved_code);
+        // Akzeptanzkriterium: zweiter Lauf innerhalb des Intervalls ohne HTTP —
+        // Cache-Größe unverändert, fetch_request nie erreicht.
+        assert_eq!(state.cache.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn scan_username_change_busts_cache_key() {
+        let (_m, scan) = scan_manifest_fixture();
+        // Key enthält den Username — anderer Name kann nicht denselben Treffer
+        // lesen (Schlüsselbildung wie in scan_inner).
+        let key_for = |u: &str| format!("scan:{}?u={}", scan.id, u);
+        assert_ne!(key_for("Semih"), key_for("Anderer"));
+        // Der Username wird getrimmt in den Schlüssel — " Semih " und "Semih"
+        // sind derselbe Cache-Raum (sondert: UI kann Whitespace enthalten).
+        assert_eq!(key_for(" Semih ".trim()), key_for("Semih"));
     }
 }

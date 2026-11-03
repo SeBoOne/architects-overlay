@@ -67,6 +67,47 @@ export type ViewDTO = {
 	headers?: Record<string, string> | null;
 };
 
+/** Manifest-deklarierter Sessionscan (SCLM v2 Karte B, Spec 5.3): generische
+ * „Meine …“-Landliste — alle offenen Sessions + die letzten done_cap
+ * erledigten; pro Kandidat Detail-Fetch mit `{code}` und ci-Name-Match gegen
+ * den gespeicherten settings_fields-Wert `match_setting_key`. */
+export type ScanDTO = {
+	id: string;
+	title: LocalizedText;
+	list_endpoint: string;
+	done_field: string;
+	code_field: string;
+	id_field: string;
+	name_field: string;
+	detail_endpoint: string;
+	match_path: string;
+	match_setting_key: string;
+	headers?: Record<string, string> | null;
+	done_cap?: number;
+	concurrency?: number;
+	poll_seconds?: number | null;
+};
+
+/** Ein Landlisten-Eintrag (Rust: connector_scan_match). */
+export type ScannedRaffleDTO = {
+	sid: string;
+	name: string;
+	raffle_done: boolean;
+	/** sid liegt im Session-Keystore → „Öffnen“-Button (Spec 5.2). */
+	has_saved_code: boolean;
+};
+
+export type ScanOutcomeDTO = {
+	scan_id: string;
+	/** false → Leerzustand-Hinweis „… in den Einstellungen setzen“. */
+	username_set: boolean;
+	items: ScannedRaffleDTO[];
+	/** Detail-Sessions mit Fetch-Fehler (übersprungen, Liste bleibt). */
+	skipped: number;
+	cached: boolean;
+	fetched_at_ms: number;
+};
+
 export type ConnectorManifestDTO = {
 	manifest_version: number;
 	id: string;
@@ -82,6 +123,8 @@ export type ConnectorManifestDTO = {
 	flows?: FlowDTO[] | null;
 	/** Generische Plugin-Settings-Felder (Karte A) — Settings-UI-Gruppe. */
 	settings_fields?: SettingsFieldDTO[] | null;
+	/** Sessionscan-Landliste (Karte B) — own-Mode startet mit „Meine …“-Liste. */
+	scan?: ScanDTO | null;
 	sync?: unknown;
 };
 
