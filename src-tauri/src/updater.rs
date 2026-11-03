@@ -143,6 +143,11 @@ async fn run_check(state: &UpdaterState, settings: &SettingsState) {
             state.set_note(friendly(&err));
         }
     }
+    // Härtung t_05f86461: fehlgeschlagene MSI-Installation der VORSITZUNG
+    // (Marker aus dem PowerShell-else-Zweig) überschreibt die reguläre
+    // Check-Note — der Nutzer soll den Fehlschlag sehen, nicht nur
+    // "uptodate". `available` bleibt bewusst erhalten (Retry möglich).
+    consume_msi_failure_note(state);
 }
 
 /// Periodischer Check (Start + alle N Stunden): läuft als eigener Thread,
@@ -261,6 +266,70 @@ fn spawn_nsis_silent(installer: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Name der Fehler-Marker-Datei im Temp-Update-Verzeichnis (Härtung
+/// t_05f86461): schreibt der PowerShell-Wrapper nur bei fehlgeschlagener
+/// MSI-Installation (Exit-Code nicht 0/3010). Der nächste App-Start liest
+/// sie und zeigt die Note `update.note_msi_failed`.
+const MSI_FAILURE_MARKER: &str = "msi-install-failure.txt";
+
+/// Pfad des Fehler-Markers: Temp-Update-Verzeichnis (identisch zum
+/// MSI-Download-Verzeichnis aus `updater::windows_update_dir()`), Datei
+/// `msi-install-failure.txt`. Plattformneutral gebaut (auf Nicht-Windows
+/// existiert die Datei nie → Lesepfad ist harmlos).
+/// bewusst OHNE cfg(windows): identische Begründung wie bei
+/// `msi_powershell_command` — Pfadlogik wird auf jedem Runner
+/// unit-getestet, verwendet wird sie nur in `spawn_msi_install` und
+/// `consume_msi_failure_note` (beide cfg windows).
+#[allow(dead_code)]
+fn msi_failure_marker_path() -> std::path::PathBuf {
+    std::env::temp_dir()
+        .join("architects-overlay-update")
+        .join(MSI_FAILURE_MARKER)
+}
+
+/// Liest den Fehler-Marker (Härtung t_05f86461) und meldet ihn als
+/// UI-Note `update.note_msi_failed` (Exit-Code + Zeitstempel aus dem
+/// Dateiinhalt `msiexec exit <code> <ts>`). Kein Marker → false (nichts zu
+/// melden). Der Marker wird NACH dem Lesen gelöscht: die Note erscheint
+/// genau einmal pro Fehlschlag (der Fehlschlag selbst hat die App-Instance
+/// bereits beendet; sichtbar wird sie im neu gestarteten Overlay der alten
+/// Version beim nächsten Check).
+#[cfg(windows)]
+fn consume_msi_failure_note(state: &UpdaterState) -> bool {
+    consume_msi_failure_marker(&msi_failure_marker_path(), state)
+}
+
+#[cfg(not(windows))]
+fn consume_msi_failure_note(state: &UpdaterState) -> bool {
+    // Kein Windows → nie ein MSI-Fehlschlag-Marker; bewusst kein Reading.
+    let _ = state;
+    false
+}
+
+/// Marker lesen → Note setzen → Marker löschen. Testbar ohne cfg: pure
+/// Dateilogik, auf jedem Runner unit-getestet; auf Linux nur durch die
+/// Unit-Tests verwendet (daher allow(dead_code)).
+#[allow(dead_code)]
+fn consume_msi_failure_marker(marker_path: &std::path::Path, state: &UpdaterState) -> bool {
+    let Ok(content) = std::fs::read_to_string(marker_path) else {
+        return false;
+    };
+    // Format-Zeile: "msiexec exit 1603 2026-11-03T12:00:00Z"
+    let words: Vec<&str> = content.split_whitespace().collect();
+    let exit_code = words.get(2).copied().unwrap_or("unbekannt").to_owned();
+    let timestamp = words.get(3).unwrap_or(&"").to_string();
+    log::warn!(
+        "updater: MSI-Installation fehlgeschlagen — {}",
+        content.trim()
+    );
+    state.set_note(err_keyp(
+        "update.note_msi_failed",
+        json!({ "code": exit_code, "timestamp": timestamp }),
+    ));
+    let _ = std::fs::remove_file(marker_path);
+    true
+}
+
 /// Windows MSI (SAC-Fix t_803497b5): PowerShell-Kommando-Bau für
 /// `Start-Process msiexec.exe -ArgumentList '/i','<msi>','/qb' -Wait
 /// -PassThru` + Auto-Relaunch der Overlay-exe nach Exit-Code 0 ODER 3010
@@ -268,6 +337,16 @@ fn spawn_nsis_silent(installer: &std::path::Path) -> Result<(), String> {
 /// nötig; das Overlay startet trotzdem neu, der Nutzer rebootet wann es
 /// ihm passt). Plattformunabhängig, damit das Quoting auf jedem Runner
 /// getestet werden kann.
+///
+/// Fehlschlag-Zweig (Härtung t_05f86461): Exit-Code NICHT 0/3010 (UAC
+/// verweigert → 1223, interne 1603-Fehler, MSI-Abbruch) — die App hat
+/// sich längst beendet, die Installation ist aber fehlgeschlagen und MSI
+/// hat auf die noch funktionierende ALTEN Version zurückgerollt. Ohne
+/// Gegenmaßnahme läge die App danach nirgends vor (die App-Zurück-Lücke).
+/// Der else-Zweig daher: (1) Exit-Code + Zeitstempel in die
+/// Fehler-Marker-Datei im Temp-Update-Verzeichnis schreiben (der nächste
+/// Start baut daraus die UI-Note `update.note_msi_failed`), (2) Overlay-EXE
+/// trotzdem neu starten — die alte Version ist lauffähig.
 ///
 /// SAC-konsequent: NUR signierte System-Binaries werden gespawnt
 /// (powershell.exe → msiexec.exe). KEIN selbst-geschriebenes
@@ -278,12 +357,18 @@ fn spawn_nsis_silent(installer: &std::path::Path) -> Result<(), String> {
 /// `spawn_msi_install` (cfg windows) — daher allow(dead_code) für
 /// Nicht-Windows-Checks.
 #[allow(dead_code)]
-fn msi_powershell_command(msi: &std::path::Path, current_exe: &std::path::Path) -> String {
+fn msi_powershell_command(
+    msi: &std::path::Path,
+    current_exe: &std::path::Path,
+    failure_marker: &std::path::Path,
+) -> String {
     // PowerShell-Single-Quotes escapen: ' -> ''
     let q = |p: &std::path::Path| -> String { p.to_string_lossy().replace('\'', "''") };
     format!(
-        "$p = Start-Process msiexec.exe -ArgumentList '/i','{}','/qb' -Wait -PassThru; if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {{ Start-Process '{}' }}",
+        "$p = Start-Process msiexec.exe -ArgumentList '/i','{}','/qb' -Wait -PassThru; if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {{ Start-Process '{}' }} else {{ Set-Content -LiteralPath '{}' -Value ('msiexec exit ' + $p.ExitCode + ' ' + (Get-Date).ToUniversalTime().ToString('o')); Start-Process '{}' }}",
         q(msi),
+        q(current_exe),
+        q(failure_marker),
         q(current_exe),
     )
 }
@@ -298,7 +383,12 @@ fn spawn_msi_install(msi: &std::path::Path) -> Result<(), String> {
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let cmd = msi_powershell_command(msi, &current_exe);
+    // Härtung t_05f86461: alter Fehler-Marker einer früheren fehlgeschlagenen
+    // Installation wird vor dem neuen Versuch entfernt — sonst würde ein
+    // Erfolgsmarker-Fehlen fälschlich als frischer Fehlschlag gelesen.
+    let marker = msi_failure_marker_path();
+    let _ = std::fs::remove_file(&marker);
+    let cmd = msi_powershell_command(msi, &current_exe, &marker);
     std::process::Command::new("powershell.exe")
         .args([
             "-NoProfile",
@@ -497,6 +587,9 @@ mod tests {
                 r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\app_x64_en-US.msi",
             ),
             Path::new(r"C:\Program Files\architects-overlay\architects-overlay.exe"),
+            Path::new(
+                r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\msi-install-failure.txt",
+            ),
         );
         assert!(cmd.contains("Start-Process msiexec.exe -ArgumentList '/i'"));
         assert!(cmd.contains("'/qb' -Wait -PassThru"));
@@ -511,16 +604,80 @@ mod tests {
     }
 
     #[test]
+    fn msi_command_failure_branch_relaunches_and_marks_error() {
+        // Härtung t_05f86461: Exit-Code NICHT 0/3010 (UAC verweigert 1223,
+        // 1603, MSI-Abbruch) — else-Zweig schreibt Exit-Code + Zeitstempel
+        // in die Marker-Datei UND relauncht die Overlay-exe (die noch
+        // installierte alte Version liegt danach wieder vor).
+        let exe = r"C:\Program Files\architects-overlay\architects-overlay.exe";
+        let cmd = msi_powershell_command(
+            Path::new(
+                r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\app_x64_en-US.msi",
+            ),
+            Path::new(exe),
+            Path::new(
+                r"C:\Users\sebo\AppData\Local\Temp\architects-overlay-update\msi-install-failure.txt",
+            ),
+        );
+        // else-Zweig vorhanden …
+        assert!(cmd.contains("} else {"));
+        // … schreibt Exit-Code + UTC-Zeitstempel in den Marker …
+        assert!(cmd.contains("Set-Content -LiteralPath 'C:\\Users\\sebo\\AppData\\Local\\Temp\\architects-overlay-update\\msi-install-failure.txt'"));
+        assert!(cmd.contains("$p.ExitCode"));
+        assert!(cmd.contains("ToUniversalTime"));
+        // … und relauncht die Overlay-exe (zweites Start-Process im else).
+        let relaunch = format!("Start-Process '{exe}'");
+        assert!(
+            cmd.matches(&relaunch).count() == 2,
+            "Erfolgs- UND Fehlschlag-Zweig müssen die Overlay-exe relaunchen: {cmd}"
+        );
+    }
+
+    #[test]
+    fn failure_marker_note_roundtrip_and_single_display() {
+        // Marker vorhanden → Note update.note_msi_failed mit code/timestamp,
+        // Marker danach gelöscht (Note erscheint genau einmal pro Fehlschlag).
+        let dir = std::env::temp_dir().join(format!("ao-updater-test-{}", std::process::id()));
+        let marker = dir.join(MSI_FAILURE_MARKER);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&marker, "msiexec exit 1603 2026-11-03T12:34:56Z").unwrap();
+        let state = UpdaterState::default();
+        assert!(consume_msi_failure_marker(&marker, &state));
+        let note: serde_json::Value =
+            serde_json::from_str(&state.note()).expect("note must be key-JSON");
+        assert_eq!(note["error_key"], "update.note_msi_failed");
+        assert_eq!(note["params"]["code"], "1603");
+        assert_eq!(note["params"]["timestamp"], "2026-11-03T12:34:56Z");
+        // Einmalverbrauch: zweiter Aufruf meldet nichts mehr.
+        assert!(!marker.exists());
+        assert!(!consume_msi_failure_marker(&marker, &state));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn failure_marker_absent_is_silent() {
+        let state = UpdaterState::default();
+        state.set_note("baseline");
+        let missing = std::env::temp_dir()
+            .join("ao-updater-test-missing")
+            .join(MSI_FAILURE_MARKER);
+        assert!(!consume_msi_failure_marker(&missing, &state));
+        assert_eq!(state.note(), "baseline");
+    }
+
+    #[test]
     fn msi_command_escapes_single_quotes() {
         // PowerShell-Single-Quotes: ' -> '' (Pfad mit Apostroph darf das
         // Kommando nicht zerschießen).
         let cmd = msi_powershell_command(
             Path::new(r"C:\Users\o'brien\app.msi"),
             Path::new(r"C:\Program Files\architects-overlay\architects-overlay.exe"),
+            Path::new(r"C:\Users\o'brien\msi-install-failure.txt"),
         );
         assert!(cmd.contains("'C:\\Users\\o''brien\\app.msi'"));
-        // Nur die vier erwarteten Argument-Quotes um den MSI-Pfad herum
-        // plus die Relaunch-Quotes; das Apostroph selbst ist verdoppelt.
+        assert!(cmd.contains("'C:\\Users\\o''brien\\msi-install-failure.txt'"));
+        // Nur die erwarteten Argument-Quotes um die Pfade; das Apostroph
+        // selbst ist jeweils verdoppelt.
         assert!(!cmd.contains("o'brien"));
     }
 }
