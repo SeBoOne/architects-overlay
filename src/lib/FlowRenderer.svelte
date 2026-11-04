@@ -31,6 +31,20 @@
 	// - Zustands-Pinning pro Session: gepinnte Werte (admin_code/join_code/
 	//   pcode) leben im Connector-Zustand, NICHT global (localStorage pro
 	//   Connector+Flow+Session).
+	//
+	// E-SCLM-UX v4 (t_102e220d, Sebo-Feedback-Runde 2):
+	// - Punkt 1: rid aus normalisierten Ergebnis-Skalaren (nie aus
+	//   Selection-Pins) — Rust zipt results-Screens zu Zeilenarrays, der
+	//   Index-Spread ließ rid/waived/collected nie in fstate landen.
+	// - Punkt 2: One-Way-Status — ist ein enabled_if-Flag gesetzt, ersetzt
+	//   ein Statusfeld BEIDE Write-Buttons (kein collected↔waived-Weg).
+	// - Punkt 3+4: results-Zweig greift wieder (der List-Zweig fängt
+	//   results nicht mehr ab) und zeigt pro Gruppe nur Name (+ ×N).
+	// - Punkt 5: list-Hauptspalte = name/title (Rust-BTreeMap sortiert
+	//   Mapping-Keys alphabetisch — sonst wäre z. B. grade prominent).
+	// - Punkt 6: nach einer erfolgreichen Write-Aktion wird der
+	//   Flow-Zustand per connector_flow_open aufgefrischt (state.wished
+	//   steht sofort auf der Warteseite).
 	import { onDestroy, untrack } from 'svelte';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { t, tr, trError, currentLang } from './i18n';
@@ -43,11 +57,15 @@
 		resolvePlaceholders,
 		isNavigationAction,
 		actionEnabled,
+		dotPath,
+		normalizeResults,
+		groupNames,
 		loadFlowPins,
 		saveFlowPin,
 		type ConnectorEntry,
 		type FetchResultDTO,
 		type FlowDTO,
+		type FlowOpenOutcomeDTO,
 		type ScreenDTO,
 		type AutocompleteRuleDTO,
 		type ScreenActionDTO
@@ -136,16 +154,8 @@
 			: null
 	);
 	// SCLM v2 Karte C (Spec Abschnitt 3): result_for liefert 200 mit
-	// {result: null}, solange keine Ziehung lief — alle mapped-Felder leer
-	// → Hinweis „Ergebnis noch offen“ (null-safe, nicht nur Status).
-	const resultsPending = $derived(
-		shown?.type === 'results' &&
-			res.data !== null &&
-			!Array.isArray(res.data.mapped) &&
-			Object.values((res.data.mapped as Record<string, unknown> | null) ?? {}).every(
-				(v) => v === null || v === undefined
-			)
-	);
+	// {result: null} → „Ergebnis noch offen“ — siehe resultsPending unten
+	// (liefert als leerer Zeilenkern, E-SCLM-UX v4 Punkt 3).
 	// D-B Punkt 4 (generisch): Mapping-Keys, die nur Pin-/Plumbing-Zwecke
 	// sind — Union aus Screen-pins, keystore_fields-Quellen, Action-params
 	// und pins_map-Keys. Bewusst KEINE Template-Platzhalter (body/path/
@@ -166,27 +176,65 @@
 		return hidden;
 	});
 	/** Sichtbare Spalten einer Flow-Liste = Mapping-Reihenfolge minus Plumbing. */
-	const listColumns = $derived(
-		Object.keys(shown?.mapping ?? {}).filter((k) => !hiddenMappingKeys.has(k))
+	// E-SCLM-UX v4 Punkt 5: Rust serialisiert Mapping-Keys aus einem
+	// BTreeMap (alphabetisch) — die Manifest-Reihenfolge geht auf dem Weg
+	// verloren. Menschliche Hauptspalte ist name/title; die Reste bleiben
+	// dezente Meta-Paare daneben/unterhalb.
+	const listColumns = $derived.by(() => {
+		const cols = Object.keys(shown?.mapping ?? {}).filter((k) => !hiddenMappingKeys.has(k));
+		const main = cols.findIndex((k) => /^(name|title)$/i.test(k));
+		return main > 0 ? [cols[main], ...cols.filter((_, i) => i !== main)] : cols;
+	});
+	// E-SCLM-UX v4 Punkt 1/3/4: normalisierte Ergebnisse (scalars für
+	// rid/waived/collected im Zustand, names für die Gewinn-Gruppen).
+	const resultsNorm = $derived.by(() => {
+		if (shown?.type !== 'results' || !res.data) return null;
+		return normalizeResults(res.data.mapped, shown.mapping ?? {});
+	});
+	// Spec Abschnitt 3: 200 {result: null} → map_view liefert ein LEERES
+	// Zeilenarray (results-Screens sind Table-Views) — nicht nur das
+	// Object-Szenario abfangen; leerer Zeilenkern = „Ergebnis noch offen“.
+	const resultsPending = $derived(
+		shown?.type === 'results' && res.data !== null && (resultsNorm?.rowCount ?? 0) === 0
 	);
-	// D-B Punkt 11: Gewinnübersicht — alle Array-Werte des gemappten
-	// Ergebnis-Objekts zu Gruppen zusammenfassen (Name ×Menge, Reihenfolge
-	// des ersten Auftretens). Skalare Flags (rid/waived/collected …) werden
-	// NICHT gerendert, bleiben aber über load() im fstate für enabled_if.
-	const resultGroups = $derived.by(() => {
-		const mapped = res.data?.mapped;
-		if (!mapped || Array.isArray(mapped)) return [] as { name: string; count: number }[];
-		const order: string[] = [];
-		const counts = new Map<string, number>();
-		for (const v of Object.values(mapped as Record<string, unknown>)) {
-			if (!Array.isArray(v)) continue;
-			for (const item of v) {
-				const name = formatValue(item);
-				if (!counts.has(name)) order.push(name);
-				counts.set(name, (counts.get(name) ?? 0) + 1);
+	// E-SCLM-UX v4 Punkt 4 (war D-B Punkt 11): Gewinnübersicht gruppiert
+	// gleichnamige Items (Name ×Menge, Reihenfolge des ersten Auftretens).
+	// Quelle ist resultsNorm.names — Namen, nie Flags/Skalare; rid/waived/
+	// collected bleiben zustandslos sichtbarlos für enabled_if/Action-rid.
+	const resultGroups = $derived(resultGroupsSource());
+	function resultGroupsSource(): { name: string; count: number }[] {
+		return resultsNorm ? groupNames(resultsNorm.names) : [];
+	}
+	// E-SCLM-UX v4 Punkt 2: One-Way-Status — ist ein enabled_if-Flag
+	// (z. B. collected/waived) wahrhaftig gesetzt (Bool-Toleranz wie
+	// evaluateCondition: true/1/'1'/'true'), ersetzen wir beide
+	// Write-Buttons durch EINEN Status; der jeweils andere Button ist dann
+	// nicht mehr darstellbar, geschweige denn clickable. Ersteller-Reset
+	// → frischer Fetch → Flag wieder falsch → Buttons erscheinen von selbst.
+	const oneWayFlag = $derived.by(() => {
+		const s = shown;
+		if (!s) return null;
+		for (const a of s.actions ?? []) {
+			if (isNavigationAction(a) || !a.enabled_if) continue;
+			let v: unknown;
+			try {
+				v = dotPath(fstate, a.enabled_if.on);
+			} catch {
+				continue;
 			}
+			if (v === true || v === 1 || v === '1' || v === 'true') return a.enabled_if.on;
 		}
-		return order.map((name) => ({ name, count: counts.get(name) ?? 1 }));
+		return null;
+	});
+	const oneWayLabel = $derived.by(() => {
+		if (!oneWayFlag) return '';
+		// Text-Key pro Flag (connector.flow.status_collected / _waived …);
+		// fehlt er (Manifest mit unbekanntem Flag), auf Action-Titel fallen.
+		const key = `connector.flow.status_${oneWayFlag}`;
+		const txt = tr(key);
+		if (txt && txt !== key) return txt;
+		const a = (shown?.actions ?? []).find((x) => !isNavigationAction(x) && x.enabled_if?.on === oneWayFlag);
+		return a ? labelOf(a.title, lang) : txt;
 	});
 	// D-B Punkt 8: Wunschliste der Warteseite — D-A injiziert state-Key
 	// `wished` (string[] loot-Namen). Fehlt der Key (oder ist leer) → die
@@ -291,8 +339,17 @@
 			});
 			res = { data, error: '', loading: false };
 			// Mapped-Daten in den Flow-Zustand (Conditions sehen den letzten Fetch).
+			// E-SCLM-UX v4 Punkt 1: results-Screens mapped der Rust-Kern als
+			// ZEILENARRAY (Table-Zip) — ein Object-Spread über ein Array
+			// verteilt nur Indizes 0..n und rid/waived/collected würden den
+			// Zustand nie erreichen (Ursache der rid-Fehlermeldung). Für
+			// results-Screens daher normalisiert: nur die Skalaren.
 			if (data.mapped && typeof data.mapped === 'object') {
-				fstate = { ...fstate, ...(data.mapped as Record<string, unknown>) };
+				if (s.type === 'results') {
+					fstate = { ...fstate, ...normalizeResults(data.mapped, s.mapping ?? {}).scalars };
+				} else {
+					fstate = { ...fstate, ...(data.mapped as Record<string, unknown>) };
+				}
 			}
 			// Exit-/Branch-Bedingung (SF2-R1 D2, generisch): Jeder Screen mit
 			// `exit` verzweigt nach dem Load — wait pollt bis raffle_done,
@@ -628,6 +685,31 @@
 					const v = String(actionValues()[f.key] ?? '').trim();
 					if (v) pin(f.key, v);
 				}
+				// E-SCLM-UX v4 Punkt 6: Flow-Zustand nach der Write-Kette
+				// auffrischen — connector_flow_open mit dem gespeicherten
+				// Code (flow.open.param, z. B. 'code') erneut ausführen.
+				// Rust ist idempotent (bereits beigetreten → Claim-Weg ohne
+				// Doppel-POST) und liefert das frische FlowOpenOutcome inkl.
+				// state.wished — die Warteseite zeigt die Wünsche SOFORT,
+				// ohne dass der User den Flow erneut öffnen muss.
+				if (flow.open) {
+					const openKey = flow.open.param || 'code';
+					const openCode = String(fstate[openKey] ?? pins[openKey] ?? '').trim();
+					if (openCode) {
+						try {
+							const ref = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
+								id: entry.id,
+								flowId: flow.id, // camelCase wie beim Erst-Open (Rust-Parameter flow_id)
+								code: openCode
+							});
+							fstate = { ...fstate, ...(ref.state ?? {}) };
+						} catch {
+							/* Best-effort: die Write-Aktion selbst ist bereits
+							   erfolgreich — ein fehlendes State-Refresh darf
+							   den Nutzer nicht mit einer Fehlernote quittieren. */
+						}
+					}
+				}
 				marked = [];
 				if (a.goto) go(a.goto);
 				else await load(true); // ohne goto: Screen refreshen (Status sichtbar)
@@ -826,10 +908,14 @@
 						{/each}
 					</ul>
 				{/if}
-			{:else if shown.type === 'list' || (shown.type === 'results' && Array.isArray(res.data?.mapped))}
+			{:else if shown.type === 'list'}
 				<!-- D-B Punkt 1+3+4: Listen im Overlay-Zeilenstil (wie Trade-
 				     Route-/Suchergebnis-Listen), Pin-/Plumbing-Spalten gefiltert,
-				     dezenter ↻-Refresh oben rechts. -->
+				     dezenter ↻-Refresh oben rechts.
+				     E-SCLM-UX v4 Punkt 3: der results-Abfang (`Array.isArray
+				     (mapped)`) ist entfallen — results-Screens sind im Kern
+				     immer Zeilenarrays und liefen daher IMMER in diesen List-
+			     Zweig (Tabelle mit Zahlen/Strichen statt results-Ansicht). -->
 				<div class="fbar">
 					{#if shown.type === 'list' && shown.multi}
 						<span class="fmarkinfo">
@@ -903,10 +989,23 @@
 					<p class="fwaittext">{tr('connector.flow.result_open')}</p>
 				</div>
 			{:else if shown.type === 'results'}
-				<!-- D-B Punkt 11: Gewinnübersicht — gleichnamige Items zu einer
-				     Zeile mit Menge gruppiert (Overlay-Listenstil). Spalten: nur
-				     Item-Name (+Menge); rid/waived/collected bleiben unsichtbar
-				     im Zustand für die enabled_if-Logik der Buttons. -->
+				<!-- D-B Punkt 11 / E-SCLM-UX v4 Punkt 3+4: Gewinnübersicht —
+				     gleichnamige Items zu einer Zeile mit Menge gruppiert
+				     (Overlay-Listenstil). Spalten: NUR Item-Name (+ ×Menge),
+				     keine WAIVED/COLLECTED-/Zahlen-Spalten; rid/waived/collected
+				     bleiben unsichtbar im Zustand für enabled_if und die rid-
+				     Auflösung der Buttons. Dezenter ↻ wie auf Listen (nach
+				     Ersteller-Reset zeigen die Buttons sich beim Refreshen). -->
+				<div class="fbar">
+					<span class="fspacer"></span>
+					<button
+						type="button"
+						class="frefresh"
+						title={tr('connector.flow.refresh')}
+						aria-label={tr('connector.flow.refresh')}
+						onclick={() => void load(true)}
+					>↻</button>
+				</div>
 				<ul class="flist">
 					{#each resultGroups as g (g.name)}
 						<li>
@@ -959,10 +1058,14 @@
 							>
 								{labelOf(a.title, lang)}
 							</button>
-						{:else}
+						{:else if !oneWayFlag}
 							<!-- enabled_if (Requirement 9): bereits gesetzte
 							     one-way-Flags (collected/waived) rendern die
-							     Aktion deaktiviert. -->
+							     Aktion deaktiviert (Rust-Defense).
+							     E-SCLM-UX v4 Punkt 2: ist ein Flag gesetzt,
+							     werden BEIDE Write-Buttons gar nicht mehr
+							     gerendert — unten steht stattdessen der
+							     Status (kein collected↔waived-Weg). -->
 							<button
 								class="btn fsubmit"
 								type="button"
@@ -974,6 +1077,14 @@
 							</button>
 						{/if}
 					{/each}
+					{#if oneWayFlag}
+						<!-- E-SCLM-UX v4 Punkt 2: One-Way-Status pro ERGEBNIS —
+						     „Abgeholt ✓“ ODER „Verzichtet“, nicht beides und
+						     nicht änderbar; nur Ersteller/Admin setzt zurück
+						     (dann liefert der frische Fetch die Buttons zurück).
+						     Chip-Optik wie vorhanden (keine neuen Farben). -->
+						<span class="fstatus chip" role="status">{oneWayLabel}</span>
+					{/if}
 				</div>
 				<!-- D-B Punkt 7: Action-Eingabefelder (pcode-Claim) als eigene,
 				     ruhig formatierte Zeile unterhalb der Actions — moderate
@@ -1097,6 +1208,10 @@
 
 	/* Actions nach globaler .btn/.btn-ghost-Norm (Punkt 3) — nur Layout hier */
 	.factions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+	/* E-SCLM-UX v4 Punkt 2: One-Way-Status anstelle der Write-Buttons —
+	   globaler .chip-Look (Theme-Variablen), nur Ausrichtung hier. */
+	.fstatus { align-self: center; }
 
 	/* D-B Punkt 7: Action-Feld als eigene Zeile unterhalb der Buttons */
 	.factionfields {

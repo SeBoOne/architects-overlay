@@ -469,6 +469,65 @@ export function branchTarget(c: ConditionDTO, state: Record<string, unknown>): s
 	return evaluateCondition(c, state) ? (c.then ?? null) : (c.otherwise ?? null);
 }
 
+/**
+ * E-SCLM-UX v4 (Punkte 1/3/4): results-Screen-Daten normalisieren.
+ *
+ * Hintergrund (Rust-Kern, read-only betrachtet): `screen_as_view` überführt
+ * Results-Screens in Table-Views, `map_view` zipt sie daher zu einem
+ * ZEILENARRAY — Skalare (result.id → rid, waived, collected) wiederholen
+ * sich pro Zeile, `[]`-Pfade (won[].name) werden auf die Zeilen verteilt.
+ * `{result: null}` liefert ein LEERES Array. Object-Form (Detail-Mapping)
+ * wird ebenfalls akzeptiert.
+ *
+ * Ergebnis: scalars → Flow-Zustand (rid für Action-Pfade, collected/waived
+ * für enabled_if/One-Way-Status), names → Item-Namen für die Gruppierung.
+ * Booleans/Null landen nie in names (Flags sind keine Item-Namen).
+ */
+export function normalizeResults(
+	mapped: unknown,
+	mapping: Record<string, string>
+): { scalars: Record<string, unknown>; names: string[]; rowCount: number } {
+	const scalars: Record<string, unknown> = {};
+	const names: string[] = [];
+	if (mapped === null || mapped === undefined) return { scalars, names, rowCount: 0 };
+	const rows = Array.isArray(mapped) ? mapped : [mapped];
+	for (const raw of rows) {
+		if (!raw || typeof raw !== 'object') continue;
+		const row = raw as Record<string, unknown>;
+		for (const [key, value] of Object.entries(row)) {
+			// List-Feld: Manifest-Pfad enthält `[]` ODER der Wert ist ein
+			// Array (z. B. `won: result.won` ohne [] → Array-Wert).
+			const listField = (mapping[key] ?? '').includes('[]') || Array.isArray(value);
+			if (listField) {
+				const items = Array.isArray(value) ? value : [value];
+				for (const item of items) {
+					if (typeof item === 'string' && item.trim()) names.push(item.trim());
+					else if (item && typeof item === 'object') {
+						const o = item as Record<string, unknown>;
+						const n = typeof o.name === 'string' ? o.name : typeof o.title === 'string' ? o.title : null;
+						if (n && n.trim()) names.push(n.trim());
+					}
+				}
+			} else if (value !== null && value !== undefined && !(key in scalars)) {
+				scalars[key] = value;
+			}
+		}
+	}
+	return { scalars, names, rowCount: rows.length };
+}
+
+/** Item-Namen in Reihenfolge des ersten Auftretens gruppieren:
+ *  gleicher Name → ein Eintrag ×N (E-SCLM-UX v4 Punkt 4). */
+export function groupNames(names: string[]): { name: string; count: number }[] {
+	const order: string[] = [];
+	const counts = new Map<string, number>();
+	for (const n of names) {
+		if (!counts.has(n)) order.push(n);
+		counts.set(n, (counts.get(n) ?? 0) + 1);
+	}
+	return order.map((name) => ({ name, count: counts.get(name) ?? 1 }));
+}
+
 /** Auto-Fill-Mapping: Treffer-Felder → Formular-Werte (fehlt/nul = nicht füllen). */
 export function applyAutofill(item: Record<string, unknown>, rule: AutocompleteRuleDTO): Record<string, string> {
 	const out: Record<string, string> = {};

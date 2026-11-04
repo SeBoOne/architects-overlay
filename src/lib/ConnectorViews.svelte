@@ -305,6 +305,21 @@
 	// Session-Keystore (sonst gäbe es keinen Button) → connector_flow_open
 	// (Auto-Beitritt/Claim/pcode in Rust) → Flow startet am gemeldeten Screen.
 	const openFlow = $derived(openFlowOf(entry.manifest));
+	// E-SCLM-UX v4 Punkt 7: Reiter-Politik des own-Modes —
+	// - Teilnehmer-Reiter gibt es NUR, wenn gerade ein Flow geöffnet ist;
+	//   ohne offenen Flow keine Reiter (Landliste ist der Startzustand,
+	//   Hotkey/Code-Eingabe führt wie gehabt auf die Landliste, von dort
+	//   nur via Öffnen-Button/Code in eine Verlosung).
+	// - Ersteller-Reiter komplett ausgeblendet: Flows ohne open-Block
+	//   (Ersteller-Flows) bekommen keinen Reiter und sind nicht anwählbar.
+	//   Ersteller-Bereich bis auf Weiteres deaktiviert (Sebo 2026-11-04) —
+	//   Code erhalten (selectFlow/FlowRenderer bleiben), nichts gelöscht.
+	const creatorTabsDisabled = true;
+	const tabFlows = $derived(creatorTabsDisabled ? flows.filter((f) => !!f.open) : flows);
+	// Reiter-Zeile = genau der geöffnete Flow (wenn er ein erlaubter ist).
+	const tabFlow = $derived(
+		activeFlow && tabFlows.some((f) => f.id === activeFlow.id) ? activeFlow : null
+	);
 	let openBusy = $state(false);
 	let openNote = $state('');
 	async function openRaffle(sid: string) {
@@ -451,19 +466,29 @@
 	{#if hasFlows}
 		<!-- SF4: Tab-Leiste = Flow-Auswahl (nur Flows) in Chip-Optik.
 		     Interne Screens sind Flow-Zustände — niemals Tabs; die
-		     Flow-Kette läuft strikt linear (Karte C Requirement 9). -->
-		<div class="connector-tabs" role="tablist" aria-label={title}>
-			{#each flows as fl (fl.id)}
+		     Flow-Kette läuft strikt linear (Karte C Requirement 9).
+		     E-SCLM-UX v4 Punkt 7: die Reiter-Zeile existiert nur, wenn
+		     ein Flow GEÖFFNET ist (tabFlow); ohne offenen Flow keine
+		     Reiter (Landliste ist Startzustand). Ersteller-Reiter sind
+		     deaktiviert (creatorTabsDisabled — siehe Kommentar im Script).
+		     Punkt 8: „Zurück zur Liste“-Chip neben dem Reiter — zusätzlicher
+		     Weg neben der Esc-Kaskade (Esc Flow→Landliste→Modus bleibt). -->
+		{#if tabFlow}
+			<div class="connector-tabs" role="tablist" aria-label={title}>
 				<button
 					type="button"
 					role="tab"
-					aria-selected={flowId === fl.id}
-					class="chip"
-					class:is-on={flowId === fl.id}
-					onclick={() => selectFlow(fl.id)}
-				>{labelOf(fl.title, lang)}</button>
-			{/each}
-		</div>
+					aria-selected={true}
+					class="chip is-on"
+					onclick={() => selectFlow(tabFlow.id)}
+				>{labelOf(tabFlow.title, lang)}</button>
+				<button
+					type="button"
+					class="chip chip-back"
+					onclick={() => backToLanding()}
+				>{tr('connector.flow.back_to_list')}</button>
+			</div>
+		{/if}
 	{:else if views.length > 1}
 		<!-- Fallback (Manifests ohne flows, z. B. AAWA später): views als Tabs. -->
 		<div class="connector-tabs" role="tablist" aria-label={title}>
@@ -921,10 +946,17 @@
 	}
 	/* Karte B: Scan-Landliste (globale .mlist/.mrow/.chip-Klassen werden
 	   nur minimal ergänzt — keine neue CSS-Welt). Tab-Leiste nutzt das
-	   globale Chip-Muster (Requirement 10). D-B Punkt 6: .chip-back ist mit
-	   dem „Zurück“-Button entfallen (Esc-Kaskade ersetzt ihn). */
+	   globale Chip-Muster (Requirement 10). D-B Punkt 6: .chip-back war mit
+	   dem „Zurück“-Button entfallen (Esc-Kaskade); E-SCLM-UX v4 Punkt 8
+	   bringt ihn als Reiter-Chip zurück (neben Esc, nicht statt Esc). */
 	.cscan-spacer {
 		flex: 1;
+	}
+	.chip-back {
+		opacity: 0.75;
+	}
+	.chip-back:hover {
+		opacity: 1;
 	}
 	.cscan-status {
 		margin-right: 8px;
