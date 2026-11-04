@@ -165,3 +165,27 @@ builder), D-A=Rust/Manifest `feat/sclm-flow-behavior-v3`, D-B=Frontend `feat/scl
 Vertragsnote: D-A/D-B schneiden disjointe Dateien (D-A: crates/connector,
 src-tauri/src/connector*.rs, examples/sclm.json, Tests; D-B: src/lib/*.svelte,
 +page.svelte-Rendering, locales). Merge-Reihenfolge: D-A vor D-B.
+
+## 11. Feedback-Runde 2 Sebo Live-Test (2026-11-04, kanonisch)
+
+Karte E (Frontend, `feat/sclm-ux-v4`), Manifest unverändert. API-Fakten dafür:
+`rid` = `session.results[].id` (pro Teilnehmer-Ergebnis; `result_id` ist bereits im
+Keystore gepinnt), `collected`/`waived` sind ONE-WAY pro Ergebnis (Teilnehmer setzt,
+nur Admin/Ersteller zurücknimmt — API.md §12/13.4); PATCH `/api/session/{sid}/raffle/{rid}`.
+
+1. Collect/Waive-Buttons brauchen vorgelagerten Zeilen-Klick (rid-Pin leer) — rid
+   kommt direkt aus Ergebnis/Keystore, Buttons laufen ohne Auswahl.
+2. Ein Ergebnis = eine Entscheidung: nach collected → nur "Abgeholt ✓", nach waived →
+   nur "Verzichtet"; beide Buttons durch Status ersetzt. Ersteller-Reset → frischer
+   Fetch → Buttons wieder da.
+3. Gewinnübersicht: nur Item-Name prominent; keine Zahlen/Striche, keine
+   WAIVED/COLLECTED-Spalten. (Aktuell rendert bei Sebo ein List-Zweig statt des
+   results-Zweigs — Branch-Kette/debuggen.)
+4. Gruppierung gleichnamiger Gewinne (×N) greift nicht — Ursache finden (resultGroups
+   hängt an mapped-Form; Array-vs-Object-Fall!) und nachweisbar fixen.
+5. Wunschauswahl: Item-NAME prominent, Grade/Art/Größe dezent dahinter.
+6. Nach Wunsch-Übernahme sofort Wünsche auf Warteseite (state.wished fehlt bis
+   Re-Open — Action-Kette muss flow_open erneut ausführen bzw. State frisch setzen).
+7. Reiter: Teilnehmer-Reiter nur bei geöffnetem Flow; Ersteller-Reiter komplett
+   aus (Range stillgelegt). Landliste ohne Reiter erreichbar via Hotkey/Code.
+8. "Zurück zur Liste"-Button im Reiterstil neben Teilnehmer-Reiter zurück (neben Esc).
