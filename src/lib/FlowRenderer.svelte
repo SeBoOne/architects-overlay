@@ -2,10 +2,26 @@
 	// FlowRenderer — generischer Screen-Flow-Renderer (SF1, t_c35bc233).
 	//
 	// Rendert deklarative Screen-Ketten aus dem Manifest (`flows`) mit FESTER
-	// Overlay-Optik: Tabs statt Buttons (Muster wie Routen/Trade-Logs),
-	// ke Fremdstyling. KEIN connector-spezifisches Wissen: alles kommt aus
-	// dem Flow-Schema (Screens: code_entry | list | detail | form | wait |
-	// results, conditions, transitions, poll, autocomplete).
+	// Overlay-Optik: Listen/Buttons wie Trade-Route-/Suchergebnis-Listen
+	// (Theme-Variablen, keine neuen Farben), keine Fremdstyling-Welt.
+	// KEIN connector-spezifisches Wissen: alles kommt aus dem Flow-Schema
+	// (Screens: code_entry | list | detail | form | wait | results,
+	// conditions, transitions, poll, autocomplete).
+	//
+	// D-B (t_159ebc5c, Sebo-Feedback 3–11):
+	// - Punkt 5: genau EINE Überschrift pro Ansicht = Screen-Titel
+	//   (Flow-Titel und Zurück/Esc-Buttons entfallen).
+	// - Punkt 6+9: keine Zurück-/Esc-Buttons; Navigation voran nur über
+	//   Manifest-Actions, zurück nur Esc (Kaskade in ConnectorViews).
+	// - Punkt 4: Pin-/Plumbing-Mapping-Keys (pins ∪ Action-params/-templates)
+	//   werden in Flow-Listen nicht als Spalten gerendert.
+	// - Punkt 8: Warteseite neu: zentrierte Ladeanimation + „Warten auf die
+	//   Verlosung…“ + Wunschliste aus state-Key `wished` (fehlt → ausblenden);
+	//   alle Kopier-Buttons im Flow ersatzlos entfernt.
+	// - Punkt 11: results-Screen gruppiert gleichnamige Items (Name ×Menge),
+	//   rid/waived/collected bleiben nur als Zustand für enabled_if sichtbarlos.
+	// - Punkt 1 (Client): Frisch-Fetch beim Betreten (force), Auto-Refresh aus
+	//   poll_seconds (list-Screens Default 60), dezenter ↻-Button auf Listen.
 	//
 	// - Display-Regel (`when`): Screen nur zeigen, wenn Bedingung wahr; sonst
 	//   der `otherwise`-Screen.
@@ -15,8 +31,6 @@
 	// - Zustands-Pinning pro Session: gepinnte Werte (admin_code/join_code/
 	//   pcode) leben im Connector-Zustand, NICHT global (localStorage pro
 	//   Connector+Flow+Session).
-	//
-	// ESC-Kaskade: erst Flow beenden → onexit (wie im Rest des Overlays).
 	import { onDestroy, untrack } from 'svelte';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { t, tr, trError, currentLang } from './i18n';
@@ -35,10 +49,9 @@
 		type FetchResultDTO,
 		type FlowDTO,
 		type ScreenDTO,
-		type ConditionDTO,
 		type AutocompleteRuleDTO,
 		type ScreenActionDTO
-		} from './connector';
+	} from './connector';
 
 	type Result = { data: FetchResultDTO | null; error: string; loading: boolean };
 
@@ -49,19 +62,16 @@
 		/** Vorgemergter Flow-Zustand (SF2-R1 D1: gemappte code_entry-Daten des
 		 *  Suchleisten-Prefetch — max_wishes/raffle_done landen im fstate,
 		 *  ohne sie persistieren zu müssen). */
-		initialState = null,
-		onexit
+		initialState = null
 	}: {
 		entry: ConnectorEntry;
 		flow: FlowDTO;
 		/** Start-Screen-ID (z. B. Wiedereinstieg direkt beim Ergebnis-Screen). */
 		initial?: string | null;
 		initialState?: Record<string, unknown> | null;
-		onexit?: () => void;
 	} = $props();
 
 	const lang = $derived(currentLang());
-	const flowTitle = $derived(labelOf(flow.title, lang));
 
 	function findScreen(id: string): ScreenDTO | undefined {
 		return flow.screens.find((s) => s.id === id);
@@ -70,12 +80,11 @@
 	// ---- Flow-Zustand -----------------------------------------------------
 	// Bewusst nur der Initialwert: der Einstiegs-Screen wird einmal beim
 	// Mount bestimmt (untrack — spätere Prop-Änderungen ändern den Start nicht).
-	const startId: string = untrack(() =>
-		initial && findScreen(initial) ? initial : flow.entry
-	);
+	// D-A-Vertrag: der Start-Screen kommt serverseitig entschieden an
+	// (Resume auf progress_screen), der Renderer rät nichts dazu.
+	const startId: string = untrack(() => (initial && findScreen(initial) ? initial : flow.entry));
 	let screenId: string = $state(startId);
 	let current: ScreenDTO | null = $derived(findScreen(screenId) ?? null);
-	let path: string[] = $state([]); // Historie für Zurück-Navigation
 	let fstate: Record<string, unknown> = $state({
 		...(untrack(() => initialState) ?? {})
 	}); // gemappte Daten + Pins (initialState bewusst nur beim Mount)
@@ -101,20 +110,6 @@
 	// (collected/waived) deaktivieren die zugehörige Aktion.
 	function actionIsEnabled(a: ScreenActionDTO): boolean {
 		return actionEnabled(a, fstate);
-	}
-	// SF3: Copy-Hinweis pro Detail-Zeile (Codes einsehen/kopieren — generisch
-	// für alle Detail-Screens, keine Connector-Logik).
-	let copiedKey: string | null = $state(null);
-	async function copyValue(key: string, v: unknown) {
-		try {
-			await navigator.clipboard.writeText(formatValue(v) ?? '');
-			copiedKey = key;
-			setTimeout(() => {
-				if (copiedKey === key) copiedKey = null;
-			}, 1500);
-		} catch {
-			/* Clipboard verweigert — stillschweigend, Button ist Best-Effort */
-		}
 	}
 
 	// Display-Regel: wenn `when` falsch → otherwise-Screen (falls deklariert).
@@ -151,6 +146,56 @@
 				(v) => v === null || v === undefined
 			)
 	);
+	// D-B Punkt 4 (generisch): Mapping-Keys, die nur Pin-/Plumbing-Zwecke
+	// sind — Union aus Screen-pins, keystore_fields-Quellen, Action-params
+	// und pins_map-Keys. Bewusst KEINE Template-Platzhalter (body/path/
+	// header): die referenzieren oft Mensch-Spalten (z. B. rename-Template
+	// {name} in c_participants, {scu} in commodities) — deren Aufnahme in
+	// die Union würde menschliche Spalten verstecken (Review R1, Punkt 4).
+	// Whitelist-Logik: Keys, die NICHT in dieser Union liegen, bleiben sichtbar.
+	const hiddenMappingKeys = $derived.by(() => {
+		const s = shown;
+		const hidden = new Set<string>();
+		if (!s) return hidden;
+		for (const k of s.pins ?? []) hidden.add(k);
+		for (const src of Object.values(s.keystore_fields ?? {})) hidden.add(src);
+		for (const a of s.actions ?? []) {
+			for (const p of a.params ?? []) hidden.add(p.key);
+			for (const k of Object.keys(a.pins_map ?? {})) hidden.add(k);
+		}
+		return hidden;
+	});
+	/** Sichtbare Spalten einer Flow-Liste = Mapping-Reihenfolge minus Plumbing. */
+	const listColumns = $derived(
+		Object.keys(shown?.mapping ?? {}).filter((k) => !hiddenMappingKeys.has(k))
+	);
+	// D-B Punkt 11: Gewinnübersicht — alle Array-Werte des gemappten
+	// Ergebnis-Objekts zu Gruppen zusammenfassen (Name ×Menge, Reihenfolge
+	// des ersten Auftretens). Skalare Flags (rid/waived/collected …) werden
+	// NICHT gerendert, bleiben aber über load() im fstate für enabled_if.
+	const resultGroups = $derived.by(() => {
+		const mapped = res.data?.mapped;
+		if (!mapped || Array.isArray(mapped)) return [] as { name: string; count: number }[];
+		const order: string[] = [];
+		const counts = new Map<string, number>();
+		for (const v of Object.values(mapped as Record<string, unknown>)) {
+			if (!Array.isArray(v)) continue;
+			for (const item of v) {
+				const name = formatValue(item);
+				if (!counts.has(name)) order.push(name);
+				counts.set(name, (counts.get(name) ?? 0) + 1);
+			}
+		}
+		return order.map((name) => ({ name, count: counts.get(name) ?? 1 }));
+	});
+	// D-B Punkt 8: Wunschliste der Warteseite — D-A injiziert state-Key
+	// `wished` (string[] loot-Namen). Fehlt der Key (oder ist leer) → die
+	// Sektion wird ausgeblendet (D-A läuft parallel, Kontrakt sauber behandelt).
+	const wishedList = $derived.by(() => {
+		const w = fstate.wished;
+		if (!Array.isArray(w)) return [] as string[];
+		return w.filter((x) => typeof x === 'string' || typeof x === 'number').map(String);
+	});
 	// SF2: Write-Action eines Multi-Screens = Confirm-Button.
 	const confirmAction = $derived(
 		shown && shown.type === 'list' && shown.multi
@@ -214,6 +259,8 @@
 	});
 
 	// ---- Daten laden (generisch: Fetch + Mapping via Backend) --------------
+	// D-B Punkt 1: force=true beim Betreten (Frische bei Screen-Eintritt;
+	// Poll-Intervalle laden mit force=false, der Backend-Cache greift nur dort).
 	async function load(force = false) {
 		const s = shown;
 		if (!isTauri || !s || s.type === 'form' || !s.endpoint) return;
@@ -273,11 +320,12 @@
 		return out;
 	}
 
-	// ---- Navigation (ESC-Kaskade wie im Overlay) ---------------------------
+	// ---- Navigation (D-B Punkt 6+9: voran nur über Manifest-Actions) ------
+	// Eine Zurück-Navigation im Renderer gibt es nicht mehr: zurück geht es
+	// ausschließlich per Esc (Kaskade in ConnectorViews → Landliste).
 	function go(id: string) {
 		if (id === screenId) return;
 		if (!findScreen(id)) return; // unbekanntes Ziel: stillschweigend ignorieren? Nein — bewusst loggen.
-		path = [...path, screenId];
 		screenId = id;
 		formValues = {};
 		formNote = '';
@@ -297,38 +345,41 @@
 			seedFromState(t, formValues);
 		}
 		res = { data: null, error: '', loading: false };
-		untrack(() => void load());
+		// Punkt 1: Frisch-Fetch beim Screen-Wechsel erledigt der $effect
+		// (trackt `shown`, ruft load(true) bei jeder Screen-Änderung) —
+		// ein zweiter load hier wäre ein Doppel-Request pro Transition
+		// (Review R1, Finding 1).
 	}
 
-	function back() {
-		const prev = path[path.length - 1];
-		if (!prev) return;
-		path = path.slice(0, -1);
-		screenId = prev;
-		formValues = {};
-		actionInputs = {};
-		res = { data: null, error: '', loading: false };
-		untrack(() => void load());
-	}
-
-	function exit() {
-		onexit?.();
-	}
-
-	// ---- Poll-Regeln (wait: poll_seconds + exit-condition) -----------------
-	// SCLM v2 Karte C (Requirement 7): results-Screens mit poll_seconds
-	// pollen weiter (null-Pfad „Ergebnis noch offen“ → wait-Verhalten).
+	// ---- Poll-Regeln -------------------------------------------------------
+	// wait: bestehender poll_seconds + exit-Bedingung (unverändert).
+	// results mit poll_seconds: pollen weiter (null-Pfad „Ergebnis noch offen“
+	// → wait-Verhalten, SCLM v2 Karte C Requirement 7).
+	// D-B Punkt 1: list-Screens pollen zusätzlich nach poll_seconds aus dem
+	// Manifest (Default 60, wenn null); floor 15 s (API-Empfehlung: kein Burst).
 	function schedulePolling() {
 		if (timer) clearInterval(timer);
 		timer = null;
 		const s = shown;
-		if (!s) return;
-		if (s.type !== 'wait' && !(s.type === 'results' && s.poll_seconds)) return;
-		const secs = Math.max(s.poll_seconds ?? 15, 5);
-		timer = setInterval(() => void load(false), secs * 1000);
+		if (!s || !isTauri) return;
+		let secs: number | null = null;
+		let force = false;
+		if (s.type === 'wait') secs = Math.max(s.poll_seconds ?? 15, 5);
+		else if (s.type === 'results' && s.poll_seconds) secs = Math.max(s.poll_seconds, 10);
+		else if (s.type === 'list' && s.endpoint) {
+			secs = Math.max(s.poll_seconds ?? 60, 15);
+			// Punkt 1: Listen-Auffrischung ist Intention des Intervalls —
+			// force=true macht sie unabhängig vom Backend-TTL (D-A läuft
+			// parallel und cache-bypassed Flow-Screens ohnehin).
+			force = true;
+		}
+		if (secs === null) return;
+		timer = setInterval(() => void load(force), secs * 1000);
 	}
 	$effect(() => {
-		untrack(() => void load());
+		// Punkt 1: Frisch-Fetch beim Mount; Timer-Cleanup bei Screen-Wechsel
+		// (kein Intervall-Leak — pro Screen wird neu schedulePolling't).
+		untrack(() => void load(true));
 		schedulePolling();
 		return () => {
 			if (timer) clearInterval(timer);
@@ -624,7 +675,7 @@
 			const data = await invoke<FetchResultDTO>('connector_fetch', {
 				id: entry.id,
 				viewId: `${flow.id}:${rule.field}`,
-				force: true,
+			force: true,
 				params: { q: text, __flow_ep: ep }
 			});
 			const rows = Array.isArray(data.body) ? (data.body as unknown[]) : [];
@@ -650,9 +701,9 @@
 		acOpen = { ...acOpen, [rule.field]: false };
 	}
 
-	// SF2-R1 D3: Actions mit Eingabefeldern (z. B. pcode-Claim) — Felder
-	// über den Buttons rendern (Template-ausgelagert: Typ-Prädikate sind
-	// im Markup nicht parsebar).
+	// SF2-R1 D3: Actions mit Eingabefeldern (z. B. pcode-Claim) — D-B Punkt 7:
+	// als eigene, ruhig formatierte Zeile UNTERHALB der Actions rendern
+	// (moderate Breite, dezent), nicht neben/klemmend in den Buttons.
 	const fieldActions = $derived.by(() => {
 		const s = shown;
 		if (!s) return [];
@@ -665,48 +716,41 @@
 </script>
 
 <section class="flow">
-	<header class="fhead">
-		<div class="ftitle">
-			<span class="fname">{flowTitle}</span>
-			{#if shown}
-				<!-- SCLM v2 Karte C: der deklarierte Screen-Titel ist die
-				     Schritt-Orientierung im linearen Flow (de/en aus dem
-				     Manifest) — ohne ihn sähe der Nutzer nur "Step n". -->
-				<span class="fscreentitle">{labelOf(shown.title, lang)}</span>
-				<span class="fstep">
-					{tr('connector.flow.step', {
-						n: String(flow.screens.findIndex((x) => x.id === shown.id) + 1),
-						total: String(flow.screens.length)
-					})}
-				</span>
-			{/if}
-		</div>
-		<div class="fnav">
-			{#if path.length > 0}
-				<button class="fbtn" type="button" onclick={back}>{$t('common.back')}</button>
-			{/if}
-			<button class="fbtn" type="button" onclick={exit}>{$t('common.back_esc')}</button>
-		</div>
-	</header>
+	<!-- D-B Punkt 5: genau EINE Überschrift = Screen-Titel. Flow-Titel und
+	     Zurück-/Esc-Buttons sind entfallen (Punkt 6+9); der own-Mode-Rail-Name
+	     lebt nur im Rail-Menü des Overlays. -->
+	{#if shown}
+		<header class="fhead">
+			<span class="fscreentitle">{labelOf(shown.title, lang)}</span>
+			<span class="fstep">
+				{tr('connector.flow.step', {
+					n: String(flow.screens.findIndex((x) => x.id === shown.id) + 1),
+					total: String(flow.screens.length)
+				})}
+			</span>
+		</header>
+	{/if}
 
 	{#if shown === null}
 		<p class="fempty">{tr('error.connector.flow_screen_missing')}</p>
 	{:else}
 		<!-- SCLM v2 Karte C (Requirement 9): Flows mit open-Block sind
-		     strikt linear — Flow-Schritte sind KEINE Tabs (keine
-		     pill-artige Schritt-Navigation). Legacy-Flows ohne open-Block
-		     (z. B. creator) behalten ihre Screen-Navigation. -->
+		     strikt linear — Flow-Schritte sind KEINE Tabs. Legacy-Flows ohne
+		     open-Block (z. B. creator) behalten ihre Screen-Navigation, jetzt
+		     in Chip-Reiter-Optik (Requirement 10: keine Pill-Tabs). -->
 		{#if !flow.open}
-			<nav class="ftabs">
+			<div class="ftabs" role="tablist">
 				{#each flow.screens as s (s.id)}
 					<button
-						class="ftab"
-						class:is-on={s.id === shown.id}
 						type="button"
+						role="tab"
+						aria-selected={s.id === shown.id}
+						class="chip"
+						class:is-on={s.id === shown.id}
 						onclick={() => go(s.id)}
 					>{labelOf(s.title, lang)}</button>
 				{/each}
-			</nav>
+			</div>
 		{/if}
 
 		<div class="fbody">
@@ -752,37 +796,80 @@
 							</ul>
 						{/if}
 					{/each}
-					<button class="fbtn fsubmit" type="submit" disabled={formBusy}>
+					<button class="btn fsubmit" type="submit" disabled={formBusy}>
 						{shown.type === 'code_entry' ? tr('connector.flow.code_enter') : $t('connector.form_submit')}
 					</button>
 					{#if formNote}<p class="fnote">{formNote}</p>{/if}
 				</form>
 			{:else if res.error}
 				<p class="ferror">{res.error}</p>
-			{:else if shown.type === 'list' || (shown.type === 'results' && Array.isArray(res.data?.mapped))}
-				{#if shown.type === 'list' && shown.multi}
-					<p class="fmarkinfo">
-						{tr('connector.flow.marked', {
-							n: String(marked.length),
-							max: String(multiMax ?? '∞')
-						})}
-					</p>
+			{:else if shown.type === 'wait'}
+				<!-- D-B Punkt 8: Warteseite neu — keine Infozeilen, keine
+				     Kopier-Buttons. Zentrierte CSS-Ladeanimation (Theme-Farben,
+				     keyframes im scoped <style>) + „Warten auf die Verlosung…“.
+				     Darunter die Wunschliste aus state-Key `wished` (D-A-Vertrag:
+				     string[] loot-Namen; fehlt der Key → Sektion ausblenden). -->
+				<div class="fwaitwrap">
+					<span class="fspinner" aria-hidden="true"></span>
+					<p class="fwaittext">{tr('connector.flow.waiting')}</p>
+				</div>
+				{#if wishedList.length > 0}
+					<ul class="flist" aria-label={tr('connector.flow.wished_list')}>
+						{#each wishedList as item, i (i)}
+							<li>
+								<div class="frow frow-static">
+									<span class="fmain"><span class="ftitle">{item}</span></span>
+								</div>
+							</li>
+						{:else}
+							<li class="fempty">{$t('connector.empty')}</li>
+						{/each}
+					</ul>
 				{/if}
+			{:else if shown.type === 'list' || (shown.type === 'results' && Array.isArray(res.data?.mapped))}
+				<!-- D-B Punkt 1+3+4: Listen im Overlay-Zeilenstil (wie Trade-
+				     Route-/Suchergebnis-Listen), Pin-/Plumbing-Spalten gefiltert,
+				     dezenter ↻-Refresh oben rechts. -->
+				<div class="fbar">
+					{#if shown.type === 'list' && shown.multi}
+						<span class="fmarkinfo">
+							{tr('connector.flow.marked', {
+								n: String(marked.length),
+								max: String(multiMax ?? '∞')
+							})}
+						</span>
+					{/if}
+					<span class="fspacer"></span>
+					<button
+						type="button"
+						class="frefresh"
+						title={tr('connector.flow.refresh')}
+						aria-label={tr('connector.flow.refresh')}
+						onclick={() => void load(true)}
+					>↻</button>
+				</div>
 				<ul class="flist">
 					{#each rows as row, i (i)}
 						<li>
 							{#if shown.type === 'list' && shown.multi}
 								<button
-									class="frow fmark"
+									class="frow frow-mark"
 									class:is-marked={isMarked(i)}
 									type="button"
 									aria-pressed={isMarked(i)}
 									onclick={() => toggleMark(i)}
 								>
 									<span class="fcheck">{isMarked(i) ? '☑' : '☐'}</span>
-									{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
-										<span class="fk">{field}</span><span class="fv">{formatValue(row?.[field])}</span>
-									{/each}
+									<span class="fmain">
+										<span class="ftitle">{listColumns.length > 0 ? formatValue(row?.[listColumns[0]]) : ''}</span>
+										{#if listColumns.length > 1}
+											<span class="fmeta">
+												{#each listColumns.slice(1) as field (field)}
+													<span class="fmetapair"><span class="fk">{field}</span>{formatValue(row?.[field])}</span>
+												{/each}
+											</span>
+										{/if}
+									</span>
 								</button>
 							{:else}
 								<button
@@ -790,9 +877,16 @@
 									type="button"
 									onclick={() => select(String(row.id ?? i), row)}
 								>
-									{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
-										<span class="fk">{field}</span><span class="fv">{formatValue(row?.[field])}</span>
-									{/each}
+									<span class="fmain">
+										<span class="ftitle">{listColumns.length > 0 ? formatValue(row?.[listColumns[0]]) : ''}</span>
+										{#if listColumns.length > 1}
+											<span class="fmeta">
+												{#each listColumns.slice(1) as field (field)}
+													<span class="fmetapair"><span class="fk">{field}</span>{formatValue(row?.[field])}</span>
+												{/each}
+											</span>
+										{/if}
+									</span>
 								</button>
 							{/if}
 						</li>
@@ -802,49 +896,52 @@
 				</ul>
 			{:else if resultsPending}
 				<!-- Spec Abschnitt 3: 200 {result: null} abfangen (nicht nur
-				     Status) — Hinweis + Poll-Verhalten wie wait (poll unten). -->
-				<p class="fwait">{tr('connector.flow.result_open')}</p>
-				{#if shown.poll_seconds}
-					<p class="fwait">{tr('connector.flow.wait_poll', { s: String(shown.poll_seconds) })}</p>
-				{/if}
-			{:else}
+				     Status) — Hinweis + Poll-Verhalten wie wait; D-B Punkt 8/11:
+				     gleiche zentrierte Spinner-Optik wie die Warteseite. -->
+				<div class="fwaitwrap">
+					<span class="fspinner" aria-hidden="true"></span>
+					<p class="fwaittext">{tr('connector.flow.result_open')}</p>
+				</div>
+			{:else if shown.type === 'results'}
+				<!-- D-B Punkt 11: Gewinnübersicht — gleichnamige Items zu einer
+				     Zeile mit Menge gruppiert (Overlay-Listenstil). Spalten: nur
+				     Item-Name (+Menge); rid/waived/collected bleiben unsichtbar
+				     im Zustand für die enabled_if-Logik der Buttons. -->
+				<ul class="flist">
+					{#each resultGroups as g (g.name)}
+						<li>
+							<div class="frow frow-static">
+								<span class="fmain"><span class="ftitle">{g.name}</span></span>
+								{#if g.count > 1}
+									<span class="fqty">×{g.count}</span>
+								{/if}
+							</div>
+						</li>
+					{:else}
+						<li class="fempty">{$t('connector.empty')}</li>
+					{/each}
+				</ul>
+			{:else if shown.type === 'detail'}
+				<!-- Detailzeilen ohne Kopier-Buttons (D-B Punkt 8: Kopier-Buttons
+				     im Flow-Bereich ersatzlos entfernt). -->
 				<dl class="fdetail">
 					{#each Object.entries(shown.mapping ?? {}) as [field], j (field)}
 						<div class="fdetail-line">
 							<dt class="fk">{field}</dt>
-							<dd class="fv">
-								{formatValue(detailRow?.[field])}
-								<button
-									class="fcopy"
-									type="button"
-									title={copiedKey === field ? tr('connector.flow.copied') : tr('connector.flow.copy')}
-									onclick={() => void copyValue(field, detailRow?.[field])}>⧉</button
-								>
-							</dd>
+							<dd class="fv">{formatValue(detailRow?.[field])}</dd>
 						</div>
 					{/each}
 				</dl>
-			{/if}
-			{#if shown.type === 'wait'}
-				<p class="fwait">{tr('connector.flow.wait_poll', { s: String(shown.poll_seconds ?? 15) })}</p>
+			{:else}
+				<p class="fempty">{$t('connector.empty')}</p>
 			{/if}
 			{#if (confirmAction || screenActions.length > 0)}
+				<!-- Buttons nach vorhandener .btn/.btn-ghost-Norm (D-B Punkt 3):
+				     Write-Aktionen = .btn (Akzent), goto-Navigation = .btn-ghost. -->
 				<div class="factions">
-					{#each fieldActions as a (a.id)}
-						{#each a.fields ?? [] as f (f.key)}
-							<label class="ffield fafield">
-								<span class="flabel">{labelOf(f.label, lang)}{f.required !== false ? ' *' : ''}</span>
-								<input
-									class="finput"
-									type="text"
-									bind:value={actionInputs[`${a.id}.${f.key}`]}
-								/>
-							</label>
-						{/each}
-					{/each}
 					{#if confirmAction}
 						<button
-							class="fbtn fsubmit"
+							class="btn fsubmit"
 							type="button"
 							disabled={actionBusy || marked.length === 0 || !actionIsEnabled(confirmAction)}
 							onclick={() => void confirmMulti()}
@@ -855,7 +952,7 @@
 					{#each screenActions as a (a.id)}
 						{#if isNavigationAction(a)}
 							<button
-								class="fbtn"
+								class="btn-ghost"
 								type="button"
 								disabled={!actionIsEnabled(a)}
 								onclick={() => void runAction(a)}
@@ -867,7 +964,7 @@
 							     one-way-Flags (collected/waived) rendern die
 							     Aktion deaktiviert. -->
 							<button
-								class="fbtn fsubmit"
+								class="btn fsubmit"
 								type="button"
 								disabled={actionBusy || !actionIsEnabled(a)}
 								title={actionIsEnabled(a) ? '' : $t('connector.flow.action_done')}
@@ -878,6 +975,25 @@
 						{/if}
 					{/each}
 				</div>
+				<!-- D-B Punkt 7: Action-Eingabefelder (pcode-Claim) als eigene,
+				     ruhig formatierte Zeile unterhalb der Actions — moderate
+				     Breite, normale Schriftgröße, dezent. -->
+				{#if fieldActions.length > 0}
+					<div class="factionfields">
+						{#each fieldActions as a (a.id)}
+							{#each a.fields ?? [] as f (f.key)}
+								<label class="ffield">
+									<span class="flabel">{labelOf(f.label, lang)}{f.required !== false ? ' *' : ''}</span>
+									<input
+										class="finput"
+										type="text"
+										bind:value={actionInputs[`${a.id}.${f.key}`]}
+									/>
+								</label>
+							{/each}
+						{/each}
+					</div>
+				{/if}
 				{#if actionNote}<p class="fnote">{actionNote}</p>{/if}
 			{/if}
 		</div>
@@ -885,67 +1001,106 @@
 </section>
 
 <style>
-	.flow { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-	.fhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-	.ftitle { display: flex; flex-direction: column; gap: 2px; }
-	.fname { font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
-	.fscreentitle { font-weight: 600; font-size: 13px; opacity: 0.95; }
-	.fstep { font-size: 11px; opacity: 0.7; }
-	.fnav { display: flex; gap: 6px; }
-	.fbtn {
-		background: transparent; color: inherit; border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-		border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+	/* D-B Punkt 3: keine neuen Farben — ausschließlich bestehende
+	   Theme-Variablen (--line/--lineb/--panel2/--fg/--fgdim/--fgfaint/
+	   --accent/--font-mono), Typo-Größen wie .m-title/.m-sub (.mlist-Muster). */
+	.flow { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+	.fhead {
+		display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+		padding-bottom: 6px; border-bottom: 1px solid var(--line);
 	}
-	.fbtn:hover { border-color: currentColor; }
-	.fsubmit { padding: 6px 14px; }
-	.fsubmit:disabled { opacity: 0.5; cursor: default; }
-	.fempty { font-size: 12px; opacity: 0.7; margin: 0; }
-	.ferror { font-size: 12px; margin: 0; opacity: 0.9; }
-	.fnote { font-size: 11px; opacity: 0.8; margin: 0; }
-	.fwait { font-size: 11px; opacity: 0.7; margin: 0; }
-	.ftabs { display: flex; gap: 4px; flex-wrap: wrap; }
-	.ftab {
-		background: transparent; color: inherit; border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-		border-radius: 6px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+	/* Einzige Überschrift der Ansicht (Punkt 5) — wie .m-title, einen Tick lauter. */
+	.fscreentitle { font-weight: 700; font-size: 14px; color: var(--fg); }
+	.fstep { font: 700 10px/1 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--fgfaint); }
+	.fempty { font-size: 12px; color: var(--fgdim); margin: 0; padding: 8px 0; }
+	.ferror { font-size: 12px; margin: 0; color: var(--alert); }
+	.fnote { font-size: 11px; color: var(--fgdim); margin: 0; }
+	.fbody { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+
+	/* Listenleiste: Markier-Zähler + dezenter ↻-Refresh (Punkt 1) */
+	.fbar { display: flex; align-items: center; gap: 8px; }
+	.fspacer { flex: 1; }
+	.fmarkinfo { font-size: 11px; color: var(--fgdim); }
+	.frefresh {
+		background: transparent; color: var(--fgdim); border: 1px solid var(--lineb);
+		border-radius: 3px; padding: 3px 8px; font: 700 11px/1 var(--font-mono);
+		cursor: pointer;
 	}
-	.ftab.is-on { border-color: currentColor; font-weight: 700; }
-	.fbody { min-height: 0; overflow: auto; }
-	.fform { display: flex; flex-direction: column; gap: 10px; }
+	.frefresh:hover { border-color: var(--fgdim); color: var(--fg); }
+
+	/* Flow-Listen wie .mlist-Zeilen: volle Breite, --line-Trenner, Hover-Panel */
+	.flist {
+		list-style: none; margin: 0; padding: 0;
+		border-top: 1px solid var(--line);
+		overflow: auto; max-height: min(46vh, 340px); scrollbar-width: thin;
+	}
+	.frow {
+		display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px;
+		width: 100%; text-align: left; background: transparent; color: inherit;
+		border: 0; border-bottom: 1px solid var(--line);
+		padding: 7px 10px; min-height: 42px; cursor: pointer; font: inherit;
+	}
+	.frow:hover { background: var(--panel2); }
+	.frow-mark { grid-template-columns: auto 1fr; }
+	.frow.is-marked { background: var(--panel2); box-shadow: inset 4px 0 0 var(--accent); }
+	.frow-static { cursor: default; }
+	.fcheck { font-size: 14px; color: var(--fgdim); }
+	.fmain { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+	.ftitle { font-size: 13.5px; font-weight: 500; color: var(--fg); overflow-wrap: anywhere; }
+	.fmeta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--fgdim); }
+	.fmetapair { display: inline-flex; gap: 4px; align-items: baseline; }
+	.fk { font: 700 9.5px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fgfaint); }
+	.fqty { font: 600 12px/1 var(--font-mono); color: var(--fgdim); }
+
+	/* D-B Punkt 8: zentrierte Ladeanimation (Theme-Farben, scoped keyframes) */
+	.fwaitwrap { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 10px 20px; }
+	@keyframes flow-spin { to { transform: rotate(360deg); } }
+	.fspinner {
+		width: 34px; height: 34px; border-radius: 50%;
+		border: 3px solid var(--lineb); border-top-color: var(--accent);
+		animation: flow-spin 0.9s linear infinite;
+	}
+	.fwaittext {
+		font: 700 11px/1.7 var(--font-mono); letter-spacing: 0.12em; text-transform: uppercase;
+		color: var(--fgdim); margin: 0;
+	}
+
+	/* Formulare (bestehende dezent-Linie, Akzent-Fokus wie .qnum) */
+	.fform { display: flex; flex-direction: column; gap: 10px; max-width: 460px; }
 	.ffield { display: flex; flex-direction: column; gap: 3px; }
-	.flabel { font-size: 11px; opacity: 0.85; }
+	.flabel { font-size: 11px; color: var(--fgdim); }
 	.finput {
-		background: transparent; color: inherit; border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-		border-radius: 6px; padding: 6px 8px; font-size: 13px;
+		background: transparent; color: inherit; border: 1px solid var(--lineb);
+		border-radius: 3px; padding: 6px 9px; font: inherit; font-size: 12.5px;
 	}
-	.fauto { font-size: 10px; opacity: 0.6; }
+	.finput:focus { outline: none; border-color: var(--accent); }
+	.fauto { font-size: 10px; color: var(--fgfaint); }
+	.fsubmit { align-self: flex-start; }
 	.facs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 	.fac {
-		background: transparent; color: inherit; border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
-		border-radius: 4px; padding: 4px 8px; font-size: 12px; text-align: left; cursor: pointer; width: 100%;
+		background: var(--panel2); color: var(--fg); border: 1px solid var(--lineb);
+		border-radius: 3px; padding: 5px 8px; font-size: 12px; text-align: left;
+		cursor: pointer; width: 100%;
 	}
-	.flist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-	.frow {
-		background: transparent; color: inherit; border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
-		border-radius: 6px; padding: 6px 10px; font-size: 12px; text-align: left; cursor: pointer; width: 100%;
-		display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline;
+	.fac:hover { border-color: var(--accent); }
+
+	/* Legacy-Flows ohne open-Block: Reiter in globaler Chip-Optik (Req. 10) */
+	.ftabs { display: flex; gap: 4px; flex-wrap: wrap; }
+
+	/* Detailzeilen (ohne Kopier-Buttons) */
+	.fdetail { margin: 0; display: flex; flex-direction: column; }
+	.fdetail-line {
+		display: grid; grid-template-columns: 150px 1fr; gap: 10px; align-items: baseline;
+		padding: 6px 0; border-bottom: 1px solid var(--line);
 	}
-	.frow:hover { border-color: currentColor; }
-	.fk { font-size: 10px; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.05em; }
-	.fv { font-size: 12px; }
-	.fdetail { margin: 0; display: flex; flex-direction: column; gap: 4px; }
-	.fdetail-line { display: flex; gap: 8px; align-items: baseline; }
-	.fmarkinfo { font-size: 11px; opacity: 0.75; margin: 0; }
-	.fmark.is-marked { border-color: currentColor; font-weight: 700; }
-	.fcheck { font-size: 13px; }
-	.factions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-	.factions .fafield { flex: 0 1 220px; }
-	.fcopy {
-		margin-left: 6px;
-		padding: 0 5px;
-		font-size: 11px;
-		line-height: 1.4;
-		cursor: pointer;
-		opacity: 0.7;
+	.fv { font-size: 12.5px; color: var(--fg); overflow-wrap: anywhere; }
+
+	/* Actions nach globaler .btn/.btn-ghost-Norm (Punkt 3) — nur Layout hier */
+	.factions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+	/* D-B Punkt 7: Action-Feld als eigene Zeile unterhalb der Buttons */
+	.factionfields {
+		display: flex; flex-direction: column; gap: 8px; max-width: 460px;
+		margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line);
 	}
-	.fcopy:hover { opacity: 1; }
 </style>
