@@ -40,3 +40,6 @@ market_screens/
 __pycache__/
 *.pyc
 .worktrees/
+
+# Internes Plugin-Manifest (SCLM) — lokal, nicht für Repos/Releases (Sebo 2026-11-04)
+examples/sclm.json

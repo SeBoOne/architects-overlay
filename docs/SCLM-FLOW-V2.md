@@ -221,3 +221,14 @@ Web-seitig mit Innen-Leerzeichen angelegte Teilnehmer matched weiterhin.
 Frontend: Draft-Vorbesetzung aus settings_values + Server-Echo nach Speichern
 (zeigt den bereinigten Wert). SCLM-Server vergleicht lower(name), Innen-Leerzeichen
 bleiben dort erhalten — die Overlay-Bereinigung ist einseitig bewusst.
+
+## 14. examples/sclm.json ist jetzt lokal (2026-11-04)
+
+Das SCLM-Manifest ist ein internes Plugin und wurde aus allen Repo-Historien
+(inkl. öffentlichem GitHub, per filter-repo) entfernt; main ist dort umgeschrieben
+(50acbb2 → bde2650, Tags neu gesetzt). Die Datei liegt lokal als
+`examples/sclm.json` (untracked, in .gitignore) plus Backup
+`~/.config/architects-overlay/plugins-sclm-backup.json`. Probe-Skripte in
+docs/scripts/ funktionieren mit der lokalen Datei unverändert weiter.
+Feature-Branch-Zweige in den privaten Repos wurden nicht umgeschrieben (alle
+längst in main gemerged); der öffentliche Verlauf enthält die Datei nie wieder.
