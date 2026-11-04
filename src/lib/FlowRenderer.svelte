@@ -147,8 +147,11 @@
 			)
 	);
 	// D-B Punkt 4 (generisch): Mapping-Keys, die nur Pin-/Plumbing-Zwecke
-	// sind — Union aus Screen-pins, Action-params, Action-Template-Platz-
-	// haltern (path/body/header), pins_map-Keys und keystore_fields-Quellen.
+	// sind — Union aus Screen-pins, keystore_fields-Quellen, Action-params
+	// und pins_map-Keys. Bewusst KEINE Template-Platzhalter (body/path/
+	// header): die referenzieren oft Mensch-Spalten (z. B. rename-Template
+	// {name} in c_participants, {scu} in commodities) — deren Aufnahme in
+	// die Union würde menschliche Spalten verstecken (Review R1, Punkt 4).
 	// Whitelist-Logik: Keys, die NICHT in dieser Union liegen, bleiben sichtbar.
 	const hiddenMappingKeys = $derived.by(() => {
 		const s = shown;
@@ -159,9 +162,6 @@
 		for (const a of s.actions ?? []) {
 			for (const p of a.params ?? []) hidden.add(p.key);
 			for (const k of Object.keys(a.pins_map ?? {})) hidden.add(k);
-			templateKeys(a.body_template, hidden);
-			if (a.path) templateKeys(a.path, hidden);
-			for (const v of Object.values(a.headers ?? {})) templateKeys(v, hidden);
 		}
 		return hidden;
 	});
@@ -345,8 +345,10 @@
 			seedFromState(t, formValues);
 		}
 		res = { data: null, error: '', loading: false };
-		// Punkt 1: Eintritt in einen Screen = Frisch-Fetch (force).
-		untrack(() => void load(true));
+		// Punkt 1: Frisch-Fetch beim Screen-Wechsel erledigt der $effect
+		// (trackt `shown`, ruft load(true) bei jeder Screen-Änderung) —
+		// ein zweiter load hier wäre ein Doppel-Request pro Transition
+		// (Review R1, Finding 1).
 	}
 
 	// ---- Poll-Regeln -------------------------------------------------------
