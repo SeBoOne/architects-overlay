@@ -189,3 +189,20 @@ nur Admin/Ersteller zurücknimmt — API.md §12/13.4); PATCH `/api/session/{sid
 7. Reiter: Teilnehmer-Reiter nur bei geöffnetem Flow; Ersteller-Reiter komplett
    aus (Range stillgelegt). Landliste ohne Reiter erreichbar via Hotkey/Code.
 8. "Zurück zur Liste"-Button im Reiterstil neben Teilnehmer-Reiter zurück (neben Esc).
+
+## 12. Stand nach Korrekturrunde 2 (main bca6906, 2026-11-04)
+
+Karte E (t_102e220d, Branch feat/sclm-ux-v4 @ 4ea9a15, Review APPROVED 18/18-Sonde)
+gemerged + Reviewer-Finding 1 selbst gehärtet (Actions-Block aus bei resultsPending).
+Dauerhafte Technik-Fakten:
+- Rust `screen_as_view`: ScreenType::Results → ViewType::Table → `map_view` liefert
+  results-Screens als ZEILENARRAY (Skalare nur in Zeile 0; {result:null} → leerer
+  Array = „noch offen“, resultsPending). Frontend normalisiert via
+  `connector.ts normalizeResults/groupNames` (names nie Flags; rid/waived/collected
+  als scalars ins fstate → Action-rid ohne Zeilenauswahl).
+- Manifest-Mapping-Keys kommen aus Rust-BTreeMap alphabetisch sortiert im DTO an —
+  Hauptspaltenwahl (name-first) ist FRONTEND-Verantwortung (listColumns).
+- collected/waived ist pro ERGEBNIS (rid), one-way; UI: Statuschip ersetzt beide
+  Buttons; Ersteller-Reset → Frische-Fetch → Buttons zurück.
+- Ersteller-Reiter per `creatorTabsDisabled=true` stillgelegt (Code erhalten).
+Visuelle Abnahme Runde 2: Sebo. Release 0.5.45 weiterhin nur nach explizitem GO.
