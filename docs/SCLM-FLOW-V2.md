@@ -206,3 +206,18 @@ Dauerhafte Technik-Fakten:
   Buttons; Ersteller-Reset → Frische-Fetch → Buttons zurück.
 - Ersteller-Reiter per `creatorTabsDisabled=true` stillgelegt (Code erhalten).
 Visuelle Abnahme Runde 2: Sebo. Release 0.5.45 weiterhin nur nach explizitem GO.
+
+## 13. Username-Bereinigung + Klartwert-Anzeige (2026-11-04, direkt auf main)
+
+Sebo Runde 3: (a) SCLM-Benutzername wird beim Speichern自动 leerzeichenfrei
+(alle Whitespace-Charaktere), (b) der gespeicherte Name ist kein Geheimnis und
+wird in den Settings angezeigt (nicht mehr nur "bereits gesetzt").
+Umsetzung: connector.rs — strip_connector_ws/name_key/normalized_setting_value;
+NICHT-geheime settings_fields werden bei Save UND Read (settings_field_values,
+declared_setting_values, ConnectorEntry.settings_values ans Frontend) bereinigt;
+secret:true-Felder bleiben byte-treu (Secret-Vertrag Spec 5.1 unverändert).
+Name-Matching (scan + flow) vergleicht leerzeichenfrei+lowercase BEIDE Seiten —
+Web-seitig mit Innen-Leerzeichen angelegte Teilnehmer matched weiterhin.
+Frontend: Draft-Vorbesetzung aus settings_values + Server-Echo nach Speichern
+(zeigt den bereinigten Wert). SCLM-Server vergleicht lower(name), Innen-Leerzeichen
+bleiben dort erhalten — die Overlay-Bereinigung ist einseitig bewusst.

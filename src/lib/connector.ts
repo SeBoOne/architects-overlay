@@ -260,9 +260,12 @@ export type ConnectorEntry = {
 	manifest: ConnectorManifestDTO;
 	enabled: boolean;
 	auth_set: Record<string, boolean>;
-	/** Pro deklariertem settings_fields-Key: Wert gesetzt? (Werte selbst
-	 * verlassen das Backend nie — Auth-Mechanik, Spec 5.1). */
+	/** Pro deklariertem settings_fields-Key: Wert gesetzt? (Secret-Felder:
+	 * nur dieser Booles — Klartwerte verlassen das Backend nie, Spec 5.1). */
 	settings_set: Record<string, boolean>;
+	/** Gespeicherte Klartwerte NICHT-geheimer Felder (Sebo Runde 3: Name ist
+	 * kein Geheimnis — Anzeige in den Settings; secret:true-Felder fehlen). */
+	settings_values?: Record<string, string>;
 	hotkey: string | null;
 };
 

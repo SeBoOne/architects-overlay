@@ -3957,6 +3957,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let pluginWarn = $state<{ text: string; msg: string } | null>(null);
 	let authDraft = $state<Record<string, string>>({});
 	let pluginFieldDraft = $state<Record<string, string>>({});
+
+	// Sebo Runde 3: gespeicherte NICHT-geheime Feldwerte werden angezeigt —
+	// Draft aus settings_values vorbesetzen (Name statt "bereits gesetzt").
+	// Secret-Felder tauchen in settings_values nie auf (Secret-Vertrag Spec 5.1),
+	// deren Draft bleibt leer; Konvergenz: zweite Runde setzt nichts mehr.
+	$effect(() => {
+		const seeds: Record<string, string> = {};
+		for (const c of connectors ?? []) {
+			for (const f of c.manifest.settings_fields ?? []) {
+				const k = `${c.id}:${f.key}`;
+				if (pluginFieldDraft[k] !== undefined) continue;
+				seeds[k] = c.settings_values?.[f.key] ?? '';
+			}
+		}
+		if (Object.keys(seeds).length) {
+			pluginFieldDraft = { ...pluginFieldDraft, ...seeds };
+		}
+	});
 	let connHkCapture = $state<string | null>(null);
 	let connHkNote = $state('');
 
@@ -4046,7 +4064,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				key: f.key,
 				value: clear ? null : (pluginFieldDraft[settingDraftKey(c, f)] || null)
 			});
-			pluginFieldDraft = { ...pluginFieldDraft, [settingDraftKey(c, f)]: '' };
+			// Server-Echo (Sebo Runde 3): das Feld zeigt den gespeicherten,
+			// leerzeichenfreien Wert — nicht das leere Draft nach dem Speichern.
+			const storedEcho =
+				connectors.find((e) => e.id === c.id)?.settings_values?.[f.key] ?? '';
+			pluginFieldDraft = { ...pluginFieldDraft, [settingDraftKey(c, f)]: storedEcho };
 			pluginNote = {
 				key: clear ? 'settings.plugins_field_cleared' : 'settings.plugins_field_saved',
 				params: { label: labelOf(f.label, currentLang()) }

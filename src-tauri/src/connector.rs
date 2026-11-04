@@ -68,6 +68,10 @@ pub struct ConnectorEntry {
     /// Pro deklariertem `settings_fields`-Key: ist ein Wert gesetzt? Der Wert
     /// selbst verlässt das Backend nie (Auth-Feld-Mechanik, Spec 5.1).
     pub settings_set: BTreeMap<String, bool>,
+    /// Gespeicherte Klartwerte NICHT-geheimer settings_fields (Secret-Vertrag
+    /// bleibt: `secret:true`-Felder erscheinen hier nie — Sebo-Runde-3: der
+    /// Benutzername ist kein Geheimnis und wird im Settings angezeigt).
+    pub settings_values: BTreeMap<String, String>,
 }
 
 impl ConnectorEntry {
@@ -83,12 +87,31 @@ impl ConnectorEntry {
         {
             auth_set.insert(key.to_owned(), s.connector_auth_value(id, key).is_some());
         }
+        // Nicht-geheim deklarierte Settings-Felder: gespeicherter Wert fürs
+        // Frontend (Anzeige statt "bereits gesetzt"); secret:true-Felder werden
+        // nie ausgegeben (Secret-Vertrag Spec 5.1 bleibt unberührt).
+        let mut settings_values = BTreeMap::new();
+        if let Some(fields) = manifest.get("settings_fields").and_then(|f| f.as_array()) {
+            for f in fields {
+                let Some(key) = f.get("key").and_then(|k| k.as_str()) else {
+                    continue;
+                };
+                if f.get("secret").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    continue;
+                }
+                if let Some(v) = s.connector_setting_value(id, key) {
+                    // Anzeige wie Matching: leerzeichenfrei (Sebo Runde 3).
+                    settings_values.insert(key.to_owned(), strip_connector_ws(v));
+                }
+            }
+        }
         ConnectorEntry {
             id: id.to_owned(),
             manifest: manifest.clone(),
             enabled: s.connector_enabled(id),
             auth_set,
             settings_set: s.connector_setting_values_set(id),
+            settings_values,
             hotkey: s.connector_hotkey(id).map(str::to_owned),
         }
     }
@@ -421,7 +444,7 @@ pub(crate) fn settings_field_values(
                 return None;
             }
             s.connector_setting_value(id, k)
-                .map(|v| (k.clone(), v.to_owned()))
+                .map(|v| (k.clone(), normalized_setting_value(*secret, v)))
         })
         .collect()
 }
@@ -439,18 +462,9 @@ pub(crate) fn declared_setting_values(
         .iter()
         .filter_map(|f| {
             s.connector_setting_value(id, &f.key)
-                .map(|v| (f.key.clone(), v.to_owned()))
+                .map(|v| (f.key.clone(), normalized_setting_value(f.secret, v)))
         })
         .collect()
-}
-
-/// Deklariert das Manifest den Key als settings_fields-Eintrag?
-fn setting_field_declared(state: &ConnectorState, id: &str, key: &str) -> bool {
-    let entries = state.entries.lock().expect("connector entries lock");
-    entries
-        .iter()
-        .find(|e| e.manifest.id == id)
-        .is_some_and(|e| e.manifest.settings_fields.iter().any(|f| f.key == key))
 }
 
 /// Keystore-Pfade des Connectors (Geschwister-Ordner des Manifest-Stores).
@@ -474,9 +488,21 @@ pub async fn connector_set_setting_field(
             return Err(err_key("error.connector.unknown"));
         }
     }
-    if !setting_field_declared(&state, &id, &key) {
+    // Sebo Runde 3: NICHT-geheime Settings-Felder werden leerzeichenfrei
+    // gespeichert (Benutzername-Z_noise); secret:true-Felder bleiben byte-treu
+    // (Codes/Token sind Daten, keine Namen).
+    let field_secret = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        entries
+            .iter()
+            .find(|e| e.manifest.id == id)
+            .and_then(|e| e.manifest.settings_fields.iter().find(|f| f.key == key))
+            .map(|f| f.secret)
+    };
+    let Some(field_secret) = field_secret else {
         return Err(err_key("error.connector.setting_field_undeclared"));
-    }
+    };
+    let value = value.map(|v| normalized_setting_value(field_secret, &v));
     {
         let mut s = settings_state.inner.lock().expect("settings lock");
         s.set_connector_setting_value(&id, &key, value.filter(|v| !v.trim().is_empty()));
@@ -644,15 +670,44 @@ pub(crate) fn select_scan_candidates(
     out
 }
 
-/// ci-EXAKTER Name-Vergleich (Entscheidung „Name-Match exakt ci“): trim +
-/// Unicode-lowercase; kein substring, kein Präfix. Non-String-Namen ignorieren,
+/// SCLM-Username-Regel (Sebo Runde 3): Benutzernamen werden ohne Leerzeichen
+/// gespeichert und leerzeichenfrei verglichen. Nicht-geheime Settings-Felder
+/// werden beim Speichern UND beim Auslesen bereinigt (Hebel auf bereits
+/// gespeicherte Werte); `secret:true`-Felder bleiben byte-treu (Codes/Token).
+pub(crate) fn strip_connector_ws(value: &str) -> String {
+    value.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Vergleichs-Normalisierung für Namen: leerzeichenfrei + Unicode-lowercase
+/// (kein substring, kein Präfix). Die SCLM-Serverseite vergleicht `lower(name)`;
+/// Web-seitig angelegte Teilnehmer-Namen können Innen-Leerzeichen tragen und
+/// matched trotzdem.
+fn name_key(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Nicht-geheime Settings-Werte leerzeichenfrei ausliefern (Spec 5.1 Lese-
+/// Pfad; Secrets bleiben unberührt).
+fn normalized_setting_value(secret: bool, value: &str) -> String {
+    if secret {
+        value.to_owned()
+    } else {
+        strip_connector_ws(value)
+    }
+}
+
+/// ci-EXAKTER Name-Vergleich (Entscheidung „Name-Match exakt ci"): via
+/// name_key (leerzeichenfrei + lowercase). Non-String-Namen ignorieren,
 /// kaputter Dot-Path = kein Treffer (detail-Fehler wird ohnehin übersprungen).
 pub(crate) fn scan_name_matches(
     detail: &serde_json::Value,
     match_path: &str,
     username: &str,
 ) -> bool {
-    let user = username.trim().to_lowercase();
+    let user = name_key(username);
     if user.is_empty() {
         return false;
     }
@@ -662,7 +717,7 @@ pub(crate) fn scan_name_matches(
     };
     hits.iter()
         .filter_map(|v| v.as_str())
-        .any(|n| n.trim().to_lowercase() == user)
+        .any(|n| name_key(n) == user)
 }
 
 /// String-Wert eines Listen-Felds (Zahlen werden String-belegt — sids sind
@@ -1632,7 +1687,7 @@ pub(crate) fn flow_participant_match(
     id_path: &str,
     username: &str,
 ) -> Option<MatchedParticipant> {
-    let user = username.trim().to_lowercase();
+    let user = name_key(username);
     if user.is_empty() {
         return None;
     }
@@ -1640,7 +1695,7 @@ pub(crate) fn flow_participant_match(
     let ids = connector::dot_path(detail, id_path).ok()?;
     for (n, id) in names.iter().zip(ids.iter()) {
         if let Some(s) = n.as_str()
-            && s.trim().to_lowercase() == user
+            && name_key(s) == user
             && let Some(i) = value_to_string(id)
         {
             return Some(MatchedParticipant {
@@ -2948,6 +3003,53 @@ mod tests {
         assert!(!scan_name_matches(&detail, "participants[].name", ""));
         // Kaputter Dot-Path = kein Treffer (Detail-Fehler wird ohnehin übersprungen).
         assert!(!scan_name_matches(&detail, "participants[].nope", "semih"));
+    }
+
+    #[test]
+    fn username_whitespace_stripped_read_and_match_sebo_round3() {
+        // Sebo Runde 3: Nicht-geheime Settings-Werte werden leerzeichenfrei
+        // ausgeliefert (Anzeige + Platzhalter), Secrets bleiben byte-treu.
+        let m = manifest_with_secret_setting_fields(&[("sclm_username", false), ("tok", true)]);
+        let st = settings_state_with(
+            "sclm",
+            &[("sclm_username", " Semih Balci "), ("tok", "a b c")],
+        );
+        let cs = test_connector_state(vec![m]);
+        let out = settings_field_values(&cs, &st, "sclm", false);
+        assert_eq!(out["sclm_username"], "SemihBalci");
+        let in_backend = settings_field_values(&cs, &st, "sclm", true);
+        assert_eq!(in_backend["sclm_username"], "SemihBalci");
+        assert_eq!(in_backend["tok"], "a b c", "secret:true bleibt byte-treu");
+
+        // Match: Web-seitig mit Innen-Leerzeichen angelegter Teilnehmer wird
+        // vom leerzeichenfreien Overlay-Namen gefunden (beide Seiten name_key).
+        let detail = json!({"participants": [
+            {"name": "Semih Balci", "id": 7},
+            {"name": "Andere Person", "id": 8}
+        ]});
+        assert!(scan_name_matches(
+            &detail,
+            "participants[].name",
+            "SemihBalci"
+        ));
+        assert!(scan_name_matches(
+            &detail,
+            "participants[].name",
+            "semih balci"
+        ));
+        assert!(!scan_name_matches(
+            &detail,
+            "participants[].name",
+            "SemihBalc"
+        ));
+        let matched = flow_participant_match(
+            &detail,
+            "participants[].name",
+            "participants[].id",
+            "semihbalci",
+        );
+        assert!(matched.is_some(), "leerzeichenfreier Match gegen Web-Namen");
+        assert_eq!(matched.unwrap().id, "7");
     }
 
     #[test]
