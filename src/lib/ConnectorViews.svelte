@@ -292,7 +292,7 @@
 			} else {
 				const out = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
 					id: entry.id,
-					flow_id: fl.id,
+					flowId: fl.id, // Tauri erwartet camelCase-Kommandoargumente (Rust-Parameter flow_id)
 					code
 				});
 				flowId = out.flow_id;

@@ -3929,7 +3929,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const out = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
 				id: ownEntry.id,
-				flow_id: fl.id,
+				flowId: fl.id, // Tauri erwartet camelCase-Kommandoargumente (Rust-Parameter flow_id)
 				code: c
 			});
 			ownFlowNote = '';
