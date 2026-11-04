@@ -1059,6 +1059,11 @@ pub(crate) async fn fetch_inner(
     // TTL-Cache: fetch nur bei Ablauf oder force (F5/Manual-Button). Der
     // Cache-Schlüssel schließt die Parameter ein — zwei Sessions kollidieren
     // nicht im Cache.
+    // D-A (Fresh-Fetch): Flow-Screens bedienen den Flow — jeder Flow-Schritt
+    // holt FRISCHE Daten, der Poll-Cache darf einen Flow-Abruf nie bedienen
+    // (auch nicht der Session-Laden in flow_open_core, der ohnehin direkt
+    // über fetch_request geht). View-/Scan-Caching bleibt unverändert.
+    let flow_screen_fetch = find_flow_screen(&manifest, view_id).is_some();
     let poll_secs = view.poll_seconds.unwrap_or(DEFAULT_POLL_SECONDS).max(1);
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1068,7 +1073,7 @@ pub(crate) async fn fetch_inner(
         id.to_owned(),
         format!("{view_id}?{}", canonical_params(&params)),
     );
-    if !force {
+    if !force && !flow_screen_fetch {
         let cache = state.cache.lock().expect("cache lock");
         if let Some(c) = cache.get(&cache_key)
             && now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs)
@@ -1609,12 +1614,19 @@ fn generate_pcode() -> String {
 
 /// ci-EXAKTER Name-Vergleich gegen die Teilnehmerliste derselben Session
 /// (gleiche Semantik wie die Landlisten-Zuordnung, Spec 5.4 Punkt 2).
+/// Liefert das TREFFENDE Teilnehmer-Objekt mit (D-A: progress-/wishes-Lesezugriff
+/// relativ zum gematchten Teilnehmer).
+pub(crate) struct MatchedParticipant {
+    pub id: String,
+    pub name: String,
+}
+
 pub(crate) fn flow_participant_match(
     detail: &serde_json::Value,
     match_path: &str,
     id_path: &str,
     username: &str,
-) -> Option<String> {
+) -> Option<MatchedParticipant> {
     let user = username.trim().to_lowercase();
     if user.is_empty() {
         return None;
@@ -1626,10 +1638,131 @@ pub(crate) fn flow_participant_match(
             && s.trim().to_lowercase() == user
             && let Some(i) = value_to_string(id)
         {
-            return Some(i);
+            return Some(MatchedParticipant {
+                id: i,
+                name: s.trim().to_owned(),
+            });
         }
     }
     None
+}
+
+/// D-A: match_path zeigt auf die NAMEN-Liste, nicht auf die Teilnehmer-
+/// Objekte. Das Fortschritts-/Wünsche-Lesen braucht aber das Objekt des
+/// Treffers — deshalb generischer Lookup: erste Objekt-Liste im Body, deren
+/// Elemente denselben (name, id)-Wert tragen wie der Match (kein
+/// Connector-Sprech, Namen-Pfade bleiben im Manifest).
+fn find_participant_object(
+    body: &serde_json::Value,
+    match_name: &str,
+    match_id: &str,
+) -> Option<serde_json::Value> {
+    let matches_item = |item: &serde_json::Value| -> bool {
+        let name_ok = connector::dot_path(item, "name")
+            .ok()
+            .and_then(|hits| hits.first().copied())
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.trim() == match_name);
+        let id_ok = connector::dot_path(item, "id")
+            .ok()
+            .and_then(|hits| hits.first().copied())
+            .and_then(value_to_string)
+            .is_some_and(|s| s == match_id);
+        name_ok && id_ok
+    };
+    match body {
+        serde_json::Value::Object(map) => map
+            .values()
+            .find_map(|v| find_participant_object(v, match_name, match_id)),
+        serde_json::Value::Array(items) => {
+            if let Some(hit) = items.iter().find(|item| matches_item(item)) {
+                return Some(hit.clone());
+            }
+            items
+                .iter()
+                .find_map(|item| find_participant_object(item, match_name, match_id))
+        }
+        _ => None,
+    }
+}
+
+/// D-A Feedback 2: „bereits begonnen“ am gematchten Teilnehmer —
+/// `progress_path` (relativ zum Teilnehmer-Objekt) liefert ein nicht-leeres
+/// Array ODER bool true (bool-true wie beim Done-Flag; Zahl/String zählt
+/// nicht als Fortschritt).
+fn participant_progress(participant: &serde_json::Value, progress_path: &str) -> bool {
+    let Some(hit) = connector::dot_path(participant, progress_path)
+        .ok()
+        .and_then(|hits| hits.first().copied())
+    else {
+        return false;
+    };
+    match hit {
+        serde_json::Value::Array(items) => !items.is_empty(),
+        serde_json::Value::Bool(b) => *b,
+        _ => false,
+    }
+}
+
+/// D-A Feedback 8: wishes-IDs des gematchten Teilnehmers gegen die
+/// Session-Collection auflösen (item.id_path → item.name_path). Ergebnis in
+/// Collection-Reihenfolge, je Item-ID genau einmal; unbekannte IDs werden
+/// übersprungen. Leere Liste → None (Key wird dann GAR NICHT gesetzt —
+/// Frontend behandelt fehlend = ausblenden).
+fn resolve_self_wishes(
+    body: &serde_json::Value,
+    participant: &serde_json::Value,
+    sw: &connector::flow::SelfWishes,
+) -> Option<Vec<String>> {
+    let hits = connector::dot_path(participant, &sw.wishes_path).ok()?;
+    // wishes kommt als EIN Array-Hit (dot_path liefert Treffer-Vec) —
+    // Scalars extrahieren: Array-Hits flach machen, Einzelwerte übernehmen.
+    let mut scalars: Vec<&serde_json::Value> = Vec::new();
+    for hit in &hits {
+        match hit {
+            serde_json::Value::Array(items) => scalars.extend(items.iter()),
+            other => scalars.push(other),
+        }
+    }
+    let id_values = scalars
+        .into_iter()
+        .filter_map(value_to_string)
+        .collect::<std::collections::BTreeSet<_>>();
+    if id_values.is_empty() {
+        return None;
+    }
+    let hits = connector::dot_path(body, &sw.collection).ok()?;
+    // Collection-Hits normalisieren: 'loot' liefert das Array als EINEN Hit
+    // (Items erst herausziehen), 'loot[]' liefert bereits Items.
+    let mut items: Vec<&serde_json::Value> = Vec::new();
+    for hit in &hits {
+        match hit {
+            serde_json::Value::Array(inner) => items.extend(inner.iter()),
+            other => items.push(other),
+        }
+    }
+    let mut names: Vec<String> = Vec::new();
+    for item in &items {
+        let Some(id) = connector::dot_path(item, &sw.id_path)
+            .ok()
+            .and_then(|hits| hits.first().copied())
+            .and_then(value_to_string)
+        else {
+            continue;
+        };
+        if !id_values.contains(&id) {
+            continue;
+        }
+        if let Some(name) = connector::dot_path(item, &sw.name_path)
+            .ok()
+            .and_then(|hits| hits.first().copied())
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_owned())
+        {
+            names.push(name);
+        }
+    }
+    (!names.is_empty()).then_some(names)
 }
 
 /// open.mapping → Flow-Zustand: ein Treffer → Skalar, mehrere → echtes Array,
@@ -1752,9 +1885,11 @@ pub(crate) async fn flow_open_core(
     let mut joined = false;
     let mut claimed = false;
     let mut resp_pcode: Option<String> = None;
+    let mut matched_participant: Option<serde_json::Value> = None;
     let pid =
         if let Some(found) = flow_participant_match(&body, &o.match_path, &o.id_path, &username) {
-            found
+            matched_participant = find_participant_object(&body, &found.name, &found.id);
+            found.id
         } else {
             // Selbst eintragen (POST). Body-Default: {"name": "{match_setting_key}"}.
             let mut jbody = o
@@ -1845,10 +1980,41 @@ pub(crate) async fn flow_open_core(
     state.insert("participant_id".to_owned(), serde_json::Value::String(pid));
     state.insert("pcode".to_owned(), serde_json::Value::String(pcode));
 
-    // 7) Auto-Weiche: Event schon gelaufen → direkt Ergebnis-Screen.
+    // 6b) D-A Feedback 8 (Selbst-Wünsche-Injektion): wishes-IDs des
+    // gematchten Teilnehmers gegen die Session-Collection auflösen →
+    // state["wished"] = Item-Namen. Ohne Treffer wird der Key GAR NICHT
+    // gesetzt (Frontend: fehlend = ausblenden).
+    if let (Some(sw), Some(participant)) = (&o.self_wishes, &matched_participant)
+        && let Some(names) = resolve_self_wishes(&body, participant, sw)
+    {
+        state.insert(
+            "wished".to_owned(),
+            serde_json::Value::Array(
+                names
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect::<Vec<_>>(),
+            ),
+        );
+    }
+
+    // 7) Auto-Weiche: done hat VORRANG (Gezogene landen immer im Ergebnis),
+    //    sonst Resume-Regel (D-A Feedback 2): progress_path am gematchten
+    //    Teilnehmer gesetzt (nicht-leeres Array ODER bool true) →
+    //    progress_screen, sonst open_screen.
     let done = truthy_flag(state.get(&o.done_path).unwrap_or(&serde_json::Value::Null));
+    let resumed = !done
+        && matched_participant.as_ref().is_some_and(|p| {
+            o.progress_path
+                .as_deref()
+                .is_some_and(|pp| participant_progress(p, pp))
+        });
     let screen = if done {
         o.done_screen.clone()
+    } else if resumed {
+        o.progress_screen
+            .clone()
+            .unwrap_or_else(|| o.open_screen.clone())
     } else {
         o.open_screen.clone()
     };
@@ -3230,6 +3396,14 @@ mod tests {
                 .any(|a| a.goto.as_deref() == Some("wishes")),
             "wait trägt „Wünsche ändern“ (Requirement 8)"
         );
+        // D-A: Resume-Felder + Selbst-Wünsche-Schalter sind wirklich drin.
+        assert_eq!(o.progress_path.as_deref(), Some("wishes"));
+        assert_eq!(o.progress_screen.as_deref(), Some("wait"));
+        let sw = o.self_wishes.as_ref().expect("self_wishes-Schalter");
+        assert_eq!(sw.wishes_path, "wishes");
+        assert_eq!(sw.collection, "loot");
+        assert_eq!(sw.id_path, "id");
+        assert_eq!(sw.name_path, "name");
     }
 
     /// reqwest braucht einen Tokio-Reactor (net+time) — reine futures::block_on
@@ -3241,6 +3415,10 @@ mod tests {
             .expect("tokio runtime");
         rt.block_on(fut)
     }
+
+    /// Mock-Handler liest die Routen dynamisch (D-A: Mock-Antwort darf
+    /// zwischen zwei Aufrufe desselben Endpunkts geändert werden).
+    pub(crate) struct MockRoutes(pub std::sync::Mutex<Vec<(String, String, u16, String)>>);
 
     /// Minimal-HTTP-Fixture: antwortet auf (method, path) mit fixem
     /// status+body und protokolliert jeden Treffer (headers/body). Prüft
@@ -3329,6 +3507,100 @@ mod tests {
         out
     }
 
+    /// Variante mit MUTABLEN Routen (D-A Fresh-Fetch-Test): die Antwort desselben
+    /// Endpunkts kann zwischen Aufrufen geändert werden (Mock-„Datenänderung“).
+    fn start_mock_api_dyn(
+        routes: Vec<(&str, &str, u16, &str)>,
+    ) -> (
+        String,
+        std::sync::mpsc::Receiver<MockHit>,
+        std::sync::Arc<MockRoutes>,
+    ) {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+        use std::sync::mpsc;
+        use std::thread;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("mock bind");
+        let port = listener.local_addr().unwrap().port();
+        let routes = std::sync::Arc::new(MockRoutes(std::sync::Mutex::new(
+            routes
+                .into_iter()
+                .map(|(m, p, s, b)| (m.to_owned(), p.to_owned(), s, b.to_owned()))
+                .collect(),
+        )));
+        let (tx, rx) = mpsc::channel();
+        let routes_bg = routes.clone();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().expect("mock clone"));
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    continue;
+                }
+                let mut parts = line.split_whitespace();
+                let method = parts.next().unwrap_or("").to_owned();
+                let path = parts.next().unwrap_or("").to_owned();
+                let mut headers: Vec<(String, String)> = Vec::new();
+                let mut content_length = 0usize;
+                loop {
+                    let mut h = String::new();
+                    if reader.read_line(&mut h).unwrap_or(0) == 0 || h.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((k, v)) = h.split_once(':') {
+                        if k.trim().eq_ignore_ascii_case("content-length") {
+                            content_length = v.trim().parse().unwrap_or(0);
+                        }
+                        headers.push((k.trim().to_owned(), v.trim().to_owned()));
+                    }
+                }
+                let mut body = String::new();
+                if content_length > 0 {
+                    let mut buf = vec![0u8; content_length];
+                    let _ = reader.read_exact(&mut buf);
+                    body = String::from_utf8_lossy(&buf).to_string();
+                }
+                let _ = tx.send(MockHit {
+                    method: method.clone(),
+                    path: path.clone(),
+                    headers,
+                    body,
+                });
+                let (status, resp) = routes_bg
+                    .0
+                    .lock()
+                    .expect("mock routes lock")
+                    .iter()
+                    .find(|(m, p, _, _)| *m == method && *p == path)
+                    .map(|(_, _, s, b)| (*s, b.clone()))
+                    .unwrap_or((500, r#"{"error":"no route"}"#.to_owned()));
+                let head = format!(
+                    "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    resp.len()
+                );
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(resp.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), rx, routes)
+    }
+
+    /// Mock-Antwort desselben (method, path) ersetzen (Datenänderung testen).
+    fn set_mock_route(routes: &MockRoutes, method: &str, path: &str, status: u16, body: &str) {
+        let mut guard = routes.0.lock().expect("mock routes lock");
+        if let Some(r) = guard
+            .iter_mut()
+            .find(|(m, p, _, _)| *m == method && *p == path)
+        {
+            r.2 = status;
+            r.3 = body.to_owned();
+        } else {
+            guard.push((method.to_owned(), path.to_owned(), status, body.to_owned()));
+        }
+    }
+
     ///participant-Flow-Fixture im v2-Schema (open-Block + wishes/wait/results),
     /// base_url zeigt auf die Mock-API. Bewusst identische Feldstruktur wie
     /// examples/sclm.json (Entwurksnah, aber test-fix).
@@ -3388,8 +3660,11 @@ mod tests {
      "X-SCLM-Code": "{code}"
     },
     "open_screen": "wishes",
-    "done_screen": "results"
-   },
+    "done_screen": "results",
+    "progress_path": "wishes",
+    "progress_screen": "wait",
+    "self_wishes": {}
+    },
    "screens": [
     {
      "id": "wishes",
@@ -3872,6 +4147,296 @@ mod tests {
             "nur die Session-Lastung, kein Join-POST danach"
         );
         assert!(!file.exists(), "unbekannte Session → kein Keystore-Eintrag");
+    }
+
+    // ---- D-A Karte: Fresh-Fetch + Resume + Selbst-Wünsche ------------------
+
+    /// ConnectorState-Ziegel nur mit einem Manifest-Eintrag (fetch_inner-Tests).
+    fn flow_test_state(
+        manifest: &connector::ConnectorManifest,
+        keystore_file: &std::path::Path,
+    ) -> ConnectorState {
+        ConnectorState {
+            dir: keystore_file.parent().expect("keystore-dir").to_path_buf(),
+            entries: std::sync::Mutex::new(vec![StoredConnector {
+                raw: String::new(),
+                manifest: manifest.clone(),
+                value: serde_json::Value::Null,
+            }]),
+            cache: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn flow_screen_fetch_bypasses_poll_cache_but_view_cache_stays() {
+        // D-A Fresh-Fetch: ein zweiter Flow-Screen-Abruf (force=false, direkt
+        // nacheinander) darf NICHT aus dem Poll-Cache bedient werden — der
+        // Mock muss beide Abrufe sehen. View-Abrufe cachen unverändert weiter.
+        let (base, rx, routes) = start_mock_api_dyn(vec![
+            (
+                "GET",
+                "/api/session/ABC123",
+                200,
+                r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":false,"participants":[]}"#,
+            ),
+            ("GET", "/api/sessions", 200, r#"{"sessions":[]}"#),
+        ]);
+        let mut manifest_json =
+            serde_json::to_value(open_flow_manifest_fixture(&base)).expect("fixture serialisiert");
+        manifest_json["views"] = json!([{
+            "id": "sessions",
+            "type": "table",
+            "title": {"de": "s", "en": "s"},
+            "endpoint": "/api/sessions",
+            "mapping": {"sid": "sessions[].id"},
+            "poll_seconds": 300
+        }]);
+        let manifest: connector::ConnectorManifest =
+            serde_json::from_value(manifest_json).expect("view-Extended Fixture parst");
+        let file = tmp_keystore_file("fresh");
+        let cs = flow_test_state(&manifest, &file);
+        let ss = settings_state_with("sclm", &[]);
+        let mut params: BTreeMap<String, String> = BTreeMap::new();
+        params.insert("code".into(), "ABC123".into());
+        let r1 = block_on_async(fetch_inner(
+            &cs,
+            &ss,
+            "sclm",
+            "participant:wishes",
+            false,
+            params.clone(),
+        ))
+        .expect("flow-fetch 1");
+        assert!(!r1.cached, "erster Flow-Abruf ist fresh");
+        set_mock_route(
+            &routes,
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid NEU","max_wishes":3,"raffle_mode":"wish","raffle_done":false,"participants":[]}"#,
+        );
+        let r2 = block_on_async(fetch_inner(
+            &cs,
+            &ss,
+            "sclm",
+            "participant:wishes",
+            false,
+            params.clone(),
+        ))
+        .expect("flow-fetch 2");
+        assert!(!r2.cached, "Flow-Abrufe bedienen nie den Poll-Cache");
+        assert_eq!(r2.body["name"], json!("Raid NEU"), "frische Mock-Daten");
+        let hits = mock_hits(&rx);
+        let session_hits = hits
+            .iter()
+            .filter(|h| h.path == "/api/session/ABC123")
+            .count();
+        assert_eq!(
+            session_hits, 2,
+            "Mock hat beide Flow-Abrufe gesehen (Cache war leer)"
+        );
+        // View-Caching bleibt wie es ist: zweiter view-Abruf → Cache-Treffer.
+        let v1 = block_on_async(fetch_inner(
+            &cs,
+            &ss,
+            "sclm",
+            "sessions",
+            false,
+            params.clone(),
+        ))
+        .expect("view-fetch 1");
+        assert!(!v1.cached);
+        let v2 = block_on_async(fetch_inner(
+            &cs,
+            &ss,
+            "sclm",
+            "sessions",
+            false,
+            params.clone(),
+        ))
+        .expect("view-fetch 2");
+        assert!(v2.cached, "View-Cache unverändert aktiv");
+    }
+
+    #[test]
+    fn flow_open_second_open_after_mock_change_sees_fresh_state() {
+        // D-A Akzeptanz Fresh-Fetch: zweiter flow_open nach Mock-Änderung sieht
+        // neue Daten (Session-Laden in flow_open_core nie aus dem Poll-Cache).
+        let (base, rx, routes) = start_mock_api_dyn(vec![(
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid A","max_wishes":3,"raffle_mode":"wish","raffle_done":false,"participants":[{"id":"pX","name":"Semih"}]}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("freshopen");
+        let flow = open_flow_of(&m);
+        let out1 = block_on_async(flow_open_core(&m, &flow, &file, "ABC123", &st, "sclm"))
+            .expect("open 1");
+        assert_eq!(out1.state["name"], json!("Raid A"));
+        set_mock_route(
+            &routes,
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid B","max_wishes":5,"raffle_mode":"no_interest","raffle_done":false,"participants":[{"id":"pX","name":"Semih"}]}"#,
+        );
+        let out2 = block_on_async(flow_open_core(&m, &flow, &file, "ABC123", &st, "sclm"))
+            .expect("open 2");
+        assert_eq!(out2.state["name"], json!("Raid B"), "neue Daten im state");
+        assert_eq!(out2.state["max_wishes"], json!(5));
+        assert_eq!(out2.state["raffle_mode"], json!("no_interest"));
+        assert_eq!(mock_hits(&rx).len(), 2, "zwei GETs — kein Cache");
+    }
+
+    #[test]
+    fn flow_open_progress_wishes_resume_to_wait_screen() {
+        // D-A Resume (Feedback 2): Teilnehmer mit nicht-leeren wishes → Start
+        // direkt auf progress_screen ('wait') + self_wishes liefert state.wished.
+        let (base, _rx, _routes) = start_mock_api_dyn(vec![(
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":false,
+              "loot":[{"id":"l1","name":"Aputarma Blaster"},{"id":"l2","name":"Medkit"},{"id":"l3","name":"Andere"}],
+              "participants":[{"id":"pX","name":"Semih","wishes":["l1","l2"]}]}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("resume");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect("open läuft durch");
+        assert_eq!(out.screen, "wait", "progress gesetzt → wait-Screen");
+        assert!(!out.joined && !out.claimed);
+        assert_eq!(
+            out.state["wished"],
+            json!(["Aputarma Blaster", "Medkit"]),
+            "D-A Feedback 8: wishes-IDs → Item-Namen in loot-Reihenfolge"
+        );
+    }
+
+    #[test]
+    fn flow_open_progress_empty_wishes_open_normally() {
+        // wishes leer → kein Fortschritt → normaler open_screen ('wishes');
+        // self_wishes ohne Treffer setzt den Key GAR NICHT (leeres Array wäre
+        // ein Show-empty-Fehler im Frontend).
+        let (base, _rx, _routes) = start_mock_api_dyn(vec![(
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":false,
+              "loot":[{"id":"l1","name":"Aputarma Blaster"}],
+              "participants":[{"id":"pX","name":"Semih","wishes":[]}]}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("emptyprog");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect("open läuft durch");
+        assert_eq!(out.screen, "wishes", "keine wishes → wishes-Screen");
+        assert!(
+            !out.state.contains_key("wished"),
+            "wished-Key fehlt statt leerem Array"
+        );
+    }
+
+    #[test]
+    fn flow_open_progress_done_overrides_resume_to_results() {
+        // Gezogene landen IMMER im Ergebnis: raffle_done true hat VORRANG vor
+        // progress (wishes non-leer), self_wishes-Injektion bleibt unabhängig.
+        let (base, _rx, _routes) = start_mock_api_dyn(vec![(
+            "GET",
+            "/api/session/ABC123",
+            200,
+            r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":true,
+              "loot":[{"id":"l1","name":"Aputarma Blaster"},{"id":"l2","name":"Medkit"}],
+              "participants":[{"id":"pX","name":"Semih","wishes":["l2","l1"]}]}"#,
+        )]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("doneresume");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &file,
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect("open läuft durch");
+        assert_eq!(out.screen, "results", "done-Vorrang vor progress");
+        assert_eq!(
+            out.state["wished"],
+            json!(["Aputarma Blaster", "Medkit"]),
+            "loot-Reihenfolge, nicht wishes-Reihenfolge"
+        );
+    }
+
+    #[test]
+    fn flow_open_self_wishes_skips_unknown_ids() {
+        // Wünsche-IDs ohne Loot-Treffer werden übersprungen; Teilnehmer ohne
+        // wishes-Feld → kein wished-Key (self_wishes ohne Daten = ausblenden).
+        let (base, _rx, _routes) = start_mock_api_dyn(vec![
+            (
+                "GET",
+                "/api/session/ABC123",
+                200,
+                r#"{"id":"sid9","name":"Raid","max_wishes":3,"raffle_mode":"wish","raffle_done":false,
+                  "loot":[{"id":"l1","name":"Aputarma Blaster"},{"id":"l2","name":"Medkit"},{"id":"l3","name":"Andere"}],
+                  "participants":[{"id":"pX","name":"Semih","wishes":["l1","ghost"]}]}"#,
+            ),
+            (
+                "GET",
+                "/api/session/GHOST99",
+                200,
+                r#"{"id":"sid8","name":"Raid2","max_wishes":3,"raffle_mode":"wish","raffle_done":false,
+                  "loot":[{"id":"l1","name":"Aputarma Blaster"}],
+                  "participants":[{"id":"pZ","name":"Semih","no_interest":["l1"]}]}"#,
+            ),
+        ]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let out = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &tmp_keystore_file("swghost"),
+            "ABC123",
+            &st,
+            "sclm",
+        ))
+        .expect("open 1 läuft durch");
+        assert_eq!(out.screen, "wait", "wishes non-leer → resume");
+        assert_eq!(
+            out.state["wished"],
+            json!(["Aputarma Blaster"]),
+            "ghost-ID übersprungen"
+        );
+        let out2 = block_on_async(flow_open_core(
+            &m,
+            &open_flow_of(&m),
+            &tmp_keystore_file("swnowish"),
+            "GHOST99",
+            &st,
+            "sclm",
+        ))
+        .expect("open 2 läuft durch");
+        assert_eq!(out2.screen, "wishes", "ohne wishes-Feld → open_screen");
+        assert!(!out2.state.contains_key("wished"));
     }
 
     #[test]
