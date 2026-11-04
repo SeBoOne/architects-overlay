@@ -126,6 +126,49 @@ pub struct FlowOpen {
     /// Dot-Path im Session-Objekt auf das Done-Flag (Default `raffle_done`).
     #[serde(default = "default_done_path")]
     pub done_path: String,
+    /// Resume-Regel (D-A Feedback 2): Dot-Pfad RELATIV zum gematchten
+    /// Teilnehmer-Objekt (z. B. `wishes`). „Gesetzt“ = nicht-leeres Array
+    /// oder bool true — der Nutzer hat den Flow bereits begonnen.
+    pub progress_path: Option<String>,
+    /// Ziel-Screen bei gesetzter `progress_path` (z. B. `wait`). Fehlend →
+    /// normaler `open_screen`. `done_path`/`done_screen` haben VORRANG
+    /// ( Gezogene landet immer im Ergebnis).
+    pub progress_screen: Option<String>,
+    /// Selbst-Wünsche-Injektion (D-A Feedback 8): der Core löst die
+    /// wishes-IDs des gematchten Teilnehmers gegen die Session-Collection
+    /// auf und injiziert die Item-Namen als `state["wished"]` in den
+    /// Flow-Zustand (wait-Screen zeigt sie ohne Extra-Request).
+    pub self_wishes: Option<SelfWishes>,
+}
+
+/// Konfiguration der Selbst-Wünsche-Auflösung (D-A). Alle Pfade sind
+/// optional und defaults-getreu — `"self_wishes": {}` reicht als Schalter.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct SelfWishes {
+    /// Dot-Pfad RELATIV zum gematchten Teilnehmer-Objekt mit den loot-IDs.
+    #[serde(default = "default_sw_wishes_path")]
+    pub wishes_path: String,
+    /// Dot-Pfad in der Session-Antwort auf die Item-Liste (z. B. `loot`).
+    #[serde(default = "default_sw_collection")]
+    pub collection: String,
+    /// Dot-Pfad RELATIV zu einem Collection-Item mit der Item-ID.
+    #[serde(default = "default_sw_id_path")]
+    pub id_path: String,
+    /// Dot-Pfad RELATIV zu einem Collection-Item mit dem Item-Namen.
+    #[serde(default = "default_sw_name_path")]
+    pub name_path: String,
+}
+
+impl Default for SelfWishes {
+    fn default() -> Self {
+        Self {
+            wishes_path: default_sw_wishes_path(),
+            collection: default_sw_collection(),
+            id_path: default_sw_id_path(),
+            name_path: default_sw_name_path(),
+        }
+    }
 }
 
 fn default_open_param() -> String {
@@ -134,6 +177,22 @@ fn default_open_param() -> String {
 
 fn default_done_path() -> String {
     "raffle_done".to_owned()
+}
+
+fn default_sw_wishes_path() -> String {
+    "wishes".to_owned()
+}
+
+fn default_sw_collection() -> String {
+    "loot".to_owned()
+}
+
+fn default_sw_id_path() -> String {
+    "id".to_owned()
+}
+
+fn default_sw_name_path() -> String {
+    "name".to_owned()
 }
 
 /// Multi-Select-Liste (SF2): Zeilen sind markierbar (Checkboxen), der

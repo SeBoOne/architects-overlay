@@ -529,6 +529,41 @@ fn check_flow_open(
             ));
         }
     }
+    // D-A (Resume-Logik): progress-Felder sind optional, aber gekoppelt —
+    // progress_screen ohne progress_path wäre eine Zielangabe ohne Auslöser.
+    if let Some(pp) = &o.progress_path
+        && pp.trim().is_empty()
+    {
+        report.error(format!("{tag}: progress_path is empty"));
+    }
+    if let Some(ps) = &o.progress_screen {
+        if ps.trim().is_empty() {
+            report.error(format!("{tag}: progress_screen is empty"));
+        } else if !ids.contains(ps.as_str()) {
+            report.error(format!(
+                "{tag}: progress_screen references unknown screen '{ps}'"
+            ));
+        }
+        if o.progress_path.as_deref().unwrap_or("").trim().is_empty() {
+            report.error(format!(
+                "{tag}: progress_screen requires a non-empty progress_path"
+            ));
+        }
+    }
+    // D-A (Selbst-Wünsche-Injektion): alle Pfade müssen gefüllt sein —
+    // leere Strings wären ein semantisch kaputter Schalter.
+    if let Some(sw) = &o.self_wishes {
+        for (what, val) in [
+            ("self_wishes.wishes_path", &sw.wishes_path),
+            ("self_wishes.collection", &sw.collection),
+            ("self_wishes.id_path", &sw.id_path),
+            ("self_wishes.name_path", &sw.name_path),
+        ] {
+            if val.trim().is_empty() {
+                report.error(format!("{tag}: {what} is empty"));
+            }
+        }
+    }
 }
 
 /// Alle Strings in einem JSON-Wert einsammeln (join_body-Platzhalterprüfung).
@@ -2100,6 +2135,59 @@ mod tests {
             r.errors
                 .iter()
                 .any(|e| e.contains("exactly one placeholder")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn flow_open_progress_and_self_wishes_guardrails() {
+        // D-A: progress-Felder + self_wishes sind optional, aber wohlgeformt
+        // prüfen (Muster wie flow_open_block_rules).
+        // Saubere Variante: progress zeigt auf existierenden Screen, self_wishes
+        // als reiner Schalter ({}) mit serde-Defaults.
+        let good = OPEN_OK.replace(
+            r#""done_screen": "d"#,
+            r#""progress_path": "wishes", "progress_screen": "d", "self_wishes": {}, "done_screen": "d"#,
+        );
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&good)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        // progress_screen auf unbekannten Screen → Error
+        let ghost = good.replace(r#""progress_screen": "d""#, r#""progress_screen": "nope""#);
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&ghost)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("progress_screen references unknown screen")),
+            "{r:?}"
+        );
+        // progress_screen ohne progress_path → Error (Ziel ohne Auslöser)
+        let orphan = good.replace(r#""progress_path": "wishes", "#, "");
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&orphan)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("requires a non-empty progress_path")),
+            "{r:?}"
+        );
+        // progress_path leer → Error
+        let empty = good.replace(r#""progress_path": "wishes""#, r#""progress_path": " ""#);
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&empty)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("progress_path is empty")),
+            "{r:?}"
+        );
+        // self_wishes mit leerem collection-String → Error
+        let bad_sw = good.replace(
+            r#""self_wishes": {}"#,
+            r#""self_wishes": {"collection": " "}"#,
+        );
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&bad_sw)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("self_wishes.collection is empty")),
             "{r:?}"
         );
     }
