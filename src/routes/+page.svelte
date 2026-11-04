@@ -3917,6 +3917,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		 *  gleicher Screen-Kombination (frischer Zustand pro Öffnung). */
 		nonce: number;
 	} | null>(null);
+	// D-B Punkt 6: wird von ConnectorViews ($bindable) synchronisiert — true,
+	// solange intern ein Flow offen ist (auch bei Öffnung per „Öffnen“-Button).
+	let ownFlowActive = $state(false);
 	let ownFlowNote = $state('');
 	let ownFlowNonce = 0; // plain let: Zähler, kein Tracking (Remount-Key)
 
@@ -4630,7 +4633,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						return;
 					}
 				}
-			} else if (railMode !== 'inventory' && k === 'Escape') {
+			} else if (railMode === 'own') {
+				// D-B (t_159ebc5c) Punkt 6: Die own-Mode-Esc-Kaskade gehört
+				// ConnectorViews (Flow → Landliste; Landliste → Modus verlassen
+				// über onexit) — Muster wie 'inventory', das Esc selbst behandelt.
+				// Fallback nur, wenn gar kein Connector aktiv ist: Exit wie bisher.
+				if (k === 'Escape' && !ownEntry) {
+					railMode = null;
+					focusSearch(true);
+					e.preventDefault();
+				}
+			} else if (k === 'Escape' && railMode !== 'inventory') {
 				railMode = null;
 				focusSearch(true);
 				e.preventDefault();
@@ -5065,7 +5078,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						void startOwnFlow(String(input ?? ''));
 					}
 				}}
-				placeholder={railMode === 'own' && ownOpenFlow && !ownFlowStart
+				placeholder={railMode === 'own' && ownOpenFlow && !ownFlowActive
 				? $t('connector.flow.code_ph')
 				: railMode === 'inventory'
 				? $t('search.ph_inventory')
@@ -5415,11 +5428,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				entry={ownEntry}
 				onexit={() => {
 					ownFlowStart = null;
+					ownFlowActive = false;
 					ownFlowNote = '';
 					setMode('search');
 				}}
 				initialFlow={ownFlowStart}
 				initialFlowState={ownFlowStart?.state ?? null}
+				flowActive={ownFlowActive}
 			/>
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").

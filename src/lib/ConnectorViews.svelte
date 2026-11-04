@@ -39,7 +39,10 @@
 		embedded = false,
 		onexit,
 		initialFlow = null,
-		initialFlowState = null
+		initialFlowState = null,
+		/** D-B (t_159ebc5c) Punkt 6: bindable — meldet dem own-Mode-Parent,
+		 *  ob gerade ein Flow aktiv ist (Placeholder-/Esc-Steuerung). */
+		flowActive = $bindable(false)
 	}: {
 		entry: ConnectorEntry;
 		embedded?: boolean;
@@ -48,6 +51,7 @@
 		initialFlow?: { flowId: string; screenId: string; nonce?: number } | null;
 		/** SCLM v2: vorgemergter Flow-Zustand aus connector_flow_open. */
 		initialFlowState?: Record<string, unknown> | null;
+		flowActive?: boolean;
 	} = $props();
 
 	const views = $derived(entry.manifest.views ?? []);
@@ -100,6 +104,11 @@
 	});
 	// Erster View als Start-Auswahl (einmalig beim Mount).
 	let res = $state<Result>({ data: null, error: '', loading: false });
+	// D-B Punkt 6: Flow-Aktivität an den Parent rückmelden ($bindable wird per
+	// Effect synchronisiert — Mount wie Flow-Wechsel, kein manuelles Melden).
+	$effect(() => {
+		flowActive = activeFlowRef() !== null;
+	});
 	let formValues = $state<Record<string, string>>({});
 	let formNote = $state('');
 	let formBusy = $state(false);
@@ -261,12 +270,34 @@
 		return s < 90 ? `${s}s` : `${Math.floor(s / 60)}min`;
 	}
 
-	/** Tabs-Leiste: zurück zur Landliste (Flow/View-Selektion aufheben). */
+	/** Tabs-Leiste: zurück zur Landliste. D-B Punkt 6: kein Button mehr —
+	 *  nur noch der Esc-Pfad ruft diese Funktion auf. */
 	function backToLanding() {
 		flowId = null;
 		flowStart = null;
 		viewId = '';
 		void loadScan(false);
+	}
+
+	// D-B Punkt 6+9 (t_159ebc5c): Tastatur statt Buttons — Esc-Kaskade des
+	// own-Modes (Muster wie Inventory, das seinen Esc selbst behandelt):
+	//   Flow aktiv  → zurück auf die Landliste (Flow beenden)
+	//   Landliste   → Modus verlassen (bestehendes onexit-Handling des Parents)
+	// Der Parent hat den generischen railMode-Esc für 'own' freigegeben; die
+	// Fenster-Instanzen eingebetteter Connectors (hangar/inventory) sind
+	// ausgenommen (embedded-Guard), Popups des Parents haben via
+	// defaultPrevented den Vortritt.
+	function onOwnKey(e: KeyboardEvent) {
+		if (embedded || e.key !== 'Escape' || e.defaultPrevented) return;
+		if (scan && (activeFlowRef() || viewId)) {
+			backToLanding();
+			e.preventDefault();
+			return;
+		}
+		if (onexit) {
+			onexit();
+			e.preventDefault();
+		}
 	}
 
 	// SCLM v2 Karte C (Requirements 5/6): „Öffnen“-Button der Landliste —
@@ -413,18 +444,14 @@
 	class:is-embedded={embedded}
 	aria-label={noteForView(view)}
 >
-	{#if !embedded && onexit}
-		<div class="connector-head">
-			<span class="connector-title">{title}</span>
-			<button type="button" class="btn-ghost" onclick={onexit}>Esc · {$t('common.back')}</button>
-		</div>
-	{/if}
-
+	<!-- D-B Punkt 5+6: Connector-Namen-Header mit Esc-Button und
+	     „← Zurück zur Liste“-Chip sind entfernt — genau EINE Überschrift pro
+	     Ansicht (Screen-Titel bzw. Landlisten-Titel), zurück geht es nur per
+	     Esc (onOwnKey). -->
 	{#if hasFlows}
-		<!-- SF4: Tab-Leiste = Flow-Auswahl (nur Flows). Interne Screens sind
-		     Flow-Zustände (ZURÜCK/Weiter im FlowRenderer) — niemals Tabs.
-		     Karte B: Landliste ist Startzustand (scan) → „Zurück zur Liste“
-		     als Chip, wenn ein Flow angewählt ist. -->
+		<!-- SF4: Tab-Leiste = Flow-Auswahl (nur Flows) in Chip-Optik.
+		     Interne Screens sind Flow-Zustände — niemals Tabs; die
+		     Flow-Kette läuft strikt linear (Karte C Requirement 9). -->
 		<div class="connector-tabs" role="tablist" aria-label={title}>
 			{#each flows as fl (fl.id)}
 				<button
@@ -436,11 +463,6 @@
 					onclick={() => selectFlow(fl.id)}
 				>{labelOf(fl.title, lang)}</button>
 			{/each}
-			{#if scan && flowId}
-				<button type="button" class="chip chip-back" onclick={backToLanding}>
-					← {$t('connector.scan_back')}
-				</button>
-			{/if}
 		</div>
 	{:else if views.length > 1}
 		<!-- Fallback (Manifests ohne flows, z. B. AAWA später): views als Tabs. -->
@@ -457,11 +479,6 @@
 					{labelOf(v.title, lang)}
 				</button>
 			{/each}
-			{#if scan && viewId}
-				<button type="button" class="chip chip-back" onclick={backToLanding}>
-					← {$t('connector.scan_back')}
-				</button>
-			{/if}
 		</div>
 	{/if}
 
@@ -530,7 +547,6 @@
 		<FlowRenderer
 			{entry}
 			flow={activeFlow}
-			onexit={onexit}
 			initial={flowStart?.screenId ?? null}
 			initialState={flowStart?.state ?? null}
 		/>
@@ -582,7 +598,8 @@
 					<div class="mrow rrow">
 						<div class="m-main">
 							<div class="m-title">{it.name}</div>
-							<div class="m-sub">{it.sid}</div>
+							<!-- D-B Punkt 10: Code-/ID-Zeile unter dem Titel ist
+							     entfernt — nur Titel + Status/Öffnen rechts. -->
 						</div>
 						<div class="m-right">
 							<span class="chip cscan-status" class:cscan-done={it.raffle_done}>
@@ -725,6 +742,10 @@
 	{/if}
 </section>
 
+<!-- D-B Punkt 6: own-Mode-Esc-Kaskade (Flow → Landliste → Modus verlassen).
+     embedded-Instanzen (hangar/inventory-Hooks) ignorieren den Handler. -->
+<svelte:window onkeydown={onOwnKey} />
+
 <style>
 	.connector {
 		display: flex;
@@ -732,12 +753,7 @@
 		gap: 8px;
 		min-height: 0;
 	}
-	.connector-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-	}
+	/* D-B Punkt 5: Landlisten-Titel bleibt einzige Überschrift des own-Modes */
 	.connector-title {
 		font-weight: 700;
 		letter-spacing: 0.08em;
@@ -905,10 +921,8 @@
 	}
 	/* Karte B: Scan-Landliste (globale .mlist/.mrow/.chip-Klassen werden
 	   nur minimal ergänzt — keine neue CSS-Welt). Tab-Leiste nutzt das
-	   globale Chip-Muster (Requirement 10). */
-	.chip-back {
-		opacity: 0.75;
-	}
+	   globale Chip-Muster (Requirement 10). D-B Punkt 6: .chip-back ist mit
+	   dem „Zurück“-Button entfallen (Esc-Kaskade ersetzt ihn). */
 	.cscan-spacer {
 		flex: 1;
 	}
