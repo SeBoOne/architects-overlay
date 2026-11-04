@@ -1063,7 +1063,12 @@ pub(crate) async fn fetch_inner(
     // holt FRISCHE Daten, der Poll-Cache darf einen Flow-Abruf nie bedienen
     // (auch nicht der Session-Laden in flow_open_core, der ohnehin direkt
     // über fetch_request geht). View-/Scan-Caching bleibt unverändert.
-    let flow_screen_fetch = find_flow_screen(&manifest, view_id).is_some();
+    // Defense (Reviewer t_a6ca0ad8 Finding 1): Bypass nur für qualifizierte
+    // Flow-IDs (`flow:screen`) — gleichnamige Views (z. B. 'add_participant'
+    // als View UND Creator-Screen) behalten ihren View-Cache.
+    let flow_screen_fetch = view_id.contains(':')
+        && manifest.views.iter().all(|v| v.id != view_id)
+        && find_flow_screen(&manifest, view_id).is_some();
     let poll_secs = view.poll_seconds.unwrap_or(DEFAULT_POLL_SECONDS).max(1);
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
