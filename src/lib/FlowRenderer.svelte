@@ -1034,7 +1034,7 @@
 			{:else}
 				<p class="fempty">{$t('connector.empty')}</p>
 			{/if}
-			{#if (confirmAction || screenActions.length > 0)}
+			{#if !resultsPending && (confirmAction || screenActions.length > 0)}
 				<!-- Buttons nach vorhandener .btn/.btn-ghost-Norm (D-B Punkt 3):
 				     Write-Aktionen = .btn (Akzent), goto-Navigation = .btn-ghost. -->
 				<div class="factions">
