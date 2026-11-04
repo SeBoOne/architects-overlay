@@ -116,3 +116,52 @@ Jeweils: Builder auf eigenem Branch, Reviewer-Review, Omar merged --no-ff. Kein 
 - Nach Merge + Gates (fmt, clippy --workspace --all-targets, cargo test --workspace,
   pnpm check) folgt Release 0.5.43 nur mit Sebo (Tag + MSI-Build + Doku-Check);
   danach VM-Gegentest mit der Testerin (SAC-Rechner).
+
+## 9. FlowId-Hotfix + Manifest-Audit (2026-11-04, main cc92243)
+
+- **Hotfix:** `connector_flow_open`-Aufrufe (Suchleiste + Open-Button) übergaben
+  `flow_id:`; Tauri-Kommandoargumente sind camelCase → `flowId:`. Fehler war
+  „missing required key flowId“. Andere Commands geprüft, nur flow_open betroffen.
+- **examples/sclm.json API-v5.0-Audit:** `won`→`result.won[].name`, Phantom-Feld
+  `result.item_name` entfernt, c_results ohne Roh-`won`, Creator-Flow um
+  `regenerate_codes`-Screen (on_submit→open, neuer Code-Re-Entry) erweitert.
+  Manifest läuft im Test `examples_sclm_manifest_validates_with_open_flow`.
+- Release-Lage: 0.5.44 live (Updater zeigt public-Repo); Hotfix zunächst nur im
+  Dev-Stand, wandert mit 0.5.45 in die Releases.
+
+## 10. Feedback-Runde Sebo Live-Test (2026-11-04, kanonisch)
+
+11 Punkte aus dem Participant-Flow-Livetest; Karten `t_*` (Board architects-overlay,
+builder), D-A=Rust/Manifest `feat/sclm-flow-behavior-v3`, D-B=Frontend `feat/sclm-ux-v3`:
+
+1. **Frische beim Öffnen + Refresh:** Flow-Screens fetchen beim Betreten immer
+   frisch (kein Poll-Cache für Flow-Treffer); Client-Poll nach `poll_seconds`
+   (wishes: 60) + „Aktualisieren“-Button. (D-A serverseitig, D-B Client)
+2. **Resume-Logik:** eigener Teilnehmer hat nicht-leere `wishes` → Öffnen landet
+   auf `progress_screen` (wait), sonst open_screen (wishes). Manifest-Extension im
+   open-Block: `progress_path` (Pfad auf matched-participant-Objekt) +
+   `progress_screen`. (D-A)
+3. **Styling-Pflicht:** gesamter SCLM-Bereich (Flow-Screens, Listen, Warteseite,
+   Landliste) an Overlay-Look & Feel angleichen — vorhandene Muster (chip-Tabs
+   `market.tab_*`, Suchergebnis-/Trade-Route-Listen, Theme-Variablen, dunkel). (D-B)
+4. **Keine ID-Spalten:** Pin-/Plumbing-Mapping-Keys (loot_id, participant_id, rid,
+   cid, sid) werden in Flow-Listen nicht als Spalten gerendert. (D-B)
+5. **Eine Überschrift pro Ansicht:** Connector-Namen-Header („SCLM-Verlosungen“)
+   und Flow-Titel („Teilnehmer“/„Ersteller“) entfallen; nur Screen-Titel. (D-B)
+6. **Esc-Navigation statt Buttons:** keine „Zurück/Esc“-Buttons im SCLM-Mode.
+   Esc: aus Flow → Landliste; aus Landliste → Mode verlassen. (D-B)
+7. **Claim-Code-Layout:** pcode-Override-Feld als eigene Zeile unterhalb der
+   Bestätigungs-Actions, großzügig platziert, nicht hervorgehoben. (D-B)
+8. **Warteseite neu:** Infozeilen + alle Kopier-Buttons raus; zentrierte
+   Ladeanimation + „Warten auf die Verlosung…“; darunter Wunschliste
+   (state-Key `wished`, von D-A in FlowOpenOutcome.state injiziert: matched
+   participant wishes → loot-Namen) + „Wünsche ändern“ (nur vor Ziehung). (D-A Daten, D-B UI)
+9. **Keine Zurück-Buttons innerhalb der Verlosung** — auch nicht results→wait.
+   Navigation voran nur über Actions, zurück nur Esc→Landliste. (D-B)
+10. **Landliste ohne Code/ID-Zeile** unter dem Verlosungstitel. (D-B)
+11. **Gewinnübersicht:** gleiche Items gruppieren (Name × Anzahl), Stil wie
+    Overlay-Listen, nur Name (+Menge) als Spalten. (D-B)
+
+Vertragsnote: D-A/D-B schneiden disjointe Dateien (D-A: crates/connector,
+src-tauri/src/connector*.rs, examples/sclm.json, Tests; D-B: src/lib/*.svelte,
++page.svelte-Rendering, locales). Merge-Reihenfolge: D-A vor D-B.
