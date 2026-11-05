@@ -68,8 +68,9 @@
 		type FlowOpenOutcomeDTO,
 		type ScreenDTO,
 		type AutocompleteRuleDTO,
-		type ScreenActionDTO
-	} from './connector';
+		type ScreenActionDTO,
+		type ParamDTO
+		} from './connector';
 
 	type Result = { data: FetchResultDTO | null; error: string; loading: boolean };
 
@@ -80,13 +81,17 @@
 		/** Vorgemergter Flow-Zustand (SF2-R1 D1: gemappte code_entry-Daten des
 		 *  Suchleisten-Prefetch — max_wishes/raffle_done landen im fstate,
 		 *  ohne sie persistieren zu müssen). */
-		initialState = null
+		initialState = null,
+		/** Karten-G (Spec 15): Cockpit-Modal offen? — der Vorgänger (ConnectorViews)
+		 *  muss die Esc-Kaskade dann ANHALTEN (Esc schließt erst das Modal). */
+		modalActive = $bindable(false)
 	}: {
 		entry: ConnectorEntry;
 		flow: FlowDTO;
 		/** Start-Screen-ID (z. B. Wiedereinstieg direkt beim Ergebnis-Screen). */
 		initial?: string | null;
 		initialState?: Record<string, unknown> | null;
+		modalActive?: boolean;
 	} = $props();
 
 	const lang = $derived(currentLang());
@@ -153,6 +158,33 @@
 			? (res.data.mapped as Record<string, unknown>)
 			: null
 	);
+	// ---- Karten-G (Spec-Abschnitt 15): Ersteller-Cockpit --------------------
+	// Ein Flow mit `tabs` wird zum Cockpit: permanente Sub-Reiter in bestehender
+	// Chip-Optik statt Wizard-Kette; Formulare, Mehrfachauswahlen und Confirms
+	// sind Modals ÜBER der unbewegten Liste (Esc schließt zuerst das Modal).
+	// Die Modal-Klassifikation ist rein Manifest-strukturell (Form-Felder,
+	// multi-Listen, statische Boolean-Bodies, Pin-Params, select-Felder) —
+	// KEIN connector-spezifisches Wissen. Flow ohne tabs = bisheriges Verhalten
+	// unverändert: jeder Cockpit-Zweig ist an `cockpit` gegattert.
+	const cockpitTabs = $derived.by(() => {
+		const seen = new Set<string>();
+		return (flow.tabs ?? []).filter((t) => {
+			if (!t?.id || !t.screen || seen.has(t.id) || !findScreen(t.screen)) return false;
+			seen.add(t.id);
+			return true;
+		});
+	});
+	const cockpit = $derived(cockpitTabs.length > 0);
+	// Aktiver Tab = der Tab, dessen Screen gerade gezeigt wird (Modal-Ziele
+	// sind keine Tab-Screens — sie ändern den aktiven Tab nicht).
+	const activeTabId = $derived(
+		cockpitTabs.find((t) => t.screen === shown?.id)?.id ?? cockpitTabs[0]?.id ?? ''
+	);
+	function tabGo(t: { id: string; screen: string }) {
+		if (t.screen === screenId) return;
+		go(t.screen); // go() resettet Auswahl/Inputs; der $effect fetcht FRISCH (Fresh-Fetch-Regel, kein Poll-Cache)
+	}
+
 	// SCLM v2 Karte C (Spec Abschnitt 3): result_for liefert 200 mit
 	// {result: null} → „Ergebnis noch offen“ — siehe resultsPending unten
 	// (liefert als leerer Zeilenkern, E-SCLM-UX v4 Punkt 3).
@@ -173,6 +205,14 @@
 			for (const p of a.params ?? []) hidden.add(p.key);
 			for (const k of Object.keys(a.pins_map ?? {})) hidden.add(k);
 		}
+		// Cockpit (Spec 15): ID-/Claim-Spalten zusätzlich ausblenden
+		// ("keine IDs-Spalten") — Codes bleiben nur auf der Übersicht sichtbar
+		// (dokumentierte Copy-Ausnahme). rechte/erkenntnisse bleiben sichtbar.
+		if (cockpit && s.type === 'list') {
+			for (const k of Object.keys(s.mapping ?? {})) {
+				if (/(^|_)(id|code)$|^(sid|rid|cid|pcode)$/i.test(k)) hidden.add(k);
+			}
+		}
 		return hidden;
 	});
 	/** Sichtbare Spalten einer Flow-Liste = Mapping-Reihenfolge minus Plumbing. */
@@ -191,12 +231,8 @@
 		if (shown?.type !== 'results' || !res.data) return null;
 		return normalizeResults(res.data.mapped, shown.mapping ?? {});
 	});
-	// Spec Abschnitt 3: 200 {result: null} → map_view liefert ein LEERES
-	// Zeilenarray (results-Screens sind Table-Views) — nicht nur das
-	// Object-Szenario abfangen; leerer Zeilenkern = „Ergebnis noch offen“.
-	const resultsPending = $derived(
-		shown?.type === 'results' && res.data !== null && (resultsNorm?.rowCount ?? 0) === 0
-	);
+	// doneFlag + resultsPending: siehe Cockpit-Block (Spec 15) — sie brauchen
+	// das cockpit-Flag und sind dort deklariert.
 	// E-SCLM-UX v4 Punkt 4 (war D-B Punkt 11): Gewinnübersicht gruppiert
 	// gleichnamige Items (Name ×Menge, Reihenfolge des ersten Auftretens).
 	// Quelle ist resultsNorm.names — Namen, nie Flags/Skalare; rid/waived/
@@ -269,6 +305,465 @@
 				}))
 			: (shown?.form?.fields ?? [])
 	);
+
+	// Spec Abschnitt 3: 200 {result: null} → map_view liefert ein LEERES
+	// Zeilenarray (results-Screens sind Table-Views) — nicht nur das
+	// Object-Szenario abfangen; leerer Zeilenkern = „Ergebnis noch offen“.
+	// Cockpit (Spec 15): leer ist NUR nach der Ziehung „offen“ (done_path
+	// z. B. raffle_done) — vor der Ziehung zeigt der Verlosungs-Tab Hinweis
+	// + Start-Button. Die resultsPending-Regel bleibt participant-seitig
+	// unverändert intact.
+	const doneFlag = $derived.by(() => {
+		const dp = flow.open?.done_path;
+		if (!dp) return false;
+		const v = fstate[dp];
+		return v === true || v === 1 || v === '1' || v === 'true';
+	});
+	const resultsPending = $derived(
+		shown?.type === 'results' &&
+			res.data !== null &&
+			(resultsNorm?.rowCount ?? 0) === 0 &&
+			(!cockpit || doneFlag)
+	);
+
+	// Cockpit-Modal — ein Zustandstyp für alle vier Modal-Formen.
+	type CockpitModal = {
+		kind: 'form' | 'multi' | 'confirm' | 'prompt';
+		title: string;
+		warnings: string[];
+		target: ScreenDTO | null;
+		/** confirm: auszuführende Action; form: Ziel-Formular-Screen. */
+		action: ScreenActionDTO | null;
+		/** Optional-Kette (Verkauf an → Erlös-POST nach optionalem Feld). */
+		chain: ScreenActionDTO | null;
+		row: Record<string, unknown> | null;
+		/** Injekt-Werte in die Action-Bindings (Zeilen-IDs, participant_id …). */
+		extra: Record<string, unknown>;
+		/** form: true → connector_form_submit auf target, sonst action ausführen. */
+		formSubmit: boolean;
+		/** prompt: Eingabefelder (label localized, value vorbelegt). */
+		inputs: { key: string; label: string; required: boolean; type: string; value: string }[];
+		/** multi: 'wishes' (Kontext = Teilnehmerzeile) | 'assign' (Kontext = markierte Loot-IDs). */
+		multi: 'wishes' | 'assign' | null;
+		multiCtxRow: Record<string, unknown> | null;
+		multiCaptured: string[];
+		note: string;
+		/** wishes: zweistufige Leeren-Bestätigung (leere Auswahl = Löschen). */
+		confirmStage: 'normal' | 'empty';
+	};
+	let modal = $state<CockpitModal | null>(null);
+	let modalRows = $state<Record<string, unknown>[]>([]);
+	/** ROHE Entity-Zeilen des Modal-Ziels (Zuordnungs-Eignung braucht die
+	 *  Original-Struktur — `participants[].wishes[].id` zipt den Kern zu
+	 *  unzuverlässigen Paar-Zeilen, daher nie über das Mapping gehen). */
+	let modalRaw = $state<Record<string, unknown>[]>([]);
+	let modalMarked = $state<string[]>([]);
+	let modalLoading = $state(false);
+	let modalBusy = $state(false);
+	let copiedField = $state('');
+	let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+	// ---- Manifest-strukturelle Helfer (generisch, connector-frei) ----------
+	function singleField(a: ScreenActionDTO): ParamDTO | null {
+		const fs = a.fields ?? [];
+		return fs.length === 1 ? fs[0] : null;
+	}
+	/** Body ohne jeglichen {Platzhalter} (z. B. {for_sale:true}) — statisch. */
+	function staticBodyEntry(a: ScreenActionDTO): [string, boolean] | null {
+		const b = a.body_template;
+		if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+		const e = Object.entries(b as Record<string, unknown>);
+		if (e.length !== 1 || typeof e[0][1] !== 'boolean') return null;
+		return [e[0][0], e[0][1]];
+	}
+	/** Body = genau {key: "{key}"} (Selbst-Platzhalter: delta, scu, name …). */
+	function bodySelfPlaceholder(a: ScreenActionDTO, key: string): boolean {
+		const b = a.body_template;
+		if (!b || typeof b !== 'object' || Array.isArray(b)) return false;
+		const e = Object.entries(b as Record<string, unknown>);
+		return e.length === 1 && e[0][0] === key && e[0][1] === `{${key}}`;
+	}
+	/** Zeilen-Aktion: non-nav Action, deren Params einen Screen-pin-Key
+	 *  (loot_id/cid/participant_id/rid) tragen — sie gehört an die Zeile. */
+	function isRowAction(a: ScreenActionDTO, s: ScreenDTO): boolean {
+		if (isNavigationAction(a)) return false;
+		const pins = s.pins ?? [];
+		return (a.params ?? []).some((p) => pins.includes(p.key));
+	}
+	/** Primitive Werte einer Zeile als Action-Bindings (pfad-{id}-Auflösung). */
+	function rowCtx(row: Record<string, unknown>): Record<string, unknown> {
+		const out: Record<string, unknown> = {};
+		for (const [k, v] of Object.entries(row ?? {})) {
+			if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+		}
+		return out;
+	}
+	/** Lokaler Warn-Text eines Confirm-Modals (Key fehlt → keine Zeile). */
+	function warnText(key: string): string {
+		const full = `connector.flow.creator.warn_${key}`;
+		const txt = tr(full);
+		return txt !== full ? txt : '';
+	}
+	/** Kurzer Button-Text pro Action (Key fehlt → Manifest-Titel). */
+	function rowBtnLabel(a: ScreenActionDTO): string {
+		const short = `connector.flow.creator.row_${a.id}`;
+		const txt = tr(short);
+		if (txt !== short) return txt;
+		if (a.enabled_if) {
+			const rz = tr('connector.flow.creator.row_reset');
+			if (rz !== 'connector.flow.creator.row_reset') return rz;
+		}
+		return labelOf(a.title, lang);
+	}
+	/** Kurzer Top-Button-Text nach goto-Ziel (Key fehlt → Manifest-Titel). */
+	function topBtnLabel(a: ScreenActionDTO): string {
+		if (a.goto) {
+			const k = `connector.flow.creator.btn_${a.goto}`;
+			const t2 = tr(k);
+			if (t2 !== k) return t2;
+		}
+		return labelOf(a.title, lang);
+	}
+	/** enabled_if PRO ZEILE (Cockpit: collect/waive/reset leben pro
+	 *  Ergebnis, nicht pro Auswahl): equals/not_equals auf dem Zeilenwert —
+	 *  gleiche Bool-Toleranz wie evaluateCondition im Kern. */
+	function rowActionEnabledFor(a: ScreenActionDTO, row: Record<string, unknown>): boolean {
+		const c = a.enabled_if;
+		if (!c) return true;
+		const v = row?.[c.on];
+		if (c.value === true) {
+			const t = truthyFlagVal(v);
+			return c.op === 'not_equals' ? !t : t;
+		}
+		const eq = String(v ?? '') === String(c.value);
+		return c.op === 'not_equals' ? !eq : eq;
+	}
+	/** Cockpit-Formularfelder NUR für Menschen: form fields, deren Key als
+	 *  {Platzhalter} im body_template steht (sid/code sind Plumbing und
+	 *  werden ohnehin aus dem Zustand vorseedet — kein Eingabefeld). */
+	function formUserKeys(s: ScreenDTO): Set<string> {
+		const keys = new Set<string>();
+		templateKeys(s.form?.body_template, keys);
+		return keys;
+	}
+	/** Entity-Name + Id-Feld aus einem Mapping-Pfad `X[].id` (ROH-Body-Zugriff). */
+	function entityOf(s: ScreenDTO, key: string): { array: string; idField: string } | null {
+		const p = (s.mapping ?? {})[key];
+		const m = p && /^([A-Za-z_][A-Za-z0-9_]*)\[\]\.([A-Za-z_][A-Za-z0-9_]*)$/.exec(p);
+		return m ? { array: m[1], idField: m[2] } : null;
+	}
+	function firstEntityName(s: ScreenDTO): string | null {
+		for (const p of Object.values(s.mapping ?? {})) {
+			const m = /^([A-Za-z_][A-Za-z0-9_]*)\[\]\./.exec(p ?? '');
+			if (m) return m[1];
+		}
+		return null;
+	}
+	function rawArray(body: unknown, name: string): Record<string, unknown>[] {
+		const v = (body as Record<string, unknown> | null | undefined)?.[name];
+		return Array.isArray(v) ? (v as Record<string, unknown>[]) : [];
+	}
+	function wishIdsOf(e: Record<string, unknown>): string[] {
+		const w = e?.wishes;
+		if (!Array.isArray(w)) return [];
+		const ids: string[] = [];
+		for (const x of w) {
+			if (typeof x === 'string' || typeof x === 'number') {
+				const s2 = String(x).trim();
+				if (s2) ids.push(s2);
+			} else if (x && typeof x === 'object') {
+				const o = x as Record<string, unknown>;
+				const v = o.loot_id ?? o.id ?? o.item_id;
+				if (typeof v === 'string' || typeof v === 'number') {
+					const s2 = String(v).trim();
+					if (s2) ids.push(s2);
+				}
+			}
+		}
+		return ids;
+	}
+	function truthyFlagVal(v: unknown): boolean {
+		return v === true || v === 1 || v === '1' || v === 'true';
+	}
+
+	// Cap der Mehrfachauswahl: multi.max_path, sonst Session-Key max_wishes
+	// (Spec 15: Wünsche-bearbeiten-Grenze; der Admin-Pfad des Servers prüft
+	// die Grenze NICHT — die UI setzt sie hart durch, Decision 5.3).
+	const modalCap = $derived.by(() => {
+		const t = modal?.target;
+		if (!modal || modal.kind !== 'multi' || !t) return null;
+		const keys = t.multi?.max_path ? [t.multi.max_path] : ['max_wishes'];
+		for (const k of keys) {
+			const v = fstate[k];
+			if (typeof v === 'number' && v > 0) return Math.max(1, Math.floor(v));
+			if (typeof v === 'string') {
+				const n = Number(v);
+				if (Number.isFinite(n) && n > 0) return Math.max(1, Math.floor(n));
+			}
+		}
+		return null;
+	});
+
+	// ---- Cockpit-Aktionstafeln ---------------------------------------------
+	type RowBtn = {
+		kind: 'button' | 'stepper' | 'prompt' | 'confirm';
+		a: ScreenActionDTO;
+		chain?: ScreenActionDTO;
+		fieldKey?: string;
+	};
+	/** Zeilen-Buttons eines Cockpit-Screens (Manifest-klassifiziert, s. o.). */
+	function cockpitRowBtns(s: ScreenDTO): RowBtn[] {
+		const out: RowBtn[] = [];
+		const acts = s.actions ?? [];
+		const chainHidden = new Set<string>();
+		for (const a of acts) {
+			if (isNavigationAction(a) || !isRowAction(a, s)) continue;
+			const stat = staticBodyEntry(a);
+			if (stat) {
+				const [, val] = stat;
+				const partner = acts.find(
+					(b) =>
+						b.id !== a.id &&
+						!isNavigationAction(b) &&
+						b.method === a.method &&
+						b.path === a.path &&
+						!staticBodyEntry(b) &&
+						(b.fields?.length ?? 0) > 0
+				);
+				if (partner) chainHidden.add(partner.id);
+				if (val === true && partner) {
+					const pf = (partner.fields ?? [])[0];
+					out.push({ kind: 'prompt', a, chain: partner, fieldKey: pf?.key });
+				} else {
+					// statische One-Way-Schalter (collect/waive/reset) + "aus":
+					// Direkt-Button, enabled_if wird PRO ZEILE ausgewertet.
+					out.push({ kind: 'button', a });
+				}
+				continue;
+			}
+			if (a.method === 'delete') {
+				out.push({ kind: 'confirm', a });
+				continue;
+			}
+			const f = singleField(a);
+			if (f && bodySelfPlaceholder(a, f.key)) {
+				const isColumn = f.key in (s.mapping ?? {});
+				if (!isColumn) {
+					out.push({ kind: 'stepper', a }); // Delta-Stepper (±1)
+				} else if (rows.some((r) => typeof r?.[f.key] === 'number')) {
+					out.push({ kind: 'stepper', a, fieldKey: f.key }); // Absolut-Stepper (cur±1)
+				} else {
+					out.push({ kind: 'prompt', a, fieldKey: f.key }); // Textfeld (prenfilled)
+				}
+				continue;
+			}
+			if (f) {
+				out.push({ kind: 'prompt', a, fieldKey: f.key });
+				continue;
+			}
+			out.push({ kind: 'confirm', a });
+		}
+		return out.filter((p) => !chainHidden.has(p.a.id));
+	}
+	/** Nav-Actions, deren Ziel ein Modal ist (multi-list OHNE aktuellen
+	 *  multi-Screen = je ZEILE (Wünsche eines Teilnehmers); multi-list MIT
+	 *  aktuellem multi-Screen = Top-Button (Zuordnung markierter Loot-IDs);
+	 *  form-Ziel = Top-Button). Kein Tab-Ziel = nie Wizard-Navigation. */
+	const cockpitRowNavs = $derived.by(() => {
+		const s = shown;
+		if (!cockpit || !s || s.type === 'detail' || s.type === 'results') return [];
+		return (s.actions ?? []).filter((a) => {
+			if (!isNavigationAction(a) || !a.goto) return false;
+			const t = findScreen(a.goto);
+			return !!t && !!t.multi && !s.multi;
+		});
+	});
+	type TopPlan = { a: ScreenActionDTO; mode: 'formmodal' | 'multimodal' | 'confirmmodal' | 'nav' };
+	const cockpitTopPlans = $derived.by((): TopPlan[] => {
+		const s = shown;
+		if (!cockpit || !s) return [];
+		const out: TopPlan[] = [];
+		for (const a of s.actions ?? []) {
+			if (isNavigationAction(a)) {
+				const t = a.goto ? findScreen(a.goto) : null;
+				if (!t) continue;
+				if (t.multi && !s.multi) continue; // Zeilen-Modal (cockpitRowNavs)
+				if (t.multi && s.multi) {
+					out.push({ a, mode: 'multimodal' });
+				} else if (t.type === 'form') {
+					out.push({ a, mode: formUserKeys(t).size > 0 ? 'formmodal' : 'confirmmodal' });
+				} else {
+					// Ziel ist (Tab-)Screen des Cockpits: normale Reiter-Navigation.
+					out.push({ a, mode: 'nav' });
+				}
+				continue;
+			}
+			if (isRowAction(a, s)) continue; // Zeilen-Button (cockpitRowBtns)
+			const f = singleField(a);
+			if (f && f.type === 'select') continue; // Inline-Select (cockpitSelect)
+			out.push({ a, mode: 'confirmmodal' });
+		}
+		return out;
+	});
+	/** Inline-Select einer Cockpit-Detailseite (z. B. max_wishes — ändert
+	 *  sofort über den bestehenden Screen-Action-Mechanismus, Spec 15). */
+	const cockpitSelect = $derived.by(() => {
+		const s = shown;
+		if (!cockpit || s?.type !== 'detail') return null;
+		for (const a of s.actions ?? []) {
+			if (isNavigationAction(a) || isRowAction(a, s)) continue;
+			const f = singleField(a);
+			if (f && f.type === 'select' && (f.options?.length ?? 0) > 0) return { a, f };
+		}
+		return null;
+	});
+	// Übersicht (detail): _code-Keys → Code-Zeile mit Copy-Button (dokumentierte
+	// Ausnahme der No-Copy-Regel: NUR Codes im Creator-Cockpit, Spec 15) und
+	// _count-Keys → Statistikkarten im bestehenden Overlay-Kartenstil.
+	const cockpitCodeRows = $derived.by(() => {
+		const s = shown;
+		if (!cockpit || s?.type !== 'detail') return [];
+		return Object.keys(s.mapping ?? {})
+			.filter((k) => /_code$/i.test(k))
+			.map((k) => ({
+				field: k,
+				value: detailRow?.[k] ?? fstate[k] ?? null
+			}));
+	});
+	const cockpitStatRows = $derived.by(() => {
+		const s = shown;
+		if (!cockpit || s?.type !== 'detail') return [];
+		return Object.keys(s.mapping ?? {})
+			.filter((k) => /_count$/i.test(k))
+			.map((k) => ({
+				field: k,
+				value: detailRow?.[k] ?? fstate[k] ?? null
+			}));
+	});
+	const cockpitName = $derived(
+		cockpit && shown?.type === 'detail' && 'name' in (shown.mapping ?? {})
+			? formatValue(detailRow?.name ?? fstate.name)
+			: ''
+	);
+	function metaFieldLabel(field: string): string {
+		const k = `connector.flow.creator.field_${field}`;
+		const txt = tr(k);
+		return txt !== k ? txt : field;
+	}
+	/** Meta-Wert-Text: Booleans als localized an/aus (Verkaufs-Status),
+	 *  sonst bestehende formatValue-Norm. */
+	function metaValueText(v: unknown): string {
+		if (typeof v === 'boolean')
+			return v ? tr('connector.flow.creator.flag_on') : tr('connector.flow.creator.flag_off');
+		return formatValue(v);
+	}
+	// Kopfzeile des Waren-Tabs: Gesamt-Erlös + pro Kopf (0 Teilnehmer → „—“),
+	// reine Anzeige aus dem ROHEN Session-Body (commodity_summary.total_revenue).
+	const revenueHead = $derived.by(() => {
+		const s = shown;
+		const body = res.data?.body as Record<string, unknown> | null | undefined;
+		if (!cockpit || !s || s.type !== 'list' || !body || typeof body !== 'object') return null;
+		// Screen-scharfes Gate (Review R1-Punkt 1, Spec 15 Punkt 7): die
+		// Pro-Kopf-Zeile gehoert NUR zur Waren-Liste. Manifeststrukturelle
+		// Identifikation ueber deren Commodity-ID (mapping-Key 'cid' —
+		// identisch deklariert wie ihr pins-Eintrag): Session-weite
+		// Body-Felder wie total_revenue/commodity_summary stecken im rohen
+		// Body JEDES Screens und duerfen Teilnehmer-/Loot-Tab nicht
+		// dekorieren. Keine Screen-Ids, kein SCLM-Wissen im Renderer.
+		if (!('cid' in (s.mapping ?? {}))) return null;
+		const cs = body.commodity_summary as Record<string, unknown> | undefined;
+		const total = cs?.total_revenue ?? body.total_revenue;
+		if (typeof total !== 'number' || !Number.isFinite(total)) return null;
+		const parts = Array.isArray(body.participants) ? body.participants.length : 0;
+		return { total, per: parts > 0 ? total / parts : null };
+	});
+	// Teilnehmer-Zeilen: Wunsch-Anzahl/-Namen dezent unter dem Namen. Quelle =
+	// ROHER Session-Body (Teilnehmer-Entity mit wishes-ID-Liste; Namen via
+	 // sibling {id,name}-Array). Manifest-unabhängige Datenform-Heuristik:
+	// Connectors ohne dieses Muster zeigen schlicht keine Wunsch-Meta.
+	const cockpitWishMeta = $derived.by(() => {
+		const out = new Map<string, string[]>();
+		const s = shown;
+		const body = res.data?.body as Record<string, unknown> | null | undefined;
+		if (!cockpit || !s || s.type !== 'list' || !body || typeof body !== 'object') return out;
+		const idKey = Object.keys(s.mapping ?? {}).find((k) => /(^|_)id$/i.test(k));
+		const ent = idKey ? entityOf(s, idKey) : null;
+		if (!ent) return out;
+		const ents = rawArray(body, ent.array);
+		if (!ents.length) return out;
+		const pools = Object.values(body).filter(
+			(v): v is Record<string, unknown>[] =>
+				Array.isArray(v) &&
+				v.length > 0 &&
+				v.every((x) => !!x && typeof x === 'object' && 'id' in x && 'name' in x)
+		);
+		for (const e of ents) {
+			const id = String(e[ent.idField] ?? '').trim();
+			if (!id || !Array.isArray(e.wishes)) continue;
+			const ids = wishIdsOf(e);
+			out.set(
+				id,
+				ids.map((lid) => {
+					for (const p of pools) {
+						const hit = p.find((x) => String(x.id) === lid);
+						if (hit) return String(hit.name);
+					}
+					return lid;
+				})
+			);
+		}
+		return out;
+	});
+	// results-Zweig des Cockpits: pro Teilnehmer Name + Gruppen ×N + Status
+	// bzw. Buttons (enabled_if PRO ZEILE; Reset-Buttons erscheinen nur bei
+	// gesetztem Flag — nach Reset liefert der frische Fetch die Buttons zurück).
+	const cockpitResultRows = $derived.by(() => {
+		const s = shown;
+		if (!cockpit || s?.type !== 'results') return [];
+		const mapping = s.mapping ?? {};
+		const nameKey =
+			Object.keys(mapping).find((k) => !/(id|code)$/i.test(k) && /(participant|name|title)/i.test(k)) ??
+			Object.keys(mapping)[0];
+		return rows.map((row) => {
+			const groups = groupNames(normalizeResults([row], mapping).names);
+			const flags: string[] = [];
+			for (const a of s.actions ?? []) {
+				if (isNavigationAction(a) || !a.enabled_if || a.enabled_if.value !== true) continue;
+				if (truthyFlagVal(row?.[a.enabled_if.on])) flags.push(a.enabled_if.on);
+			}
+			return {
+				row,
+				name: nameKey ? formatValue(row?.[nameKey]) : '',
+				groups,
+				flags
+			};
+		});
+	});
+	// Zuordnungs-Modal (assign): Eignung aus ROHEN Teilnehmer-Zeilen — nur mit
+	// freien Wunsch-Slots (cap − aktuelle Wünsche − captured), bereits
+	// zugeordnete Teilnehmer deaktiviert mit Hinweis (Spec 15 Punkt 6).
+	const assignRows = $derived.by(() => {
+		const m = modal;
+		if (!m || m.multi !== 'assign') return [];
+		const cap = modalCap;
+		const captured = m.multiCaptured;
+		return modalRaw.map((e) => {
+			const ids = wishIdsOf(e);
+			const overlap = captured.some((l) => ids.includes(l));
+			const full = cap !== null && ids.length + captured.length > cap;
+			return {
+				id: String(e.id ?? '').trim(),
+				name: String(e.name ?? ''),
+				count: ids.length,
+				eligible: !overlap && !full,
+				reason: overlap
+					? tr('connector.flow.creator.assign_hint_assigned')
+					: full
+						? tr('connector.flow.creator.assign_hint_full')
+						: ''
+			};
+		});
+	});
 
 	// ---- Session-Pins (Zustand pro Session, nicht global) ------------------
 	function ensurePins() {
@@ -639,7 +1134,11 @@
 		return cur;
 	}
 
-	async function runAction(a: ScreenActionDTO) {
+	/** Karten-G (Spec 15): `extra` injiziert Bindings (Zeilen-IDs,
+	 *  participant_id, whole-array loot_ids …) — Cockpit-Buttons haben keine
+	 *  Eingabefelder, ihre Pin-Werte kommen direkt aus Zeile/Modal. Extra
+	 *  hat die letzte Schreibhand. */
+	async function runAction(a: ScreenActionDTO, extra?: Record<string, unknown>) {
 		const s = shown;
 		if (!s || actionBusy) return;
 		if (isNavigationAction(a)) {
@@ -648,11 +1147,12 @@
 		}
 		// enabled_if (one-way-Flags): deaktivierte Aktionen laufen nicht.
 		if (!actionIsEnabled(a)) return;
+		const mergedValues = { ...actionValues(), ...(extra ?? {}) };
 		// SF2-R1 D3: Pflicht-Action-Felder (z. B. pcode-Claim) vor dem Write
 		// prüfen — fehlende Werte laufen sonst als 403/400 beim Server an.
 		for (const f of a.fields ?? []) {
 			if (f.required === false) continue;
-			const v = String(actionValues()[f.key] ?? '').trim();
+			const v = String(mergedValues[f.key] ?? '').trim();
 			if (!v) {
 				actionNote = tr('error.connector.param_required', { key: labelOf(f.label, lang) });
 				return;
@@ -665,7 +1165,7 @@
 				id: entry.id,
 				screenId: `${flow.id}:${s.id}`,
 				actionId: a.id,
-				values: actionValues()
+				values: mergedValues
 			});
 			actionNote =
 				out.status < 400
@@ -680,9 +1180,14 @@
 				}
 				// SF2-R1 D3: eingegebene Action-Felder sind Session-Pins (z. B.
 				// pcode-Claim — der erste Save bindet den Code, spätere Saves/
-				// results brauchen ihn nicht mehr einzutippen).
+				// results brauchen ihn nicht mehr einzutippen.
+				// Cockpit-Ausnahme (Spec 15): Feld-Keys wie name/delta/scu sind
+				// KEINE Pins und dürfen den Flow-Zustand nicht vergiften (sonst
+				// seedet ein rename-"name" später das add_participant-Feld).
+				// Claim-Felder bleiben Pins, wenn das Manifest sie pinnt.
 				for (const f of a.fields ?? []) {
-					const v = String(actionValues()[f.key] ?? '').trim();
+					if (cockpit && !(s.pins ?? []).includes(f.key)) continue;
+					const v = String(mergedValues[f.key] ?? '').trim();
 					if (v) pin(f.key, v);
 				}
 				// E-SCLM-UX v4 Punkt 6: Flow-Zustand nach der Write-Kette
@@ -711,8 +1216,12 @@
 					}
 				}
 				marked = [];
+				const before = screenId;
 				if (a.goto) go(a.goto);
-				else await load(true); // ohne goto: Screen refreshen (Status sichtbar)
+				// ohne goto ODER goto auf den aktuellen Screen (Cockpit-Modals
+				// confirmen auf ihren eigenen Tab): der $effect löst dabei
+				// keinen Fetch aus → explizit frisch nachladen (Status sichtbar).
+				if (!a.goto || screenId === before) await load(true);
 			}
 		} catch (err) {
 			actionNote = trError(err);
@@ -741,6 +1250,441 @@
 		if (write) await runAction(write);
 		else if (s.on_select) go(s.on_select);
 	}
+
+	// ---- Karten-G: Cockpit-Modal-Handler ------------------------------------
+	// Der Vorgänger hält die Esc-Kaskade an, solange ein Modal offen ist.
+	$effect(() => {
+		modalActive = modal !== null;
+	});
+
+	function closeModal() {
+		modal = null;
+		modalRows = [];
+		modalRaw = [];
+		modalMarked = [];
+		modalLoading = false;
+		modalBusy = false;
+	}
+
+	function openModal(m: CockpitModal) {
+		modal = m;
+		void loadModal();
+	}
+
+	function mkModal(p: Partial<CockpitModal>): CockpitModal {
+		return {
+			kind: 'confirm',
+			title: '',
+			warnings: [],
+			target: null,
+			action: null,
+			chain: null,
+			row: null,
+			extra: {},
+			formSubmit: false,
+			inputs: [],
+			multi: null,
+			multiCtxRow: null,
+			multiCaptured: [],
+			note: '',
+			confirmStage: 'normal',
+			...p
+		};
+	}
+
+	/** Modal-Ziel-Liste frisch fetchen (viewId-Regel wie Screens:
+	 *  `<flow>:<screen>`, force = Fresh-Fetch wie beim Tab-Wechsel). */
+	async function loadModal() {
+		const m = modal;
+		const t = m?.target;
+		if (!m || !t || !t.endpoint || !isTauri) return;
+		modalLoading = true;
+		modalMarked = [];
+		try {
+			const data = await invoke<FetchResultDTO>('connector_fetch', {
+				id: entry.id,
+				viewId: `${flow.id}:${t.id}`,
+				force: true,
+				params: bindings(t)
+			});
+			modalRows = Array.isArray(data.mapped) ? (data.mapped as Record<string, unknown>[]) : [];
+			const ent = firstEntityName(t);
+			modalRaw = ent ? rawArray(data.body, ent) : [];
+			if (m.multi === 'wishes') {
+				// Vorauswahl: die Wünsche, die dieser Teilnehmer gerade hält
+				// (ROHER Body der Basisscreen-Session, nicht das Modal-Mapping).
+				let held: string[] = [];
+				const ctx = multiCtxOf(t);
+				if (ctx.key && m.multiCtxRow) {
+					const cid = String(m.multiCtxRow[ctx.key] ?? '');
+					const e = rawArray(res.data?.body, ctx.ent?.array ?? '').find(
+						(x) => String(x[ctx.ent?.idField ?? 'id'] ?? '') === cid
+					);
+					if (e) held = wishIdsOf(e);
+				}
+				const pinKey = (t.pins ?? [])[0];
+				modalMarked = modalRows
+					.map((r, i) => (pinKey && held.includes(String(r[pinKey] ?? '')) ? String(i) : ''))
+					.filter((v) => v !== '');
+			} else if (m.multi === 'assign') {
+				// Keine Vorauswahl (Review R1-Punkt 2): Teilnehmer, die das
+				// captured Loot bereits halten, sind in assignRows als
+				// ineligible deaktiviert (Hinweis im Modal). Eine
+				// Vorauswahl genau dieser Zeilen war toter Code —
+				// `eligible` impliziert overlap-frei — und waehlte
+				// aehnliche Formeln im Zweifel deaktivierte Zeilen vor.
+				// Verhalten unveraendert: nichts vorausgewaehlt.
+				modalMarked = [];
+			}
+		} catch (err) {
+			modalRows = [];
+			modalRaw = [];
+			if (modal) modal.note = trError(err);
+		}
+		modalLoading = false;
+	}
+
+	/** Kontext-Key einer modalen Write-Aktion: Body-{Platzhalter}-Key, den der
+	 *  Basis-Screen als Pin liefert (z. B. participant_id vom Teilnehmer-Tab),
+	 *  NICHT der Ziel-Pin selbst (loot_id des Wünsche-Modals). */
+	function multiCtxOf(t: ScreenDTO): { key: string | null; ent: { array: string; idField: string } | null } {
+		const write = (t.actions ?? []).find((a) => !isNavigationAction(a));
+		const ph = new Set<string>();
+		if (write) templateKeys(write.body_template, ph);
+		const targetPin = (t.pins ?? [])[0];
+		const key = (shown?.pins ?? []).find((k) => k !== targetPin && ph.has(k)) ?? null;
+		return { key, ent: key ? entityOf(shown as ScreenDTO, key) : null };
+	}
+
+	function isModalMarked(k: string): boolean {
+		return modalMarked.includes(k);
+	}
+
+	/** harte UI-Grenze: max_path bzw. Session max_wishes (Spec 15); der
+	 *  Server-Admin-Pfad prüft sie NICHT — die Grenze ist UI-Pflicht. */
+	function toggleModalMark(k: string, eligible: boolean) {
+		const m = modal;
+		if (!m || !eligible || !k) return;
+		if (modalMarked.includes(k)) {
+			modalMarked = modalMarked.filter((x) => x !== k);
+		} else if (m.multi === 'wishes' && modalCap !== null && modalMarked.length >= modalCap) {
+			return;
+		} else {
+			modalMarked = [...modalMarked, k];
+		}
+	}
+
+	function openTopPlan(p: TopPlan) {
+		const a = p.a;
+		if (p.mode === 'nav') {
+			if (a.goto) go(a.goto);
+			return;
+		}
+		const t = a.goto ? findScreen(a.goto) : null;
+		if (p.mode === 'formmodal' && t?.form) {
+			formValues = {};
+			formNote = '';
+			seedFromState(t, formValues);
+			openModal(mkModal({ kind: 'confirm', target: t, formSubmit: true, title: labelOf(t.title, lang) }));
+			return;
+		}
+		if (p.mode === 'confirmmodal') {
+			if (t?.form) {
+				// Confirm-Submit ohne Nutzerfelder (z. B. regen_codes): Warnung +
+				// Bestätigen; Submit via connector_form_submit (Codes werden
+				// gepinnt, frischer Fetch zeigt die neuen Codes).
+				formValues = {};
+				formNote = '';
+				seedFromState(t, formValues);
+				openModal(
+					mkModal({
+						kind: 'confirm',
+						target: t,
+						formSubmit: true,
+						title: labelOf(t.title, lang),
+						warnings: [warnText(a.id), warnText(t.id)].filter(Boolean)
+					})
+				);
+			} else {
+				const warnings = [warnText(a.id)];
+				if (doneFlag) warnings.push(warnText('overwrite'));
+				openModal(
+					mkModal({ kind: 'confirm', action: a, title: labelOf(a.title, lang), warnings: warnings.filter(Boolean) })
+				);
+			}
+			return;
+		}
+		if (p.mode === 'multimodal' && t) {
+			const s = shown;
+			const pinKey = s ? (s.pins ?? [])[0] : undefined;
+			const captured =
+				s && pinKey
+					? rows
+							.filter((_, i) => isMarked(i))
+							.map((r) => {
+								const v = r?.[pinKey];
+								return v === undefined || v === null ? '' : String(v);
+							})
+							.filter((v) => v !== '')
+					: [];
+			openModal(mkModal({ kind: 'multi', multi: 'assign', target: t, title: labelOf(t.title, lang), multiCaptured: captured }));
+		}
+	}
+
+	function openRowNav(a: ScreenActionDTO, row: Record<string, unknown>) {
+		const t = a.goto ? findScreen(a.goto) : null;
+		if (!t || !t.multi) return;
+		openModal(
+			mkModal({
+				kind: 'multi',
+				multi: 'wishes',
+				target: t,
+				multiCtxRow: row,
+				title: `${labelOf(t.title, lang)} — ${formatValue(row?.name ?? row?.title ?? '')}`,
+				warnings: []
+			})
+		);
+	}
+
+	function openRowBtn(p: RowBtn, row: Record<string, unknown>) {
+		const a = p.a;
+		if (p.kind === 'button') {
+			void runAction(a, rowCtx(row));
+			return;
+		}
+		if (p.kind === 'confirm') {
+			openModal(
+				mkModal({ kind: 'confirm', action: a, row, title: labelOf(a.title, lang), warnings: [warnText(a.id), warnText('remove')].filter((v, i, arr) => v && arr.indexOf(v) === i) })
+			);
+			return;
+		}
+		if (p.kind === 'prompt') {
+			const src = p.chain
+				? (p.chain.fields ?? []).find((f) => f.key === p.fieldKey)
+				: (a.fields ?? []).find((f) => f.key === p.fieldKey);
+			const inputs: CockpitModal['inputs'] = src
+				? [
+						{
+							key: src.key,
+							label: labelOf(src.label, lang),
+							// required nur bei EXPLIZIT deklariertem
+							// true (Review R1-Punkt 3): Manifest-
+							// Contract aus F — required ist optional
+							// deklariert; undeklarierte Felder wie
+							// sale_revenue sind laut Spec 15 optional
+							// und duerfen nicht UI-pflichtig werden.
+							required: src.required === true,
+							type: src.type === 'number' ? 'number' : 'text',
+							value: String(row?.[src.key] ?? '')
+						}
+					]
+				: [];
+			openModal(mkModal({ kind: 'prompt', action: a, chain: p.chain ?? null, row, title: labelOf(a.title, lang), inputs }));
+		}
+	}
+
+	/** qty ± (delta-Body) und scu ± (absoluter Body) — Zähler-Buttons statt
+	 *  Freitextfeld (Spec 15 Punkte 6/7). Absolut: cur+sign, floor 0. */
+	async function stepperRun(a: ScreenActionDTO, row: Record<string, unknown>, fieldKey: string | undefined, sign: number) {
+		const s = shown;
+		if (!s || actionBusy) return;
+		const f = (a.fields ?? []).find((x) => x.key === fieldKey) ?? (a.fields ?? [])[0];
+		if (!f) return;
+		const abs = !!fieldKey && fieldKey in (s.mapping ?? {});
+		const val = abs ? String(Math.max(0, Number(row?.[fieldKey] ?? 0) + sign)) : String(sign);
+		actionInputs = { ...actionInputs, [`${a.id}.${f.key}`]: val };
+		await runAction(a, rowCtx(row));
+	}
+
+	async function modalSaveMulti() {
+		const m = modal;
+		const t = m?.target;
+		if (!m || !t || m.kind !== 'multi') return;
+		const write = (t.actions ?? []).find((a) => !isNavigationAction(a));
+		const targetPin = (t.pins ?? [])[0] ?? 'id';
+		const ctx = multiCtxOf(t);
+		if (m.multi === 'wishes') {
+			const ids = modalRows
+				.map((r, i) => (isModalMarked(String(i)) ? String(r[targetPin] ?? '') : ''))
+				.filter((v) => v !== '');
+			if (ids.length === 0 && m.confirmStage !== 'empty') {
+				// Zweistufig (Spec 15): leere Auswahl = alle Wünsche löschen —
+				// erst nach Bestätigung im Modal.
+				m.confirmStage = 'empty';
+				return;
+			}
+			const extra: Record<string, unknown> = { [targetPin]: ids };
+			if (ctx.key && m.multiCtxRow) {
+				const v = m.multiCtxRow[ctx.key];
+				if (typeof v === 'string' || typeof v === 'number') extra[ctx.key] = v;
+			}
+			closeModal();
+			if (write) await runAction(write, extra); // full-replace POST
+			return;
+		}
+		// assign: ein POST je gewähltem Teilnehmer — bestehende Wünsche bleiben,
+		// das captured Loot wird ergänzt (dedupliziert).
+		const chosen = assignRows.filter((r) => r.eligible && r.id && isModalMarked(r.id));
+		const lootIds = m.multiCaptured;
+		if (!write || chosen.length === 0) {
+			closeModal();
+			return;
+		}
+		modalBusy = true;
+		let errNote = '';
+		for (const pr of chosen) {
+			const e = modalRaw.find((x) => String(x.id ?? '') === pr.id) ?? {};
+			const existing = wishIdsOf(e);
+			const merged = [...existing, ...lootIds.filter((l) => !existing.includes(l))];
+			try {
+				const out = await invoke<{ status: number }>('connector_screen_action', {
+					id: entry.id,
+					screenId: `${flow.id}:${t.id}`,
+					actionId: write.id,
+					values: { ...actionValues(), [targetPin]: pr.id, ...(ctx.key ? { [ctx.key]: merged } : {}) }
+				});
+				if (out.status >= 400 && !errNote) errNote = tr('connector.form_http_error', { status: String(out.status) });
+			} catch (err) {
+				if (!errNote) errNote = trError(err);
+			}
+		}
+		closeModal();
+		actionNote = errNote || tr('connector.flow.creator.assign_done', { n: String(chosen.length) });
+		marked = [];
+		await load(true);
+	}
+
+	async function modalPromptRun() {
+		const m = modal;
+		const a = m?.action;
+		if (!m || !a) return;
+		const extra: Record<string, unknown> = { ...m.extra };
+		for (const inp of m.inputs) {
+			const v = inp.value.trim();
+			if (inp.required && !v) {
+				m.note = tr('error.connector.param_required', { key: inp.label });
+				return;
+			}
+			if (v) extra[inp.key] = v;
+		}
+		const rowValues = m.row ? rowCtx(m.row) : {};
+		closeModal();
+		await runAction(a, { ...rowValues, ...extra });
+		const filled = m.inputs.some((i) => String(extra[i.key] ?? '').trim());
+		if (m.chain && filled && !actionBusy) {
+			// Optional-Kette Verkauf an: zweiter PATCH derselben Zeile mit Wert.
+			await runAction(m.chain, { ...rowValues, ...extra });
+		}
+	}
+
+	async function modalConfirmRun() {
+		const m = modal;
+		if (!m) return;
+		if (m.formSubmit) {
+			await modalFormSubmit();
+			return;
+		}
+		const a = m.action;
+		if (!a) return;
+		const extra = { ...(m.row ? rowCtx(m.row) : {}), ...m.extra };
+		closeModal();
+		await runAction(a, extra);
+	}
+
+	async function modalFormSubmit() {
+		const m = modal;
+		const t = m?.target;
+		if (!m || !t?.form || !isTauri) return;
+		modalBusy = true;
+		m.note = '';
+		const seeded: Record<string, string> = { ...formValues };
+		seedFromState(t, seeded);
+		for (const f of t.form.fields ?? []) {
+			// required nur bei EXPLIZIT true (Review R1-Punkt 3, gleiche
+			// Semantik wie im Prompt-Modal): Spec-15-optionale Felder
+			// (add_loot size/type/grade/qty, add_commodity scu, settings
+			// max_wishes) sind im Manifest undeklariert-required und
+			// duerfen den Submit nicht blocken; explizit required:true
+			// (name/code/sid) bleibt Pflicht.
+			if (f.required === true && !String(seeded[f.key] ?? '').trim()) {
+				m.note = tr('error.connector.param_required', { key: labelOf(f.label, lang) });
+				modalBusy = false;
+				return;
+			}
+		}
+		try {
+			const out = await invoke<{ status: number; body: unknown }>('connector_form_submit', {
+				id: entry.id,
+				formId: `${flow.id}:${t.id}`,
+				values: seeded
+			});
+			if (out.status >= 400) {
+				m.note = tr('connector.form_http_error', { status: String(out.status) });
+				modalBusy = false;
+				return;
+			}
+			// Werte in den Zustand (Regel wie submitForm; Cockpit-Frischfetch
+			// bringt ohnehin die Wahrheit — hier Best-effort-Vorfüllen).
+			for (const [k, v] of Object.entries(seeded)) if (!(k in fstate)) fstate[k] = v;
+			if (out.body && typeof out.body === 'object') {
+				const body = out.body as Record<string, unknown>;
+				for (const [k, v] of Object.entries(body)) {
+					fstate[k] = v;
+					if ((t.pins ?? []).includes(k) && typeof v === 'string') pin(k, v);
+				}
+				for (const [k, path] of Object.entries(t.mapping ?? {})) {
+					const v = dotGet(body, path);
+					if (typeof v === 'string' || typeof v === 'number') {
+						fstate[k] = v;
+						if ((t.pins ?? []).includes(k)) pin(k, String(v));
+					}
+				}
+			}
+			closeModal();
+			const nxt = t.on_submit;
+			if (nxt && nxt !== screenId && findScreen(nxt)) go(nxt); // $effect fetcht frisch
+			else await load(true);
+		} catch (err) {
+			m.note = trError(err);
+			modalBusy = false;
+		}
+	}
+
+	/** No-Copy-Regel-Ausnahme (Spec 15): NUR Codes im Creator-Cockpit. */
+	async function copyCode(field: string, value: string) {
+		try {
+			await navigator.clipboard.writeText(value);
+			copiedField = field;
+			if (copiedTimer) clearTimeout(copiedTimer);
+			copiedTimer = setTimeout(() => {
+				copiedField = '';
+			}, 2000);
+		} catch {
+			/* Clipboard nicht verfügbar (unsicherer Kontext) — still: der Wert
+			   steht ohnehin als Text auf dem Screen. */
+		}
+	}
+
+	/** Esc im Cockpit: zuerst das Modal schließen (Kaskade Flow→Liste→Modus
+	 *  bleibt beim Vorgänger, der über modalActive angehalten wird). */
+	function onCockpitKey(e: KeyboardEvent) {
+		if (!modal || e.key !== 'Escape' || e.defaultPrevented) return;
+		closeModal();
+		e.preventDefault();
+	}
+
+	// Select-Vorbelegung (Spec 15/F-Vertrag): Action-Felder werden aus dem
+	// Flow-Zustand vorseedet — c_overview.mapping mappt max_wishes, der
+	// Select startet daher auf dem Session-Wert und patcht sofort per onchange.
+	$effect(() => {
+		const c = cockpitSelect;
+		if (!c) return;
+		const k = `${c.a.id}.${c.f.key}`;
+		if ((actionInputs[k] ?? '').trim()) return;
+		const v = fstate[c.f.key];
+		const sv = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : '';
+		if (sv) actionInputs = { ...actionInputs, [k]: sv };
+	});
 
 	// ---- Autocomplete + Auto-Fill ------------------------------------------
 	async function searchAC(rule: AutocompleteRuleDTO, text: string) {
@@ -804,23 +1748,42 @@
 	{#if shown}
 		<header class="fhead">
 			<span class="fscreentitle">{labelOf(shown.title, lang)}</span>
-			<span class="fstep">
-				{tr('connector.flow.step', {
-					n: String(flow.screens.findIndex((x) => x.id === shown.id) + 1),
-					total: String(flow.screens.length)
-				})}
-			</span>
+			{#if !cockpit}
+				<!-- Cockpit hat permanente Sub-Reiter statt Wizard-Zähler. -->
+				<span class="fstep">
+					{tr('connector.flow.step', {
+						n: String(flow.screens.findIndex((x) => x.id === shown.id) + 1),
+						total: String(flow.screens.length)
+					})}
+				</span>
+			{/if}
 		</header>
 	{/if}
 
 	{#if shown === null}
 		<p class="fempty">{tr('error.connector.flow_screen_missing')}</p>
 	{:else}
-		<!-- SCLM v2 Karte C (Requirement 9): Flows mit open-Block sind
-		     strikt linear — Flow-Schritte sind KEINE Tabs. Legacy-Flows ohne
-		     open-Block (z. B. creator) behalten ihre Screen-Navigation, jetzt
-		     in Chip-Reiter-Optik (Requirement 10: keine Pill-Tabs). -->
-		{#if !flow.open}
+		<!-- SCLM v2 Karte C (Requirement 9): Flows ohne tabs sind strikt
+		     linear — Flow-Schritte sind KEINE Tabs (participant flow).
+		     Karten-G (Spec 15): flow.tabs rendert permanente Sub-Reiter in
+		     bestehender Chip-Reiter-Optik (identisch zu den Legacy-ftabs
+		     unten); freier Wechsel jederzeit, jeder Tab-Wechsel fetched den
+		     Screen frisch ($effect load(true) auf Screen-Änderung, kein
+		     Poll-Cache). Flow ohne tabs = bisheriges Verhalten unverändert. -->
+		{#if cockpit}
+			<div class="ftabs" role="tablist">
+				{#each cockpitTabs as t (t.id)}
+					<button
+						type="button"
+						role="tab"
+						aria-selected={activeTabId === t.id}
+						class="chip"
+						class:is-on={activeTabId === t.id}
+						onclick={() => tabGo(t)}
+					>{labelOf(t.label, lang)}</button>
+				{/each}
+			</div>
+		{:else if !flow.open}
 			<div class="ftabs" role="tablist">
 				{#each flow.screens as s (s.id)}
 					<button
@@ -907,6 +1870,160 @@
 							<li class="fempty">{$t('connector.empty')}</li>
 						{/each}
 					</ul>
+				{/if}
+			{:else if cockpit && shown.type === 'list'}
+				<!-- Cockpit-Tab-Liste (Spec 15): Name prominent, Meta-Felder
+				     dezent, keine ID-/Claim-Spalten (hiddenMappingKeys zieht
+				     Cockpit-Id/Code-Keys zusätzlich ab), Button-Cluster je
+				     Zeile (Manifest-strukturklassiert: Umbenennen/Löschen/
+				     Stepper/Verkauf…). multi-Screens: Zeilen markierbar
+				     (Erfassung für „Teilnehmern zuordnen“). -->
+				{#if revenueHead}
+					<p class="fmeta frevhead">{tr('connector.flow.creator.revenue_head', { total: formatValue(revenueHead.total), per: revenueHead.per === null ? '—' : formatValue(revenueHead.per) })}</p>
+				{/if}
+				<div class="fbar">
+					{#if shown.multi}
+						<span class="fmarkinfo">{tr('connector.flow.marked', { n: String(marked.length), max: String(multiMax ?? '∞') })}</span>
+					{/if}
+					<span class="fspacer"></span>
+					<button type="button" class="frefresh" title={tr('connector.flow.refresh')} aria-label={tr('connector.flow.refresh')} onclick={() => void load(true)}>↻</button>
+				</div>
+				<ul class="flist">
+					{#each rows as row, i (i)}
+						{@const pinKey = (shown.pins ?? [])[0]}
+						{@const wishMeta = cockpitWishMeta.get(String(row?.[pinKey] ?? ''))}
+						{@const btns = cockpitRowBtns(shown)}
+						<li>
+							<div class="frow frow-static" class:is-marked={!!shown.multi && isMarked(i)}>
+								{#if shown.multi}
+									<button type="button" class="fcheckbtn" aria-pressed={isMarked(i)} onclick={() => toggleMark(i)}>{isMarked(i) ? '☑' : '☐'}</button>
+								{/if}
+								<span class="fmain">
+									<span class="ftitle">{listColumns.length > 0 ? formatValue(row?.[listColumns[0]]) : ''}</span>
+									{#if wishMeta && wishMeta.length > 0}
+										<span class="fmeta fwishmeta">{wishMeta.length}× {wishMeta.slice(0, 4).join(' · ')}{wishMeta.length > 4 ? ` +${wishMeta.length - 4}` : ''}</span>
+									{/if}
+									{#if listColumns.length > 1}
+										<span class="fmeta">
+											{#each listColumns.slice(1) as field (field)}
+												<span class="fmetapair"><span class="fk">{metaFieldLabel(field)}</span>{metaValueText(row?.[field])}</span>
+											{/each}
+										</span>
+									{/if}
+								</span>
+								<span class="frowbtns">
+									{#each cockpitRowNavs as a (a.id)}
+										<button class="btn-ghost fbtnrow" type="button" disabled={actionBusy} onclick={() => openRowNav(a, row)}>{rowBtnLabel(a)}</button>
+									{/each}
+									{#each btns as p (p.a.id)}
+										{#if p.kind === 'stepper'}
+											<button class="fstepbtn" type="button" title={tr('connector.flow.creator.dec')} aria-label={tr('connector.flow.creator.dec')} disabled={actionBusy} onclick={() => void stepperRun(p.a, row, p.fieldKey, -1)}>−</button>
+											{#if p.fieldKey}
+												<span class="fqty">{formatValue(row?.[p.fieldKey])}</span>
+											{/if}
+											<button class="fstepbtn" type="button" title={tr('connector.flow.creator.inc')} aria-label={tr('connector.flow.creator.inc')} disabled={actionBusy} onclick={() => void stepperRun(p.a, row, p.fieldKey, 1)}>+</button>
+										{:else}
+											<button class="btn-ghost fbtnrow" type="button" disabled={actionBusy || !rowActionEnabledFor(p.a, row)} onclick={() => openRowBtn(p, row)}>{rowBtnLabel(p.a)}</button>
+										{/if}
+									{/each}
+								</span>
+							</div>
+						</li>
+					{:else}
+						<li class="fempty">{$t('connector.empty')}</li>
+					{/each}
+				</ul>
+			{:else if cockpit && shown.type === 'results' && !resultsPending}
+				<!-- Cockpit Verlosungs-Tab (Spec 15): Teilnehmer-Name prominent,
+				     gewonnene Items gruppiert ×N (normalizeResults/groupNames
+				     weiterverwendet), Statuschip je gesetztem Flag + Ersteller-
+				     „Zurücksetzen“-Button; Abgeholt/Verzichtet nur ohne gesetztes
+				     Flag. Nach Status-Schreibaktion: frischer Fetch (load(true))
+				     — der Reset-Button erscheint per frischem Fetch zurück.
+				     Vor der Ziehung: Hinweis + Start-Button (Confirm-Modal,
+				     Überschreib-Warnung falls raffle_done — doneFlag-Warnung im
+				     Modal-Handler). -->
+				{#if cockpitResultRows.length === 0}
+					<p class="fempty">{tr('connector.flow.creator.results_none')}</p>
+				{:else}
+					<div class="fbar">
+						<span class="fspacer"></span>
+						<button type="button" class="frefresh" title={tr('connector.flow.refresh')} aria-label={tr('connector.flow.refresh')} onclick={() => void load(true)}>↻</button>
+					</div>
+					<ul class="flist">
+						{#each cockpitResultRows as r, i (i)}
+							<li>
+								<div class="frow frow-static">
+									<span class="fmain">
+										<span class="ftitle">{r.name}</span>
+										{#if r.groups.length > 0}
+											<span class="fmeta">
+												{#each r.groups as g (g.name)}
+													<span class="fmetapair"><span class="fk">×{g.count}</span>{g.name}</span>
+												{/each}
+											</span>
+										{/if}
+									</span>
+									<span class="frowbtns">
+										{#if r.flags.length > 0}
+											{#each r.flags as fl (fl)}
+												<span class="fstatus chip" role="status">{tr(`connector.flow.status_${fl}`)}</span>
+											{/each}
+										{/if}
+										{#each cockpitRowBtns(shown) as p (p.a.id)}
+											{#if p.kind === 'button' && rowActionEnabledFor(p.a, r.row) && (p.a.enabled_if ? true : r.flags.length === 0)}
+												<button class="btn-ghost fbtnrow" type="button" disabled={actionBusy} onclick={() => openRowBtn(p, r.row)}>{rowBtnLabel(p.a)}</button>
+											{/if}
+										{/each}
+									</span>
+								</div>
+							</li>
+						{:else}
+							<li class="fempty">{$t('connector.empty')}</li>
+						{/each}
+					</ul>
+				{/if}
+			{:else if cockpit && shown.type === 'detail'}
+				<!-- Cockpit-Übersicht (Spec 15): Codes als Zeile mit Wert +
+				     Copy-Button (documentierte Ausnahme der No-Copy-Regel:
+				     nur Codes im Creator-Cockpit, nicht in Teilnehmer-Flows),
+				     max_wishes-Select 1–6 als Sofort-Eingang (existing
+				     Screen-Action-Mechanismus, onchange → PATCH), drei
+				     Statistikkarten im bestehenden Overlay-Kartenstil. -->
+				{#if cockpitName}<p class="fmeta fcockpitname">{cockpitName}</p>{/if}
+				{#if cockpitCodeRows.length > 0}
+					<ul class="fcode-list">
+						{#each cockpitCodeRows as c (c.field)}
+							<li class="fcode-line">
+								<span class="fk">{metaFieldLabel(c.field)}</span>
+								<span class="fcode-value">{c.value === null || c.value === undefined || c.value === '' ? '—' : String(c.value)}</span>
+								{#if c.value !== null && c.value !== undefined && String(c.value) !== ''}
+									<button type="button" class="fcopy" title={tr('connector.flow.copy')} onclick={() => void copyCode(c.field, String(c.value))}>{copiedField === c.field ? tr('connector.flow.copied') : '⧉'}</button>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				{#if cockpitSelect}
+					{@const k = `${cockpitSelect.a.id}.${cockpitSelect.f.key}`}
+					<label class="ffield fselectfield">
+						<span class="flabel">{labelOf(cockpitSelect.f.label, lang)}</span>
+						<select class="finput" bind:value={actionInputs[k]} onchange={() => void runAction(cockpitSelect.a)}>
+							{#each cockpitSelect.f.options ?? [] as o (labelOf(o, lang))}
+								<option value={labelOf(o, lang)}>{labelOf(o, lang)}</option>
+							{/each}
+						</select>
+					</label>
+				{/if}
+				{#if cockpitStatRows.length > 0}
+					<div class="fstatcards">
+						{#each cockpitStatRows as s (s.field)}
+							<div class="fstatcard">
+								<span class="fstatval">{formatValue(s.value)}</span>
+								<span class="fstatlabel">{metaFieldLabel(s.field)}</span>
+							</div>
+						{/each}
+					</div>
 				{/if}
 			{:else if shown.type === 'list'}
 				<!-- D-B Punkt 1+3+4: Listen im Overlay-Zeilenstil (wie Trade-
@@ -1034,7 +2151,27 @@
 			{:else}
 				<p class="fempty">{$t('connector.empty')}</p>
 			{/if}
-			{#if !resultsPending && (confirmAction || screenActions.length > 0)}
+			{#if cockpit && !resultsPending && cockpitTopPlans.length > 0}
+				<!-- Cockpit-Top-Buttons (Spec 15): „+ Teilnehmer“, „Wünsche
+				     bearbeiten“, „+ Gegenstand“, „Teilnehmern zuordnen“,
+				     „Codes neu generieren“, „Verlosung starten“, Einstellungen.
+				     Kurze Labels wo Locale-Key existiert (btn_<goto>), sonst
+                     Manifest-Titel; Assign-Button deaktiviert ohne erfasste
+                     Zeilen (Cockpit-Liste: Mehrfachauswahl per ☐ in der
+                     Zeile — Erfassung für das Zuordnungs-Modal). -->
+				<div class="factions">
+					{#each cockpitTopPlans as p (p.a.id)}
+						<button
+							class={p.mode === 'nav' ? 'btn-ghost' : 'btn fsubmit'}
+							type="button"
+							disabled={actionBusy || (p.mode === 'multimodal' && marked.length === 0)}
+							onclick={() => openTopPlan(p)}
+						>{topBtnLabel(p.a)}</button>
+					{/each}
+					{#if actionNote}<p class="fnote">{actionNote}</p>{/if}
+				</div>
+			{/if}
+			{#if !cockpit && !resultsPending && (confirmAction || screenActions.length > 0)}
 				<!-- Buttons nach vorhandener .btn/.btn-ghost-Norm (D-B Punkt 3):
 				     Write-Aktionen = .btn (Akzent), goto-Navigation = .btn-ghost. -->
 				<div class="factions">
@@ -1111,6 +2248,117 @@
 	{/if}
 </section>
 
+{#if modal}
+	<!-- Cockpit-Modal (Spec 15): steht ÜBER der unbewegten Liste; Esc und
+	     Backdrop schließen zuerst das Modal (die Esc-Kaskade
+	     Flow→Liste→Modus in ConnectorViews wird über modalActive
+	     angehalten). notes/warnings im Modal, Fehler bleiben im Modal. -->
+	<div class="fmodal" role="dialog" aria-modal="true" aria-label={modal.title}>
+		<button class="fmodal-backdrop" type="button" tabindex={-1} aria-label={tr('connector.flow.creator.cancel')} onclick={() => { if (!modalBusy) closeModal(); }}></button>
+		<div class="fmodal-card">
+			<p class="fmodal-title">{modal.title}</p>
+			{#each modal.warnings as w (w)}
+				<p class="fmodal-warn">{w}</p>
+			{/each}
+			{#if modalLoading}
+				<p class="fempty">{$t('common.loading')}</p>
+			{:else if modal.kind === 'multi'}
+				{@const cap = modalCap}
+				<p class="fmarkinfo">{tr('connector.flow.marked', { n: String(modalMarked.length), max: String(cap ?? '∞') })}</p>
+				{#if modal.confirmStage === 'empty'}
+					<p class="fmodal-warn">{tr('connector.flow.creator.clear_confirm')}</p>
+				{/if}
+				<ul class="flist fmodal-list">
+					{#if modal.multi === 'wishes'}
+						{@const metaKeys = Object.keys(modal?.target?.mapping ?? {}).filter((k) => k !== (modal?.target?.pins ?? [])[0] && k !== 'name' && /(qty|type|grade|size|wish_count)/i.test(k)).slice(0, 3)}
+						{#each modalRows as row, i (i)}
+							<li>
+								<button class="frow frow-mark" class:is-marked={isModalMarked(String(i))} type="button" aria-pressed={isModalMarked(String(i))} onclick={() => toggleModalMark(String(i), true)}>
+									<span class="fcheck">{isModalMarked(String(i)) ? '☑' : '☐'}</span>
+									<span class="fmain">
+										<span class="ftitle">{formatValue(row?.name ?? row?.title ?? '')}</span>
+										{#if metaKeys.length > 0}
+											<span class="fmeta">
+												{#each metaKeys as field (field)}
+													<span class="fmetapair"><span class="fk">{metaFieldLabel(field)}</span>{metaValueText(row?.[field])}</span>
+												{/each}
+											</span>
+										{/if}
+									</span>
+								</button>
+							</li>
+						{:else}
+							<li class="fempty">{$t('connector.empty')}</li>
+						{/each}
+					{:else}
+						{#each assignRows as ar (ar.id)}
+							<li>
+								<button class="frow frow-mark" class:is-marked={isModalMarked(ar.id)} class:is-off={!ar.eligible} disabled={!ar.eligible} type="button" aria-pressed={isModalMarked(ar.id)} onclick={() => toggleModalMark(ar.id, ar.eligible)}>
+									<span class="fcheck">{isModalMarked(ar.id) ? '☑' : '☐'}</span>
+									<span class="fmain">
+										<span class="ftitle">{ar.name}</span>
+										<span class="fmeta">
+											<span class="fmetapair">{ar.count}/{String(cap ?? '∞')}</span>
+											{#if ar.reason}<span class="fassign-hint">{ar.reason}</span>{/if}
+										</span>
+									</span>
+								</button>
+							</li>
+						{:else}
+							<li class="fempty">{$t('connector.empty')}</li>
+						{/each}
+					{/if}
+				</ul>
+			{:else if modal.kind === 'prompt'}
+				{#each modal.inputs as inp (inp.key)}
+					<label class="ffield">
+						<span class="flabel">{inp.label}{inp.required ? ' *' : ''}</span>
+						<input class="finput" type={inp.type} bind:value={inp.value} />
+					</label>
+				{/each}
+			{:else if modal.formSubmit && modal.target?.form}
+				{@const userKeys = formUserKeys(modal.target)}
+				{#each (modal.target.form.fields ?? []).filter((f) => userKeys.has(f.key)) as f (f.key)}
+					<label class="ffield">
+						<span class="flabel">{labelOf(f.label, lang)}{f.required === true ? ' *' : ''}</span>
+						{#if f.type === 'select'}
+							<select class="finput" bind:value={formValues[f.key]}>
+								{#each f.options ?? [] as o (labelOf(o, lang))}
+									<option value={labelOf(o, lang)}>{labelOf(o, lang)}</option>
+								{/each}
+							</select>
+						{:else}
+							<input class="finput" type={f.type === 'number' ? 'number' : 'text'} bind:value={formValues[f.key]} autocomplete="off" oninput={() => { const rule = (modal?.target?.autocomplete ?? []).find((a) => a.field === f.key); if (rule) void searchAC(rule, String(formValues[f.key] ?? '')); }} />
+							{#if autofilled[f.key]}<span class="fauto">{tr('connector.flow.autofill_applied')}</span>{/if}
+						{/if}
+					</label>
+					{#if acOpen[f.key] && (acItems[f.key] ?? []).length > 0}
+						<ul class="facs">
+							{#each acItems[f.key] as item, i (i)}
+								<li>
+									<button class="fac" type="button" onclick={() => { const rule = (modal?.target?.autocomplete ?? []).find((a) => a.field === f.key); if (rule) pickAC(rule, item.value); }}>{item.label}</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				{/each}
+			{/if}
+			{#if modal.note}<p class="fmodal-warn">{modal.note}</p>{/if}
+			<div class="fmodal-actions">
+				<button class="btn-ghost" type="button" onclick={() => closeModal()}>{tr('connector.flow.creator.cancel')}</button>
+				{#if modal.kind === 'multi'}
+					<button class="btn fsubmit" type="button" disabled={modalBusy || modalLoading || (modal.multi === 'assign' && modalMarked.length === 0)} onclick={() => void modalSaveMulti()}>{tr('connector.flow.creator.save')}</button>
+				{:else if modal.kind === 'prompt'}
+					<button class="btn fsubmit" type="button" disabled={modalBusy} onclick={() => void modalPromptRun()}>{tr('connector.flow.creator.confirm')}</button>
+				{:else}
+					<button class="btn fsubmit" type="button" disabled={modalBusy} onclick={() => void modalConfirmRun()}>{modal.formSubmit ? tr('connector.flow.creator.save') : tr('connector.flow.creator.confirm')}</button>
+				{/if}
+			</div>
+		</div>
+	</div>
+{/if}
+
+<svelte:window onkeydown={onCockpitKey} />
 <style>
 	/* D-B Punkt 3: keine neuen Farben — ausschließlich bestehende
 	   Theme-Variablen (--line/--lineb/--panel2/--fg/--fgdim/--fgfaint/
@@ -1218,4 +2466,78 @@
 		display: flex; flex-direction: column; gap: 8px; max-width: 460px;
 		margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line);
 	}
+	/* Karten-G (Spec-Abschnitt 15): Cockpit-Modals + Übersicht-Controls.
+	   D-B Punkt 3 unverändert: keine neuen Farben — nur bestehende
+	   Theme-Variablen; Scrim = color-mix aus --fg (theme-adaptiv, dunkel
+	   wie hell). Listenzeilen/Buttons weiterverwendet: .frow/.btn/.chip-Norm. */
+	.fmodal {
+		position: fixed; inset: 0; z-index: 1400;
+		display: flex; align-items: center; justify-content: center;
+		background: color-mix(in srgb, var(--fg) 35%, transparent);
+	}
+	/* Backdrop-Schließen als echter Button (a11y): fängt Klicks ab, ist
+	   nicht tabbar (tabindex -1) — Esc handled onCockpitKey. */
+	.fmodal-backdrop {
+		position: absolute; inset: 0; border: 0; padding: 0;
+		background: transparent; cursor: default;
+	}
+	.fmodal-card {
+		width: min(430px, calc(100vw - 28px)); max-height: min(72vh, 640px);
+		overflow: auto; display: flex; flex-direction: column; gap: 10px;
+		padding: 14px 16px 12px; border: 1px solid var(--lineb);
+		border-radius: 10px; background: var(--panel2);
+	}
+	.fmodal-title { margin: 0; font-weight: 700; font-size: 13.5px; color: var(--fg); }
+	.fmodal-warn {
+		margin: 0; font-size: 11.5px; color: var(--alert);
+		border: 1px solid var(--lineb); border-radius: 7px; padding: 6px 9px;
+		background: color-mix(in srgb, var(--alert) 12%, transparent);
+	}
+	.fmodal-list { max-height: 42vh; }
+	.fmodal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+	.frowbtns { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+	.fbtnrow { padding: 4px 9px; font-size: 11.5px; }
+	.fstepbtn {
+		width: 26px; height: 22px; flex: none; cursor: pointer;
+		border: 1px solid var(--lineb); border-radius: 6px;
+		background: transparent; color: var(--fg);
+		font: 600 13px/1 var(--font-mono);
+	}
+	.fstepbtn[disabled] { opacity: 0.45; cursor: default; }
+	.fcheckbtn {
+		flex: none; width: 26px; height: 26px; cursor: pointer;
+		border: 1px solid var(--lineb); border-radius: 6px;
+		background: transparent; color: var(--fg); font-size: 13px;
+	}
+	.frow-mark:disabled, .frow-mark.is-off { opacity: 0.45; cursor: not-allowed; }
+	.fassign-hint { color: var(--fgfaint); font-style: italic; }
+	.fcode-list {
+		list-style: none; margin: 0 0 12px; padding: 0;
+		display: flex; flex-direction: column; gap: 6px;
+	}
+	.fcode-line {
+		display: flex; align-items: center; gap: 10px;
+		border: 1px solid var(--lineb); border-radius: 8px; padding: 8px 10px;
+	}
+	.fcode-line .fk { flex: none; }
+	.fcode-value { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); color: var(--fg); }
+	.fcopy {
+		flex: none; cursor: pointer; padding: 3px 8px; font-size: 11px;
+		border: 1px solid var(--lineb); border-radius: 6px;
+		background: transparent; color: var(--fgdim);
+	}
+	.fstatcards {
+		display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+		gap: 8px; margin: 0 0 12px;
+	}
+	.fstatcard {
+		display: flex; flex-direction: column; gap: 2px;
+		border: 1px solid var(--lineb); border-radius: 8px; padding: 10px 12px;
+	}
+	.fstatval { font: 700 18px/1.1 var(--font-mono); color: var(--fg); }
+	.fstatlabel { font-size: 11px; color: var(--fgdim); }
+	.fselectfield { max-width: 280px; }
+	.fwishmeta { color: var(--fgdim); }
+	.frevhead { color: var(--fg); margin-bottom: 4px; }
+	.fcockpitname { margin-bottom: 2px; }
 </style>

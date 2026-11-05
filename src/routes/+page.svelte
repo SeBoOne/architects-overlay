@@ -62,6 +62,8 @@ function keyActivate(e: KeyboardEvent) {
 		ownConnectors,
 		replaceFor,
 		embedFor,
+		adminFlowOf,
+		joinFlowOf,
 		type ConnectorEntry,
 		type FlowOpenOutcomeDTO,
 		type SettingsFieldDTO
@@ -3923,18 +3925,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	let ownFlowNote = $state('');
 	let ownFlowNonce = 0; // plain let: Zähler, kein Tracking (Remount-Key)
 
-	/** Suchleisten-Enter im own-Modus: join_code → Flow öffnen (Auto-Beitritt). */
+	/** Suchleisten-Enter im own-Modus: Session-Code → Flow öffnen.
+	 *  G-SCLM-UX v1 (Spec 15 Entscheidung 2): Admin-Code in der Suchzeile
+	 *  öffnet direkt das Creator-Cockpit. Der Core routet nur flow-intern
+	 *  (flow.open.admin_flow ist im Manifest nicht deklariert), also wählt
+	 *  das Frontend den Admin-Einstiegs-Flow manifest-strukturell zuerst
+	 *  (Rust 2a: admin_path-Guardrail — join_code trifft NICHT den Admin-
+	 *  Flow, gibt flow_not_admin ohne Keystore-Schaden) und fällt auf den
+	 *  Teilnehmer-Flow zurück — join_code-Verhalten bleibt unverändert. */
+	const ownAdminFlow = $derived(ownEntry ? adminFlowOf(ownEntry.manifest) : null);
+	const ownJoinFlow = $derived(ownEntry ? joinFlowOf(ownEntry.manifest) : null);
 	async function startOwnFlow(code: string) {
-		const fl = ownOpenFlow;
-		if (!fl || !ownEntry || !isTauri) return;
+		if (!ownEntry || !isTauri) return;
 		const c = code.trim();
 		if (!c) return;
-		try {
-			const out = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
-				id: ownEntry.id,
-				flowId: fl.id, // Tauri erwartet camelCase-Kommandoargumente (Rust-Parameter flow_id)
-				code: c
-			});
+		const apply = (out: FlowOpenOutcomeDTO) => {
 			ownFlowNote = '';
 			ownFlowNonce += 1;
 			ownFlowStart = {
@@ -3944,6 +3949,32 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				nonce: ownFlowNonce
 			};
 			input = '';
+		};
+		const admin = ownAdminFlow;
+		if (admin) {
+			// Versuch 1: Code als Ersteller-Code (Creator-Flow, Übersicht).
+			try {
+				const out = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
+					id: ownEntry.id,
+					flowId: admin.id, // Tauri camelCase (Rust-Parameter flow_id)
+					code: c
+				});
+				apply(out);
+				return;
+			} catch {
+				// Kein Admin-Code (flow_not_admin) — der Teilnehmer-Weg unten
+				// führt wie bisher und liefert ggf. die Fehlermeldung.
+			}
+		}
+		const fl = ownJoinFlow ?? ownOpenFlow;
+		if (!fl) return;
+		try {
+			const out = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
+				id: ownEntry.id,
+				flowId: fl.id,
+				code: c
+			});
+			apply(out);
 		} catch (err) {
 			// Spec 6 Punkt 4: Abbruch mit klarer Note (z. B. fehlender
 			// Benutzername, Session 404) — der Flow öffnet gar nicht erst.
