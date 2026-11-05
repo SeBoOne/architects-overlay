@@ -269,6 +269,11 @@ pub struct ScreenAction {
     /// beim ersten Wishes-Save — der Nutzer tippt seinen Claim-Code, der
     /// Wert fließt als `{key}`-Binding in Body/Path/Headers. Bereits
     /// gepinnte Werte werden vorgeseedet (User-Input gewinnt).
+    /// Ersteller-Cockpit v1 (Karte F, Spec 15): ein Feld kann `type`
+    /// (`text`|`number`|`select`, Default text) und bei select `options`
+    /// (de/en, nicht leer) tragen — der Renderer zeichnet daraus ein
+    /// Auswahlfeld (z. B. max_wishes 1–6 auf c_overview, PATCH settings
+    /// sofort). Fehlende `type` = Textfeld wie bisher.
     pub fields: Option<Vec<Param>>,
     /// Ein-Regel (SCLM v2 Requirement 9/one-way-Flags): Action nur aktiv,
     /// wenn die Bedingung gegen den Flow-Zustand wahr ist (z. B.
@@ -887,6 +892,74 @@ mod tests {
         // deny_unknown_fields im Tab-Eintrag
         let bad: Result<Flow, _> =
             serde_json::from_str(text.replace("\"screen\"", "\"scrn\"").as_str());
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn flow_action_field_select_type_and_options_round_trip() {
+        // Frontend-Kontrakt (Karte F R2, Review-R1): Action-`fields` tragen
+        // `type` (text|number|select) und bei select `options` (de/en) — der
+        // Renderer braucht sie, um den max_wishes-Select 1–6 auf c_overview
+        // generisch zu zeichnen (kein Hardcoding in Karte G).
+        let text = r#"{
+            "id": "a", "title": {"de": "A", "en": "A"}, "entry": "c_overview",
+            "screens": [{
+                "id": "c_overview", "type": "detail", "title": {"de": "Ü", "en": "O"},
+                "actions": [{
+                    "id": "max_wishes", "title": {"de": "M", "en": "M"},
+                    "method": "patch", "path": "/api/session/{sid}/settings",
+                    "params": [{"key": "sid", "label": {"de": "S", "en": "S"}}],
+                    "body_template": {"max_wishes": "{max_wishes}"},
+                    "fields": [
+                        {"key": "max_wishes", "label": {"de": "Max", "en": "Max"},
+                         "type": "select", "required": true,
+                         "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]},
+                        {"key": "note", "label": {"de": "N", "en": "N"}, "type": "number"}
+                    ]
+                }]
+            }]
+        }"#;
+        let f: Flow = serde_json::from_str(text).unwrap();
+        let action = &f.screens[0].actions.as_ref().unwrap()[0];
+        let fields = action.fields.as_ref().expect("fields");
+        assert_eq!(
+            fields[0].field_type,
+            Some(crate::manifest::FieldType::Select)
+        );
+        assert_eq!(fields[0].required, Some(true));
+        assert_eq!(fields[0].options.as_ref().expect("options").len(), 2);
+        assert_eq!(fields[0].options.as_ref().unwrap()[1].en, "6");
+        assert_eq!(
+            fields[1].field_type,
+            Some(crate::manifest::FieldType::Number)
+        );
+        assert!(fields[1].options.is_none());
+        // Round-trip: Select und seine Optionen landen unverändert im DTO.
+        let back = serde_json::to_value(&f).unwrap();
+        let f0 = &back["screens"][0]["actions"][0]["fields"][0];
+        assert_eq!(f0["type"], json!("select"));
+        assert_eq!(f0["options"][0], json!({"de": "1", "en": "1"}));
+        assert_eq!(
+            back["screens"][0]["actions"][0]["fields"][1]["type"],
+            json!("number")
+        );
+        // Rückwärtskompatibilität: ein Feld ohne type/options (alle bestehenden
+        // Manifeste) parst UND serialisiert ohne die neuen Keys.
+        let legacy: Screen = serde_json::from_str(
+            r#"{"id":"s","type":"list","title":{"de":"l","en":"l"},"actions":[{"id":"x","title":{"de":"x","en":"x"},"method":"patch","path":"/api/x","fields":[{"key":"delta","label":{"de":"D","en":"D"}}]}]}"#,
+        )
+        .unwrap();
+        let lf = &legacy.actions.as_ref().unwrap()[0].fields.as_ref().unwrap()[0];
+        assert_eq!(lf.field_type, None);
+        assert_eq!(lf.options, None);
+        let lb = serde_json::to_value(&legacy).unwrap();
+        let lfield = &lb["actions"][0]["fields"][0];
+        assert!(!lfield.as_object().unwrap().contains_key("type"));
+        assert!(!lfield.as_object().unwrap().contains_key("options"));
+        // deny_unknown_fields: Tippfer "opcion" scheitert am Schema (die
+        // select-ohne-options-Kombination prüft der Validator, nicht Serde).
+        let bad: Result<Flow, _> =
+            serde_json::from_str(text.replace("\"options\"", "\"opcion\"").as_str());
         assert!(bad.is_err());
     }
 

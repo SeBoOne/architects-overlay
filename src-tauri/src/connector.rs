@@ -3028,6 +3028,8 @@ mod tests {
                         en: "c".into(),
                     },
                     required: None,
+                    field_type: None,
+                    options: None,
                 }]),
                 headers: None,
                 poll_seconds: None,
@@ -4838,7 +4840,7 @@ mod tests {
                             {{"id": "raffle", "screen": "c_results", "label": {{"de": "V", "en": "R"}}}}
                         ],
                         "screens": [
-                            {{"id": "c_overview", "type": "detail", "title": {{"de": "O", "en": "O"}}}},
+                            {{"id": "c_overview", "type": "detail", "title": {{"de": "O", "en": "O"}}, "actions": [{{"id": "max_wishes", "title": {{"de": "M", "en": "M"}}, "method": "patch", "path": "/api/session/{{sid}}/settings", "params": [{{"key": "code", "label": {{"de": "c", "en": "c"}}}}, {{"key": "sid", "label": {{"de": "s", "en": "s"}}}}], "headers": {{"X-SCLM-Code": "{{code}}"}}, "body_template": {{"max_wishes": "{{max_wishes}}"}}, "fields": [{{"key": "max_wishes", "label": {{"de": "M", "en": "M"}}, "type": "select", "required": true, "options": [{{"de": "1", "en": "1"}}, {{"de": "2", "en": "2"}}, {{"de": "3", "en": "3"}}, {{"de": "4", "en": "4"}}, {{"de": "5", "en": "5"}}, {{"de": "6", "en": "6"}}]}}]}}]}},
                             {{"id": "c_results", "type": "results", "title": {{"de": "R", "en": "R"}}}}
                         ],
                         "open": {{
@@ -4968,6 +4970,68 @@ mod tests {
         assert!(
             !file.exists(),
             "fehlgeschlagener Create lässt Keystore unberührt"
+        );
+    }
+
+    #[test]
+    fn creator_overview_max_wishes_action_patches_settings_immediately() {
+        // Review-R1 blocking-Punkt (Spec 15): der max_wishes-Select 1–6 sitzt
+        // AUF c_overview und patcht sofort /settings (nicht nur die Settings-
+        // Form dahinter). Fixture spiegelt genau diesen Manifest-Vertrag.
+        let (base, rx) = start_mock_api(vec![(
+            "PATCH",
+            "/api/session/sidC/settings",
+            200,
+            r#"{"id":"sidC","max_wishes":4}"#,
+        )]);
+        let m = admin_routing_manifest_fixture(&base);
+        let creator = flow_with_id(&m, "creator");
+        let overview = creator
+            .screens
+            .iter()
+            .find(|s| s.id == "c_overview")
+            .expect("c_overview");
+        let action = overview
+            .actions
+            .as_ref()
+            .expect("Aktion auf c_overview")
+            .iter()
+            .find(|a| a.id == "max_wishes")
+            .expect("max_wishes-Aktion")
+            .clone();
+        let field = &action.fields.as_ref().expect("Select-Feld")[0];
+        assert_eq!(
+            field.field_type,
+            Some(connector::manifest::FieldType::Select)
+        );
+        assert_eq!(field.options.as_ref().expect("options").len(), 6);
+        let st = settings_state_with("sclm", &[]);
+        let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values.insert("sid".into(), json!("sidC"));
+        values.insert("code".into(), json!("ADM-C1"));
+        // Ein Select liefert den Optionswert als String — der Kern muss ihn
+        // JSON-numerisch in den Body bringen (API: int 1–10).
+        values.insert("max_wishes".into(), json!("4"));
+        let (status, _body) = block_on_async(screen_action_core(&m, &action, values, &st, "sclm"))
+            .expect("Aktion läuft durch");
+        assert_eq!(status, 200);
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].method, "PATCH");
+        assert_eq!(hits[0].path, "/api/session/sidC/settings");
+        let sent: serde_json::Value = serde_json::from_str(&hits[0].body).unwrap();
+        assert_eq!(sent["max_wishes"], json!(4), "numerischer Body-Wert");
+        assert_eq!(
+            sent.as_object().expect("body object").len(),
+            1,
+            "teilbarer PATCH: nur das geänderte Feld im Body"
+        );
+        assert!(
+            hits[0]
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("x-sclm-code") && v == "ADM-C1"),
+            "Admin-Code aus dem Flow-Zustand als Header"
         );
     }
 

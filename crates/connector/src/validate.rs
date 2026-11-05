@@ -1002,6 +1002,33 @@ fn check_screen(
                     a.id, f.key
                 ));
             }
+            // Ersteller-Cockpit v1 (Karte F, Spec 15): Action-Felder dürfen
+            // Auswahlfelder sein (`type: "select"` + `options`) — z. B. der
+            // max_wishes-Select 1–6 auf c_overview. select ohne Optionen ist
+            // unrendierbar (Error), Optionen ohne select wären tote Deklaration
+            // (Error). options-Einträge müssen beide Sprachen tragen.
+            let options = f.options.as_deref().unwrap_or(&[]);
+            if f.field_type == Some(FieldType::Select) {
+                if options.is_empty() {
+                    report.error(format!(
+                        "flow '{flow_id}': screen '{sid}': action '{}': select field '{}' has no options",
+                        a.id, f.key
+                    ));
+                }
+                for o in options {
+                    if o.de.trim().is_empty() || o.en.trim().is_empty() {
+                        report.error(format!(
+                            "flow '{flow_id}': screen '{sid}': action '{}': select field '{}' has an option without de/en text",
+                            a.id, f.key
+                        ));
+                    }
+                }
+            } else if !options.is_empty() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': action '{}': field '{}' has options without type 'select'",
+                    a.id, f.key
+                ));
+            }
         }
         // SCLM v2: enabled_if ist Bedingung wie when/exit — Referenzen müssen
         // existieren, then/otherwise ist hier sinnlos (Error, kein Warnpfad:
@@ -1816,6 +1843,183 @@ mod tests {
         assert!(
             r.errors.iter().any(|e| e.contains("duplicate action id")),
             "{r:?}"
+        );
+    }
+
+    #[test]
+    fn flow_action_select_fields_checked() {
+        // Ersteller-Cockpit v1 (Karte F, Spec 15): c_overview-Vertrag — ein
+        // Action-Feld als Select (type select + options 1–6) ist valide und
+        // wirft keine Warnung (Karte G rendert daraus das Sofort-Auswahlfeld).
+        let select_ok = r#"{"id": "co", "type": "detail", "title": {"de": "co", "en": "co"}, "endpoint": "/api/session/{code}", "params": [{"key": "code", "label": {"de": "c", "en": "c"}}, {"key": "sid", "label": {"de": "s", "en": "s"}}], "mapping": {"sid": "id", "max_wishes": "max_wishes"}, "actions": [{"id": "max_wishes", "title": {"de": "mw", "en": "mw"}, "method": "patch", "path": "/api/session/{sid}/settings", "params": [{"key": "code", "label": {"de": "c", "en": "c"}}, {"key": "sid", "label": {"de": "s", "en": "s"}}], "headers": {"X-SCLM-Code": "{code}"}, "body_template": {"max_wishes": "{max_wishes}"}, "fields": [{"key": "max_wishes", "label": {"de": "Max", "en": "Max"}, "type": "select", "required": true, "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]}]}]}"#;
+        let r = validate_manifest(manifest_with_flow(&flow_json("co", select_ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        assert!(r.warnings.is_empty(), "{r:?}");
+        let m = connector_manifest_of(&manifest_with_flow(&flow_json("co", select_ok)));
+        let action = &m.flows.as_ref().unwrap()[0].screens[0]
+            .actions
+            .as_ref()
+            .unwrap()[0];
+        let field = &action.fields.as_ref().unwrap()[0];
+        assert_eq!(field.field_type, Some(FieldType::Select));
+        assert_eq!(field.options.as_ref().unwrap().len(), 2);
+        assert_eq!(field.options.as_ref().unwrap()[1].de, "6");
+
+        // select ohne options → Error (nichts rendert das Feld).
+        let select_no_options = select_ok.replace(
+            r#", "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]"#,
+            "",
+        );
+        let r =
+            validate_manifest(manifest_with_flow(&flow_json("co", &select_no_options)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("select field 'max_wishes' has no options")),
+            "{r:?}"
+        );
+
+        // options ohne select-Typ (explizit text) → Error (tote Deklaration).
+        let text_with_options = select_ok.replace(r#""type": "select""#, r#""type": "text""#);
+        let r =
+            validate_manifest(manifest_with_flow(&flow_json("co", &text_with_options)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("field 'max_wishes' has options without type 'select'")),
+            "{r:?}"
+        );
+
+        // options ohne deklarierten type (Default text) → ebenfalls Error.
+        let implicit_text_with_options = select_ok.replace(r#""type": "select", "#, "");
+        let r = validate_manifest(
+            manifest_with_flow(&flow_json("co", &implicit_text_with_options)).as_bytes(),
+        );
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("field 'max_wishes' has options without type 'select'")),
+            "{r:?}"
+        );
+
+        // Option ohne en-Text → Error (beide Sprachen sind Pflicht).
+        let half_option =
+            select_ok.replace(r#"{"de": "6", "en": "6"}"#, r#"{"de": "6", "en": ""}"#);
+        let r = validate_manifest(manifest_with_flow(&flow_json("co", &half_option)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("select field 'max_wishes' has an option without de/en text")),
+            "{r:?}"
+        );
+
+        // number-Feld ohne options ist legitim (Delta-Felder wie loot qty).
+        let number_ok = select_ok.replace(r#""type": "select""#, r#""type": "number""#);
+        let number_ok = number_ok.replace(
+            r#", "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]"#,
+            "",
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("co", &number_ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn examples_sclm_manifest_creator_overview_max_wishes_select() {
+        // Review-R1 blocking-Punkt: Spec 15 (Zeile „max_wishes-Select 1–6
+        // (PATCH settings, sofort)“) + Karte G Kriterium 4 verlangen die
+        // Aktion AUF c_overview (nicht nur die Settings-Form dahinter) —
+        // Karte G darf examples/sclm.json nicht anfassen.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sclm.json");
+        let text = std::fs::read_to_string(path).expect("examples/sclm.json ist lesbar");
+        let report = validate_manifest(text.as_bytes());
+        assert!(report.errors.is_empty(), "{report:?}");
+        let m = crate::manifest::ConnectorManifest::parse(text.as_bytes()).expect("parst");
+        let creator = m
+            .flows
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|f| f.id == "creator")
+            .expect("creator-Flow");
+        let overview = creator
+            .screens
+            .iter()
+            .find(|s| s.id == "c_overview")
+            .expect("c_overview-Screen");
+        let action = overview
+            .actions
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|a| a.id == "max_wishes")
+            .expect("max_wishes-Aktion auf c_overview (Sofort-Select, nicht goto)");
+        assert_eq!(action.method, Some(HttpMethod::Patch));
+        assert_eq!(
+            action.path.as_deref(),
+            Some("/api/session/{sid}/settings"),
+            "PATCH settings ist der bestehende Settings-Pfad"
+        );
+        assert_eq!(
+            action
+                .headers
+                .as_ref()
+                .and_then(|h| h.get("X-SCLM-Code"))
+                .map(String::as_str),
+            Some("{code}"),
+            "Admin-Code als Header-Template (Creator-Flow pinnt admin_code)"
+        );
+        assert_eq!(
+            action.body_template.as_ref(),
+            Some(&Value::Object(
+                [(
+                    "max_wishes".to_string(),
+                    Value::String("{max_wishes}".to_string())
+                )]
+                .into_iter()
+                .collect()
+            )),
+            "Body nur das geänderte Feld (teilbarer PATCH)"
+        );
+        let params: Vec<&str> = action
+            .params
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|p| p.key.as_str())
+            .collect();
+        assert_eq!(params, vec!["code", "sid"]);
+        let field = &action.fields.as_ref().expect("Select-Feld deklariert")[0];
+        assert_eq!(field.key, "max_wishes");
+        assert_eq!(field.field_type, Some(FieldType::Select));
+        assert_eq!(field.required, Some(true));
+        let options: Vec<&str> = field
+            .options
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|o| o.de.as_str())
+            .collect();
+        assert_eq!(
+            options,
+            vec!["1", "2", "3", "4", "5", "6"],
+            "Overlay-Grenze 1–6 (API-Limit 1–10 bleibt möglich, Spec 15 Punkt 3)"
+        );
+        // Fallback-Navigation bleibt erhalten (Spec: Select SOFORT auf der
+        // Übersicht, die Settings-Form dahinter darf weiter existieren).
+        assert!(
+            overview
+                .actions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|a| a.goto.as_deref() == Some("settings")),
+            "goto settings bleibt als Fallback"
+        );
+        // Der Select ist das ERSTE Feld der Übersicht (Tab-Primat).
+        assert_eq!(
+            overview.actions.as_ref().unwrap()[0].id,
+            "max_wishes",
+            "Sofort-Select steht vor goto/Regenerate"
         );
     }
 
