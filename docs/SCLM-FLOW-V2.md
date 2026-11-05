@@ -356,3 +356,24 @@ connector.ts, locales). Merge F vor G.
 - Lehre fuer spaetere Manifest-Pflege: String-Treffer-Autocomplete ohne
   Label-Echo im Frontend ist wertlos; Fill-Mappings setzen Objekt-Treffer
   voraus.
+## 19 Loot-HTTP-500: Diagnose + Qty-Klampe + 5xx-Logger (Omar, 2026-11-05)
+
+Live-Sonden gegen sclm.site (throwaway-Sessions, geloescht/gesperrt): Der Server
+panikt mit **nacktem HTTP 500 (HTML, kein JSON)** genau dann, wenn ein JSON-
+Zahlenfeld (z.B. qty) **jenseits int64 range** liegt — z.B. eine 26-stellige
+Menge. `i64::MAX` selbst ist noch 200, ein int64-umspannender Arbitrary-Int
+bricht die DB-Schicht. Alle ueblichen Loot-Feld-Kombinationen (leer/fehlend/
+Umlaute/Striche/qty=0/negativ/nach der Ziehung) sindServer-seitig sauber (200
+oder klaer 400 mit Servertext) — ein 500 ohne Servertext ist damit ein
+Overflow-/Panic-Verdaechtiger.
+
+Overlay-Haertung (`src-tauri/src/connector.rs`):
+- `normalize_qty_value` klemmt jede Menge auf max **999_999** (Float-Saettigung
+  `1e26 -> i64::MAX` wird so entschärft); Tests decken String-/Number-/
+  Saettigungsfaelle ab.
+- `submit_form_request` loggt bei **Status >= 500** via `log::warn!` die Zeile
+  `connector 5xx: METHOD PFAD body=... response=<16 Zeichen gekuerzt>` ins
+  User-Journal (`journalctl --user -u architects-overlay`). Header-Werte
+  (Session-/Admin-Codes) werden dafuer **niemals** geloggt. Damit haelt das
+  Overlay beim naechsten 500 die exakte Request-Huelle fest, statt raten zu
+  muessen.

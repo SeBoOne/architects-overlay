@@ -2829,7 +2829,7 @@ fn name_hardening_applies(path: &str) -> bool {
     p.contains("/loot") || p.contains("/commodities")
 }
 fn normalize_qty_value(v: &serde_json::Value) -> Option<i64> {
-    match v {
+    let raw = match v {
         serde_json::Value::Number(n) => n.as_i64().or_else(|| {
             n.as_f64()
                 .filter(|f| f.is_finite())
@@ -2848,7 +2848,13 @@ fn normalize_qty_value(v: &serde_json::Value) -> Option<i64> {
             })
         }
         _ => None,
-    }
+    };
+    // Obere Schranke 999_999 (Omar Live-Sonde 2026-11-05): ein JSON-Int jenseits
+    // int64 range bringt den SCLM-Server auf nackten HTTP 500 (HTML, kein JSON) —
+    // i64::MAX selbst ist noch 200. SCLM-Loot-Mengen REALITAT << 1 Mio; die Klampe
+    // verhindert, dass Float-Saettigung (f64 -> i64::MAX) als Kanone den Server
+    // trifft. Negative bleiben durchgereicht (Server normalisiert, keine Panik).
+    raw.map(|n| if n > 999_999 { 999_999 } else { n })
 }
 
 fn harden_write_body(body: &mut serde_json::Value, path: &str) -> Result<(), String> {
@@ -2989,7 +2995,15 @@ pub(crate) async fn submit_form_request(
         .await
         .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
     let resp_body: serde_json::Value =
-        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text));
+        serde_json::from_str(&text).unwrap_or(serde_json::Value::String(text.clone()));
+    if status >= 500 {
+        // 5xx-Diagnose (Omar, Sebo-Loot-500): der Server panikt mit nacktem HTML
+        // ohne JSON — ohne Logger wuesste niemand, WELCHE Request-Huelle das
+        // ausloeste. Body protokollieren (enthaelt keine Header-Codes), Response
+        // gekuerzt. Kein Secret-Leak: Header-Werte werden nie geloggt.
+        let trimmed: String = text.chars().take(160).collect();
+        log::warn!("connector 5xx: {method:?} {path} body={body} response={trimmed}");
+    }
     Ok((status, resp_body))
 }
 
@@ -3343,6 +3357,25 @@ mod tests {
         let mut body2 = json!({ "name": "Sabre", "qty": "12" });
         harden_write_body(&mut body2, "/api/session/s1/loot").expect("hardened");
         assert_eq!(body2["qty"], json!(12)); // saubere Ganzzahl, kein String
+        // Klampe (Omar Live-Sonde): JSON-Int > int64 range panikt den SCLM-Server
+        // (nackter 500 HTML); Float-Saettigung (i64::MAX) wird auf 999_999 geklampt,
+        // damit kein int64-Kanonenrohr den Server trifft. 26-stellige Strings
+        // parse-nicht-i64 -> f64 -> Saettigung -> ebenfalls geklampt.
+        assert_eq!(
+            normalize_qty_value(&json!(9_223_372_036_854_775_807_i64)),
+            Some(999_999)
+        );
+        assert_eq!(
+            normalize_qty_value(&json!("99999999999999999999999999")),
+            Some(999_999)
+        );
+        assert_eq!(normalize_qty_value(&json!(1_000_001)), Some(999_999));
+        assert_eq!(normalize_qty_value(&json!("1000000")), Some(999_999));
+        assert_eq!(normalize_qty_value(&json!("999999")), Some(999_999));
+        assert_eq!(normalize_qty_value(&json!(0)), Some(0)); // Server-Default-Pfad bleibt
+        let mut body3 = json!({ "name": "Sabre", "qty": "99999999999999999999999999" });
+        harden_write_body(&mut body3, "/api/session/s1/loot").expect("hardened");
+        assert_eq!(body3["qty"], json!(999_999));
     }
 
     #[test]
