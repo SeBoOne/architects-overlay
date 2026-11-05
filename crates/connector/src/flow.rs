@@ -242,6 +242,21 @@ fn default_sw_name_path() -> String {
 pub struct MultiSpec {
     /// Dot-Path in den Flow-Zustand mit dem Maximum.
     pub max_path: Option<String>,
+    /// I-SCLM Cockpit UX R2 (Punkt 4): Modal-Modus eines multi-Ziels, wenn
+    /// es als Zeilen-Modal geöffnet wird — `wishes` (Loot für einen
+    /// Teilnehmer auswählen) oder `assign` (Teilnehmer für einen Gegenstand
+    /// auswählen, Eignung über freie Wunsch-Slots). Fehlt der Modus, gilt
+    /// `wishes` (Bestandsmanifeste bleiben byte-identisch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<MultiMode>,
+}
+
+/// Modal-Auswahlrichtung eines multi-Screens (Siehe `MultiSpec::mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MultiMode {
+    Wishes,
+    Assign,
 }
 
 /// Generische Screen-Aktion (SF2): Button unter Detail-/Listen-/Results-

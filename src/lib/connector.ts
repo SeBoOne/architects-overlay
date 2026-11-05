@@ -33,6 +33,11 @@ export type FormViewDTO = {
 	method: 'get' | 'post' | 'patch' | 'put' | 'delete';
 	path: string;
 	body_template: unknown;
+	/** I-SCLM Cockpit UX R2 (Punkt 1): false = Add-Formular — sichtbare
+	 *  Nutzerfelder dürfen NICHT aus dem Flow-Zustand vorseediert werden
+	 *  (Plumbing-Keys sid/code/Params laufen weiter still mit).
+	 *  fehlt/true = Bearbeiten-Formular, vorbefüllt wie bisher. */
+	prefill?: boolean | null;
 };
 
 export type ParamDTO = {
@@ -165,6 +170,10 @@ export type AutocompleteRuleDTO = {
 /** Multi-Select-Liste (SF2): Confirm führt die Write-Action aus. */
 export type MultiSpecDTO = {
 	max_path?: string | null;
+	/** I-SCLM Cockpit UX R2 (Punkt 4): Richtung des Zeilen-Modals —
+	 *  'assign' = Teilnehmer für den Zeilen-Gegenstand auswählen,
+	 *  'wishes'/fehlt = Loot-Auswahl für den Zeilen-Teilnehmer. */
+	mode?: 'wishes' | 'assign' | null;
 };
 
 /** Generische Screen-Aktion (SF2): Write (method+path) oder Navigation. */

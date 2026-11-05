@@ -1695,6 +1695,8 @@ pub(crate) async fn form_submit_core(
     let mut body = form.body_template.clone();
     apply_fill(&mut body, &values);
     strip_unfilled(&mut body);
+    // Haertung (I-SCLM UX R2 Punkt 2a): qty-Normalisierung, name-Cap, null-Keys.
+    harden_write_body(&mut body)?;
     // Header aus Feldern mit `header`-Deklaration (z. B. Session-Code als
     // X-SCLM-Code — pro Formular, nicht global).
     let mut field_headers: Vec<(String, String)> = Vec::new();
@@ -1790,7 +1792,7 @@ pub async fn connector_screen_action(
 pub(crate) async fn screen_action_core(
     manifest: &connector::ConnectorManifest,
     action: &connector::flow::ScreenAction,
-    values: BTreeMap<String, serde_json::Value>,
+    mut values: BTreeMap<String, serde_json::Value>,
     settings_state: &crate::app_settings::SettingsState,
     id: &str,
 ) -> Result<(u16, serde_json::Value), String> {
@@ -1805,10 +1807,29 @@ pub(crate) async fn screen_action_core(
     let path = fill_form_path(path_template, &values)
         .map_err(|k| err_keyp("error.connector.param_required", json!({ "key": k })))?;
     // Body: JSON-bewusst einsetzen (Listen bleiben strukturiert), unfüllte
-    // Keys entfernen.
+    // Keys entfernen. Leere optionale Action-Felder (required: false) werden
+    // vorher verworfen — wie im Formular-Pfad: „leer = unverändert“, kein
+    // `""`/null-Müll im Body (I-SCLM UX R2 Härtung).
+    if let Some(fields) = &action.fields {
+        for p in fields.iter().filter(|p| p.required == Some(false)) {
+            let empty = values
+                .get(&p.key)
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.trim().is_empty(),
+                    serde_json::Value::Null => true,
+                    _ => false,
+                })
+                .unwrap_or(false);
+            if empty {
+                values.remove(&p.key);
+            }
+        }
+    }
     let mut body = action.body_template.clone().unwrap_or(json!({}));
     apply_fill(&mut body, &values);
     strip_unfilled(&mut body);
+    // Haertung (I-SCLM UX R2 Punkt 2a): qty-Normalisierung, name-Cap, null-Keys.
+    harden_write_body(&mut body)?;
     // Header-Templates der Action: Platzhalter aus den Werten (stringifiziert).
     let mut string_values: BTreeMap<String, String> = BTreeMap::new();
     for (k, v) in &values {
@@ -2788,6 +2809,64 @@ fn string_has_unfilled(v: &serde_json::Value) -> bool {
     }
 }
 
+/// I-SCLM Cockpit UX R2 (Punkt 2a): Haertung des Write-Bodies NACH dem Fill.
+/// - `qty`: leer / 'NaN' / 'null' / unparsebar -> Key entfaellt (Server-
+///   Default 1); sonst saubere Ganzzahl (auch aus Ziffern-/Dezimalstrings).
+/// - `name`: laenger als 120 Zeichen -> lokaler Hinweis-Fehler (der Server-
+///   'Name zu lang'-400 bleibt als Backstop erhalten, loot/commodity-Limit).
+/// - Keys, die nach dem Fill als JSON `null` dastehen, werden entfernt:
+///   unaufloesbare Platzhalter hat bereits `strip_unfilled` getilgt; das
+///   `null` kommt von explizit geleerten Frontend-Feldern und crash't
+///   Zahlen-/Text-Endpunkte des Servers (500-Kandidat).
+fn normalize_qty_value(v: &serde_json::Value) -> Option<i64> {
+    match v {
+        serde_json::Value::Number(n) => n.as_i64().or_else(|| {
+            n.as_f64()
+                .filter(|f| f.is_finite())
+                .map(|f| f.round() as i64)
+        }),
+        serde_json::Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() || t.eq_ignore_ascii_case("nan") || t.eq_ignore_ascii_case("null") {
+                return None;
+            }
+            t.parse::<i64>().ok().or_else(|| {
+                t.parse::<f64>()
+                    .ok()
+                    .filter(|f| f.is_finite())
+                    .map(|f| f.round() as i64)
+            })
+        }
+        _ => None,
+    }
+}
+
+fn harden_write_body(body: &mut serde_json::Value) -> Result<(), String> {
+    let serde_json::Value::Object(map) = body else {
+        return Ok(());
+    };
+    map.retain(|_, v| !v.is_null());
+    if let Some(s) = map.get("name").and_then(|v| v.as_str())
+        && s.chars().count() > 120
+    {
+        return Err(err_keyp(
+            "error.connector.name_too_long",
+            json!({ "key": "name", "limit": 120 }),
+        ));
+    }
+    if let Some(v) = map.get("qty").cloned() {
+        match normalize_qty_value(&v) {
+            Some(n) => {
+                map.insert("qty".to_owned(), json!(n));
+            }
+            None => {
+                map.remove("qty");
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Formular-Pfad: ROHE Werte einsetzen (kein JSON-Quoting — ein Session-Code
 /// im Pfad darf nicht als `"abc"` landen). Unaufgelöster Platzhalter → Err.
 fn fill_form_path(
@@ -3223,6 +3302,135 @@ mod tests {
         assert!(out.get("empty_opt").is_none());
         assert!(out["nested"].get("drop").is_none());
         assert_eq!(out["nested"]["keep"], json!("Sabre"));
+    }
+
+    // I-SCLM Cockpit UX R2 (Punkt 2a): qty-Härtung, name-Cap, null-Keys —
+    // Root-Cause-Absicherung gegen die 500-/400-Muster des SCLM-Servers.
+    #[test]
+    fn qty_hardening_junk_dropped_and_ints_cleaned() {
+        for junk in [
+            json!(""),
+            json!("NaN"),
+            json!("nan"),
+            json!("null"),
+            json!(true),
+            json!([]),
+        ] {
+            assert_eq!(
+                normalize_qty_value(&junk),
+                None,
+                "junk-Key muss entfallen: {junk:?}"
+            );
+        }
+        assert_eq!(normalize_qty_value(&json!("4")), Some(4));
+        assert_eq!(normalize_qty_value(&json!(" 7 ")), Some(7));
+        assert_eq!(normalize_qty_value(&json!("3.6")), Some(4));
+        assert_eq!(normalize_qty_value(&json!(2)), Some(2));
+        let mut body = json!({ "name": "Sabre", "qty": "NaN" });
+        harden_write_body(&mut body).expect("hardened");
+        assert_eq!(body, json!({ "name": "Sabre" })); // qty-Key entfaellt -> Server-Default 1
+        let mut body2 = json!({ "name": "Sabre", "qty": "12" });
+        harden_write_body(&mut body2).expect("hardened");
+        assert_eq!(body2["qty"], json!(12)); // saubere Ganzzahl, kein String
+    }
+
+    #[test]
+    fn name_cap_local_hint_and_null_keys_stripped() {
+        let long = "a".repeat(121);
+        let mut body = json!({ "name": long, "delta": 1 });
+        let err = harden_write_body(&mut body).unwrap_err();
+        assert!(err.contains("error.connector.name_too_long"), "{err}");
+        assert!(err.contains("\"limit\":120"), "{err}");
+        let ok = "b".repeat(120);
+        let mut body2 = json!({ "name": ok });
+        harden_write_body(&mut body2).expect("120 Zeichen sind grenzgültig");
+        // null-Werte (explizit geleerte Felder) verlassen den Body nie.
+        let mut body3 = json!({ "name": "ok", "qty": null, "sale_revenue": null });
+        harden_write_body(&mut body3).expect("hardened");
+        assert_eq!(body3, json!({ "name": "ok" }));
+    }
+
+    #[test]
+    fn flow_multi_mode_and_form_prefill_parse() {
+        let m: connector::flow::MultiSpec =
+            serde_json::from_value(json!({ "mode": "assign" })).unwrap();
+        assert_eq!(m.mode, Some(connector::flow::MultiMode::Assign));
+        let m2: connector::flow::MultiSpec = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(m2.mode, None); // Bestandsmanifeste bleiben gültig
+    }
+
+    fn hardening_test_manifest(base: &str) -> connector::ConnectorManifest {
+        serde_json::from_value(json!({
+            "manifest_version": 1, "id": "sclm", "name": { "de": "S", "en": "S" },
+            "base_url": base, "auth": { "type": "none" },
+            "placement": { "kind": "own", "label": { "de": "S", "en": "S" } },
+            "views": [{
+                "id": "add_loot", "type": "form", "title": { "de": "A", "en": "A" },
+                "endpoint": "",
+                "form": {
+                    "fields": [
+                        { "key": "name", "label": { "de": "n", "en": "n" }, "type": "text", "required": true },
+                        { "key": "qty", "label": { "de": "q", "en": "q" }, "type": "number" },
+                        { "key": "type", "label": { "de": "t", "en": "t" }, "type": "text" }
+                    ],
+                    "method": "post", "path": "/api/session/s1/loot",
+                    "body_template": { "name": "{name}", "qty": "{qty}", "type": "{type}", "grade": "{grade}", "size": "{size}" },
+                    "prefill": false
+                }
+            }]
+        }))
+        .expect("Manifest parst (inkl. neuem prefill-Feld)")
+    }
+
+    #[test]
+    fn add_loot_write_hardening_e2e_against_mock() {
+        let (base, rx) = start_mock_api(vec![(
+            "POST",
+            "/api/session/s1/loot",
+            200,
+            r#"{"ok":true,"id":"l1"}"#,
+        )]);
+        let manifest = hardening_test_manifest(&base);
+        assert_eq!(
+            manifest.views[0].form.as_ref().unwrap().prefill,
+            Some(false)
+        );
+        let form = manifest.views[0].form.clone().unwrap();
+        let st = settings_state_with("sclm", &[]);
+        let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values.insert("name".to_owned(), json!("Sabre"));
+        values.insert("qty".to_owned(), json!("NaN"));
+        values.insert("type".to_owned(), json!(""));
+        // grade/size werden nie gesendet: ihre Platzhalter bleiben unaufgelöst.
+        let (status, _) = block_on_async(form_submit_core(&manifest, &form, values, &st, "sclm"))
+            .expect("Request läuft durch");
+        assert_eq!(status, 200);
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1);
+        let sent: serde_json::Value = serde_json::from_str(&hits[0].body).unwrap();
+        // Es verlässt NUR der gehärtete Body die Software: kein qty-Müll,
+        // kein Literal-Typ für grade/size, keine null-Keys.
+        assert_eq!(sent, json!({ "name": "Sabre" }));
+    }
+
+    #[test]
+    fn name_over_limit_blocks_before_any_request() {
+        let (base, rx) = start_mock_api(vec![(
+            "POST",
+            "/api/session/s1/loot",
+            200,
+            r#"{"ok":true,"id":"l1"}"#,
+        )]);
+        let manifest = hardening_test_manifest(&base);
+        let form = manifest.views[0].form.clone().unwrap();
+        let st = settings_state_with("sclm", &[]);
+        let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values.insert("name".to_owned(), json!("a".repeat(121)));
+        let err =
+            block_on_async(form_submit_core(&manifest, &form, values, &st, "sclm")).unwrap_err();
+        assert!(err.contains("error.connector.name_too_long"), "{err}");
+        // Der Fehler ist lokal: es ging kein Request mehr raus.
+        assert!(mock_hits(&rx).is_empty());
     }
 
     #[test]

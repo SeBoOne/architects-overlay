@@ -109,6 +109,12 @@ pub struct FormView {
     pub path: String,
     /// Body-Vorlage; `{param}`-Platzhalter werden ersetzt.
     pub body_template: serde_json::Value,
+    /// I-SCLM Cockpit UX R2 (Punkt 1): `false` = Add-Formular — der Renderer
+    /// darf sichtbare Eingabefelder NICHT aus dem Flow-Zustand vorbelegen
+    /// (Plumbing-Keys wie sid/code werden weiter still geseedet). Default
+    /// `true` (fehlend) = Bearbeiten-Formular wie bisher vorbefüllt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
