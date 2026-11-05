@@ -310,3 +310,17 @@ Toast-Meldungen im Vordergrund), de/en Locales vollständig.
 Bauaufteilung: F = Rust+Manifest (connector.rs, examples/sclm.json, keystore, Tests);
 G = Frontend (FlowRenderer tabs+Modals, ConnectorViews Ersteller-Buttons+Create-Modal,
 connector.ts, locales). Merge F vor G.
+
+
+## 16. Merge F + Fixture-Fallback (2026-11-05, Omar, main)
+
+- F (t_e2f1f346) Review Runde 2 APPROVED @ d1a3343 -> main-Merge d7bd578 (--no-ff).
+- Neuer Manifest-Vertrag flows[].tabs (5 Cockpit-Tabs) ist jetzt Backend-Standard;
+  participant-Flow unveraendert. examples/sclm.json lokal aktualisiert (Stand R2,
+  max_wishes-Select auf c_overview, 1-6), Backup nachgezogen.
+- Reviewer-R1-Hinweis behoben: Manifest-Validator-Test fand gitigoriertes
+  examples/sclm.json auf Frisch-Klonen/CI nicht (Panic). Fix: eingecheckter
+  Snapshot src-tauri/tests/fixtures/sclm-manifest.json als Fallback im Test.
+  REGEL: bei jeder Manifest-Pflege examples/sclm.json UND Fixture synchron halten.
+- G (t_3f2356c7, Frontend) laeuft; Merge G -> main nach Review, dann lokaler
+  Abnahme-Build. Release nur mit Sebo-Autorisierung.
