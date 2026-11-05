@@ -324,3 +324,16 @@ connector.ts, locales). Merge F vor G.
   REGEL: bei jeder Manifest-Pflege examples/sclm.json UND Fixture synchron halten.
 - G (t_3f2356c7, Frontend) laeuft; Merge G -> main nach Review, dann lokaler
   Abnahme-Build. Release nur mit Sebo-Autorisierung.
+
+
+## 17. Cockpit-Modal-Mausfix (2026-11-05, direkt auf main)
+
+- Sebo-Runde 2: Cockpit-Modals schlossen bei jedem Maus-Klick (nur Tastatur
+  bedienbar). Root-Cause: .fmodal-card ohne eigenes position -> der absolute
+  .fmodal-backdrop malt im Paint-Order UBER die Karte (absolute Layer >
+  normaler Flow) und jeder Klick traf den Backdrop-Button (closeModal).
+- Fix: .fmodal-card position:relative + z-index:1 (FlowRenderer.svelte).
+  .cmodal-card (ConnectorViews) hatte position:relative schon immer — daher
+  war das Create-Modal nie betroffen.
+- DAUERREGEL fuer jede Modal-Ebene mit Backdrop-Flaeche: die Inhaltskarte
+  braucht position:relative (+ z-index), sonst frisst der Backdrop die Maus.

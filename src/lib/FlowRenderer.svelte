@@ -2498,6 +2498,12 @@
 		background: transparent; cursor: default;
 	}
 	.fmodal-card {
+		/* KRITISCH: position:relative — ohne eigenes position läge der
+		   absolute .fmodal-backdrop im Paint-Order ÜBER der Karte (abs.
+		   Layer > normaler Flow) und jede Maus-Klaus würde closeModal()
+		   auslösen (Sebo-Runde-2-Defekt: Modals nur per Tastatur bedienbar).
+		   cmodal-card in ConnectorViews macht's seit jeher richtig. */
+		position: relative; z-index: 1;
 		/* Breite/Überlauf an der Shell ausgerichtet (100% = Shell-Breite),
 		   kein 100vw mehr (Viewport > Shell). Zoom-Konvention wie .shell:
 		   fester px-Anteil dividiert durch --ui-scale → visuell konstant;
