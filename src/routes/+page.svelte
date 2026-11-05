@@ -3922,6 +3922,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// D-B Punkt 6: wird von ConnectorViews ($bindable) synchronisiert — true,
 	// solange intern ein Flow offen ist (auch bei Öffnung per „Öffnen“-Button).
 	let ownFlowActive = $state(false);
+	// H-SCLM-UX R1 (Sebo P4-P6, Diagnose A): Cockpit-/Create-Modal offen?
+	// (bindable aus ConnectorViews) — steuert class:shell-cockpitmodal an
+	// der .shell-Box: min-height-Floor für die Dauer des offenen Modals,
+	// damit hohe Modals (Wuensche-Editor, Loot-Formular) nicht abgeschnitten
+	// werden; geschlossen -> Shell fällt auf content-driven Größe zurück.
+	let ownCockpitModalOpen = $state(false);
 	let ownFlowNote = $state('');
 	let ownFlowNonce = 0; // plain let: Zähler, kein Tracking (Remount-Key)
 
@@ -4969,6 +4975,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		class:in-detail={inDetail}
 		class:shell-advert={advertOpen || trkOpen || hangarFormOpen}
 		class:shell-info={infoOpen}
+		class:shell-cockpitmodal={ownCockpitModalOpen}
 	>
 
 												<!-- PT: Formular „Trade erfassen" als modales Popup.
@@ -5488,6 +5495,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				initialFlow={ownFlowStart}
 				initialFlowState={ownFlowStart?.state ?? null}
 				flowActive={ownFlowActive}
+				bind:cockpitModalOpen={ownCockpitModalOpen}
 			/>
 		{:else if inConfig}
 			<!-- Config-View: eigenes View in der Palette (wie die Detail-"Seite").

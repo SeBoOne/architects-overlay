@@ -69,7 +69,8 @@
 		type ScreenDTO,
 		type AutocompleteRuleDTO,
 		type ScreenActionDTO,
-		type ParamDTO
+		type ParamDTO,
+		type LocalizedText
 		} from './connector';
 
 	type Result = { data: FetchResultDTO | null; error: string; loading: boolean };
@@ -341,8 +342,11 @@
 		extra: Record<string, unknown>;
 		/** form: true → connector_form_submit auf target, sonst action ausführen. */
 		formSubmit: boolean;
-		/** prompt: Eingabefelder (label localized, value vorbelegt). */
-		inputs: { key: string; label: string; required: boolean; type: string; value: string }[];
+		/** prompt: Eingabefelder (label localized, value vorbelegt).
+		 *  H-SCLM-UX R1 (Sebo P3): select-Felder tragen ihre Manifest-options
+		 *  und werden als Overlay-Button-Optionen gerendert, nicht als
+		 *  native <select> (borderloses Wayland-Overlay: Maus unbedienbar). */
+		inputs: { key: string; label: string; required: boolean; type: string; value: string; options?: LocalizedText[] | null }[];
 		/** multi: 'wishes' (Kontext = Teilnehmerzeile) | 'assign' (Kontext = markierte Loot-IDs). */
 		multi: 'wishes' | 'assign' | null;
 		multiCtxRow: Record<string, unknown> | null;
@@ -600,22 +604,15 @@
 			}
 			if (isRowAction(a, s)) continue; // Zeilen-Button (cockpitRowBtns)
 			const f = singleField(a);
-			if (f && f.type === 'select') continue; // Inline-Select (cockpitSelect)
+			// H-SCLM-UX R1 (Sebo P2): select-Felder in Actions werden nicht
+			// mehr inline gerendert (kein CockpitSelect-Duplikat). Die
+			// max_wishes-Aktion bleibt im Manifest, ihr einziger UI-Weg ist
+			// der Einstellungen-Button (goto settings → Settings-Modal mit
+			// Button-Optionen 1–6, Spec-Abschnitt 16).
+			if (f && f.type === 'select') continue;
 			out.push({ a, mode: 'confirmmodal' });
 		}
 		return out;
-	});
-	/** Inline-Select einer Cockpit-Detailseite (z. B. max_wishes — ändert
-	 *  sofort über den bestehenden Screen-Action-Mechanismus, Spec 15). */
-	const cockpitSelect = $derived.by(() => {
-		const s = shown;
-		if (!cockpit || s?.type !== 'detail') return null;
-		for (const a of s.actions ?? []) {
-			if (isNavigationAction(a) || isRowAction(a, s)) continue;
-			const f = singleField(a);
-			if (f && f.type === 'select' && (f.options?.length ?? 0) > 0) return { a, f };
-		}
-		return null;
 	});
 	// Übersicht (detail): _code-Keys → Code-Zeile mit Copy-Button (dokumentierte
 	// Ausnahme der No-Copy-Regel: NUR Codes im Creator-Cockpit, Spec 15) und
@@ -1474,11 +1471,12 @@
 							// sale_revenue sind laut Spec 15 optional
 							// und duerfen nicht UI-pflichtig werden.
 							required: src.required === true,
-							type: src.type === 'number' ? 'number' : 'text',
+							type: src.type === 'select' ? 'select' : src.type === 'number' ? 'number' : 'text',
+							options: src.type === 'select' ? src.options : undefined,
 							value: String(row?.[src.key] ?? '')
 						}
 					]
-				: [];
+					: [];
 			openModal(mkModal({ kind: 'prompt', action: a, chain: p.chain ?? null, row, title: labelOf(a.title, lang), inputs }));
 		}
 	}
@@ -1673,18 +1671,9 @@
 		e.preventDefault();
 	}
 
-	// Select-Vorbelegung (Spec 15/F-Vertrag): Action-Felder werden aus dem
-	// Flow-Zustand vorseedet — c_overview.mapping mappt max_wishes, der
-	// Select startet daher auf dem Session-Wert und patcht sofort per onchange.
-	$effect(() => {
-		const c = cockpitSelect;
-		if (!c) return;
-		const k = `${c.a.id}.${c.f.key}`;
-		if ((actionInputs[k] ?? '').trim()) return;
-		const v = fstate[c.f.key];
-		const sv = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : '';
-		if (sv) actionInputs = { ...actionInputs, [k]: sv };
-	});
+	// H-SCLM-UX R1: die CockpitSelect-Vorbelegung ist entfallen — mit dem
+	// Inline-Select ist auch sein Session-Wert-Seeding entfallen. Die
+	// Settings-Modal-Vorbelegung übernimmt seedFromState (formmodal-Öffnung).
 
 	// ---- Autocomplete + Auto-Fill ------------------------------------------
 	async function searchAC(rule: AutocompleteRuleDTO, text: string) {
@@ -1984,12 +1973,14 @@
 					</ul>
 				{/if}
 			{:else if cockpit && shown.type === 'detail'}
-				<!-- Cockpit-Übersicht (Spec 15): Codes als Zeile mit Wert +
-				     Copy-Button (documentierte Ausnahme der No-Copy-Regel:
-				     nur Codes im Creator-Cockpit, nicht in Teilnehmer-Flows),
-				     max_wishes-Select 1–6 als Sofort-Eingang (existing
-				     Screen-Action-Mechanismus, onchange → PATCH), drei
-				     Statistikkarten im bestehenden Overlay-Kartenstil. -->
+				<!-- Cockpit-Übersicht (Spec 15, Korrekturrunde 1 Spec-Abschnitt 16):
+				     Codes als Zeile mit Wert + Copy-Button (documentierte
+				     Ausnahme der No-Copy-Regel: nur Codes im Creator-Cockpit,
+				     nicht in Teilnehmer-Flows), drei Statistikkarten im
+				     bestehenden Overlay-Kartenstil. Das bisherige
+				     max_wishes-Inline-Select ist entfernt (Duplikat zum
+				     Einstellungen-Button; native <select> ist im borderlosen
+				     Wayland-Overlay mit der Maus unbedienbar — Sebo P2/P3). -->
 				{#if cockpitName}<p class="fmeta fcockpitname">{cockpitName}</p>{/if}
 				{#if cockpitCodeRows.length > 0}
 					<ul class="fcode-list">
@@ -2003,17 +1994,6 @@
 							</li>
 						{/each}
 					</ul>
-				{/if}
-				{#if cockpitSelect}
-					{@const k = `${cockpitSelect.a.id}.${cockpitSelect.f.key}`}
-					<label class="ffield fselectfield">
-						<span class="flabel">{labelOf(cockpitSelect.f.label, lang)}</span>
-						<select class="finput" bind:value={actionInputs[k]} onchange={() => void runAction(cockpitSelect.a)}>
-							{#each cockpitSelect.f.options ?? [] as o (labelOf(o, lang))}
-								<option value={labelOf(o, lang)}>{labelOf(o, lang)}</option>
-							{/each}
-						</select>
-					</label>
 				{/if}
 				{#if cockpitStatRows.length > 0}
 					<div class="fstatcards">
@@ -2313,7 +2293,19 @@
 				{#each modal.inputs as inp (inp.key)}
 					<label class="ffield">
 						<span class="flabel">{inp.label}{inp.required ? ' *' : ''}</span>
-						<input class="finput" type={inp.type} bind:value={inp.value} />
+						{#if inp.type === 'select'}
+							<!-- H-SCLM-UX R1 (Sebo P3): Button-Optionen statt
+							     native <select> — eine Zeile pro Option,
+							     selected-Zustand wie Statuschips. -->
+							<div class="foptgroup" role="group" aria-label={inp.label}>
+								{#each inp.options ?? [] as o (labelOf(o, lang))}
+									{@const ov = labelOf(o, lang)}
+									<button class="btn fopt" type="button" aria-pressed={String(inp.value ?? '') === ov} onclick={() => (inp.value = ov)}>{ov}</button>
+								{/each}
+							</div>
+						{:else}
+							<input class="finput" type={inp.type} bind:value={inp.value} />
+						{/if}
 					</label>
 				{/each}
 			{:else if modal.formSubmit && modal.target?.form}
@@ -2322,11 +2314,19 @@
 					<label class="ffield">
 						<span class="flabel">{labelOf(f.label, lang)}{f.required === true ? ' *' : ''}</span>
 						{#if f.type === 'select'}
-							<select class="finput" bind:value={formValues[f.key]}>
+							<!-- H-SCLM-UX R1 (Sebo P3): type=select-Felder in Modal-
+							     Formularen als Overlay-Button-Optionen (eine Zeile
+							     pro Option, selected wie Statuschips, Submit wie
+							     bisher) — native <select> ist im borderlosen
+							     Wayland-Overlay mit der Maus unbedienbar.
+							     Generisch für alle Manifest-selects (aktuell
+							     max_wishes 1–6 im Settings-Modal). -->
+							<div class="foptgroup" role="group" aria-label={labelOf(f.label, lang)}>
 								{#each f.options ?? [] as o (labelOf(o, lang))}
-									<option value={labelOf(o, lang)}>{labelOf(o, lang)}</option>
+									{@const ov = labelOf(o, lang)}
+									<button class="btn fopt" type="button" aria-pressed={String(formValues[f.key] ?? '') === ov} onclick={() => (formValues[f.key] = ov)}>{ov}</button>
 								{/each}
-							</select>
+							</div>
 						{:else}
 							<input class="finput" type={f.type === 'number' ? 'number' : 'text'} bind:value={formValues[f.key]} autocomplete="off" oninput={() => { const rule = (modal?.target?.autocomplete ?? []).find((a) => a.field === f.key); if (rule) void searchAC(rule, String(formValues[f.key] ?? '')); }} />
 							{#if autofilled[f.key]}<span class="fauto">{tr('connector.flow.autofill_applied')}</span>{/if}
@@ -2466,12 +2466,28 @@
 		display: flex; flex-direction: column; gap: 8px; max-width: 460px;
 		margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--line);
 	}
-	/* Karten-G (Spec-Abschnitt 15): Cockpit-Modals + Übersicht-Controls.
+	/* Karten-G (Spec-Abschnitt 15) + H-SCLM-UX R1 (Spec-Abschnitt 16):
+	   Cockpit-Modals + Übersicht-Controls.
 	   D-B Punkt 3 unverändert: keine neuen Farben — nur bestehende
 	   Theme-Variablen; Scrim = color-mix aus --fg (theme-adaptiv, dunkel
-	   wie hell). Listenzeilen/Buttons weiterverwendet: .frow/.btn/.chip-Norm. */
+	   wie hell). Listenzeilen/Buttons weiterverwendet: .frow/.btn/.chip-Norm.
+	   H-SCLM-UX R1 (Sebo P1/P4-P6, Diagnose A): Verankerung am GEZEICHNETEN
+	   Panel statt am Viewport. Das Overlay-Fenster spannt per Hyprland-
+	   Dispatcher den ganzen Monitor (overlay.rs), die sichtbare Shellbox ist
+	   die .shell-Box (app.css .shell, position:relative). position:fixed
+	   verankert am VIEWPORT → das Modal wurde am Monitor-Mittelpunkt
+	   zentriert und landete unterhalb/außerhalb der Shell (QW-5-Lektion wie
+	   .advert-scrim, app.css: Anker an der Shell-Box, Clip-Verlust der Shell
+	   kann ein fixes Modal abschneiden). .flow/.connector/.cmodal-Ebene hat
+	   KEINE position — next positioned ancestor ist damit .shell selbst:
+	   absolute inset:0 = exakt die gezeichnete Panel-Fläche, Modal mittig.
+	   Panel-Wachstum statt fester Modal-Max-Höhe: .shell-cockpitmodal hebt
+	   die Shell-min-height, solange ein Cockpit-Modal offen ist
+	   (app.css, Muster .shell-info/.shell-advert); die Modal-Karte nutzt
+	   max-height:100% der Shell-Fläche, die Liste scrollt innen
+	   (.fmodal-list flex-Regel), Aktionen/Buttons bleiben immer erreichbar. */
 	.fmodal {
-		position: fixed; inset: 0; z-index: 1400;
+		position: absolute; inset: 0; z-index: 1400;
 		display: flex; align-items: center; justify-content: center;
 		background: color-mix(in srgb, var(--fg) 35%, transparent);
 	}
@@ -2482,7 +2498,13 @@
 		background: transparent; cursor: default;
 	}
 	.fmodal-card {
-		width: min(430px, calc(100vw - 28px)); max-height: min(72vh, 640px);
+		/* Breite/Überlauf an der Shell ausgerichtet (100% = Shell-Breite),
+		   kein 100vw mehr (Viewport > Shell). Zoom-Konvention wie .shell:
+		   fester px-Anteil dividiert durch --ui-scale → visuell konstant;
+		   max-height 100% = volle Shell-Fläche (Panel-Wachstum übernimmt
+		   .shell-cockpitmodal). */
+		width: min(calc(430px / var(--ui-scale, 1)), calc(100% - 24px));
+		max-height: 100%;
 		overflow: auto; display: flex; flex-direction: column; gap: 10px;
 		padding: 14px 16px 12px; border: 1px solid var(--lineb);
 		border-radius: 10px; background: var(--panel2);
@@ -2493,8 +2515,25 @@
 		border: 1px solid var(--lineb); border-radius: 7px; padding: 6px 9px;
 		background: color-mix(in srgb, var(--alert) 12%, transparent);
 	}
-	.fmodal-list { max-height: 42vh; }
+	/* Liste im Modal: interner Scroll-Bereich (flex-Regel statt vh-Cap) —
+	   Titel/Warnungen/Actions der Karte bleiben sichtbar, Liste dahinter
+	   reglos. */
+	.fmodal-list { flex: 1 1 auto; min-height: 0; max-height: none; overflow-y: auto; }
 	.fmodal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+	/* H-SCLM-UX R1 (Sebo P3): Button-Optionen für type=select in Modal-
+	   Formularen — Overlay-Buttons (eine Zeile pro Option) mit selected-
+	   Zustand nach Chip-Norm (Akzent-Rand + Akzent-Tönung, nur Theme-Variablen). */
+	.foptgroup { display: flex; flex-direction: column; gap: 6px; max-width: 460px; }
+	.fopt {
+		cursor: pointer; width: 100%; text-align: left; padding: 7px 10px;
+		border: 1px solid var(--lineb); border-radius: 7px;
+		background: transparent; color: var(--fg); font-size: 12px;
+	}
+	.fopt:hover { border-color: var(--accent); }
+	.fopt[aria-pressed='true'] {
+		border-color: var(--accent); font-weight: 700;
+		background: color-mix(in srgb, var(--accent) 18%, transparent);
+	}
 	.frowbtns { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 	.fbtnrow { padding: 4px 9px; font-size: 11.5px; }
 	.fstepbtn {
@@ -2536,7 +2575,6 @@
 	}
 	.fstatval { font: 700 18px/1.1 var(--font-mono); color: var(--fg); }
 	.fstatlabel { font-size: 11px; color: var(--fgdim); }
-	.fselectfield { max-width: 280px; }
 	.fwishmeta { color: var(--fgdim); }
 	.frevhead { color: var(--fg); margin-bottom: 4px; }
 	.fcockpitname { margin-bottom: 2px; }

@@ -45,7 +45,12 @@
 		initialFlowState = null,
 		/** D-B (t_159ebc5c) Punkt 6: bindable — meldet dem own-Mode-Parent,
 		 *  ob gerade ein Flow aktiv ist (Placeholder-/Esc-Steuerung). */
-		flowActive = $bindable(false)
+		flowActive = $bindable(false),
+		/** H-SCLM-UX R1 (Sebo P4-P6, Diagnose A): bindable — meldet dem
+		 *  own-Mode-Parent, ob ein Cockpit-/Erstellungs-Modal offen ist.
+		 *  Der Parent hebt darüber class:shell-cockpitmodal die Shell-
+		 *  min-height an (Panel-Wachstum statt Modal-Abschneidung). */
+		cockpitModalOpen = $bindable(false)
 	}: {
 		entry: ConnectorEntry;
 		embedded?: boolean;
@@ -55,6 +60,7 @@
 		/** SCLM v2: vorgemergter Flow-Zustand aus connector_flow_open. */
 		initialFlowState?: Record<string, unknown> | null;
 		flowActive?: boolean;
+		cockpitModalOpen?: boolean;
 	} = $props();
 
 	const views = $derived(entry.manifest.views ?? []);
@@ -340,6 +346,13 @@
 	// Flow→Liste→Modus setzt erst danach wieder ein.
 	let flowModalActive = $state(false);
 	let createModal = $state(false);
+	// H-SCLM-UX R1: offen-Status beider Modal-Ebenen an den Parent rückmelden
+	// (Shell-Wachstum .shell-cockpitmodal in +page.svelte/app.css). Der
+	// FlowRenderer meldet sein .fmodal über modalActive, das Create-Modal
+	// (.cmodal) ist hier lokal — zusammen ergibt das die Modal-Offen-Spur.
+	$effect(() => {
+		cockpitModalOpen = createModal || flowModalActive;
+	});
 	let createBusy = $state(false);
 	let createNote = $state('');
 	let createName = $state('');
@@ -1160,13 +1173,20 @@
 	}
 	/* Karten-G (Spec 15 Kriterium 2): Erstellungs-Modal + Toast. D-B Punkt 3
 	   (aus FlowRenderer übernommen): keine neuen Farben — nur Theme-Variablen
-	   bzw. color-mix aus currentColor (theme-adaptiv). */
+	   bzw. color-mix aus currentColor (theme-adaptiv).
+	   H-SCLM-UX R1 (Sebo P1, Diagnose A): Verankerung wie .fmodal/.advert-scrim
+	   an der .shell-Box (position:relative, app.css) statt fixed am Viewport —
+	   das Overlay-Fenster spannt per Hyprland-Dispatcher den ganzen Monitor,
+	   fixed hätte das Create-Modal am Monitor-Mittelpunkt unter die gezeichnete
+	   Shellbox gesetzt. Kein position:fixed/relative zwischen .shell und dieser
+	   Ebene → absolute inset:0 = exakt die sichtbare Shellbox-Fläche, Modal
+	   mittig darin. Breite/max-height shell-konform (zoom-Konvention px/scale). */
 	.ctoast {
 		opacity: 1;
 		font-weight: 600;
 	}
 	.cmodal {
-		position: fixed; inset: 0; z-index: 1400;
+		position: absolute; inset: 0; z-index: 1400;
 		display: flex; align-items: center; justify-content: center;
 		background: color-mix(in srgb, currentColor 35%, transparent);
 	}
@@ -1176,7 +1196,8 @@
 	}
 	.cmodal-card {
 		position: relative;
-		width: min(360px, calc(100vw - 28px));
+		width: min(calc(360px / var(--ui-scale, 1)), calc(100% - 24px));
+		max-height: 100%; overflow: auto;
 		display: flex; flex-direction: column; gap: 10px;
 		padding: 14px 16px 12px;
 		border: 1px solid color-mix(in srgb, currentColor 30%, transparent);

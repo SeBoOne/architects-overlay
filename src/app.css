@@ -238,6 +238,19 @@ html[data-window="spotlight"] .shell {
   min-height: calc(640px / var(--ui-scale, 1));
 }
 
+/* H-SCLM-UX R1 (Sebo P4-P6, Diagnose A): Cockpit-/Create-Modal offen →
+   min-height-Floor nach .shell-info-Muster (RB-Lektion t_94484d0c: absolute
+   Modal-Ebenen tragen NICHTs zur content-driven Shell-Höhe bei — ohne Floor
+   bliebe die Shell klein und das Modal würde an der Shell-Kante abgeschnitten;
+   kein Hyprland-Dispatch, kein set_size). Floor 640px deckt die höchsten
+   Cockpit-Modals (Wuensche-Editor 1–6, Loot-/Waren-Formular) ab; höhere
+   Modals wachsen mit dem Inhalt bis max-height 84vh (Panel-Wachstum statt
+   fester Modal-Max-Höhe), die Modal-Liste scrollt innen (.fmodal-list).
+   Modal geschlossen → Klasse fällt weg, Shell zurück auf content-driven. */
+.shell-cockpitmodal {
+  min-height: calc(640px / var(--ui-scale, 1));
+}
+
 /* Rail-Spalte: der bisherige Shell-Inhalt (Suchzeile, Panes, Fußzeile). */
 .shell-main {
   flex: 1;
