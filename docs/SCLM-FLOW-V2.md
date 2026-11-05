@@ -232,3 +232,81 @@ Das SCLM-Manifest ist ein internes Plugin und wurde aus allen Repo-Historien
 docs/scripts/ funktionieren mit der lokalen Datei unverändert weiter.
 Feature-Branch-Zweige in den privaten Repos wurden nicht umgeschrieben (alle
 längst in main gemerged); der öffentliche Verlauf enthält die Datei nie wieder.
+
+## 15. Ersteller-Cockpit v1 — kanonische Spec (Sebo 2026-11-04, entschieden)
+
+API-Fakten (API.md v5.0, verifiziert): POST /api/session/create ohne Auth, Response
+{id, admin_code, join_code} — Codes nur einmal sichtbar, MUSS sofort in den
+Session-Keystore. PATCH /settings teilbar (name, max_wishes 1–10 API / UI 1–6,
+total_revenue, locks). Admin darf Wünsche jedes Teilnehners OHNE pcode vollständig
+ersetzen (POST /wishes, loot_ids-Array; max_wishes-Grenze prüft die API im Admin-Pfad
+NICHT — Overlay muss sie durchsetzen). Loot: Dedupe name|type|grade|size (qty steigt),
+qty-Delta min 1, for_sale=true löscht Wünsche des Items, sale_revenue optional,
+DELETE kaskadiert Wünsche. Commodities: Dedupe lower(name), scu-Float, qty-Delta.
+Ziehung POST /raffle (nur Session-Admin, Content-Type json + {}; 400 ohne Teilnehmer
+oder unverkauftes Loot; Neustart UEBERSCHREIBT Ergebnisse). PATCH /raffle/<rid>
+collected/waived true/false — falsezuruecksetzen nur Admin. Statistik aus Session-Objekt:
+Teilnehmer = participants.length, zu verlosende Einzelstuecke = sum(qty) aller
+for_sale!=1, Wuensche = sum(len(participants[].wishes)). total_revenue (Waren +
+Loot-Verkauf ueber commodity_summary) gibt es nur als Gesamtsumme — pro-Kopf-
+Aufteilung ist reine Overlay-Anzeige (Summe / Teilnehmerzahl).
+
+Sebo-Entscheidungen (verbindlich):
+1. Erstellen: Button "Verlosung erstellen" neben ↻ in der SCLM-Hauptansicht, kleines
+   Modal mit nur dem Namensfeld (+ Bestätigen/Abbrechen; max_wishes-Default 3, Feinschlag
+   im Übersicht-Tab). Kein :nV-Kommando.
+2. KEIN permanenter Ersteller-Reiter. Erstellte Verlosungen erscheinen in der
+   Meine-Verlosungen-Liste (Scan + Keystore-Vereinigung: eigene Sessions mit
+   admin_code werden immer ergänzt, auch ohne Teilnehmer). Listeneintrag mit
+   gespeichertem admin_code zeigt Button "Ersteller" (öffnet Creator-View mit
+   gespeichertem Code) statt/zusätzlich "Öffnen" (Öffnen bleibt, wenn pcode vorhanden).
+   Admin-Code direkt in der Code-Eingabe eingegeben → Session wird per is_admin=true
+   erkannt und direkt in der Creator-Ansicht geöffnet (join_code → Teilnehmer-Flow wie bisher).
+3. max_wishes-Auswahl im Overlay 1–6 (Web-Limit), API-seitig 1–10 — Auswahl-Liste als
+   Konstante pflegen, Erweiterung auf 10 soll möglich bleiben. Kein "Verlosung löschen"
+   im Overlay (nur Web-UI).
+4. Creator-Ansicht = Cockpit mit PERMANENTEN Sub-Reitern: Übersicht · Teilnehmer · Loot ·
+   Waren · Verlosung. Freier Wechsel jederzeit, "Zurück zur Liste"-Chip wie Teilnehmer-Flow,
+   Esc-Kaskade. Sub-Reiter-Stil = bestehende Overlay-Tab-Optik.
+
+Manifest-Vertrag (NEU, generisches Flow-Feature — auch für künftige Connectors):
+flows[].tabs = [ {"id","screen","label":{de,en}} … ] 1–6 Entries. Hat ein Flow tabs,
+rendert FlowRenderer die Sub-Reiter-Leiste permanent; initiale Tab = erster Eintrag;
+Tab-Wechsel = Screen frisch fetchen (Fresh-Fetch-Regel gilt pro Tab-Betreten).
+Flow ohne tabs = bisheriges Wizard-Verhalten unverändert. flow.open bleibt Einstieg
+(code_entry oder automatischer Code aus Keystore).
+
+Creator-Screens (Manifest, flow "creator"):
+- c_overview (detail): Teilnehmercode + Copy-Button, Erstellercode + Copy-Button
+  (Ausnahme der No-Copy-Regel: nur Codes auf Creator-Screens, dokumentiert),
+  max_wishes-Select 1–6 (PATCH settings, sofort), 3 Statistikkarten (Teilnehmer,
+  Einzelstücke, Wünsche) im Overlay-Kartenstil; "Codes neu generieren" bleibt vorhanden
+  (Confirm-Modal, Warnung: alte Codes sofort ungültig; Keystore muss neu befüllt werden).
+- c_participants (list): Name prominent, Wünsche-Dezent (Anzahl + Namen), Aktionen:
+  "+ Teilnehmer" (Modal), Umbenennen (Modal), Entfernen (Confirm-Modal), "Wünsche
+  bearbeiten" (Modal: Loot-Mehrfachauswahl, Grenze max_wishes, Speichern = POST wishes
+  full-replace; leere Liste löscht).
+- loot (list): Name prominent + qty, Type/Grade/Size dezent, wish_count, sale-Status;
+  Aktionen: "+ Gegenstand" (Modal: Name + optionale size/type/grade + qty), qty +/−,
+  Verkauf an/aus (an-Modal fragt sale_revenue ab, optional), Entfernen (Confirm),
+  "Teilnehmern zuordnen" (Modal: Teilnehmer Liste nur mit freien Wunsch-Slots
+  (max_wishes − aktuelle Wünsche), Mehrfachauswahl, Zuordnung = POST wishes je
+  Teilnehmer (bestehende Wünsche + neues Loot), bereits zugeordnete Teilnehmer dezent
+  markiert).
+- commodities (list): name + scu; "+ Ware" (Modal), scu +/−, Entfernen (Confirm);
+  Kopfzeile: Gesamt-Erlös (commodity_summary.total_revenue) + "pro Kopf: X SCU/₵-Anzeige"
+  (total_revenue / Teilnehmerzahl, nur Anzeige, bei 0 Teilnehmern "—").
+- c_results (results): Vor der Ziehung: Button "Verlosung starten" (Confirm-Modal;
+  Warnung falls raffle_done: Ergebnisse werden UEBERSCHREIBEN). Nach Ziehung: Liste
+  pro Teilnehmer (Name prominent, Items gruppiert ×N), Statuschip_abgeholt/verziehen
+  oder Buttons Abgeholt/Verzichtet; Admin-Extra "Zurücksetzen" (PATCH collected/waived
+  false) — nach Reset erscheinen die Buttons wieder (frischer Fetch). Kein Neustart-
+  Button der Ziehung im Cockpit (nur die reguläre Start-Aktion mit Warnung).
+
+Optik/Regeln: Name immer prominent (Name-first listColumns-Regel), Plumbing-IDs nie
+als Spalte, Formulare als Modal-Popup über der Liste (Liste dahinter bleibt unbewegt,
+Toast-Meldungen im Vordergrund), de/en Locales vollständig.
+
+Bauaufteilung: F = Rust+Manifest (connector.rs, examples/sclm.json, keystore, Tests);
+G = Frontend (FlowRenderer tabs+Modals, ConnectorViews Ersteller-Buttons+Create-Modal,
+connector.ts, locales). Merge F vor G.
