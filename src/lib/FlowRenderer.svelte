@@ -1694,14 +1694,20 @@
 				params: { q: text, __flow_ep: ep }
 			});
 			const rows = Array.isArray(data.body) ? (data.body as unknown[]) : [];
+			// Sebo-Runde 3 Punkt 1+3: Server-seitiger q-Filter wird jetzt
+			// (Manifest ?q={q}) genutzt; zusätzlicher Client-Filter, damit
+			// die Vorschläge auch bei Backend-/API-Eigenheiten hart nach dem
+			// gerade Tippenden gefiltert bleiben — nie dieselben Statik-Listen.
+			const needle = text.trim().toLowerCase();
 			acItems = {
 				...acItems,
 				[rule.field]: rows
-					.slice(0, 8)
 					.map((r) => ({
 						label: typeof r === 'object' && r !== null ? String((r as Record<string, unknown>).name ?? JSON.stringify(r)) : String(r),
 						value: (r ?? {}) as Record<string, unknown>
 					}))
+					.filter((it) => it.label.toLowerCase().includes(needle))
+					.slice(0, 8)
 			};
 			acOpen = { ...acOpen, [rule.field]: true };
 		} catch {
@@ -1709,8 +1715,12 @@
 		}
 	}
 
-	function pickAC(rule: AutocompleteRuleDTO, item: Record<string, unknown>) {
-		const filled = applyAutofill(item, rule);
+	function pickAC(rule: AutocompleteRuleDTO, ac: { label: string; value: Record<string, unknown> }) {
+		const filled = applyAutofill(ac.value, rule);
+		// Sebo-Runde 3 Punkt 2: Treffer-Label immer ins Auslöser-Feld echoen
+		// (Standard-Autocomplete-Verhalten), auch wenn das Manifest-Fill
+		// fuer dieses Feld fehlt/leer ist oder der Treffer ein roher String.
+		if (!(rule.field in filled)) filled[rule.field] = ac.label;
 		formValues = { ...formValues, ...filled };
 		for (const k of Object.keys(filled)) autofilled[k] = true;
 		acOpen = { ...acOpen, [rule.field]: false };
@@ -1822,7 +1832,7 @@
 											type="button"
 											onclick={() => {
 												const rule = (shown.autocomplete ?? []).find((a) => a.field === f.key);
-												if (rule) pickAC(rule, item.value);
+												if (rule) pickAC(rule, item);
 											}}
 										>{item.label}</button>
 									</li>
@@ -2336,7 +2346,7 @@
 						<ul class="facs">
 							{#each acItems[f.key] as item, i (i)}
 								<li>
-									<button class="fac" type="button" onclick={() => { const rule = (modal?.target?.autocomplete ?? []).find((a) => a.field === f.key); if (rule) pickAC(rule, item.value); }}>{item.label}</button>
+									<button class="fac" type="button" onclick={() => { const rule = (modal?.target?.autocomplete ?? []).find((a) => a.field === f.key); if (rule) pickAC(rule, item); }}>{item.label}</button>
 								</li>
 							{/each}
 						</ul>

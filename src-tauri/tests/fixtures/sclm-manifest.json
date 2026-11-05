@@ -1201,11 +1201,20 @@
      "autocomplete": [
       {
        "field": "name",
-       "endpoint": "/api/participants/search",
+       "endpoint": "/api/participants/search?q={q}",
        "query_param": "q",
        "fill": {
-        "name": ""
-       }
+        "name": "name"
+       },
+       "params": [
+        {
+         "key": "q",
+         "label": {
+          "de": "Suchtext",
+          "en": "Search text"
+         }
+        }
+       ]
       }
      ],
      "on_submit": "c_participants"
@@ -1687,13 +1696,23 @@
      "autocomplete": [
       {
        "field": "name",
-       "endpoint": "/api/items/search",
+       "endpoint": "/api/items/search?q={q}",
        "query_param": "q",
        "fill": {
+        "name": "name",
         "type": "type",
         "grade": "grade",
         "size": "size"
-       }
+       },
+       "params": [
+        {
+         "key": "q",
+         "label": {
+          "de": "Suchtext",
+          "en": "Search text"
+         }
+        }
+       ]
       }
      ],
      "on_submit": "loot"
@@ -1875,11 +1894,20 @@
      "autocomplete": [
       {
        "field": "name",
-       "endpoint": "/api/commodities/search",
+       "endpoint": "/api/commodities/search?q={q}",
        "query_param": "q",
        "fill": {
-        "name": ""
-       }
+        "name": "name"
+       },
+       "params": [
+        {
+         "key": "q",
+         "label": {
+          "de": "Suchtext",
+          "en": "Search text"
+         }
+        }
+       ]
       }
      ],
      "on_submit": "commodities"

@@ -337,3 +337,22 @@ connector.ts, locales). Merge F vor G.
   war das Create-Modal nie betroffen.
 - DAUERREGEL fuer jede Modal-Ebene mit Backdrop-Flaeche: die Inhaltskarte
   braucht position:relative (+ z-index), sonst frisst der Backdrop die Maus.
+
+
+## 18. Cockpit-Autocomplete-Fix (2026-11-05, direkt auf main)
+
+- Sebo-Runde 3/4: Autocomplete-Vorschlaege ungefiltert + Loot-Name ohne Echo.
+- Manifest (examples + Fixture, lokal importiert): Autocomplete-Endpoints
+  /api/{participants,items,commodities}/search erhielten '?q={q}'-Template +
+  regel-eigene 'params'[{key:q}] — der Validator verlangt die Deklaration
+  REGEL-INTERN (check_autocomplete in crates/connector/src/validate.rs),
+  Screen-Level-params reichen NICHT. Fill: Loot bekam 'name':'name',
+  participants/commodities 'name':'' -> 'name':'name'.
+- Frontend (FlowRenderer.svelte): searchAC filtert Treffer zusaendlich
+  client-seitig (Contains, case-insensitive); pickAC echoe das Treffer-Label
+  immer ins Ausloeser-Feld, wenn das Fill dafuer fehlt (rohe String-Treffer
+  der participants-/commodities-Suche fuellen sonst NIE ein Feld —
+  applyAutofill sieht in einem String kein 'name'-Feld).
+- Lehre fuer spaetere Manifest-Pflege: String-Treffer-Autocomplete ohne
+  Label-Echo im Frontend ist wertlos; Fill-Mappings setzen Objekt-Treffer
+  voraus.
