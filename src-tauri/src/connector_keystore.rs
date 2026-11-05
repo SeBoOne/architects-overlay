@@ -2,9 +2,11 @@
 //!
 //! Lokale, pro Connector persistierte JSON-Liste bekannter Sessions
 //! (`<app-local-data-dir>/connector-state/<id>.json`):
-//! `sessions[{sid, join_code, name, participant_id?, pcode?, result_id?, added}]`.
+//! `sessions[{sid, join_code, name, participant_id?, pcode?, result_id?, admin_code?, added}]`.
 //! Geschrieben bei Code-Eingabe (join_code+sid), Auto-Join/Claim
-//! (participant_id+pcode) und erster Ergebnis-Sicht (result_id). Gelesen von
+//! (participant_id+pcode), erster Ergebnis-Sicht (result_id) und
+//! Ersteller-Cockpit (admin_code — additive Migration: alte Keystore-Dateien
+//! ohne admin_code laden unverändert, Feld fehlt dann). Gelesen von
 //! UI (B) und Flow-Pins (C) — "Öffnen"-Button genau dann, wenn der `sid`
 //! bereits im Keystore liegt.
 //!
@@ -29,6 +31,10 @@ pub struct SessionEntry {
     pub pcode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_id: Option<String>,
+    /// Ersteller-Cockpit v1: Session-Verwalter-Code (additiv — alte Dateien
+    /// ohne dieses Feld laden weiter, `None` = nicht Ersteller bekannt).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_code: Option<String>,
     /// Unix-Sekunden der ersten Speicherung.
     #[serde(default)]
     pub added: i64,
@@ -127,6 +133,7 @@ pub fn upsert_entry(
     participant_id: Option<String>,
     pcode: Option<String>,
     result_id: Option<String>,
+    admin_code: Option<String>,
     now: i64,
 ) -> SessionEntry {
     let sid = sid.trim().to_owned();
@@ -146,6 +153,9 @@ pub fn upsert_entry(
         if let Some(v) = trimmed(&result_id) {
             existing.result_id = Some(v);
         }
+        if let Some(v) = trimmed(&admin_code) {
+            existing.admin_code = Some(v);
+        }
         return existing.clone();
     }
     let entry = SessionEntry {
@@ -155,6 +165,7 @@ pub fn upsert_entry(
         participant_id: trimmed(&participant_id),
         pcode: trimmed(&pcode),
         result_id: trimmed(&result_id),
+        admin_code: trimmed(&admin_code),
         added: now,
     };
     sessions.push(entry.clone());
@@ -185,6 +196,7 @@ pub fn upsert_and_save(
     participant_id: Option<String>,
     pcode: Option<String>,
     result_id: Option<String>,
+    admin_code: Option<String>,
 ) -> SessionEntry {
     let mut sessions = load_sessions(path);
     let entry = upsert_entry(
@@ -195,6 +207,7 @@ pub fn upsert_and_save(
         participant_id,
         pcode,
         result_id,
+        admin_code,
         now_secs(),
     );
     if let Err(e) = save_sessions(path, &sessions) {
@@ -224,6 +237,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             100,
         );
         assert_eq!(created.sid, "9k2m4x7q");
@@ -240,6 +254,7 @@ mod tests {
             None,
             Some("p8n24rt".into()),
             Some("pc0123456789ab".into()),
+            None,
             None,
             999,
         );
@@ -258,6 +273,7 @@ mod tests {
             None,
             None,
             Some("r3t4".into()),
+            None,
             999,
         );
         assert_eq!(done.result_id.as_deref(), Some("r3t4"));
@@ -276,6 +292,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             1,
         );
         assert_eq!(sessions[0].sid, "sid1");
@@ -285,6 +302,7 @@ mod tests {
             &mut sessions,
             "sid1",
             Some("".into()),
+            None,
             None,
             None,
             None,
@@ -300,12 +318,14 @@ mod tests {
             None,
             None,
             None,
+            None,
             2,
         );
         upsert_entry(
             &mut sessions,
             "sid1",
             Some("  ".into()),
+            None,
             None,
             None,
             None,
@@ -331,12 +351,14 @@ mod tests {
             Some("pa".into()),
             Some("pcaa".into()),
             None,
+            None,
             10,
         );
         upsert_entry(
             &mut sessions,
             "b2",
             Some("C2".into()),
+            None,
             None,
             None,
             None,
@@ -363,9 +385,9 @@ mod tests {
     #[test]
     fn find_and_list_order() {
         let mut sessions: Vec<SessionEntry> = Vec::new();
-        upsert_entry(&mut sessions, "old", None, None, None, None, None, 10);
-        upsert_entry(&mut sessions, "new", None, None, None, None, None, 30);
-        upsert_entry(&mut sessions, "mid", None, None, None, None, None, 20);
+        upsert_entry(&mut sessions, "old", None, None, None, None, None, None, 10);
+        upsert_entry(&mut sessions, "new", None, None, None, None, None, None, 30);
+        upsert_entry(&mut sessions, "mid", None, None, None, None, None, None, 20);
         let listed = list_entries(&sessions);
         assert_eq!(
             listed.iter().map(|e| e.sid.as_str()).collect::<Vec<_>>(),
@@ -387,6 +409,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert_eq!(e1.join_code, "JC");
         // Command-artiger Zweitschritt liest den persistenten Stand.
@@ -397,6 +420,7 @@ mod tests {
             None,
             Some("pid".into()),
             Some("pc".into()),
+            None,
             None,
         );
         assert_eq!(e2.join_code, "JC");
@@ -419,5 +443,75 @@ mod tests {
         // Relative Manifest-Dir ohne Parent → Fallback-Ordnername.
         let rel = KeystorePaths::from_manifest_dir(std::path::Path::new("connectors"));
         assert_eq!(rel.state_dir, std::path::PathBuf::from("connector-state"));
+    }
+
+    // ---- Ersteller-Cockpit v1: additive Keystore-Migration admin_code -------
+
+    #[test]
+    fn keystore_admin_code_old_files_load_and_patch_partially() {
+        let path = tmp_file("adminmig");
+        let _ = std::fs::remove_file(&path);
+        // Alte Keystore-Datei (vor admin_code): MUSS unverändert laden.
+        std::fs::write(
+            &path,
+            r#"{"sessions":[{"sid":"old1","join_code":"JC1","name":"Alt","pcode":"pc-old","added":5}]}"#,
+        )
+        .unwrap();
+        let loaded = load_sessions(&path);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].pcode.as_deref(), Some("pc-old"));
+        assert_eq!(loaded[0].admin_code, None, "altes Feld: fehlend = None");
+
+        // Admin-Code-Patch auf alten Eintrag: setzt nur admin_code, lässt
+        // pcode/join_code/name/added unangetastet (partielles Upsert wie bisher).
+        let patched = upsert_and_save(
+            &path,
+            "old1",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("ADM-9".into()),
+        );
+        assert_eq!(patched.admin_code.as_deref(), Some("ADM-9"));
+        assert_eq!(patched.pcode.as_deref(), Some("pc-old"));
+        assert_eq!(patched.join_code, "JC1");
+        assert_eq!(patched.added, 5);
+        let reread = load_sessions(&path);
+        assert_eq!(reread[0].admin_code.as_deref(), Some("ADM-9"));
+
+        // Neuer Eintrag nur mit admin_code (Ersteller unbekannt ohne Teilnehmer):
+        let created = upsert_and_save(
+            &path,
+            "new2",
+            Some("JC2".into()),
+            Some("Neu".into()),
+            None,
+            None,
+            None,
+            Some("ADM-2".into()),
+        );
+        assert_eq!(created.admin_code.as_deref(), Some("ADM-2"));
+        // Admin-Code-Patch ohne admin-Wert überschreibt NICHT.
+        let kept = upsert_and_save(
+            &path,
+            "new2",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(" ".into()),
+        );
+        assert_eq!(kept.admin_code.as_deref(), Some("ADM-2"));
+        // Roundtrip: save → load erhält admin_code; fehlendes Feld wird nicht
+        // serialisiert (skip_serializing_if — alte Reader bleiben kompatibel).
+        let sessions = load_sessions(&path);
+        save_sessions(&path, &sessions).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"admin_code\""));
+        assert_eq!(load_sessions(&path), sessions);
+        let _ = std::fs::remove_file(&path);
     }
 }

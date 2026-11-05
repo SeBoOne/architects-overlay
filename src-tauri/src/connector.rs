@@ -540,6 +540,7 @@ pub async fn connector_get_settings_fields(
 /// Session-Keystore (Spec 5.2): Eintrag upserten — PARTIELL (None-Felder
 /// bleiben, wie bei Form-Teilupdates). sid ist Pflicht (Identität).
 /// Tauri-Command-Signatur = API-Vertrag zum Frontend (flache Params).
+/// `admin_code` (Ersteller-Cockpit v1): Ersteller-Code des Sessions-Keystores.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn connector_keystore_upsert(
@@ -551,6 +552,7 @@ pub async fn connector_keystore_upsert(
     participant_id: Option<String>,
     pcode: Option<String>,
     result_id: Option<String>,
+    admin_code: Option<String>,
 ) -> Result<SessionEntry, String> {
     {
         let entries = state.entries.lock().expect("connector entries lock");
@@ -569,6 +571,7 @@ pub async fn connector_keystore_upsert(
         participant_id,
         pcode,
         result_id,
+        admin_code,
     ))
 }
 
@@ -614,12 +617,15 @@ pub async fn connector_keystore_find(
 /// Ein Scan-Treffer (Landlisten-Eintrag). `has_saved_code` wird pro Aufruf
 /// frisch aus dem Keystore berechnet (nicht cached): die Liste zeigt den
 /// aktuellen Keystore-Stand, auch wenn die Sitzungsdaten noch cached sind.
+/// `is_creator` (Ersteller-Cockpit v1): Keystore hat für die sid einen
+/// admin_code — die UI zeigt dann den „Ersteller“-Button.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ScannedRaffle {
     pub sid: String,
     pub name: String,
     pub raffle_done: bool,
     pub has_saved_code: bool,
+    pub is_creator: bool,
 }
 
 /// Antwort des Scan-Commands. `skipped` = Detail-Fetch-Fehler (Spec 5.3 #5:
@@ -730,6 +736,58 @@ fn list_field_string(item: &serde_json::Value, field: &str) -> Option<String> {
     }
 }
 
+/// Ersteller-Cockpit v1 (c_overview-Statistik): Session-förmige JSON-Bodys
+/// mit `participants[]`-Array bekommen drei vorberechnete Skalare als
+/// Top-Level-Keys injiziert (participant_count = Teilnehmerzahl;
+/// item_count = Summe qty über Loot mit for_sale != 1; wish_count = Summe
+/// aller wishes-Arrays). Generische Konvention — das Manifest mappt diese
+/// Keys als Mapping-Quellen; vorhandene Keys werden nie überschrieben.
+/// Ohne participants-Array: keine Injektion (andere Connector bleiben
+/// unberührt).
+pub(crate) fn inject_session_stats(body: &mut serde_json::Value) {
+    let serde_json::Value::Object(map) = body else {
+        return;
+    };
+    let stats = {
+        let participants = match map.get("participants").and_then(|v| v.as_array()) {
+            Some(p) => p,
+            None => return,
+        };
+        let participant_count = participants.len();
+        let item_count = map
+            .get("loot")
+            .and_then(|v| v.as_array())
+            .map(|loot| {
+                loot.iter()
+                    .filter(|l| !truthy_flag(l.get("for_sale").unwrap_or(&serde_json::Value::Null)))
+                    .map(|l| l.get("qty").and_then(|q| q.as_f64()).unwrap_or(0.0))
+                    .sum::<f64>()
+            })
+            .unwrap_or(0.0);
+        let wish_count = participants
+            .iter()
+            .map(|p| {
+                p.get("wishes")
+                    .and_then(|w| w.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(0)
+            })
+            .sum::<usize>();
+        (participant_count, item_count, wish_count)
+    };
+    map.entry("participant_count")
+        .or_insert_with(|| json!(stats.0));
+    map.entry("item_count").or_insert_with(|| {
+        // Ganzzahlige Summen als Integer (UI-Feld 'Anzahl' soll keine 12.0).
+        if stats.1.fract() == 0.0 {
+            json!(stats.1 as i64)
+        } else {
+            json!(stats.1)
+        }
+    });
+    map.entry("wish_count").or_insert_with(|| json!(stats.2));
+}
+
 fn scan_cache_body(items: &[ScannedRaffle], skipped: usize) -> serde_json::Value {
     json!({
         "items": items.iter().map(|it| json!({"sid": it.sid, "name": it.name, "raffle_done": it.raffle_done})).collect::<Vec<_>>(),
@@ -774,6 +832,110 @@ pub async fn connector_scan_match(
     .await
 }
 
+/// Ersteller-Cockpit v1 (Scan-Vereinigung): Sessions, die dem Keystore nur
+/// durch den eigenen admin_code bekannt sind (Username nicht in den
+/// Teilnehmern), werden der Landliste zusätzlich angehängt. Detail-Fetch mit
+/// admin_code über `scan.detail_endpoint` ({code}-Platzhalter); Duplikate
+/// gegen Scan-Treffer dedupt über sid. Fehler: überspringen + warn (wie bei
+/// Scan-Kandidaten — die Liste bleibt verfügbar).
+async fn creator_keystore_union(
+    manifest: &connector::ConnectorManifest,
+    scan: &connector::ScanSpec,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+    keystore_entries: &[SessionEntry],
+    known_sids: &std::collections::BTreeSet<String>,
+) -> (Vec<(String, String, bool)>, usize) {
+    use futures::StreamExt;
+    let mut preskipped = 0usize;
+    let pending: Vec<&SessionEntry> = keystore_entries
+        .iter()
+        .filter(|e| {
+            let Some(code) = e.admin_code.as_deref().map(str::trim).filter(|c| !c.is_empty()) else {
+                return false;
+            };
+            if known_sids.contains(&e.sid) {
+                return false; // Dedup gegen Scan-Treffer (sid).
+            }
+            if !scan_code_is_safe(code) {
+                log::warn!(
+                    "connector scan '{}': skip keystore-creator session '{}' (admin_code carries unsafe characters)",
+                    scan.id,
+                    e.sid
+                );
+                preskipped += 1;
+                return false;
+            }
+            true
+        })
+        .collect();
+    if pending.is_empty() {
+        return (Vec::new(), preskipped);
+    }
+    let conc = scan.concurrency.clamp(1, 16);
+    // Owned-Codes statt &-Referenzen iterieren: umgeht Higher-Ranked-Lifetime-
+    // Inferenz des Closure-Arguments (E0308 'FnOnce not general enough' im
+    // Command-Makro-Kontext).
+    let codes: Vec<String> = pending
+        .iter()
+        .filter_map(|e| e.admin_code.clone())
+        .collect();
+    let results: Vec<Result<(u16, serde_json::Value), String>> =
+        futures::stream::iter(codes.into_iter().map(|code| {
+            let manifest = manifest.clone();
+            let scan = scan.clone();
+            let settings_auth = auth_header_opt(&manifest, settings_state, id);
+            async move {
+                let mut params: BTreeMap<String, String> = BTreeMap::new();
+                params.insert("code".to_owned(), code);
+                fetch_request(
+                    &manifest,
+                    &scan.detail_endpoint,
+                    &scan.headers.clone().unwrap_or_default(),
+                    &params,
+                    settings_auth,
+                )
+                .await
+            }
+        }))
+        .buffer_unordered(conc)
+        .collect()
+        .await;
+    let mut out: Vec<(String, String, bool)> = Vec::new();
+    let mut skipped = preskipped;
+    for (entry, res) in pending.iter().zip(results) {
+        match res {
+            Ok((status, body)) if status < 400 => {
+                let name = list_field_string(&body, &scan.name_field)
+                    .filter(|n| !n.trim().is_empty())
+                    .unwrap_or_else(|| entry.name.clone());
+                let done = truthy_flag(
+                    body.get(&scan.done_field)
+                        .unwrap_or(&serde_json::Value::Null),
+                );
+                out.push((entry.sid.clone(), name, done));
+            }
+            Ok((status, _)) => {
+                log::warn!(
+                    "connector scan '{}': skip keystore-creator session '{}' (HTTP {status})",
+                    scan.id,
+                    entry.sid
+                );
+                skipped += 1;
+            }
+            Err(e) => {
+                log::warn!(
+                    "connector scan '{}': skip keystore-creator session '{}' ({e})",
+                    scan.id,
+                    entry.sid
+                );
+                skipped += 1;
+            }
+        }
+    }
+    (out, skipped)
+}
+
 /// Kern des Scans (tauri-frei, mit injectierter Uhr testbar).
 pub(crate) async fn scan_inner(
     state: &ConnectorState,
@@ -793,12 +955,52 @@ pub(crate) async fn scan_inner(
         .get(&scan.match_setting_key)
         .cloned()
         .unwrap_or_default();
+    let keystore_entries = keystore_load(&keystore_paths(state).file(id));
+    let keystore_sids: std::collections::BTreeSet<String> =
+        keystore_entries.iter().map(|e| e.sid.clone()).collect();
+    // Ersteller-Cockpit v1: Sessions, für die der Keystore einen admin_code
+    // kennt (eigene Ersteller-Sessions), werden der Landliste zusätzlich
+    // angehängt — auch ohne Username-Treffer (Decision: „eigene Sessions
+    // mit admin_code werden immer ergänzt“).
+    let keystore_creator_sids: std::collections::BTreeSet<String> = keystore_entries
+        .iter()
+        .filter(|e| {
+            e.admin_code
+                .as_deref()
+                .map(|c| !c.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .map(|e| e.sid.clone())
+        .collect();
+    let attach_saved = |items: Vec<(String, String, bool)>| -> Vec<ScannedRaffle> {
+        items
+            .into_iter()
+            .map(|(sid, name, raffle_done)| ScannedRaffle {
+                has_saved_code: keystore_sids.contains(&sid),
+                is_creator: keystore_creator_sids.contains(&sid),
+                sid,
+                name,
+                raffle_done,
+            })
+            .collect()
+    };
     if username.trim().is_empty() {
+        // Landliste ohne Username: keine Listen-/Detail-Scan-Läufe, aber die
+        // Ersteller-Vereinigung läuft weiter (eigene Sessions sichtbar).
+        let (extra, skipped_extra) = creator_keystore_union(
+            manifest,
+            scan,
+            settings_state,
+            id,
+            &keystore_entries,
+            &Default::default(),
+        )
+        .await;
         return Ok(ScanOutcome {
             scan_id: scan.id.clone(),
             username_set: false,
-            items: Vec::new(),
-            skipped: 0,
+            items: attach_saved(extra),
+            skipped: skipped_extra,
             cached: false,
             fetched_at_ms: now_ms,
         });
@@ -813,59 +1015,66 @@ pub(crate) async fn scan_inner(
         id.to_owned(),
         format!("scan:{}?u={}", scan.id, username.trim()),
     );
-    let keystore_sids: std::collections::BTreeSet<String> =
-        keystore_load(&keystore_paths(state).file(id))
-            .into_iter()
-            .map(|e| e.sid)
-            .collect();
-    let attach_saved = |items: Vec<(String, String, bool)>| -> Vec<ScannedRaffle> {
-        items
-            .into_iter()
-            .map(|(sid, name, raffle_done)| ScannedRaffle {
-                has_saved_code: keystore_sids.contains(&sid),
-                sid,
-                name,
-                raffle_done,
-            })
-            .collect()
-    };
     if !force {
-        let cache = state.cache.lock().expect("cache lock");
-        if let Some(c) = cache.get(&cache_key)
-            && now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs)
-        {
-            let cached_items: Vec<ScannedRaffle> = attach_saved(
-                c.body
-                    .get("items")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .map(|it| {
-                                (
-                                    it.get("sid")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or_default()
-                                        .to_owned(),
-                                    it.get("name")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or_default()
-                                        .to_owned(),
-                                    truthy_flag(
-                                        it.get("raffle_done").unwrap_or(&serde_json::Value::Null),
-                                    ),
-                                )
+        let cached_data = {
+            let cache = state.cache.lock().expect("cache lock");
+            cache
+                .get(&cache_key)
+                .filter(|c| now_ms.saturating_sub(c.fetched_at_ms) < poll_ttl_ms(poll_secs))
+                .map(|c| {
+                    (
+                        c.fetched_at_ms,
+                        c.body
+                            .get("items")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .map(|it| {
+                                        (
+                                            it.get("sid")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .to_owned(),
+                                            it.get("name")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or_default()
+                                                .to_owned(),
+                                            truthy_flag(
+                                                it.get("raffle_done")
+                                                    .unwrap_or(&serde_json::Value::Null),
+                                            ),
+                                        )
+                                    })
+                                    .collect::<Vec<(String, String, bool)>>()
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            );
+                            .unwrap_or_default(),
+                        c.body.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                    )
+                })
+        };
+        if let Some((cached_at, mut cached_plain, cached_skipped)) = cached_data {
+            // Ersteller-Cockpit v1: auch auf dem Cache-Pfad die frische
+            // Ersteller-Vereinigung (eigene Admin-Sessions ohne Poll-Scan
+            // sichtbar; Dedup über sid gegen die gecachten Treffer).
+            let known: std::collections::BTreeSet<String> =
+                cached_plain.iter().map(|p| p.0.clone()).collect();
+            let (extra, extra_skipped) = creator_keystore_union(
+                manifest,
+                scan,
+                settings_state,
+                id,
+                &keystore_entries,
+                &known,
+            )
+            .await;
+            cached_plain.extend(extra);
             return Ok(ScanOutcome {
                 scan_id: scan.id.clone(),
                 username_set: true,
-                skipped: c.body.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                items: cached_items,
+                skipped: cached_skipped + extra_skipped,
+                items: attach_saved(cached_plain),
                 cached: true,
-                fetched_at_ms: c.fetched_at_ms,
+                fetched_at_ms: cached_at,
             });
         }
     }
@@ -1028,7 +1237,10 @@ pub(crate) async fn scan_inner(
         );
         plain.push((sid, name, done));
     }
-    let items = attach_saved(plain.clone());
+    // Nur Scan-Treffer werden gecacht (ohne Vereinigung): die Ersteller-
+    // Vereinigung wird pro Aufruf frisch gerechnet, damit eigene Sessions
+    // auch bei Cache-Treffer vollständig in der Liste stehen.
+    let hit_items = attach_saved(plain.clone());
     {
         let mut cache = state.cache.lock().expect("cache lock");
         cache.insert(
@@ -1036,14 +1248,29 @@ pub(crate) async fn scan_inner(
             CachedFetch {
                 fetched_at_ms: now_ms,
                 status: 200,
-                body: scan_cache_body(&items, skipped),
+                body: scan_cache_body(&hit_items, skipped),
             },
         );
     }
+    // Ersteller-Cockpit v1: Vereinigung der admin-only Sessions (Dedup über
+    // sid gegen die Scan-Treffer).
+    let known_sids: std::collections::BTreeSet<String> =
+        plain.iter().map(|p| p.0.clone()).collect();
+    let (extra, extra_skipped) = creator_keystore_union(
+        manifest,
+        scan,
+        settings_state,
+        id,
+        &keystore_entries,
+        &known_sids,
+    )
+    .await;
+    skipped += extra_skipped;
+    plain.extend(extra);
     Ok(ScanOutcome {
         scan_id: scan.id.clone(),
         username_set: true,
-        items,
+        items: attach_saved(plain),
         skipped,
         cached: false,
         fetched_at_ms: now_ms,
@@ -1151,7 +1378,7 @@ pub(crate) async fn fetch_inner(
     }
 
     // HTTP-Core: Endpoint-Platzhalter + Param-Header + Settings-Auth-Header.
-    let (status, body) = fetch_request(
+    let (status, mut body) = fetch_request(
         &manifest,
         &view.endpoint,
         &view.headers.clone().unwrap_or_default(),
@@ -1159,6 +1386,10 @@ pub(crate) async fn fetch_inner(
         auth_header_opt(&manifest, settings_state, id),
     )
     .await?;
+    // Ersteller-Cockpit v1: Session-Statistik vorberechnen, bevor gemappt und
+    // gecacht wird (Injektion im Body → Cache und Mapping sehen dieselbe
+    // Quelle; Manifest mappt participant_count/item_count/wish_count).
+    inject_session_stats(&mut body);
     let mapped = map_view(&view, &body)?;
     {
         let mut cache = state.cache.lock().expect("cache lock");
@@ -1231,19 +1462,22 @@ fn write_screen_keystore(
         let Some(value) = value else { continue };
         match col.as_str() {
             "join_code" => {
-                keystore_upsert(&file, sid, Some(value), None, None, None, None);
+                keystore_upsert(&file, sid, Some(value), None, None, None, None, None);
+            }
+            "admin_code" => {
+                keystore_upsert(&file, sid, None, None, None, None, None, Some(value));
             }
             "name" => {
-                keystore_upsert(&file, sid, None, Some(value), None, None, None);
+                keystore_upsert(&file, sid, None, Some(value), None, None, None, None);
             }
             "participant_id" => {
-                keystore_upsert(&file, sid, None, None, Some(value), None, None);
+                keystore_upsert(&file, sid, None, None, Some(value), None, None, None);
             }
             "pcode" => {
-                keystore_upsert(&file, sid, None, None, None, Some(value), None);
+                keystore_upsert(&file, sid, None, None, None, Some(value), None, None);
             }
             "result_id" => {
-                keystore_upsert(&file, sid, None, None, None, None, Some(value));
+                keystore_upsert(&file, sid, None, None, None, None, Some(value), None);
             }
             other => {
                 log::warn!("connector keystore_fields: unbekannte Spalte '{other}' (übersprungen)")
@@ -1876,11 +2110,20 @@ pub(crate) async fn flow_open_core(
         .as_ref()
         .ok_or_else(|| err_key("error.connector.flow_no_open"))?;
     let settings_values = declared_setting_values(manifest, settings_state, id);
-    let username = settings_values
-        .get(&o.match_setting_key)
+    // Ersteller-Cockpit v1 (Spec 15): Join-Felder all-or-none (Validator).
+    // Admin-Einstieg (Cockpit) hat keine Join-Felder und keine
+    // Username-Pflicht, dafür den admin_path-Guardrail; Teilnehmer-Einstieg
+    // mit admin_route prüft den Username erst NACH dem Session-GET (GET ist
+    // read-only, der Join-POST braucht den Namen).
+    let join_entry = o.join_endpoint.is_some();
+    let admin_route = o.admin_path.is_some() && o.admin_flow.is_some();
+    let username = o
+        .match_setting_key
+        .as_deref()
+        .and_then(|k| settings_values.get(k))
         .cloned()
         .unwrap_or_default();
-    if username.trim().is_empty() {
+    if join_entry && !admin_route && username.trim().is_empty() {
         // Spec 6 Punkt 4: klar abbrechen, KEIN Request, keine leeren POSTs.
         return Err(err_key("error.connector.flow_username_missing"));
     }
@@ -1928,12 +2171,139 @@ pub(crate) async fn flow_open_core(
         .to_owned();
     state.insert(o.param.clone(), serde_json::Value::String(code.to_owned()));
 
+    // Admin-Flag in der Session-Antwort (Guardrail, beide Einstiege).
+    let admin_hit = o.admin_path.as_deref().is_some_and(|p| {
+        connector::dot_path(&body, p)
+            .ok()
+            .and_then(|hits| hits.first().copied())
+            .is_some_and(truthy_flag)
+    });
+
+    // 2a) Admin-Einstieg (Ersteller-Cockpit, Spec 15): der eingegebene Code
+    //     ist der Ersteller-Code. Guardrail: das GET muss den Admin-Flag
+    //     tragen — sonst ist der Code kein Ersteller-Code → Abbruch ohne
+    //     Keystore-Schaden. Pins: sid + admin_code (+ join_code, wenn über
+    //     mapping sichtbar); Auto-Join entfällt, participant/pcode bleibt
+    //     None (Keystore patchweise wie bisher).
+    if !join_entry {
+        if o.admin_path
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("")
+            .is_empty()
+        {
+            log::warn!(
+                "flow open: Admin-Einstieg '{}' ohne admin_path-Guardrail",
+                flow.id
+            );
+        } else if !admin_hit {
+            return Err(err_key("error.connector.flow_not_admin"));
+        }
+        let join_from_body = state.get("join_code").and_then(value_to_string);
+        let _ = keystore_upsert(
+            keystore_file,
+            &sid,
+            join_from_body,
+            Some(session_name),
+            None,
+            None,
+            None,
+            Some(code.to_owned()),
+        );
+        let done = truthy_flag(state.get(&o.done_path).unwrap_or(&serde_json::Value::Null));
+        return Ok(FlowOpenOutcome {
+            flow_id: flow.id.clone(),
+            screen: if done {
+                o.done_screen.clone()
+            } else {
+                o.open_screen.clone()
+            },
+            state,
+            joined: false,
+            claimed: false,
+            pcode_generated: false,
+            status,
+        });
+    }
+
+    // 2b) Admin-Route am Teilnehmer-Einstieg: die Session gehört dem Nutzer
+    //     als Ersteller → Cockpit-Flow öffnen statt Teilnehmer-Flow (pins:
+    //     sid + admin_code + sichtbarer join_code; Match/Auto-Join entfällt).
+    if admin_route && admin_hit {
+        let target_id = o.admin_flow.as_deref().unwrap_or("");
+        let target = manifest
+            .flows
+            .iter()
+            .flatten()
+            .find(|f| f.id == target_id)
+            .and_then(|f| f.open.as_ref().map(|to| (f, to)));
+        let Some((target, to)) = target else {
+            return Err(err_keyp(
+                "error.connector.flow_admin_flow_missing",
+                json!({ "flow": target_id }),
+            ));
+        };
+        if to.join_endpoint.is_some() {
+            // Ziel muss Admin-Einstieg-Semantik tragen (Validator sichert
+            // das bereits ab Manifest-Ebene; Core-Verteidigung).
+            return Err(err_keyp(
+                "error.connector.flow_admin_flow_missing",
+                json!({ "flow": target_id }),
+            ));
+        }
+        let mut state2 = map_open_state(&body, &to.mapping);
+        let sid2 = state2.get("sid").and_then(value_to_string).ok_or_else(|| {
+            err_keyp(
+                "error.connector.mapping",
+                json!({ "detail": "open mapping ohne sid" }),
+            )
+        })?;
+        state2.insert(to.param.clone(), serde_json::Value::String(code.to_owned()));
+        let join_from_body = state2.get("join_code").and_then(value_to_string);
+        let _ = keystore_upsert(
+            keystore_file,
+            &sid2,
+            join_from_body,
+            Some(session_name),
+            None,
+            None,
+            None,
+            Some(code.to_owned()),
+        );
+        let done = truthy_flag(
+            state2
+                .get(&to.done_path)
+                .unwrap_or(&serde_json::Value::Null),
+        );
+        return Ok(FlowOpenOutcome {
+            flow_id: target.id.clone(),
+            screen: if done {
+                to.done_screen.clone()
+            } else {
+                to.open_screen.clone()
+            },
+            state: state2,
+            joined: false,
+            claimed: false,
+            pcode_generated: false,
+            status,
+        });
+    }
+
+    // Teilnehmer-Einstieg ohne Admin-Flag: ab hier klassischer Ablauf. Bei
+    // deklariertem admin_route wurde der Username-Check erst hier nach dem
+    // GET geprüft (Join-POST ohne Namen ist sinnlos).
+    if username.trim().is_empty() {
+        return Err(err_key("error.connector.flow_username_missing"));
+    }
+
     // 3) Keystore: join_code+sid+Sessionname merken (Spalte sid = Schlüssel).
     let entry = keystore_upsert(
         keystore_file,
         &sid,
         Some(code.to_owned()),
         Some(session_name),
+        None,
         None,
         None,
         None,
@@ -1946,62 +2316,67 @@ pub(crate) async fn flow_open_core(
     let mut claimed = false;
     let mut resp_pcode: Option<String> = None;
     let mut matched_participant: Option<serde_json::Value> = None;
-    let pid =
-        if let Some(found) = flow_participant_match(&body, &o.match_path, &o.id_path, &username) {
-            matched_participant = find_participant_object(&body, &found.name, &found.id);
-            found.id
+    let pid = if let Some(found) = o
+        .match_path
+        .as_deref()
+        .zip(o.id_path.as_deref())
+        .and_then(|(mp, ip)| flow_participant_match(&body, mp, ip, &username))
+    {
+        matched_participant = find_participant_object(&body, &found.name, &found.id);
+        found.id
+    } else {
+        // Selbst eintragen (POST). Body-Default: {"name": "{match_setting_key}"}.
+        let key = o.match_setting_key.as_deref().unwrap_or_default();
+        let mut jbody = o
+            .join_body
+            .clone()
+            .unwrap_or_else(|| json!({ "name": format!("{{{}}}", key) }));
+        let jvalues: BTreeMap<String, serde_json::Value> = vals
+            .iter()
+            .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+            .collect();
+        apply_fill(&mut jbody, &jvalues);
+        strip_unfilled(&mut jbody);
+        let path = fill_form_path(o.join_endpoint.as_deref().unwrap_or_default(), &jvalues)
+            .map_err(|k| err_keyp("error.connector.param_required", json!({ "key": k })))?;
+        let mut headers: Vec<(String, String)> = Vec::new();
+        for (name, template) in o.join_headers.iter().flatten() {
+            let value = fill_params(template, &vals)
+                .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
+            headers.push((name.clone(), value));
+        }
+        let (jstatus, jresp) = submit_form_request(
+            manifest,
+            connector::manifest::HttpMethod::Post,
+            &path,
+            &jbody,
+            &headers,
+            auth_header_opt(manifest, settings_state, id),
+        )
+        .await?;
+        if jstatus == 409 {
+            // Duplikat: id aus dem Fehlerbody (Spec Abschnitt 3) → Claim-Pfad.
+            claimed = true;
+            jresp
+                .get("id")
+                .and_then(value_to_string)
+                .ok_or_else(|| err_keyp("error.connector.flow_claim_id_missing", json!({})))?
+        } else if jstatus < 400 {
+            joined = true;
+            resp_pcode = jresp.get("pcode").and_then(value_to_string);
+            jresp.get("id").and_then(value_to_string).ok_or_else(|| {
+                err_keyp(
+                    "error.connector.mapping",
+                    json!({ "detail": "join-antwort ohne id" }),
+                )
+            })?
         } else {
-            // Selbst eintragen (POST). Body-Default: {"name": "{match_setting_key}"}.
-            let mut jbody = o
-                .join_body
-                .clone()
-                .unwrap_or_else(|| json!({ "name": format!("{{{}}}", o.match_setting_key) }));
-            let jvalues: BTreeMap<String, serde_json::Value> = vals
-                .iter()
-                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
-                .collect();
-            apply_fill(&mut jbody, &jvalues);
-            strip_unfilled(&mut jbody);
-            let path = fill_form_path(&o.join_endpoint, &jvalues)
-                .map_err(|k| err_keyp("error.connector.param_required", json!({ "key": k })))?;
-            let mut headers: Vec<(String, String)> = Vec::new();
-            for (name, template) in o.join_headers.iter().flatten() {
-                let value = fill_params(template, &vals)
-                    .map_err(|p| err_keyp("error.connector.param_required", json!({ "key": p })))?;
-                headers.push((name.clone(), value));
-            }
-            let (jstatus, jresp) = submit_form_request(
-                manifest,
-                connector::manifest::HttpMethod::Post,
-                &path,
-                &jbody,
-                &headers,
-                auth_header_opt(manifest, settings_state, id),
-            )
-            .await?;
-            if jstatus == 409 {
-                // Duplikat: id aus dem Fehlerbody (Spec Abschnitt 3) → Claim-Pfad.
-                claimed = true;
-                jresp
-                    .get("id")
-                    .and_then(value_to_string)
-                    .ok_or_else(|| err_keyp("error.connector.flow_claim_id_missing", json!({})))?
-            } else if jstatus < 400 {
-                joined = true;
-                resp_pcode = jresp.get("pcode").and_then(value_to_string);
-                jresp.get("id").and_then(value_to_string).ok_or_else(|| {
-                    err_keyp(
-                        "error.connector.mapping",
-                        json!({ "detail": "join-antwort ohne id" }),
-                    )
-                })?
-            } else {
-                return Err(err_keyp(
-                    "error.connector.http",
-                    json!({ "detail": format!("participants: HTTP {jstatus}") }),
-                ));
-            }
-        };
+            return Err(err_keyp(
+                "error.connector.http",
+                json!({ "detail": format!("participants: HTTP {jstatus}") }),
+            ));
+        }
+    };
 
     // 5) pcode-Regel (Spec 3/6): Keystore-Wert hat Vorrang (dauerhaft),
     //    Server-pcode bei Neuerstellung danach, sonst frisch erzeugen.
@@ -2034,6 +2409,7 @@ pub(crate) async fn flow_open_core(
         None,
         Some(pid.clone()),
         Some(pcode.clone()),
+        None,
         None,
     );
 
@@ -2125,6 +2501,122 @@ pub async fn connector_flow_open(
         &code,
         &settings_state,
         &id,
+    )
+    .await
+}
+
+/// Ersteller-Cockpit v1 (Spec 15, Karte F): neue Session per POST auf
+/// `manifest.create_endpoint` (base_url-relativ, z. B. `/api/session/create`).
+/// Body nur {name} — max_wishes-Default liegt beim Server (3), Feinschlag
+/// geschieht per PATCH settings auf dem c_overview-Screen (Formular-Regeln,
+/// nicht Teil des Create-Vertrags).
+/// Response {id, admin_code, join_code}: Die Codes sind NUR einmal sichtbar —
+/// der Core pinnt sie sofort in den Session-Keystore (sid+name+admin_code+
+/// join_code), bevor irgendwas weitergegeben wird. Das Frontend erhält
+/// {sid, name, admin_code, join_code} genau einmal (danach nur Keystore).
+pub(crate) async fn creator_create_core(
+    manifest: &connector::ConnectorManifest,
+    settings_state: &crate::app_settings::SettingsState,
+    id: &str,
+    name: &str,
+    keystore_file: &std::path::Path,
+) -> Result<serde_json::Value, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(err_key("error.connector.creator_name_missing"));
+    }
+    let endpoint = manifest
+        .create_endpoint
+        .as_deref()
+        .ok_or_else(|| err_key("error.connector.creator_unsupported"))?;
+    if endpoint.trim().is_empty()
+        || !endpoint.starts_with('/')
+        || endpoint.contains("file://")
+        || endpoint.starts_with("http")
+        || endpoint.contains('{')
+    {
+        // Validator prüft das bereits beim Import; der Command-Pfad verteidigt
+        // denselben Vertrag zusätzlich (identische Regel wie im Validator).
+        return Err(err_key("error.connector.creator_unsupported"));
+    }
+    let body = json!({ "name": name });
+    let (status, resp) = submit_form_request(
+        manifest,
+        connector::manifest::HttpMethod::Post,
+        endpoint,
+        &body,
+        &[],
+        auth_header_opt(manifest, settings_state, id),
+    )
+    .await?;
+    if status >= 400 {
+        return Err(err_keyp(
+            "error.connector.http",
+            json!({ "detail": format!("create: HTTP {status}") }),
+        ));
+    }
+    let detail = |what: &str| {
+        err_keyp(
+            "error.connector.mapping",
+            json!({ "detail": format!("create antwort ohne {what}") }),
+        )
+    };
+    let sid = resp
+        .get("id")
+        .and_then(value_to_string)
+        .ok_or_else(|| detail("id"))?;
+    let admin_code = resp
+        .get("admin_code")
+        .and_then(value_to_string)
+        .ok_or_else(|| detail("admin_code"))?;
+    let join_code = resp
+        .get("join_code")
+        .and_then(value_to_string)
+        .ok_or_else(|| detail("join_code"))?;
+    // Einmal-Code-Regel: sofort ins Keystore, BEVOR die Werte das Backend
+    // verlassen (partielles Upsert wie bisher — vorhandene Spalten bleiben).
+    let _ = keystore_upsert(
+        keystore_file,
+        &sid,
+        Some(join_code.clone()),
+        Some(name.to_owned()),
+        None,
+        None,
+        None,
+        Some(admin_code.clone()),
+    );
+    Ok(json!({
+        "sid": sid,
+        "name": name,
+        "admin_code": admin_code,
+        "join_code": join_code,
+    }))
+}
+
+/// Ersteller-Cockpit v1: „Verlosung erstellen“ (Spec 15, Decision 1 — Button
+/// neben ↻ in der SCLM-Hauptansicht, Modal mit nur dem Namensfeld). Ruft
+/// POST session/create über die Connector-Basis-URL, pinnt die Codes sofort
+/// in den Keystore und gibt {sid, name, admin_code, join_code} ans Frontend.
+#[tauri::command]
+pub async fn connector_creator_create(
+    state: tauri::State<'_, ConnectorState>,
+    settings_state: tauri::State<'_, crate::app_settings::SettingsState>,
+    id: String,
+    name: String,
+) -> Result<serde_json::Value, String> {
+    let manifest = {
+        let entries = state.entries.lock().expect("connector entries lock");
+        let Some(st) = entries.iter().find(|e| e.manifest.id == id) else {
+            return Err(err_key("error.connector.unknown"));
+        };
+        st.manifest.clone()
+    };
+    creator_create_core(
+        &manifest,
+        &settings_state,
+        &id,
+        &name,
+        &keystore_paths(&state).file(&id),
     )
     .await
 }
@@ -2573,6 +3065,7 @@ mod tests {
             sync: None,
             settings_fields: Vec::new(),
             scan: None,
+            create_endpoint: None,
             flows: Some(vec![connector::flow::Flow {
                 id: "participant".into(),
                 title: connector::manifest::LocalizedText {
@@ -2580,6 +3073,7 @@ mod tests {
                     en: "T".into(),
                 },
                 entry: screen_ids.first().copied().unwrap_or("").into(),
+                tabs: None,
                 screens,
                 open: None,
             }]),
@@ -2624,6 +3118,7 @@ mod tests {
             id: "creator".into(),
             title: m.flows.as_ref().unwrap()[0].title.clone(),
             entry: "code".into(),
+            tabs: None,
             screens: vec![{
                 let mut s = m.flows.as_ref().unwrap()[0].screens[0].clone();
                 s.endpoint = Some("/api/other/{code}".into());
@@ -2906,6 +3401,7 @@ mod tests {
             &mut sessions,
             "sid",
             Some("JC".into()),
+            None,
             None,
             None,
             None,
@@ -3468,7 +3964,7 @@ mod tests {
             .find(|f| f.id == "participant")
             .expect("participant-Flow");
         let o = part.open.as_ref().expect("open-Block am participant-Flow");
-        assert_eq!(o.match_setting_key, "sclm_username");
+        assert_eq!(o.match_setting_key.as_deref(), Some("sclm_username"));
         assert_eq!(o.done_screen, "results");
         let ids: Vec<&str> = part.screens.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(
@@ -3511,6 +4007,71 @@ mod tests {
         assert_eq!(sw.collection, "loot");
         assert_eq!(sw.id_path, "id");
         assert_eq!(sw.name_path, "name");
+
+        // Ersteller-Cockpit v1 (Karte F): tabs + Admin-Einstieg + create_endpoint.
+        assert_eq!(
+            m.create_endpoint.as_deref(),
+            Some("/api/session/create"),
+            "Create-Pfad ist Manifest-deklariert (kein Core-Hardcoding)"
+        );
+        let creator = m
+            .flows
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|f| f.id == "creator")
+            .expect("creator-Flow");
+        let tabs: Vec<(&str, &str)> = creator
+            .tabs
+            .as_ref()
+            .expect("creator tabs")
+            .iter()
+            .map(|t| (t.id.as_str(), t.screen.as_str()))
+            .collect();
+        assert_eq!(
+            tabs,
+            vec![
+                ("overview", "c_overview"),
+                ("participants", "c_participants"),
+                ("loot", "loot"),
+                ("commodities", "commodities"),
+                ("raffle", "c_results"),
+            ],
+            "Tab-IDs + -Reihenfolge sind Karte-G-Vertrag"
+        );
+        let co = creator.open.as_ref().expect("open-Block am creator-Flow");
+        assert!(
+            co.join_endpoint.is_none() && co.match_setting_key.is_none(),
+            "Admin-Einstieg ohne Join-Felder (all-or-none)"
+        );
+        assert_eq!(
+            co.admin_path.as_deref(),
+            Some("is_admin"),
+            "Guardrail admin_path"
+        );
+        assert_eq!(co.open_screen, "c_overview");
+        assert_eq!(co.done_screen, "c_results");
+        let overview = creator
+            .screens
+            .iter()
+            .find(|s| s.id == "c_overview")
+            .expect("c_overview-Screen");
+        for key in ["participant_count", "item_count", "wish_count"] {
+            assert_eq!(
+                overview.mapping.get(key).map(String::as_str),
+                Some(key),
+                "Core-injizierte Statistik wird als Mapping-Quelle genutzt"
+            );
+        }
+        assert_eq!(
+            overview
+                .keystore_fields
+                .as_ref()
+                .expect("keystore-Schalter am c_overview")
+                .get("admin_code")
+                .map(String::as_str),
+            Some("admin_code"),
+        );
     }
 
     /// reqwest braucht einen Tokio-Reactor (net+time) — reine futures::block_on
@@ -4254,6 +4815,589 @@ mod tests {
             "nur die Session-Lastung, kein Join-POST danach"
         );
         assert!(!file.exists(), "unbekannte Session → kein Keystore-Eintrag");
+    }
+
+    // ---- Ersteller-Cockpit v1 (Karte F, Spec 15) ----------------------------
+
+    /// Manifest-Ziegel mit Creator-Cockpit (Admin-Einstieg) + Teilnehmer-Flow
+    /// inkl. Admin-Route (`admin_path`+`admin_flow`) und create_endpoint.
+    fn admin_routing_manifest_fixture(base: &str) -> connector::ConnectorManifest {
+        let text = format!(
+            r#"{{
+                "manifest_version": 1, "id": "sclm", "name": {{"de": "S", "en": "S"}},
+                "base_url": "{base}",
+                "placement": {{"kind": "own", "label": {{"de": "S", "en": "S"}}}},
+                "settings_fields": [{{"key": "sclm_username", "label": {{"de": "L", "en": "L"}}, "type": "text"}}],
+                "views": [],
+                "create_endpoint": "/api/session/create",
+                "flows": [
+                    {{
+                        "id": "creator", "title": {{"de": "C", "en": "C"}}, "entry": "c_overview",
+                        "tabs": [
+                            {{"id": "overview", "screen": "c_overview", "label": {{"de": "Ü", "en": "O"}}}},
+                            {{"id": "raffle", "screen": "c_results", "label": {{"de": "V", "en": "R"}}}}
+                        ],
+                        "screens": [
+                            {{"id": "c_overview", "type": "detail", "title": {{"de": "O", "en": "O"}}}},
+                            {{"id": "c_results", "type": "results", "title": {{"de": "R", "en": "R"}}}}
+                        ],
+                        "open": {{
+                            "session_endpoint": "/api/session/{{code}}",
+                            "headers": {{"X-SCLM-Code": "{{code}}"}},
+                            "mapping": {{"sid": "id", "name": "name", "admin_code": "admin_code", "join_code": "join_code", "raffle_done": "raffle_done"}},
+                            "admin_path": "is_admin",
+                            "open_screen": "c_overview",
+                            "done_screen": "c_results"
+                        }}
+                    }},
+                    {{
+                        "id": "participant", "title": {{"de": "P", "en": "P"}}, "entry": "wishes",
+                        "screens": [
+                            {{"id": "wishes", "type": "list", "title": {{"de": "W", "en": "W"}}}},
+                            {{"id": "results", "type": "results", "title": {{"de": "R", "en": "R"}}}}
+                        ],
+                        "open": {{
+                            "session_endpoint": "/api/session/{{code}}",
+                            "headers": {{"X-SCLM-Code": "{{code}}"}},
+                            "mapping": {{"sid": "id", "name": "name", "raffle_done": "raffle_done"}},
+                            "match_path": "participants[].name",
+                            "id_path": "participants[].id",
+                            "match_setting_key": "sclm_username",
+                            "join_endpoint": "/api/session/{{sid}}/participants",
+                            "open_screen": "wishes",
+                            "done_screen": "results",
+                            "admin_path": "is_admin",
+                            "admin_flow": "creator"
+                        }}
+                    }}
+                ]
+            }}"#
+        );
+        connector::ConnectorManifest::parse(text.as_bytes()).expect("admin routing manifest")
+    }
+
+    fn flow_with_id(m: &connector::ConnectorManifest, id: &str) -> connector::flow::Flow {
+        m.flows
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|f| f.id == id)
+            .cloned()
+            .expect("flow")
+    }
+
+    #[test]
+    fn creator_create_pins_codes_once_and_returns_dto() {
+        // Spec 15/Annahme 3: POST session/create (Basis-URL + Manifest-Pfad),
+        // Codes nur einmal sichtbar → sofort Keystore; DTO {sid,name,admin_code,join_code}.
+        let (base, rx) = start_mock_api(vec![(
+            "POST",
+            "/api/session/create",
+            201,
+            r#"{"id":"sidN","admin_code":"ADM-NEW","join_code":"JC-NEW"}"#,
+        )]);
+        let m = admin_routing_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("create");
+        let out = block_on_async(creator_create_core(&m, &st, "sclm", " Jumptown #7 ", &file))
+            .expect("create läuft durch");
+        assert_eq!(out["sid"], json!("sidN"));
+        assert_eq!(out["name"], json!("Jumptown #7"), "Name getrimmt übergeben");
+        assert_eq!(out["admin_code"], json!("ADM-NEW"));
+        assert_eq!(out["join_code"], json!("JC-NEW"));
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].method, "POST");
+        assert_eq!(hits[0].path, "/api/session/create");
+        let body: serde_json::Value = serde_json::from_str(&hits[0].body).unwrap();
+        assert_eq!(
+            body,
+            json!({"name": "Jumptown #7"}),
+            "Body nur name-Feld — max_wishes-Default beim Server"
+        );
+        let e = keystore_find(&keystore_load(&file), "sidN").expect("Eintrag sofort gepinnt");
+        assert_eq!(e.admin_code.as_deref(), Some("ADM-NEW"));
+        assert_eq!(e.join_code, "JC-NEW");
+        assert_eq!(e.name, "Jumptown #7");
+        assert!(
+            e.participant_id.is_none() && e.pcode.is_none(),
+            "Create pinnt keine Teilnehmer-Werte"
+        );
+    }
+
+    #[test]
+    fn creator_create_requires_declared_endpoint() {
+        // Kein create_endpoint im Manifest → Fehler-Key, kein Request.
+        let (base, rx) = start_mock_api(vec![]);
+        let m = open_flow_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("create_noep");
+        let err = block_on_async(creator_create_core(&m, &st, "sclm", "X", &file))
+            .expect_err("ohne create_endpoint kein Create");
+        assert!(err.contains("creator_unsupported"), "{err}");
+        assert!(mock_hits(&rx).is_empty(), "null HTTP-Requests");
+        assert!(!file.exists(), "kein Keystore-Schaden");
+    }
+
+    #[test]
+    fn creator_create_rejects_empty_name_without_request() {
+        let (base, rx) = start_mock_api(vec![]);
+        let m = admin_routing_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("create_name");
+        let err = block_on_async(creator_create_core(&m, &st, "sclm", "   ", &file))
+            .expect_err("leerer Name → Abbruch");
+        assert!(err.contains("creator_name_missing"), "{err}");
+        assert!(mock_hits(&rx).is_empty(), "null HTTP-Requests");
+    }
+
+    #[test]
+    fn creator_create_maps_server_error_to_http_key() {
+        let (base, _rx) = start_mock_api(vec![(
+            "POST",
+            "/api/session/create",
+            400,
+            r#"{"error":"name too short"}"#,
+        )]);
+        let m = admin_routing_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("create_http");
+        let err = block_on_async(creator_create_core(&m, &st, "sclm", "X", &file))
+            .expect_err("Server-400 → Fehler");
+        assert!(err.contains("error.connector.http"), "{err}");
+        assert!(
+            !file.exists(),
+            "fehlgeschlagener Create lässt Keystore unberührt"
+        );
+    }
+
+    #[test]
+    fn flow_open_admin_entry_pins_admin_code_and_opens_cockpit() {
+        // Admin-Einstieg (Spec 15 Decision 2): Code in der Suchleiste,
+        // GET liefert is_admin:true → Cockpit-Flow, Pins sid+admin_code
+        // (+join_code aus Body-Sicht), Auto-Join entfällt.
+        let (base, rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/ADM-7",
+            200,
+            r#"{"id":"sidA","name":"MineOwn","is_admin":true,"admin_code":"ADM-7","join_code":"JC-A","max_wishes":3,"raffle_done":false,"participants":[]}"#,
+        )]);
+        let m = admin_routing_manifest_fixture(&base);
+        // Kein Username nötig am Admin-Einstieg.
+        let st = settings_state_with("sclm", &[]);
+        let file = tmp_keystore_file("openadmin");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &flow_with_id(&m, "creator"),
+            &file,
+            "ADM-7",
+            &st,
+            "sclm",
+        ))
+        .expect("Admin-Einstieg läuft durch");
+        assert_eq!(out.flow_id, "creator");
+        assert_eq!(out.screen, "c_overview");
+        assert!(
+            !out.joined && !out.claimed && !out.pcode_generated,
+            "Admin-Einstieg joinet nicht"
+        );
+        assert!(
+            !out.state.contains_key("participant_id"),
+            "kein Teilnehmer-State"
+        );
+        assert_eq!(out.state["sid"], json!("sidA"));
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1, "nur Session-GET, kein Join-POST");
+        let e = keystore_find(&keystore_load(&file), "sidA").expect("Eintrag");
+        assert_eq!(e.admin_code.as_deref(), Some("ADM-7"), "admin_code gepinnt");
+        assert_eq!(e.join_code, "JC-A", "sichtbarer join_code mitgepinnt");
+        assert_eq!(e.name, "MineOwn");
+        assert!(e.pcode.is_none(), "Admin-Einstieg erzeugt keinen pcode");
+    }
+
+    #[test]
+    fn flow_open_admin_entry_rejects_join_code_without_keystore_damage() {
+        // Guardrail admin_path: join_code getroffen (is_admin:false) → Fehler,
+        // KEIN admin_code-Write (sonst wäre die Keystore-Vereinigung vergiftet).
+        let (base, _rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/JC-ONLY",
+            200,
+            r#"{"id":"sidA","name":"MineOwn","is_admin":false,"max_wishes":3,"raffle_done":false,"participants":[{"id":"p1","name":"Semih"}]}"#,
+        )]);
+        let m = admin_routing_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[]);
+        let file = tmp_keystore_file("openadmin_no");
+        let err = block_on_async(flow_open_core(
+            &m,
+            &flow_with_id(&m, "creator"),
+            &file,
+            "JC-ONLY",
+            &st,
+            "sclm",
+        ))
+        .expect_err("join_code am Admin-Einstieg → Abbruch");
+        assert!(err.contains("flow_not_admin"), "{err}");
+        assert!(!file.exists(), "kein Keystore-Schaden");
+    }
+
+    #[test]
+    fn flow_open_admin_route_opens_cockpit_from_participant_entry() {
+        // Admin-Route: Teilnehmer-Einstieg-Flow, aber der Code gehört als
+        // Ersteller (is_admin:true) → Ziel-Flow creator öffnen, Pins wie beim
+        // Admin-Einstieg (Match/Auto-Join entfällt).
+        let (base, rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/ADM-9",
+            200,
+            r#"{"id":"sidB","name":"EigeneSession","is_admin":true,"admin_code":"ADM-9","join_code":"JC-B","raffle_done":false,"participants":[{"id":"p1","name":"Fremder"}]}"#,
+        )]);
+        let m = admin_routing_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("openroute");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &flow_with_id(&m, "participant"),
+            &file,
+            "ADM-9",
+            &st,
+            "sclm",
+        ))
+        .expect("Route läuft durch");
+        assert_eq!(out.flow_id, "creator", "Cockpit statt Teilnehmer-Flow");
+        assert_eq!(out.screen, "c_overview");
+        assert!(!out.joined, "kein Auto-Join am Ersteller-Code");
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1, "GET, aber KEIN Join-POST in fremder Session");
+        let e = keystore_find(&keystore_load(&file), "sidB").expect("Eintrag");
+        assert_eq!(e.admin_code.as_deref(), Some("ADM-9"));
+        assert!(e.pcode.is_none(), "kein pcode für Ersteller-Route");
+    }
+
+    #[test]
+    fn flow_open_admin_route_falls_back_to_participant_flow_for_join_code() {
+        // Derselbe Flow, join_code (is_admin:false) → Teilnehmer-Ablauf wie
+        // bisher (Auto-Join läuft, bester Flow unangetastet).
+        let (base, rx) = start_mock_api(vec![
+            (
+                "GET",
+                "/api/session/JC-9",
+                200,
+                r#"{"id":"sidC","name":"FremdeSession","is_admin":false,"raffle_done":false,"participants":[]}"#,
+            ),
+            (
+                "POST",
+                "/api/session/sidC/participants",
+                201,
+                r#"{"id":"p7","pcode":"srvpc12345678901"}"#,
+            ),
+        ]);
+        let m = admin_routing_manifest_fixture(&base);
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("openroute_jc");
+        let out = block_on_async(flow_open_core(
+            &m,
+            &flow_with_id(&m, "participant"),
+            &file,
+            "JC-9",
+            &st,
+            "sclm",
+        ))
+        .expect("Teilnehmer-Pfad läuft");
+        assert_eq!(out.flow_id, "participant");
+        assert!(out.joined, "Auto-Join wie bisher");
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 2, "GET dann Join-POST");
+        let e = keystore_find(&keystore_load(&file), "sidC").expect("Eintrag");
+        assert_eq!(e.join_code, "JC-9");
+        assert!(e.admin_code.is_none(), "join_code pinnt NIE als admin_code");
+    }
+
+    #[test]
+    fn flow_open_admin_route_defends_missing_target_open() {
+        // Core-Verteidigung: Ziel-Flow ohne open-Block (Manifest-Irrtum) →
+        // klarer Fehler, kein Teilnehmer-Join in die Leere.
+        let (base, _rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/ADM-X",
+            200,
+            r#"{"id":"sidD","name":"S","is_admin":true,"admin_code":"ADM-X","raffle_done":false,"participants":[]}"#,
+        )]);
+        let text = r#"{
+            "manifest_version": 1, "id": "sclm", "name": {"de": "S", "en": "S"},
+            "base_url": "http://127.0.0.1:1",
+            "placement": {"kind": "own", "label": {"de": "S", "en": "S"}},
+            "settings_fields": [{"key": "sclm_username", "label": {"de": "L", "en": "L"}, "type": "text"}],
+            "views": [],
+            "flows": [
+                {"id": "participant", "title": {"de": "P", "en": "P"}, "entry": "wishes",
+                 "screens": [{"id": "wishes", "type": "list", "title": {"de": "W", "en": "W"}}],
+                 "open": {"session_endpoint": "/api/session/{code}", "mapping": {"sid": "id"},
+                          "match_path": "participants[].name", "id_path": "participants[].id",
+                          "match_setting_key": "sclm_username", "join_endpoint": "/api/session/{sid}/participants",
+                          "open_screen": "wishes", "done_screen": "wishes",
+                          "admin_path": "is_admin", "admin_flow": "creator"}}
+            ]
+        }"#
+        .replace("http://127.0.0.1:1", &base);
+        let m = connector::ConnectorManifest::parse(text.as_bytes()).expect("parse");
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let file = tmp_keystore_file("openroute_miss");
+        let err = block_on_async(flow_open_core(
+            &m,
+            &flow_with_id(&m, "participant"),
+            &file,
+            "ADM-X",
+            &st,
+            "sclm",
+        ))
+        .expect_err("Ziel-Flow existiert nicht");
+        assert!(err.contains("flow_admin_flow_missing"), "{err}");
+        assert!(!file.exists(), "kein Keystore-Schaden");
+    }
+
+    #[test]
+    fn inject_session_stats_counts_and_respects_for_sale_boundary() {
+        // Spec 15 Statistik: participant_count = len(participants);
+        // item_count = sum(qty) über loot mit for_sale != 1 (true/1 raus,
+        // false/0/fehlend rein); wish_count = Summe aller wishes-Arrays.
+        let mut body = json!({
+            "participants": [
+                {"id": "p1", "wishes": ["a", "b"]},
+                {"id": "p2", "wishes": []},
+                {"id": "p3"}
+            ],
+            "loot": [
+                {"id": "l1", "qty": 3, "for_sale": false},
+                {"id": "l2", "qty": 5, "for_sale": true},
+                {"id": "l3", "qty": 2, "for_sale": 1},
+                {"id": "l4", "qty": 4, "for_sale": 0},
+                {"id": "l5", "qty": 1.5},
+                {"id": "l6"}
+            ]
+        });
+        inject_session_stats(&mut body);
+        assert_eq!(body["participant_count"], json!(3));
+        assert_eq!(
+            body["item_count"],
+            json!(8.5),
+            "3+4+1.5+0 (for_sale true/1 ausgeschlossen)"
+        );
+        assert_eq!(body["wish_count"], json!(2));
+        // Ganzzahlige Summe bleibt Integer (UI-Feld soll keine 12.0 zeigen).
+        let mut clean = json!({
+            "participants": [{"wishes": [1, 2]}],
+            "loot": [{"qty": 2}, {"qty": 3, "for_sale": true}]
+        });
+        inject_session_stats(&mut clean);
+        assert_eq!(clean["item_count"], json!(2));
+        assert_eq!(clean["wish_count"], json!(2));
+        // Vorhandene Keys werden nie überschrieben (Backend darf eigene Werte liefern).
+        let mut preset = json!({"participants": [], "item_count": 42});
+        inject_session_stats(&mut preset);
+        assert_eq!(preset["item_count"], json!(42), "or_insert semantics");
+        assert_eq!(preset["participant_count"], json!(0));
+        // Body ohne participants-Array: keine Injektion (andere Connectors unberührt).
+        let mut other = json!({"items": [1, 2]});
+        inject_session_stats(&mut other);
+        assert!(other.get("participant_count").is_none());
+        assert!(other.get("item_count").is_none());
+    }
+
+    #[test]
+    fn scan_union_adds_admin_only_sessions_and_sets_is_creator() {
+        // Annahme 4: Keystore-Sessions mit admin_code, die der Username-Scan
+        // nicht findet, werden ergänzend gescannt (Detail-Fetch mit admin_code)
+        // und tragen is_creator; Duplikate gegen Scan-Treffer dedupt über sid.
+        let (base, rx) = start_mock_api(vec![
+            (
+                "GET",
+                "/api/sessions",
+                200,
+                r#"[{"id":"s1","name":"Landlist-Session","join_code":"JC1","raffle_done":false}]"#,
+            ),
+            (
+                "GET",
+                "/api/session/JC1",
+                200,
+                r#"{"id":"s1","name":"Landlist-Session","raffle_done":false,"participants":[{"id":"p1","name":"Semih"}]}"#,
+            ),
+            (
+                "GET",
+                "/api/session/ADM1",
+                200,
+                r#"{"id":"s9","name":"MeineEigene","is_admin":true,"raffle_done":true}"#,
+            ),
+        ]);
+        let text = format!(
+            r#"{{
+                "manifest_version": 1, "id": "sclm", "name": {{"de": "S", "en": "S"}},
+                "base_url": "{base}",
+                "placement": {{"kind": "own", "label": {{"de": "S", "en": "S"}}}},
+                "settings_fields": [{{"key": "sclm_username", "label": {{"de": "L", "en": "L"}}, "type": "text"}}],
+                "views": [],
+                "scan": {{
+                    "id": "scan1",
+                    "title": {{"de": "S", "en": "S"}},
+                    "list_endpoint": "/api/sessions",
+                    "detail_endpoint": "/api/session/{{code}}",
+                    "headers": {{"X-SCLM-Code": "{{code}}"}},
+                    "done_field": "raffle_done",
+                    "code_field": "join_code",
+                    "id_field": "id",
+                    "name_field": "name",
+                    "match_path": "participants[].name",
+                    "match_setting_key": "sclm_username",
+                    "concurrency": 2,
+                    "poll_seconds": 300
+                }}
+            }}"#
+        );
+        let m = connector::ConnectorManifest::parse(text.as_bytes()).expect("scan union manifest");
+        let tmp = tempfile::tempdir().unwrap();
+        let conn_dir = tmp.path().join("connectors");
+        std::fs::create_dir_all(&conn_dir).unwrap();
+        std::fs::write(
+            conn_dir.join("sclm.json"),
+            serde_json::to_string_pretty(&m).unwrap(),
+        )
+        .unwrap();
+        let state = ConnectorState::load(conn_dir);
+        let ks = keystore_paths(&state).file("sclm");
+        // s1: im Scan-Treffer UND als Ersteller bekannt (Dedup, is_creator true).
+        keystore_upsert(
+            &ks,
+            "s1",
+            Some("JC1".to_owned()),
+            Some("Landlist-Session".to_owned()),
+            None,
+            None,
+            None,
+            Some("ADM-X".to_owned()),
+        );
+        // s9: NUR durch admin_code bekannt (kein Username-Treffer möglich).
+        keystore_upsert(
+            &ks,
+            "s9",
+            None,
+            Some("MeineEigene".to_owned()),
+            None,
+            None,
+            None,
+            Some("ADM1".to_owned()),
+        );
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let out = block_on_async(scan_inner(
+            &state,
+            &st,
+            &m,
+            &m.scan.clone().unwrap(),
+            "sclm",
+            true,
+            5_000,
+        ))
+        .expect("scan läuft");
+        let sids: Vec<&str> = out.items.iter().map(|i| i.sid.as_str()).collect();
+        assert_eq!(
+            sids,
+            vec!["s1", "s9"],
+            "Treffer + Ersteller-Vereinigung, sid-deduppt"
+        );
+        assert!(out.items[0].is_creator, "bekannter admin_code → is_creator");
+        assert!(
+            out.items[1].is_creator,
+            "Keystore-only Session ist Ersteller"
+        );
+        assert_eq!(out.items[1].name, "MeineEigene", "Name aus Detail-Fetch");
+        assert!(out.items[1].raffle_done, "done-Feld aus Detail-Fetch");
+        assert_eq!(out.skipped, 0, "{:?}", out.items);
+        let hits = mock_hits(&rx);
+        assert!(
+            hits.iter().any(|h| h.path == "/api/session/ADM1"),
+            "Detail-Fetch mit admin_code"
+        );
+        assert!(
+            !hits.iter().any(|h| h.path.contains("ADM-X")),
+            "bekannte sid NIE zweimal (Dedup)"
+        );
+        assert!(
+            hits.iter()
+                .all(|h| h.path != "/api/session/ADM-X" && !h.path.contains("ADM-X"))
+        );
+    }
+
+    #[test]
+    fn scan_union_works_without_username() {
+        // „Meine Verlosungen“ bleibt sichtbar, auch ohne gesetzten Benutzernamen
+        // (eigene Ersteller-Sessions brauchen keinen Username-Scan).
+        let (base, _rx) = start_mock_api(vec![(
+            "GET",
+            "/api/session/ADM1",
+            200,
+            r#"{"id":"s9","name":"MeineEigene","is_admin":true,"raffle_done":false,"participants":[]}"#,
+        )]);
+        let text = format!(
+            r#"{{
+                "manifest_version": 1, "id": "sclm", "name": {{"de": "S", "en": "S"}},
+                "base_url": "{base}",
+                "placement": {{"kind": "own", "label": {{"de": "S", "en": "S"}}}},
+                "settings_fields": [{{"key": "sclm_username", "label": {{"de": "L", "en": "L"}}, "type": "text"}}],
+                "views": [],
+                "scan": {{
+                    "id": "scan1",
+                    "title": {{"de": "S", "en": "S"}},
+                    "list_endpoint": "/api/sessions",
+                    "detail_endpoint": "/api/session/{{code}}",
+                    "headers": {{"X-SCLM-Code": "{{code}}"}},
+                    "done_field": "raffle_done",
+                    "code_field": "join_code",
+                    "id_field": "id",
+                    "name_field": "name",
+                    "match_path": "participants[].name",
+                    "match_setting_key": "sclm_username"
+                }}
+            }}"#
+        );
+        let m = connector::ConnectorManifest::parse(text.as_bytes()).expect("union manifest");
+        let tmp = tempfile::tempdir().unwrap();
+        let conn_dir = tmp.path().join("connectors");
+        std::fs::create_dir_all(&conn_dir).unwrap();
+        std::fs::write(
+            conn_dir.join("sclm.json"),
+            serde_json::to_string_pretty(&m).unwrap(),
+        )
+        .unwrap();
+        let state = ConnectorState::load(conn_dir);
+        let ks = keystore_paths(&state).file("sclm");
+        keystore_upsert(
+            &ks,
+            "s9",
+            None,
+            Some("MeineEigene".to_owned()),
+            None,
+            None,
+            None,
+            Some("ADM1".to_owned()),
+        );
+        let st = settings_state_with("sclm", &[]);
+        let out = block_on_async(scan_inner(
+            &state,
+            &st,
+            &m,
+            &m.scan.clone().unwrap(),
+            "sclm",
+            false,
+            5_000,
+        ))
+        .expect("scan läuft");
+        assert!(!out.username_set);
+        assert_eq!(
+            out.items.len(),
+            1,
+            "eigene Ersteller-Session erscheint trotzdem"
+        );
+        assert_eq!(out.items[0].sid, "s9");
+        assert!(out.items[0].is_creator);
     }
 
     // ---- D-A Karte: Fresh-Fetch + Resume + Selbst-Wünsche ------------------

@@ -294,6 +294,12 @@ pub struct ConnectorManifest {
     /// Manifeste ohne Scan verhalten sich wie bisher.
     #[serde(default)]
     pub scan: Option<ScanSpec>,
+    /// Ersteller-Cockpit v1 (Spec 15): POST-Endpunkt für „Session erstellen“
+    /// (z. B. `/api/session/create`). Optional — Manifeste ohne Feld haben
+    /// keinen Create-Button (Command liefert error.connector.creator_unsupported).
+    /// Kein SCLM-Hardcoding im Core: der Pfad kommt aus dem Manifest.
+    #[serde(default)]
+    pub create_endpoint: Option<String>,
     pub sync: Option<Sync>,
 }
 

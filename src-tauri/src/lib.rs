@@ -161,6 +161,8 @@ pub fn run() {
             connector::connector_keystore_list,
             connector::connector_keystore_find,
             connector::connector_scan_match,
+            // Ersteller-Cockpit v1 (Spec 15, Karte F): „Verlosung erstellen“.
+            connector::connector_creator_create,
             overlay::overlay_config_closed,
         ]);
     }
