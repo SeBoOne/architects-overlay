@@ -1432,11 +1432,33 @@ fn write_screen_keystore(
         Some(c) if !c.is_empty() => c,
         _ => return,
     };
-    let sid = params
+    let sid_owned: String = match params
         .get("sid")
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .unwrap_or("");
+    {
+        Some(s) => s.to_owned(),
+        None => {
+            // sid-Convention fehlt (Ersteller-Cockpit-Screens parametrieren
+            // nur {code}): sid aus dem lokalen Keystore-Einleitung herleiten —
+            // code-Feld matcht join_code oder admin_code des Eintrags.
+            // (Journal-Befund 2026-11-05: c_overview ohne sid-Param →
+            // keystore_fields-Write blieb immer aus.)
+            let code = params
+                .get("code")
+                .map(|c| c.trim())
+                .filter(|c| !c.is_empty());
+            match code {
+                Some(code) => keystore_load(&keystore_paths(state).file(&manifest.id))
+                    .into_iter()
+                    .find(|e| e.join_code == code || e.admin_code.as_deref() == Some(code))
+                    .map(|e| e.sid)
+                    .unwrap_or_default(),
+                None => String::new(),
+            }
+        }
+    };
+    let sid = sid_owned.as_str();
     if sid.is_empty() {
         log::warn!(
             "connector keystore_fields: screen '{view_id}' ohne sid-Param — Keystore-Write übersprungen"
@@ -2828,6 +2850,13 @@ fn name_hardening_applies(path: &str) -> bool {
     let p = path.to_ascii_lowercase();
     p.contains("/loot") || p.contains("/commodities")
 }
+/// Pfade, deren Textfelder (name/type/grade/size) der SCLM-Server als Saiten
+/// concatiniert — hier Zahl-Zwang; andere Connector duerfen echte Zahlen-
+/// Felder behalten (Kein Blanket-Coercion ueber alle Manifest-Connectors).
+fn text_field_coercion_applies(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    p.contains("/loot") || p.contains("/commodities") || p.contains("/participants")
+}
 fn normalize_qty_value(v: &serde_json::Value) -> Option<i64> {
     let raw = match v {
         serde_json::Value::Number(n) => n.as_i64().or_else(|| {
@@ -2862,6 +2891,24 @@ fn harden_write_body(body: &mut serde_json::Value, path: &str) -> Result<(), Str
         return Ok(());
     };
     map.retain(|_, v| !v.is_null());
+    // Typ-Zwang (Omar Live-500 2026-11-05): Der SCLM-Server baut den Loot-Key
+    // 'name|type|grade|size' und Participant-Namen als Saiten — enthalten diese
+    // Textfelder eine JSON-ZAHL (Autocomplete zieht z.B. size '3' aus dem
+    // Katalog als Number, Svelte number-Bindings liefern Numbers), panikt der
+    // Server mit nacktem 500-HTML. Server-Vertrag fuer diese Felder: Text ->
+    // Zahlen werden zu Strings korrumpiert-frei coerciert (serde-Number-Display
+    // gibt das Original-Token zurueck, '3' bleibt '3'). qty/scu/delta bleiben
+    // Zahlen-Arme (Server erwartet dort Zahlen).
+    if text_field_coercion_applies(path) {
+        for key in ["name", "type", "grade", "size"] {
+            if let Some(v) = map.get(key)
+                && v.is_number()
+            {
+                let s = v.to_string();
+                map.insert(key.to_owned(), serde_json::Value::String(s));
+            }
+        }
+    }
     if name_hardening_applies(path)
         && let Some(s) = map.get("name").and_then(|v| v.as_str())
         && s.chars().count() > 120
@@ -3385,6 +3432,20 @@ mod tests {
         let mut body3 = json!({ "name": "Sabre", "qty": "99999999999999999999999999" });
         harden_write_body(&mut body3, "/api/session/s1/loot").expect("hardened");
         assert_eq!(body3["qty"], json!(999_999));
+        // Typ-Zwang (Omar Live-500 2026-11-05): Zahlen in Textfeldern des
+        // Loot-Key (name/type/grade/size) panikten den Server — String-Zwang.
+        let mut body4 = json!({ "name": "FR-86", "type": "MIL", "grade": "A", "size": 3 });
+        harden_write_body(&mut body4, "/api/session/s1/loot").expect("hardened");
+        assert_eq!(body4["size"], json!("3"));
+        assert_eq!(body4["type"], json!("MIL"));
+        let mut body5 = json!({ "name": 42, "qty": 7 });
+        harden_write_body(&mut body5, "/api/session/s1/loot").expect("hardened");
+        assert_eq!(body5["name"], json!("42"));
+        assert_eq!(body5["qty"], json!(7)); // qty bleibt Zahl-Arm
+        let mut body6 = json!({ "name": "P-Name", "type": 7, "grade": 9.5 });
+        harden_write_body(&mut body6, "/api/session/s1/participants").expect("hardened");
+        assert_eq!(body6["type"], json!("7"));
+        assert_eq!(body6["grade"], json!("9.5"));
     }
 
     #[test]
@@ -6312,6 +6373,51 @@ mod tests {
         let file = keystore_paths(&cs).file("sclm");
         let e = keystore_find(&keystore_load(&file), "sid9").expect("Eintrag");
         assert_eq!(e.result_id.as_deref(), Some("r9"));
+    }
+
+    #[test]
+    fn write_screen_keystore_derives_sid_from_code_when_sid_param_missing() {
+        // Journal-Befund 2026-11-05: creator:c_overview parametriert nur
+        // {code} — der keystore_fields-Write muss die sid aus dem
+        // Keystore-Eintrag herleiten (join_code- oder admin_code-Match).
+        let (base, _rx) = start_mock_api(vec![]);
+        let m = open_flow_manifest_fixture(&base);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir =
+            std::env::temp_dir().join(format!("ao-c-sidfallback-{}-{nanos}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("tmp dir");
+        let cs = ConnectorState {
+            dir: dir.join("connectors"),
+            entries: std::sync::Mutex::new(vec![StoredConnector {
+                raw: String::new(),
+                manifest: m.clone(),
+                value: serde_json::Value::Null,
+            }]),
+            cache: std::sync::Mutex::new(HashMap::new()),
+        };
+        // Keystore-Eintrag mit join_code-Match, OHNE result_id initially.
+        let file = keystore_paths(&cs).file("sclm");
+        std::fs::create_dir_all(file.parent().expect("keystore parent dir")).expect("parent dir");
+        std::fs::write(
+            &file,
+            json!({"sessions":[{"sid":"sidF","join_code":"ABC123","name":"FallbackEvent"}]})
+                .to_string(),
+        )
+        .expect("keystore vorbefuellt");
+        let mut params: BTreeMap<String, String> = BTreeMap::new();
+        params.insert("code".into(), "ABC123".into()); // KEIN sid-Param
+        write_screen_keystore(
+            &cs,
+            &m,
+            "participant:results",
+            &params,
+            &json!([{"rid": "rF", "won": true}]),
+        );
+        let e = keystore_find(&keystore_load(&file), "sidF").expect("Eintrag");
+        assert_eq!(e.result_id.as_deref(), Some("rF"));
     }
 
     #[test]

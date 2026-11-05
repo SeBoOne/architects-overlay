@@ -390,3 +390,43 @@ SERVER-TO-DO (SCLM-Backend, Sebo): qty/scu-Eingaben außerhalb int64/sinnvoller
 Grenzen mit 400 ablehnen statt speichern; /api/sessions serialize-härten.
 Restliche Wegwerf-Sessions ohne Overlay-Bezug, per Site-Admin löschbar: uxe v7o98 ('Omar-Diag2', leer),
 9xmcp09y ('noop', leer), 5urkexp0 ('Omar-Diag4', 2 Loot/2 Teilnehmer, Ziehung offen).
+
+## 21 Loot-HTTP-500: Endgueltige Root-Cause (Omar, 2026-11-05, Logger-Treffer)
+
+Release-Logger (§ lib.rs Release-Zweig) lieferte die exakte Overlay-Request-Huelle:
+`connector 5xx: Post /api/session/<sid>/loot body={"grade":"A","name":"FR-86","size":3,"type":"MIL"}`
+— `size` als JSON-NUMBER. Live reproduziert: POST /loot mit size|type|grade als NUMBER ->
+nackter 500 HTML; alle als STRING -> 200. Mechanik: Server baut Loot-Key
+'name|type|grade|size' (und Participant-Namen) als Saiten; Zahlen-Konkatenation panikt.
+Autocomplete fuellt size aus dem Katalog als Number (Katalog-'FR-86' hat size 3),
+Svelte number-Bindings senden Numbers — daher der Nutzerfall.
+
+Overlay-Seitig: harden_write_body coerciert name/type/grade/size-Zahlen zu Strings
+(qty/scu/delta bleiben Zahlen; Tests decken beide Arme ab). Release-Build hat jetzt
+tauri_plugin_log (Warn->stdout->journalctl --user -u architects-overlay).
+
+SERVER-TO-DO (SCLM-Backend, exakte Repro):
+POST /api/session/<sid>/loot -H 'X-SCLM-Code: <admin>' -d '{"grade":"A","name":"X1","size":3,"type":"MIL"}'
+-> 500. Fix-Richtung: name/type/grade/size bei Ein- und Auslieferung auf String
+normalisieren (str()) oder NUMBER mit 400 ablehnen; gleiche Felder bei /participants.
+Nebenbefund Journal: 'connector keystore_fields: creator:c_overview ohne sid-Param'
+(Keystore-Write uebersprungen, kosmetisch) + stale Keystore-Eintrage geloeschter
+Sessions (scan-Warnung 404, Eintraege nhtgi8k3/buolv8wh aus Keystore genommen).
+
+## 22. Sid-Fallback im Keystore-Write (Nebenbefund aus §21)
+
+Journal showed: 'keystore_fields: creator:c_overview ohne sid-Param — Keystore-Write
+uebersprungen'. All creator cockpit screens parameterize only {code}; the writer
+conventionally required {sid}, so keystore_fields (e.g. name rename via settings
+modal) never persisted from c_overview.
+
+Fix (write_screen_keystore): if sid param missing, derive sid from the local
+keystore entry whose join_code or admin_code matches the {code} param. Unit test
+write_screen_keystore_derives_sid_from_code_when_sid_param_missing covers the
+join_code match. Stale keystore entries of deleted sessions (nhtgi8k3, buolv8wh —
+source of repeated scan 404 warnings) were removed from both connector-state and
+connectors keystore file (backup .bak-20261105).
+
+Deploy window for the whole round (coercion + logger + sid fallback): service stop
+-> keystore cleanup -> pnpm tauri build -> install -> service start. Manifest
+examples/sclm.json unchanged in this round, no re-import needed.
