@@ -160,6 +160,20 @@ fn check_structure(m: &ConnectorManifest, report: &mut Report) {
     check_settings_fields(m, report);
     // Sessionscan (Karte B / Spec 5.3): „Meine …“-Landliste.
     check_scan(m, report);
+    // Ersteller-Cockpit v1 (Spec 15): optionaler Create-Pfad — gleiche
+    // Pfad-Strenge wie alle Endpunkte (base_url-relativ, keine Platzhalter:
+    // create braucht keine Parameter, Body kommt aus dem Formular).
+    if let Some(ce) = m.create_endpoint.as_deref() {
+        if ce.trim().is_empty() || !ce.starts_with('/') {
+            report.error("create_endpoint must be a path starting with '/'".to_owned());
+        }
+        if ce.contains("file://") || ce.starts_with("http") {
+            report.error("create_endpoint must stay base_url-relative".to_owned());
+        }
+        if !extract_params(ce).is_empty() {
+            report.error("create_endpoint must not contain placeholders".to_owned());
+        }
+    }
 }
 
 /// Regeln für `settings_fields` (SCLM v2 Karte A): Key-Format wie Auth-
@@ -405,6 +419,32 @@ fn check_flow(flow: &Flow, m: &ConnectorManifest, report: &mut Report) {
             flow.entry
         ));
     }
+    // Ersteller-Cockpit v1 (Spec 15): flows[].tabs = 1–6 permanente
+    // Sub-Reiter {id, screen, label{de,en}}. Kern prüft nur Wohlgeformtheit:
+    // eindeutige ASCII-IDs, bekannte Screens, nicht leer beschriftet.
+    if let Some(tabs) = &flow.tabs {
+        if tabs.is_empty() || tabs.len() > 6 {
+            report.error(format!(
+                "flow '{fid}': tabs must have 1-6 entries (got {})",
+                tabs.len()
+            ));
+        }
+        let mut tab_ids = std::collections::BTreeSet::new();
+        for t in tabs {
+            if !ascii_key(&t.id) {
+                report.error(format!(
+                    "flow '{fid}': tab id '{}' must be ASCII [A-Za-z0-9_-]",
+                    t.id
+                ));
+            } else if !tab_ids.insert(t.id.as_str()) {
+                report.error(format!("flow '{fid}': duplicate tab id '{}'", t.id));
+            }
+            check_screen_id_ref(fid, "tab screen", &t.screen, &ids, report);
+            if t.label.de.trim().is_empty() || t.label.en.trim().is_empty() {
+                report.error(format!("flow '{fid}': tab '{}' has empty label", t.id));
+            }
+        }
+    }
     // SCLM v2 (Spec 5.4): optionaler Code-Einstieg-Block `open`.
     if let Some(o) = &flow.open {
         check_flow_open(fid, o, &ids, m, report);
@@ -454,29 +494,115 @@ fn check_flow_open(
             "{tag}: mapping must contain a 'sid' key — the join endpoint needs {{sid}}"
         ));
     }
-    for (what, val) in [
-        ("match_path", &o.match_path),
-        ("id_path", &o.id_path),
-        ("done_path", &o.done_path),
-    ] {
-        if val.trim().is_empty() {
-            report.error(format!("{tag}: {what} is empty"));
+    if o.done_path.trim().is_empty() {
+        report.error(format!("{tag}: done_path is empty"));
+    }
+    // Ersteller-Cockpit v1: Einstiegs-Semantik — die Match-/Join-Felder
+    // müssen ALLE vorhanden oder ALLE fehlend sein: Teilnehmer-Einstieg
+    // (Auto-Join, Code pinnt als join_code) vs. Admin-Einstieg (Ersteller-
+    // Code pinnt als admin_code, Auto-Join entfällt). Halbpaare sind Fehler.
+    let join_fields = [
+        o.match_path.as_ref(),
+        o.id_path.as_ref(),
+        o.match_setting_key.as_ref(),
+        o.join_endpoint.as_ref(),
+    ];
+    let any_join = join_fields.iter().any(Option::is_some);
+    let all_join = join_fields.iter().all(Option::is_some);
+    if any_join && !all_join {
+        report.error(format!(
+            "{tag}: participant join fields (match_path, id_path, match_setting_key, join_endpoint) must all be present or all absent (admin entry)"
+        ));
+    }
+    if all_join {
+        for (what, val) in [
+            ("match_path", o.match_path.as_deref().unwrap_or("")),
+            ("id_path", o.id_path.as_deref().unwrap_or("")),
+        ] {
+            if val.trim().is_empty() {
+                report.error(format!("{tag}: {what} is empty"));
+            }
+        }
+        let key = o.match_setting_key.as_deref().unwrap_or("").trim();
+        if !ascii_key(key) {
+            report.error(format!(
+                "{tag}: match_setting_key '{key}' must be ASCII [A-Za-z0-9_-]"
+            ));
+        } else if !m.settings_fields.iter().any(|f| f.key == key) {
+            report.error(format!(
+                "{tag}: match_setting_key '{key}' is not declared in settings_fields"
+            ));
+        }
+        let je = o.join_endpoint.as_deref().unwrap_or("");
+        if !je.starts_with('/') || je.contains("file://") {
+            report.error(format!("{tag}: join_endpoint must be a '/'-relative path"));
         }
     }
-    let key = o.match_setting_key.trim();
-    if !ascii_key(key) {
-        report.error(format!(
-            "{tag}: match_setting_key '{}' must be ASCII [A-Za-z0-9_-]",
-            o.match_setting_key
-        ));
-    } else if !m.settings_fields.iter().any(|f| f.key == key) {
-        report.error(format!(
-            "{tag}: match_setting_key '{}' is not declared in settings_fields",
-            key
-        ));
+    // Admin-Feld-Regeln (Ersteller-Cockpit v1):
+    // - Teilnehmer-Einstieg: admin_path + admin_flow nur als Paar (Route
+    //   zum Cockpit); eins ohne das andere ist eine halbe Regel.
+    // - Admin-Einstieg: admin_flow ist unsinnig (der Flow IST das Cockpit),
+    //   admin_path ist Pflicht-Guardrail — ohne Admin-Flag-Prüfung im
+    //   Session-GET wäre jeder gültige join_code ein Fake-Ersteller-Code.
+    // - admin_flow-Ziel: existierender Flow mit open-Block in Admin-
+    //   Semantik (eigener admin_path), nicht der eigene Flow.
+    match (o.admin_path.as_deref(), o.admin_flow.as_deref()) {
+        (Some(p), Some(target)) => {
+            if p.trim().is_empty() {
+                report.error(format!("{tag}: admin_path is empty"));
+            }
+            if !all_join {
+                report.error(format!(
+                    "{tag}: admin_flow is only valid on a participant entry (all join fields) — this flow is an admin entry"
+                ));
+            } else if target == flow_id {
+                report.error(format!("{tag}: admin_flow must not point to own flow"));
+            } else {
+                match m.flows.iter().flatten().find(|f| f.id == target) {
+                    None => report.error(format!(
+                        "{tag}: admin_flow references unknown flow '{target}'"
+                    )),
+                    Some(t) => match &t.open {
+                        None => report.error(format!(
+                            "{tag}: admin_flow target '{target}' has no open block"
+                        )),
+                        Some(to) => {
+                            if to.join_endpoint.is_some() || to.match_setting_key.is_some() {
+                                report.error(format!(
+                                    "{tag}: admin_flow target '{target}' must be an admin entry (no participant join fields)"
+                                ));
+                            }
+                            if to.admin_path.as_deref().unwrap_or("").trim().is_empty() {
+                                report.error(format!(
+                                    "{tag}: admin_flow target '{target}' requires its own admin_path guardrail"
+                                ));
+                            }
+                        }
+                    },
+                }
+            }
+        }
+        (Some(p), None) => {
+            if p.trim().is_empty() {
+                report.error(format!("{tag}: admin_path is empty"));
+            }
+            if all_join {
+                report.error(format!(
+                    "{tag}: admin_path on a participant entry requires admin_flow (route target)"
+                ));
+            }
+        }
+        (None, Some(target)) => {
+            report.error(format!(
+                "{tag}: admin_flow '{target}' requires admin_path (flag path in the session response)"
+            ));
+        }
+        (None, None) => {}
     }
-    if !o.join_endpoint.starts_with('/') || o.join_endpoint.contains("file://") {
-        report.error(format!("{tag}: join_endpoint must be a '/'-relative path"));
+    if !any_join && o.admin_path.as_deref().unwrap_or("").trim().is_empty() {
+        report.error(format!(
+            "{tag}: admin entry (no join fields) requires admin_path — the session response must carry an admin flag"
+        ));
     }
     // Erlaubte Platzhalter im open-Block: Einstiegs-Param, sid, deklarierte
     // Settings-Keys (username-Platzhalter im join_body).
@@ -703,10 +829,10 @@ fn check_screen(
     for (col, state_key) in s.keystore_fields.iter().flatten() {
         if !matches!(
             col.as_str(),
-            "join_code" | "name" | "participant_id" | "pcode" | "result_id"
+            "join_code" | "admin_code" | "name" | "participant_id" | "pcode" | "result_id"
         ) {
             report.error(format!(
-                "flow '{flow_id}': screen '{sid}': keystore_fields column '{col}' unknown (allowed: join_code, name, participant_id, pcode, result_id)"
+                "flow '{flow_id}': screen '{sid}': keystore_fields column '{col}' unknown (allowed: join_code, admin_code, name, participant_id, pcode, result_id)"
             ));
         }
         if state_key.trim().is_empty() {
@@ -873,6 +999,33 @@ fn check_screen(
             if aparams.contains(f.key.as_str()) || !field_keys.insert(f.key.as_str()) {
                 report.error(format!(
                     "flow '{flow_id}': screen '{sid}': action '{}': duplicate field/param key '{}'",
+                    a.id, f.key
+                ));
+            }
+            // Ersteller-Cockpit v1 (Karte F, Spec 15): Action-Felder dürfen
+            // Auswahlfelder sein (`type: "select"` + `options`) — z. B. der
+            // max_wishes-Select 1–6 auf c_overview. select ohne Optionen ist
+            // unrendierbar (Error), Optionen ohne select wären tote Deklaration
+            // (Error). options-Einträge müssen beide Sprachen tragen.
+            let options = f.options.as_deref().unwrap_or(&[]);
+            if f.field_type == Some(FieldType::Select) {
+                if options.is_empty() {
+                    report.error(format!(
+                        "flow '{flow_id}': screen '{sid}': action '{}': select field '{}' has no options",
+                        a.id, f.key
+                    ));
+                }
+                for o in options {
+                    if o.de.trim().is_empty() || o.en.trim().is_empty() {
+                        report.error(format!(
+                            "flow '{flow_id}': screen '{sid}': action '{}': select field '{}' has an option without de/en text",
+                            a.id, f.key
+                        ));
+                    }
+                }
+            } else if !options.is_empty() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': action '{}': field '{}' has options without type 'select'",
                     a.id, f.key
                 ));
             }
@@ -1693,6 +1846,183 @@ mod tests {
         );
     }
 
+    #[test]
+    fn flow_action_select_fields_checked() {
+        // Ersteller-Cockpit v1 (Karte F, Spec 15): c_overview-Vertrag — ein
+        // Action-Feld als Select (type select + options 1–6) ist valide und
+        // wirft keine Warnung (Karte G rendert daraus das Sofort-Auswahlfeld).
+        let select_ok = r#"{"id": "co", "type": "detail", "title": {"de": "co", "en": "co"}, "endpoint": "/api/session/{code}", "params": [{"key": "code", "label": {"de": "c", "en": "c"}}, {"key": "sid", "label": {"de": "s", "en": "s"}}], "mapping": {"sid": "id", "max_wishes": "max_wishes"}, "actions": [{"id": "max_wishes", "title": {"de": "mw", "en": "mw"}, "method": "patch", "path": "/api/session/{sid}/settings", "params": [{"key": "code", "label": {"de": "c", "en": "c"}}, {"key": "sid", "label": {"de": "s", "en": "s"}}], "headers": {"X-SCLM-Code": "{code}"}, "body_template": {"max_wishes": "{max_wishes}"}, "fields": [{"key": "max_wishes", "label": {"de": "Max", "en": "Max"}, "type": "select", "required": true, "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]}]}]}"#;
+        let r = validate_manifest(manifest_with_flow(&flow_json("co", select_ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        assert!(r.warnings.is_empty(), "{r:?}");
+        let m = connector_manifest_of(&manifest_with_flow(&flow_json("co", select_ok)));
+        let action = &m.flows.as_ref().unwrap()[0].screens[0]
+            .actions
+            .as_ref()
+            .unwrap()[0];
+        let field = &action.fields.as_ref().unwrap()[0];
+        assert_eq!(field.field_type, Some(FieldType::Select));
+        assert_eq!(field.options.as_ref().unwrap().len(), 2);
+        assert_eq!(field.options.as_ref().unwrap()[1].de, "6");
+
+        // select ohne options → Error (nichts rendert das Feld).
+        let select_no_options = select_ok.replace(
+            r#", "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]"#,
+            "",
+        );
+        let r =
+            validate_manifest(manifest_with_flow(&flow_json("co", &select_no_options)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("select field 'max_wishes' has no options")),
+            "{r:?}"
+        );
+
+        // options ohne select-Typ (explizit text) → Error (tote Deklaration).
+        let text_with_options = select_ok.replace(r#""type": "select""#, r#""type": "text""#);
+        let r =
+            validate_manifest(manifest_with_flow(&flow_json("co", &text_with_options)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("field 'max_wishes' has options without type 'select'")),
+            "{r:?}"
+        );
+
+        // options ohne deklarierten type (Default text) → ebenfalls Error.
+        let implicit_text_with_options = select_ok.replace(r#""type": "select", "#, "");
+        let r = validate_manifest(
+            manifest_with_flow(&flow_json("co", &implicit_text_with_options)).as_bytes(),
+        );
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("field 'max_wishes' has options without type 'select'")),
+            "{r:?}"
+        );
+
+        // Option ohne en-Text → Error (beide Sprachen sind Pflicht).
+        let half_option =
+            select_ok.replace(r#"{"de": "6", "en": "6"}"#, r#"{"de": "6", "en": ""}"#);
+        let r = validate_manifest(manifest_with_flow(&flow_json("co", &half_option)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("select field 'max_wishes' has an option without de/en text")),
+            "{r:?}"
+        );
+
+        // number-Feld ohne options ist legitim (Delta-Felder wie loot qty).
+        let number_ok = select_ok.replace(r#""type": "select""#, r#""type": "number""#);
+        let number_ok = number_ok.replace(
+            r#", "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]"#,
+            "",
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("co", &number_ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn examples_sclm_manifest_creator_overview_max_wishes_select() {
+        // Review-R1 blocking-Punkt: Spec 15 (Zeile „max_wishes-Select 1–6
+        // (PATCH settings, sofort)“) + Karte G Kriterium 4 verlangen die
+        // Aktion AUF c_overview (nicht nur die Settings-Form dahinter) —
+        // Karte G darf examples/sclm.json nicht anfassen.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sclm.json");
+        let text = std::fs::read_to_string(path).expect("examples/sclm.json ist lesbar");
+        let report = validate_manifest(text.as_bytes());
+        assert!(report.errors.is_empty(), "{report:?}");
+        let m = crate::manifest::ConnectorManifest::parse(text.as_bytes()).expect("parst");
+        let creator = m
+            .flows
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|f| f.id == "creator")
+            .expect("creator-Flow");
+        let overview = creator
+            .screens
+            .iter()
+            .find(|s| s.id == "c_overview")
+            .expect("c_overview-Screen");
+        let action = overview
+            .actions
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|a| a.id == "max_wishes")
+            .expect("max_wishes-Aktion auf c_overview (Sofort-Select, nicht goto)");
+        assert_eq!(action.method, Some(HttpMethod::Patch));
+        assert_eq!(
+            action.path.as_deref(),
+            Some("/api/session/{sid}/settings"),
+            "PATCH settings ist der bestehende Settings-Pfad"
+        );
+        assert_eq!(
+            action
+                .headers
+                .as_ref()
+                .and_then(|h| h.get("X-SCLM-Code"))
+                .map(String::as_str),
+            Some("{code}"),
+            "Admin-Code als Header-Template (Creator-Flow pinnt admin_code)"
+        );
+        assert_eq!(
+            action.body_template.as_ref(),
+            Some(&Value::Object(
+                [(
+                    "max_wishes".to_string(),
+                    Value::String("{max_wishes}".to_string())
+                )]
+                .into_iter()
+                .collect()
+            )),
+            "Body nur das geänderte Feld (teilbarer PATCH)"
+        );
+        let params: Vec<&str> = action
+            .params
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|p| p.key.as_str())
+            .collect();
+        assert_eq!(params, vec!["code", "sid"]);
+        let field = &action.fields.as_ref().expect("Select-Feld deklariert")[0];
+        assert_eq!(field.key, "max_wishes");
+        assert_eq!(field.field_type, Some(FieldType::Select));
+        assert_eq!(field.required, Some(true));
+        let options: Vec<&str> = field
+            .options
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|o| o.de.as_str())
+            .collect();
+        assert_eq!(
+            options,
+            vec!["1", "2", "3", "4", "5", "6"],
+            "Overlay-Grenze 1–6 (API-Limit 1–10 bleibt möglich, Spec 15 Punkt 3)"
+        );
+        // Fallback-Navigation bleibt erhalten (Spec: Select SOFORT auf der
+        // Übersicht, die Settings-Form dahinter darf weiter existieren).
+        assert!(
+            overview
+                .actions
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|a| a.goto.as_deref() == Some("settings")),
+            "goto settings bleibt als Fallback"
+        );
+        // Der Select ist das ERSTE Feld der Übersicht (Tab-Primat).
+        assert_eq!(
+            overview.actions.as_ref().unwrap()[0].id,
+            "max_wishes",
+            "Sofort-Select steht vor goto/Regenerate"
+        );
+    }
+
     // ---- SCLM v2 Karte A: settings_fields --------------------------------------
 
     /// Manifest mit settings_fields (an VALID angehängt, vor `sync`-lose Klammer).
@@ -2248,5 +2578,178 @@ mod tests {
         let flow_clean = FLOW_HEAD.to_string() + OPEN_OK + ", " + &clean;
         let r = validate_manifest(manifest_with_open_flow(&flow_clean).as_bytes());
         assert!(r.is_ok(), "{r:?}");
+    }
+
+    // ---- Ersteller-Cockpit v1 (Spec 15): tabs + Admin-Einstieg/Route --------
+
+    fn manifest_with_flows(flows: &[&str]) -> String {
+        format!(
+            r#"{{"manifest_version": 1, "id": "sclm", "name": {{"de": "SCLM", "en": "SCLM"}}, "base_url": "https://sclm.site", "placement": {{"kind": "own", "label": {{"de": "SCLM", "en": "SCLM"}}, "hotkey_slot": true}}, "views": [], "settings_fields": [{{"key": "sclm_username", "label": {{"de": "Name", "en": "Name"}}, "type": "text", "required": true}}], "flows": [{}]}}"#,
+            flows.join(", ")
+        )
+    }
+
+    /// Admin-Einstieg: alle Join-Felder fehlend, dafür admin_path.
+    const ADMIN_OPEN_OK: &str = r#""open": {
+        "session_endpoint": "/api/session/{code}",
+        "headers": {"X-SCLM-Code": "{code}"},
+        "mapping": {"sid": "id", "admin_code": "admin_code", "join_code": "join_code"},
+        "admin_path": "is_admin",
+        "open_screen": "ca",
+        "done_screen": "cd"
+    }"#;
+
+    const ADMIN_SCREENS_OK: &str = r#""screens": [
+        {"id": "ca", "type": "detail", "title": {"de": "ca", "en": "ca"}, "endpoint": "/api/session/{code}", "params": [{"key": "code", "label": {"de": "c", "en": "c"}}]},
+        {"id": "cd", "type": "results", "title": {"de": "cd", "en": "cd"}, "endpoint": "/api/x"}
+    ]}"#;
+
+    fn admin_flow(open: &str) -> String {
+        r#"{"id": "creator", "title": {"de": "C", "en": "C"}, "entry": "ca", "#.to_string()
+            + open
+            + ", "
+            + ADMIN_SCREENS_OK
+    }
+
+    #[test]
+    fn flow_tabs_validate_ids_screens_and_bounds() {
+        let tabs_ok = r#""tabs": [
+            {"id": "overview", "screen": "a", "label": {"de": "Übersicht", "en": "Overview"}},
+            {"id": "raffle", "screen": "d", "label": {"de": "Verlosung", "en": "Raffle"}}
+        ], "#;
+        let flow = FLOW_HEAD.to_string() + tabs_ok + OPEN_OK + ", " + SCREENS_OK;
+        let r = validate_manifest(manifest_with_open_flow(&flow).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        // Tab zeigt auf unbekannten Screen → Error
+        let ghost = flow.replace(r#""screen": "d""#, r#""screen": "nope""#);
+        let r = validate_manifest(manifest_with_open_flow(&ghost).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("tab screen references unknown screen")),
+            "{r:?}"
+        );
+        // doppelte Tab-ID → Error
+        let dup = flow.replace(r#""id": "raffle""#, r#""id": "overview""#);
+        let r = validate_manifest(manifest_with_open_flow(&dup).as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("duplicate tab id")),
+            "{r:?}"
+        );
+        // 7 Tabs → Error (1–6)
+        let many = r#""tabs": [
+            {"id": "t1", "screen": "a", "label": {"de": "1", "en": "1"}},
+            {"id": "t2", "screen": "a", "label": {"de": "2", "en": "2"}},
+            {"id": "t3", "screen": "a", "label": {"de": "3", "en": "3"}},
+            {"id": "t4", "screen": "a", "label": {"de": "4", "en": "4"}},
+            {"id": "t5", "screen": "a", "label": {"de": "5", "en": "5"}},
+            {"id": "t6", "screen": "a", "label": {"de": "6", "en": "6"}},
+            {"id": "t7", "screen": "a", "label": {"de": "7", "en": "7"}}
+        ], "#;
+        let flow = FLOW_HEAD.to_string() + many + OPEN_OK + ", " + SCREENS_OK;
+        let r = validate_manifest(manifest_with_open_flow(&flow).as_bytes());
+        assert!(
+            r.errors.iter().any(|e| e.contains("tabs must have 1-6")),
+            "{r:?}"
+        );
+        // leere Labels → Error
+        let empty_label =
+            r#""tabs": [{"id": "overview", "screen": "a", "label": {"de": " ", "en": " "}}], "#;
+        let flow = FLOW_HEAD.to_string() + empty_label + OPEN_OK + ", " + SCREENS_OK;
+        let r = validate_manifest(manifest_with_open_flow(&flow).as_bytes());
+        assert!(r.errors.iter().any(|e| e.contains("empty label")), "{r:?}");
+    }
+
+    #[test]
+    fn flow_open_join_fields_must_be_complete_pair() {
+        // Halbpaar: join_endpoint fehlt, Match-Felder stehen → Error.
+        let half = OPEN_OK.replace(r#""join_endpoint": "/api/session/{sid}/participants","#, "");
+        let r = validate_manifest(manifest_with_open_flow(&open_flow(&half)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("must all be present or all absent")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn flow_open_admin_entry_requires_admin_path_guardrail() {
+        // Admin-Einstieg komplett (ohne join-Felder, mit admin_path) → ok.
+        let r = validate_manifest(manifest_with_flows(&[&admin_flow(ADMIN_OPEN_OK)]).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        // Admin-Einstieg ohne admin_path → Error (Guardrail fehlt).
+        let no_guard = ADMIN_OPEN_OK.replace(r#""admin_path": "is_admin","#, "");
+        let r = validate_manifest(manifest_with_flows(&[&admin_flow(&no_guard)]).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("admin entry (no join fields) requires admin_path")),
+            "{r:?}"
+        );
+    }
+
+    #[test]
+    fn flow_open_admin_flow_target_rules() {
+        let route = OPEN_OK.replace(
+            r#""open_screen""#,
+            r#""admin_path": "is_admin", "admin_flow": "creator", "open_screen""#,
+        );
+        let routed_flow = open_flow(&route);
+        let admin_target = admin_flow(ADMIN_OPEN_OK);
+        let flows = [routed_flow.as_str(), admin_target.as_str()];
+        // Sauber: Teilnehmer-Flow routed auf Admin-Flow.
+        let r = validate_manifest(manifest_with_flows(&flows).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+        // unbekannter Ziel-Flow → Error
+        let ghost = flows[0].replace(r#""admin_flow": "creator""#, r#""admin_flow": "nope""#);
+        let r = validate_manifest(manifest_with_flows(&[&ghost, flows[1]]).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("admin_flow references unknown flow")),
+            "{r:?}"
+        );
+        // Ziel-Flow ohne open-Block → Error
+        let no_open = r#"{"id": "creator", "title": {"de": "C", "en": "C"}, "entry": "ca", "#
+            .to_string()
+            + ADMIN_SCREENS_OK;
+        let r = validate_manifest(manifest_with_flows(&[flows[0], &no_open]).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("admin_flow target 'creator' has no open block")),
+            "{r:?}"
+        );
+        // Ziel-Flow mit Join-Feldern (Teilnehmer-Semantik) → Error
+        let bad_target = flows[1].replace(
+            r#""admin_path": "is_admin""#,
+            r#""match_path": "participants[].name", "id_path": "participants[].id", "match_setting_key": "sclm_username", "join_endpoint": "/api/session/{sid}/participants", "admin_path": "is_admin""#,
+        );
+        let r = validate_manifest(manifest_with_flows(&[flows[0], &bad_target]).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("must be an admin entry")),
+            "{r:?}"
+        );
+        // admin_flow ohne admin_path → Error
+        let orphan = flows[0].replace(r#""admin_path": "is_admin", "#, "");
+        let r = validate_manifest(manifest_with_flows(&[&orphan, flows[1]]).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("admin_flow 'creator' requires admin_path")),
+            "{r:?}"
+        );
+        // admin_path ohne admin_flow am Teilnehmer-Einstieg → Error
+        let half_route = flows[0].replace(r#", "admin_flow": "creator""#, "");
+        let r = validate_manifest(manifest_with_flows(&[&half_route, flows[1]]).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("admin_path on a participant entry requires admin_flow")),
+            "{r:?}"
+        );
     }
 }

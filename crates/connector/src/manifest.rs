@@ -59,6 +59,17 @@ pub struct Param {
     /// Default true — gepinnte Werte zählen als erfüllt).
     #[serde(default)]
     pub required: Option<bool>,
+    /// Ersteller-Cockpit v1 (Karte F, Spec 15): gilt nur für Action-`fields` —
+    /// Eingabetyp des Action-Feldes (`text` | `number` | `select`). Default
+    /// `text`; Manifests ohne Typangabe bleiben byte-identisch (Key wird nur
+    /// serialisiert, wenn deklariert). View-`params` ignorieren das Feld.
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub field_type: Option<FieldType>,
+    /// Nur bei `field_type: "select"`: die Optionen (de/en), mindestens eine
+    /// (Validator). Der Renderer zeichnet daraus das Auswahlfeld und sendet
+    /// den gewählten Wert als `{key}`-Platzhalter in Body/Pfad/Header.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<LocalizedText>>,
 }
 
 /// Ein View im Manifest.
@@ -294,6 +305,12 @@ pub struct ConnectorManifest {
     /// Manifeste ohne Scan verhalten sich wie bisher.
     #[serde(default)]
     pub scan: Option<ScanSpec>,
+    /// Ersteller-Cockpit v1 (Spec 15): POST-Endpunkt für „Session erstellen“
+    /// (z. B. `/api/session/create`). Optional — Manifeste ohne Feld haben
+    /// keinen Create-Button (Command liefert error.connector.creator_unsupported).
+    /// Kein SCLM-Hardcoding im Core: der Pfad kommt aus dem Manifest.
+    #[serde(default)]
+    pub create_endpoint: Option<String>,
     pub sync: Option<Sync>,
 }
 

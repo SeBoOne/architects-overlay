@@ -81,11 +81,38 @@ pub struct AutocompleteRule {
     pub fill: BTreeMap<String, String>,
 }
 
+/// Ein permanenter Sub-Reiter eines Cockpit-Flows (Ersteller-Cockpit v1,
+/// Spec 15): `flows[].tabs` = 1–6 Einträge `{id, screen, label{de,en}}`.
+/// Hat ein Flow `tabs`, rendert der FlowRenderer die Sub-Reiter-Leiste
+/// permanent; initiale Tab = erster Eintrag; Tab-Wechsel = Screen frisch
+/// fetchen (Fresh-Fetch-Regel pro Tab-Betreten). Flow ohne `tabs` =
+/// bisheriges Wizard-Verhalten unverändert.
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowTab {
+    pub id: String,
+    /// Ziel-Screen dieses Tabs (muss in `screens` existieren).
+    pub screen: String,
+    pub label: LocalizedText,
+}
+
 /// Code-Einstieg eines Flows (SCLM v2 / Spec 5.4): der Client übergibt einen
 /// Session-Code (Suchzeile oder Öffnen-Button), der Core öffnet die Session,
 /// joined den Teilnehmer automatisch (Auto-Join/Claim) und liefert den
 /// Start-Screen. Alles SCLM-spezifische bleibt im Manifest — dieser Block
 /// ist generisch Wohlgeformtheit-geprüft, der Kern kennt keine Connector-IDs.
+///
+/// Zwei Einstiegs-Semantiken (Ersteller-Cockpit v1):
+/// - Teilnehmer-Einstieg: die Match-/Join-Felder (`match_path`, `id_path`,
+///   `match_setting_key`, `join_endpoint`) sind ALLE gesetzt — Auto-Join/Claim
+///   läuft wie bisher, der eingegebene Code pinnt als join_code.
+/// - Admin-Einstieg: die Join-Felder sind ALLE fehlend — der eingegebene Code
+///   ist der Ersteller-Code und pinnt als admin_code; Auto-Join entfällt.
+///   `admin_path` ist Pflicht (Guardrail: die Session-Antwort muss den
+///   Admin-Flag tragen, sonst ist der Code kein Ersteller-Code).
+/// - Admin-Route (participant flow): `admin_path` + `admin_flow` gekoppelt —
+///   trägt die Session am `admin_path`-Flag wahr, öffnet der Core den
+///   Ziel-Flow (Erstellt-Cockpit) statt des Teilnehmer-Flows.
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlowOpen {
@@ -102,15 +129,26 @@ pub struct FlowOpen {
     /// raffle_done, raffle_mode).
     pub mapping: BTreeMap<String, String>,
     /// Dot-Path in der Session-Antwort, der Teilnehmernamen liefert
-    /// (ci-EXAKTER Vergleich gegen `match_setting_key`).
-    pub match_path: String,
+    /// (ci-EXAKTER Vergleich gegen `match_setting_key`). Nur im
+    /// Teilnehmer-Einstieg gesetzt (alle Join-Felder oder keines — Validator).
+    pub match_path: Option<String>,
     /// Dot-Path mit den zugehörigen Teilnehmer-IDs (indexparallel zu
     /// `match_path`).
-    pub id_path: String,
+    pub id_path: Option<String>,
     /// settings_fields-Key mit dem gespeicherten Benutzernamen.
-    pub match_setting_key: String,
+    pub match_setting_key: Option<String>,
     /// POST-Endpunkt der Selbst-Anlage (`{sid}`-Platzhalter Pflicht).
-    pub join_endpoint: String,
+    pub join_endpoint: Option<String>,
+    /// Dot-Path in der Session-Antwort auf den Admin-Flag (z. B. `is_admin`).
+    /// Am Teilnehmer-Einstieg + `admin_flow` gekoppelt: Flag wahr → Core
+    /// öffnet `admin_flow` statt des Teilnehmer-Flows. Am Admin-Einstieg
+    /// (ohne Join-Felder) Pflicht und wahr-Pflicht: fehlender Flag-Wert im
+    /// GET bedeutet „kein Ersteller-Code“ → Fehler, kein Keystore-Schaden.
+    pub admin_path: Option<String>,
+    /// Flow-ID, die bei gesetztem `admin_path`-Flag geöffnet wird
+    /// (Ersteller-Cockpit). Muss existieren, einen `open`-Block mit
+    /// Admin-Semantik tragen und darf nicht der eigene Flow sein.
+    pub admin_flow: Option<String>,
     /// Body der Selbst-Anlage; `{param}` und Settings-Keys werden gefüllt
     /// (Default `{"name": "{match_setting_key}"}` — POST nur, wenn der Name
     /// NICHT bereits in der Teilnehmerliste steht).
@@ -231,6 +269,11 @@ pub struct ScreenAction {
     /// beim ersten Wishes-Save — der Nutzer tippt seinen Claim-Code, der
     /// Wert fließt als `{key}`-Binding in Body/Path/Headers. Bereits
     /// gepinnte Werte werden vorgeseedet (User-Input gewinnt).
+    /// Ersteller-Cockpit v1 (Karte F, Spec 15): ein Feld kann `type`
+    /// (`text`|`number`|`select`, Default text) und bei select `options`
+    /// (de/en, nicht leer) tragen — der Renderer zeichnet daraus ein
+    /// Auswahlfeld (z. B. max_wishes 1–6 auf c_overview, PATCH settings
+    /// sofort). Fehlende `type` = Textfeld wie bisher.
     pub fields: Option<Vec<Param>>,
     /// Ein-Regel (SCLM v2 Requirement 9/one-way-Flags): Action nur aktiv,
     /// wenn die Bedingung gegen den Flow-Zustand wahr ist (z. B.
@@ -302,6 +345,12 @@ pub struct Flow {
     pub title: LocalizedText,
     /// Entry-Screen-ID (muss in `screens` existieren).
     pub entry: String,
+    /// Permanente Sub-Reiter (Ersteller-Cockpit v1, Spec 15): 1–6
+    /// `{id, screen, label{de,en}}`. `None` = Wizard-Verhalten wie bisher.
+    /// Tab-IDs/Reihenfolge sind Manifest-Sache; der Kern prüft nur
+    /// Wohlgeformtheit (eindeutige IDs, bekannte Screens).
+    #[serde(default)]
+    pub tabs: Option<Vec<FlowTab>>,
     pub screens: Vec<Screen>,
     /// Code-Einstieg (SCLM v2 / Spec 5.4): Session-Code → Auto-Join →
     /// Start-Screen. Optional: Flows ohne `open` haben manuellen Einstieg
@@ -573,6 +622,7 @@ mod tests {
                 en: "Participant".into(),
             },
             entry: "start".into(),
+            tabs: None,
             screens: vec![s, screen("list", ScreenType::List)],
             open: None,
         };
@@ -807,5 +857,160 @@ mod tests {
         // enabled_if ist Bedingung wie when/exit — deny_unknown_fields gilt
         let bad: Result<Screen, _> = serde_json::from_str(&text.replace("enabled_if", "enabledif"));
         assert!(bad.is_err());
+    }
+
+    // ---- Ersteller-Cockpit v1 (Spec 15): tabs + Admin-Einstieg -------------
+
+    #[test]
+    fn flow_tabs_round_trip_parses_and_serializes() {
+        // Frontend-Kontrakt: flows[].tabs durchläuft den Rust-Parser und
+        // wird identisch zurückserialisiert.
+        let text = r#"{
+            "id": "creator", "title": {"de": "E", "en": "C"},
+            "entry": "c_overview",
+            "tabs": [
+                {"id": "overview", "screen": "c_overview", "label": {"de": "Übersicht", "en": "Overview"}},
+                {"id": "raffle", "screen": "c_results", "label": {"de": "Verlosung", "en": "Raffle"}}
+            ],
+            "screens": []
+        }"#;
+        let f: Flow = serde_json::from_str(text).unwrap();
+        let tabs = f.tabs.as_ref().expect("tabs");
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0].id, "overview");
+        assert_eq!(tabs[0].screen, "c_overview");
+        assert_eq!(tabs[1].label.de, "Verlosung");
+        let back = serde_json::to_value(&f).unwrap();
+        assert_eq!(back["tabs"][0]["screen"], json!("c_overview"));
+        assert_eq!(back["tabs"][1]["label"]["en"], json!("Raffle"));
+        // Flow ohne tabs: Feld fehlt im JSON und wird toleriert (None)
+        let plain: Flow = serde_json::from_str(
+            r#"{"id":"f","title":{"de":"T","en":"T"},"entry":"a","screens":[]}"#,
+        )
+        .unwrap();
+        assert!(plain.tabs.is_none());
+        // deny_unknown_fields im Tab-Eintrag
+        let bad: Result<Flow, _> =
+            serde_json::from_str(text.replace("\"screen\"", "\"scrn\"").as_str());
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn flow_action_field_select_type_and_options_round_trip() {
+        // Frontend-Kontrakt (Karte F R2, Review-R1): Action-`fields` tragen
+        // `type` (text|number|select) und bei select `options` (de/en) — der
+        // Renderer braucht sie, um den max_wishes-Select 1–6 auf c_overview
+        // generisch zu zeichnen (kein Hardcoding in Karte G).
+        let text = r#"{
+            "id": "a", "title": {"de": "A", "en": "A"}, "entry": "c_overview",
+            "screens": [{
+                "id": "c_overview", "type": "detail", "title": {"de": "Ü", "en": "O"},
+                "actions": [{
+                    "id": "max_wishes", "title": {"de": "M", "en": "M"},
+                    "method": "patch", "path": "/api/session/{sid}/settings",
+                    "params": [{"key": "sid", "label": {"de": "S", "en": "S"}}],
+                    "body_template": {"max_wishes": "{max_wishes}"},
+                    "fields": [
+                        {"key": "max_wishes", "label": {"de": "Max", "en": "Max"},
+                         "type": "select", "required": true,
+                         "options": [{"de": "1", "en": "1"}, {"de": "6", "en": "6"}]},
+                        {"key": "note", "label": {"de": "N", "en": "N"}, "type": "number"}
+                    ]
+                }]
+            }]
+        }"#;
+        let f: Flow = serde_json::from_str(text).unwrap();
+        let action = &f.screens[0].actions.as_ref().unwrap()[0];
+        let fields = action.fields.as_ref().expect("fields");
+        assert_eq!(
+            fields[0].field_type,
+            Some(crate::manifest::FieldType::Select)
+        );
+        assert_eq!(fields[0].required, Some(true));
+        assert_eq!(fields[0].options.as_ref().expect("options").len(), 2);
+        assert_eq!(fields[0].options.as_ref().unwrap()[1].en, "6");
+        assert_eq!(
+            fields[1].field_type,
+            Some(crate::manifest::FieldType::Number)
+        );
+        assert!(fields[1].options.is_none());
+        // Round-trip: Select und seine Optionen landen unverändert im DTO.
+        let back = serde_json::to_value(&f).unwrap();
+        let f0 = &back["screens"][0]["actions"][0]["fields"][0];
+        assert_eq!(f0["type"], json!("select"));
+        assert_eq!(f0["options"][0], json!({"de": "1", "en": "1"}));
+        assert_eq!(
+            back["screens"][0]["actions"][0]["fields"][1]["type"],
+            json!("number")
+        );
+        // Rückwärtskompatibilität: ein Feld ohne type/options (alle bestehenden
+        // Manifeste) parst UND serialisiert ohne die neuen Keys.
+        let legacy: Screen = serde_json::from_str(
+            r#"{"id":"s","type":"list","title":{"de":"l","en":"l"},"actions":[{"id":"x","title":{"de":"x","en":"x"},"method":"patch","path":"/api/x","fields":[{"key":"delta","label":{"de":"D","en":"D"}}]}]}"#,
+        )
+        .unwrap();
+        let lf = &legacy.actions.as_ref().unwrap()[0].fields.as_ref().unwrap()[0];
+        assert_eq!(lf.field_type, None);
+        assert_eq!(lf.options, None);
+        let lb = serde_json::to_value(&legacy).unwrap();
+        let lfield = &lb["actions"][0]["fields"][0];
+        assert!(!lfield.as_object().unwrap().contains_key("type"));
+        assert!(!lfield.as_object().unwrap().contains_key("options"));
+        // deny_unknown_fields: Tippfer "opcion" scheitert am Schema (die
+        // select-ohne-options-Kombination prüft der Validator, nicht Serde).
+        let bad: Result<Flow, _> =
+            serde_json::from_str(text.replace("\"options\"", "\"opcion\"").as_str());
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn flow_open_admin_entry_parses_without_join_fields() {
+        // Admin-Einstieg: alle Join-Felder fehlend, dafür admin_path.
+        let text = r#"{
+            "id": "creator", "title": {"de": "E", "en": "C"}, "entry": "c_overview",
+            "open": {
+                "session_endpoint": "/api/session/{code}",
+                "headers": {"X-SCLM-Code": "{code}"},
+                "mapping": {"sid": "id", "admin_code": "admin_code"},
+                "admin_path": "is_admin",
+                "open_screen": "c_overview",
+                "done_screen": "c_results"
+            },
+            "screens": []
+        }"#;
+        let f: Flow = serde_json::from_str(text).unwrap();
+        let o = f.open.expect("admin open block");
+        assert!(o.match_path.is_none());
+        assert!(o.id_path.is_none());
+        assert!(o.match_setting_key.is_none());
+        assert!(o.join_endpoint.is_none());
+        assert_eq!(o.admin_path.as_deref(), Some("is_admin"));
+        assert!(o.admin_flow.is_none());
+        assert_eq!(o.open_screen, "c_overview");
+    }
+
+    #[test]
+    fn flow_open_admin_route_pair_parses_on_participant_flow() {
+        let text = r#"{
+            "id": "participant", "title": {"de": "T", "en": "P"}, "entry": "wishes",
+            "open": {
+                "session_endpoint": "/api/session/{code}",
+                "mapping": {"sid": "id"},
+                "match_path": "participants[].name",
+                "id_path": "participants[].id",
+                "match_setting_key": "sclm_username",
+                "join_endpoint": "/api/session/{sid}/participants",
+                "admin_path": "is_admin",
+                "admin_flow": "creator",
+                "open_screen": "wishes",
+                "done_screen": "results"
+            },
+            "screens": []
+        }"#;
+        let f: Flow = serde_json::from_str(text).unwrap();
+        let o = f.open.expect("participant open with admin route");
+        assert_eq!(o.admin_path.as_deref(), Some("is_admin"));
+        assert_eq!(o.admin_flow.as_deref(), Some("creator"));
+        assert_eq!(o.match_path.as_deref(), Some("participants[].name"));
     }
 }
