@@ -176,6 +176,20 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            } else {
+                // Release-Diagnose (Loot-500-Serie 2026-11-05): ohne dieses
+                // Backend verpuffen alle log::warn!-Zeilen lautlos (log crate
+                // ohne Logger = Discard) — Support konnte 5xx-Huelle nie lesen.
+                // Warn+ geht auf stdout und landet damit im User-Journal
+                // (journalctl --user -u architects-overlay).
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Warn)
+                        .targets(vec![tauri_plugin_log::Target::new(
+                            tauri_plugin_log::TargetKind::Stdout,
+                        )])
+                        .build(),
+                )?;
             }
 
             #[cfg(all(desktop, target_os = "linux", debug_assertions))]
