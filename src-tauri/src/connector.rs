@@ -3948,8 +3948,18 @@ mod tests {
         // Karte C hat den participant-Flow umgeschrieben (open-Block,
         // enabled_if, keystore_fields, wait-Aktion): das Beispiel muss dem
         // echten Manifest-Validator standhalten (demGate von connector_import).
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/sclm.json");
-        let raw = std::fs::read(path).expect("examples/sclm.json ist lesbar");
+        // examples/sclm.json ist Nutzer-lokal und gitignored (Sebo-Entscheid
+        // 2026-11-04, internes Plugin) — auf Frisch-Klonen/CI greift der
+        // eingecheckte Snapshot-Fallback tests/fixtures/sclm-manifest.json.
+        // Bei Manifest-Pflegeständen beide Kopien aktuell halten.
+        let live = concat!(env!("CARGO_MANIFEST_DIR"), "/../examples/sclm.json");
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/sclm-manifest.json"
+        );
+        let raw = std::fs::read(live).or_else(|_| std::fs::read(fixture)).expect(
+            "examples/sclm.json (lokal) oder tests/fixtures/sclm-manifest.json (Fixture) ist lesbar",
+        );
         let report = connector::validate_manifest(&raw);
         assert!(
             report.errors.is_empty(),
