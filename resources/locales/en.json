@@ -97,6 +97,7 @@
     "connector.flow.creator.btn_assign_participants": "Assign to participants",
     "connector.flow.creator.btn_regen": "Regenerate codes",
     "connector.flow.creator.btn_settings": "Settings",
+    "connector.flow.creator.btn_wishes_for": "Wishes",
     "connector.flow.creator.cancel": "Cancel",
     "connector.flow.creator.clear_confirm": "Empty selection: saving removes all wishes of this participant. Press Save again to confirm.",
     "connector.flow.creator.confirm": "Confirm",

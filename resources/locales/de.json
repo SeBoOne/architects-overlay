@@ -97,6 +97,7 @@
     "connector.flow.creator.btn_assign_participants": "Teilnehmern zuordnen",
     "connector.flow.creator.btn_regen": "Codes neu generieren",
     "connector.flow.creator.btn_settings": "Einstellungen",
+    "connector.flow.creator.btn_wishes_for": "Wünsche",
     "connector.flow.creator.cancel": "Abbrechen",
     "connector.flow.creator.clear_confirm": "Leere Auswahl: Speichern löscht alle Wünsche dieses Teilnehmers. Speichern erneut drücken bestätigt.",
     "connector.flow.creator.confirm": "Bestätigen",

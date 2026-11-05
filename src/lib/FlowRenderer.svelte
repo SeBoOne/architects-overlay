@@ -663,6 +663,14 @@
 		const s = shown;
 		const body = res.data?.body as Record<string, unknown> | null | undefined;
 		if (!cockpit || !s || s.type !== 'list' || !body || typeof body !== 'object') return null;
+		// Screen-scharfes Gate (Review R1-Punkt 1, Spec 15 Punkt 7): die
+		// Pro-Kopf-Zeile gehoert NUR zur Waren-Liste. Manifeststrukturelle
+		// Identifikation ueber deren Commodity-ID (mapping-Key 'cid' —
+		// identisch deklariert wie ihr pins-Eintrag): Session-weite
+		// Body-Felder wie total_revenue/commodity_summary stecken im rohen
+		// Body JEDES Screens und duerfen Teilnehmer-/Loot-Tab nicht
+		// dekorieren. Keine Screen-Ids, kein SCLM-Wissen im Renderer.
+		if (!('cid' in (s.mapping ?? {}))) return null;
 		const cs = body.commodity_summary as Record<string, unknown> | undefined;
 		const total = cs?.total_revenue ?? body.total_revenue;
 		if (typeof total !== 'number' || !Number.isFinite(total)) return null;
@@ -1319,10 +1327,14 @@
 					.map((r, i) => (pinKey && held.includes(String(r[pinKey] ?? '')) ? String(i) : ''))
 					.filter((v) => v !== '');
 			} else if (m.multi === 'assign') {
-				// Vorauswahl: jeder Teilnehmer, der das captured Loot bereits hält.
-				modalMarked = assignRows
-					.filter((r) => r.eligible && m.multiCaptured.some((l) => wishIdsOf(modalRaw.find((x) => String(x.id ?? '') === r.id) ?? {}).includes(l)))
-					.map((r) => r.id);
+				// Keine Vorauswahl (Review R1-Punkt 2): Teilnehmer, die das
+				// captured Loot bereits halten, sind in assignRows als
+				// ineligible deaktiviert (Hinweis im Modal). Eine
+				// Vorauswahl genau dieser Zeilen war toter Code —
+				// `eligible` impliziert overlap-frei — und waehlte
+				// aehnliche Formeln im Zweifel deaktivierte Zeilen vor.
+				// Verhalten unveraendert: nichts vorausgewaehlt.
+				modalMarked = [];
 			}
 		} catch (err) {
 			modalRows = [];
@@ -1455,7 +1467,13 @@
 						{
 							key: src.key,
 							label: labelOf(src.label, lang),
-							required: src.required !== false,
+							// required nur bei EXPLIZIT deklariertem
+							// true (Review R1-Punkt 3): Manifest-
+							// Contract aus F — required ist optional
+							// deklariert; undeklarierte Felder wie
+							// sale_revenue sind laut Spec 15 optional
+							// und duerfen nicht UI-pflichtig werden.
+							required: src.required === true,
 							type: src.type === 'number' ? 'number' : 'text',
 							value: String(row?.[src.key] ?? '')
 						}
@@ -1582,7 +1600,13 @@
 		const seeded: Record<string, string> = { ...formValues };
 		seedFromState(t, seeded);
 		for (const f of t.form.fields ?? []) {
-			if (f.required !== false && !String(seeded[f.key] ?? '').trim()) {
+			// required nur bei EXPLIZIT true (Review R1-Punkt 3, gleiche
+			// Semantik wie im Prompt-Modal): Spec-15-optionale Felder
+			// (add_loot size/type/grade/qty, add_commodity scu, settings
+			// max_wishes) sind im Manifest undeklariert-required und
+			// duerfen den Submit nicht blocken; explizit required:true
+			// (name/code/sid) bleibt Pflicht.
+			if (f.required === true && !String(seeded[f.key] ?? '').trim()) {
 				m.note = tr('error.connector.param_required', { key: labelOf(f.label, lang) });
 				modalBusy = false;
 				return;
@@ -2296,7 +2320,7 @@
 				{@const userKeys = formUserKeys(modal.target)}
 				{#each (modal.target.form.fields ?? []).filter((f) => userKeys.has(f.key)) as f (f.key)}
 					<label class="ffield">
-						<span class="flabel">{labelOf(f.label, lang)}{f.required !== false ? ' *' : ''}</span>
+						<span class="flabel">{labelOf(f.label, lang)}{f.required === true ? ' *' : ''}</span>
 						{#if f.type === 'select'}
 							<select class="finput" bind:value={formValues[f.key]}>
 								{#each f.options ?? [] as o (labelOf(o, lang))}
