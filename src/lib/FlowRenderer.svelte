@@ -775,7 +775,12 @@
 				const flags: string[] = [];
 				for (const a of s.actions ?? []) {
 					if (isNavigationAction(a) || !a.enabled_if || a.enabled_if.value !== true) continue;
-					if (truthyFlagVal(row[a.enabled_if.on])) flags.push(a.enabled_if.on);
+					// I-SCLM UX R2-R1 (Review Finding 2): collect +
+					// reset_collected teilen sich enabled_if.on='collected'
+					// — ohne Dedup erschiene der Status-Chip doppelt
+					// (keyed each (fl) wirft sonst duplizierte Keys).
+					if (truthyFlagVal(row[a.enabled_if.on]) && !flags.includes(a.enabled_if.on))
+						flags.push(a.enabled_if.on);
 				}
 				return {
 					row,
@@ -793,7 +798,9 @@
 			const flags: string[] = [];
 			for (const a of s.actions ?? []) {
 				if (isNavigationAction(a) || !a.enabled_if || a.enabled_if.value !== true) continue;
-				if (truthyFlagVal(row?.[a.enabled_if.on])) flags.push(a.enabled_if.on);
+				// Dedup wie im strukturierten Zweig (Review Finding 2).
+				if (truthyFlagVal(row?.[a.enabled_if.on]) && !flags.includes(a.enabled_if.on))
+					flags.push(a.enabled_if.on);
 			}
 			return {
 				row,

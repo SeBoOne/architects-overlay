@@ -1696,7 +1696,7 @@ pub(crate) async fn form_submit_core(
     apply_fill(&mut body, &values);
     strip_unfilled(&mut body);
     // Haertung (I-SCLM UX R2 Punkt 2a): qty-Normalisierung, name-Cap, null-Keys.
-    harden_write_body(&mut body)?;
+    harden_write_body(&mut body, &path)?;
     // Header aus Feldern mit `header`-Deklaration (z. B. Session-Code als
     // X-SCLM-Code — pro Formular, nicht global).
     let mut field_headers: Vec<(String, String)> = Vec::new();
@@ -1829,7 +1829,7 @@ pub(crate) async fn screen_action_core(
     apply_fill(&mut body, &values);
     strip_unfilled(&mut body);
     // Haertung (I-SCLM UX R2 Punkt 2a): qty-Normalisierung, name-Cap, null-Keys.
-    harden_write_body(&mut body)?;
+    harden_write_body(&mut body, &path)?;
     // Header-Templates der Action: Platzhalter aus den Werten (stringifiziert).
     let mut string_values: BTreeMap<String, String> = BTreeMap::new();
     for (k, v) in &values {
@@ -2812,12 +2812,22 @@ fn string_has_unfilled(v: &serde_json::Value) -> bool {
 /// I-SCLM Cockpit UX R2 (Punkt 2a): Haertung des Write-Bodies NACH dem Fill.
 /// - `qty`: leer / 'NaN' / 'null' / unparsebar -> Key entfaellt (Server-
 ///   Default 1); sonst saubere Ganzzahl (auch aus Ziffern-/Dezimalstrings).
-/// - `name`: laenger als 120 Zeichen -> lokaler Hinweis-Fehler (der Server-
-///   'Name zu lang'-400 bleibt als Backstop erhalten, loot/commodity-Limit).
+/// - `name`: laenger als 120 Zeichen -> lokaler Hinweis-Fehler, aber NUR auf
+///   Pfaden, auf denen der Server selbst das 120-Limit erzwingt (loot- und
+///   commodities-POST, server.py add_loot/add_commodity `len(name) > 120` ->
+///   400 'Name zu lang'). Auf allen anderen Pfaden gilt unveraendert der
+///   Server-Backstop allein: participants-PATCH (Server OHNE Name-Limit),
+///   participants-POST (Serverlimit 120 bleibt Serverseite), create/settings
+///   (Serverlimit 200) — Review-Runde-1-Forderung: kein globaler Cap, der
+///   Teilnehmer-Session-Flow gegen main 37d9932 verschchaerft.
 /// - Keys, die nach dem Fill als JSON `null` dastehen, werden entfernt:
 ///   unaufloesbare Platzhalter hat bereits `strip_unfilled` getilgt; das
 ///   `null` kommt von explizit geleerten Frontend-Feldern und crash't
 ///   Zahlen-/Text-Endpunkte des Servers (500-Kandidat).
+fn name_hardening_applies(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    p.contains("/loot") || p.contains("/commodities")
+}
 fn normalize_qty_value(v: &serde_json::Value) -> Option<i64> {
     match v {
         serde_json::Value::Number(n) => n.as_i64().or_else(|| {
@@ -2841,12 +2851,13 @@ fn normalize_qty_value(v: &serde_json::Value) -> Option<i64> {
     }
 }
 
-fn harden_write_body(body: &mut serde_json::Value) -> Result<(), String> {
+fn harden_write_body(body: &mut serde_json::Value, path: &str) -> Result<(), String> {
     let serde_json::Value::Object(map) = body else {
         return Ok(());
     };
     map.retain(|_, v| !v.is_null());
-    if let Some(s) = map.get("name").and_then(|v| v.as_str())
+    if name_hardening_applies(path)
+        && let Some(s) = map.get("name").and_then(|v| v.as_str())
         && s.chars().count() > 120
     {
         return Err(err_keyp(
@@ -3327,10 +3338,10 @@ mod tests {
         assert_eq!(normalize_qty_value(&json!("3.6")), Some(4));
         assert_eq!(normalize_qty_value(&json!(2)), Some(2));
         let mut body = json!({ "name": "Sabre", "qty": "NaN" });
-        harden_write_body(&mut body).expect("hardened");
+        harden_write_body(&mut body, "/api/session/s1/loot").expect("hardened");
         assert_eq!(body, json!({ "name": "Sabre" })); // qty-Key entfaellt -> Server-Default 1
         let mut body2 = json!({ "name": "Sabre", "qty": "12" });
-        harden_write_body(&mut body2).expect("hardened");
+        harden_write_body(&mut body2, "/api/session/s1/loot").expect("hardened");
         assert_eq!(body2["qty"], json!(12)); // saubere Ganzzahl, kein String
     }
 
@@ -3338,16 +3349,199 @@ mod tests {
     fn name_cap_local_hint_and_null_keys_stripped() {
         let long = "a".repeat(121);
         let mut body = json!({ "name": long, "delta": 1 });
-        let err = harden_write_body(&mut body).unwrap_err();
+        let err = harden_write_body(&mut body, "/api/session/s1/loot").unwrap_err();
         assert!(err.contains("error.connector.name_too_long"), "{err}");
         assert!(err.contains("\"limit\":120"), "{err}");
         let ok = "b".repeat(120);
         let mut body2 = json!({ "name": ok });
-        harden_write_body(&mut body2).expect("120 Zeichen sind grenzgültig");
+        harden_write_body(&mut body2, "/api/session/s1/loot")
+            .expect("120 Zeichen sind grenzgültig");
         // null-Werte (explizit geleerte Felder) verlassen den Body nie.
         let mut body3 = json!({ "name": "ok", "qty": null, "sale_revenue": null });
-        harden_write_body(&mut body3).expect("hardened");
+        harden_write_body(&mut body3, "/api/session/s1/loot").expect("hardened");
         assert_eq!(body3, json!({ "name": "ok" }));
+    }
+
+    // I-SCLM Cockpit UX R2-R1 (Review-Runde 1, blockierender Punkt): Der
+    // 120-Cap ist PFADGESCHARTET auf loot/commodities — nur dort erzwingt
+    // der Server selbst das Limit (server.py add_loot L514 / add_commodity
+    // L644: len(name) > 120 -> 400 'Name zu lang'). participants-PATCH hat
+    // serverseitig GAR KEIN Name-Limit (update_participant), participants-
+    // POST und create/settings entscheiden serverseitig (120/200): 121-200
+    // Zeichen müssen bis zum Server durchreichen (Server-Backstop +
+    // httpErrorNote-Diagnose), wie auf main 37d9932.
+    #[test]
+    fn name_cap_scoped_loot_and_commodities_only() {
+        let long = "a".repeat(121);
+        for path in [
+            "/api/session/s1/loot",
+            "/api/session/s1/loot/l1/qty",
+            "/api/session/s1/commodities",
+        ] {
+            let mut body = json!({ "name": long });
+            let err = harden_write_body(&mut body, path).unwrap_err();
+            assert!(
+                err.contains("error.connector.name_too_long"),
+                "{path}: {err}"
+            );
+        }
+        for path in [
+            "/api/session/s1/participants",
+            "/api/session/s1/participants/p1",
+            "/api/session/create",
+            "/api/session/s1/settings",
+        ] {
+            let mut body = json!({ "name": long });
+            harden_write_body(&mut body, path)
+                .unwrap_or_else(|e| panic!("{path} darf nicht lokal gecappt sein: {e}"));
+            assert_eq!(body["name"], json!(long));
+        }
+        // null-Entfernung und qty-Härtung bleiben GLOBAL aktiv — nur der
+        // name-Cap ist pfadgebunden.
+        let mut body = json!({ "name": long, "qty": "NaN", "x": null });
+        harden_write_body(&mut body, "/api/session/s1/participants").expect("hardened");
+        assert_eq!(body, json!({ "name": long }));
+    }
+
+    #[test]
+    fn participant_long_name_reaches_server_no_local_block() {
+        // E2E-Gegenprobe: 121-Zeichen-Participant-Name verlässt die Software
+        // (Mock antwortet wie der echte Server mit 400 'Name zu lang' — der
+        // Server-Backstop ist sichtbar, nicht eine lokale Vorwegnahme).
+        let (base, rx) = start_mock_api(vec![(
+            "POST",
+            "/api/session/s1/participants",
+            400,
+            r#"{"error":"Name zu lang"}"#,
+        )]);
+        let manifest: connector::ConnectorManifest = serde_json::from_value(json!({
+            "manifest_version": 1, "id": "sclm", "name": { "de": "S", "en": "S" },
+            "base_url": base, "auth": { "type": "none" },
+            "placement": { "kind": "own", "label": { "de": "S", "en": "S" } },
+            "views": [{
+                "id": "add_participant", "type": "form", "title": { "de": "A", "en": "A" },
+                "endpoint": "",
+                "form": {
+                    "fields": [
+                        { "key": "name", "label": { "de": "n", "en": "n" }, "type": "text", "required": true }
+                    ],
+                    "method": "post", "path": "/api/session/s1/participants",
+                    "body_template": { "name": "{name}" },
+                    "prefill": false
+                }
+            }]
+        }))
+        .expect("Manifest parst");
+        let form = manifest.views[0].form.clone().unwrap();
+        let st = settings_state_with("sclm", &[]);
+        let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values.insert("name".to_owned(), json!("a".repeat(121)));
+        let (status, body) =
+            block_on_async(form_submit_core(&manifest, &form, values, &st, "sclm"))
+                .expect("kein lokaler Fehler — der Server entscheidet");
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], json!("Name zu lang"));
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1, "Request muss rausgehen");
+        let sent: serde_json::Value = serde_json::from_str(&hits[0].body).unwrap();
+        assert_eq!(sent["name"], json!("a".repeat(121)));
+    }
+
+    #[test]
+    fn screen_action_write_hardening_e2e() {
+        // Schließt die von Review-Runde 1 festgestellte Coverage-Lücke: der
+        // Action-Pfad (screen_action_core) war E2E ungeprüft. Adaptiertes
+        // Probe-Design des Reviewers (rvw_probe_t0f22c336.rs).
+        let (base, rx) = start_mock_api(vec![
+            (
+                "PATCH",
+                "/api/session/s1/loot/l1/qty",
+                200,
+                r#"{"echo": true}"#,
+            ),
+            (
+                "POST",
+                "/api/session/s1/participants",
+                400,
+                r#"{"error":"Name zu lang"}"#,
+            ),
+        ]);
+        let manifest = hardening_test_manifest(&base);
+        let st = settings_state_with("sclm", &[]);
+        // Fall A (loot/qty-Pfad): qty='NaN' + name='null' + delta='2' ->
+        // Body am Mock ist exakt {delta: 2} (qty-Key entfällt, null-Key weg,
+        // Ziffernstring wird JSON-Zahl).
+        let action: connector::flow::ScreenAction = serde_json::from_value(json!({
+            "id": "qty2",
+            "title": { "de": "q", "en": "q" },
+            "method": "patch",
+            "path": "/api/session/s1/loot/l1/qty",
+            "body_template": { "delta": "{delta}", "qty": "{qty}", "name": "{name}" },
+            "fields": [
+                { "key": "delta", "label": { "de": "d", "en": "d" } },
+                { "key": "qty", "label": { "de": "q", "en": "q" }, "required": false },
+                { "key": "name", "label": { "de": "n", "en": "n" }, "required": false }
+            ]
+        }))
+        .expect("ScreenAction parst");
+        let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values.insert("delta".to_owned(), json!("2"));
+        values.insert("qty".to_owned(), json!("NaN"));
+        values.insert("name".to_owned(), json!(null));
+        let (status, _) = block_on_async(screen_action_core(
+            &manifest,
+            &action,
+            values.clone(),
+            &st,
+            "sclm",
+        ))
+        .expect("Action läuft durch");
+        assert_eq!(status, 200);
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1, "genau ein Request");
+        let sent: serde_json::Value = serde_json::from_str(&hits[0].body).unwrap();
+        assert_eq!(
+            sent,
+            json!({ "delta": 2 }),
+            "Body muss gehärtet sein: {sent}"
+        );
+        // Fall B (loot/qty-Pfad, Cap greift): leerer optionaler qty-String +
+        // name >120 -> lokaler Hinweis-Fehler, KEIN Request.
+        let before = mock_hits(&rx).len();
+        values.insert("delta".to_owned(), json!("1"));
+        values.insert("qty".to_owned(), json!("  "));
+        values.insert("name".to_owned(), json!("x".repeat(121)));
+        let err = block_on_async(screen_action_core(&manifest, &action, values, &st, "sclm"))
+            .unwrap_err();
+        assert!(err.contains("error.connector.name_too_long"), "{err}");
+        assert_eq!(
+            mock_hits(&rx).len(),
+            before,
+            "kein Request bei >120 loot-Pfad-Cap"
+        );
+        // Fall C (participants-Pfad, Cap greift NICHT): 121-Zeichen-Name im
+        // Action-Body geht raus, Server-400 kommt als (status, body) zurück.
+        let action_p: connector::flow::ScreenAction = serde_json::from_value(json!({
+            "id": "join_long",
+            "title": { "de": "j", "en": "j" },
+            "method": "post",
+            "path": "/api/session/s1/participants",
+            "body_template": { "name": "{name}" },
+            "fields": [{ "key": "name", "label": { "de": "n", "en": "n" } }]
+        }))
+        .expect("ScreenAction parst");
+        let mut values_p: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        values_p.insert("name".to_owned(), json!("a".repeat(121)));
+        let (status, body) = block_on_async(screen_action_core(
+            &manifest, &action_p, values_p, &st, "sclm",
+        ))
+        .expect("Action läuft durch");
+        assert_eq!(status, 400);
+        assert_eq!(body["error"], json!("Name zu lang"));
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), before + 1, "Request muss rausgehen");
+        let sent: serde_json::Value = serde_json::from_str(&hits[before].body).unwrap();
+        assert_eq!(sent["name"], json!("a".repeat(121)));
     }
 
     #[test]
