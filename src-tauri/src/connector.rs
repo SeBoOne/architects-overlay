@@ -2938,11 +2938,20 @@ pub(crate) async fn fetch_request(
         .await
         .map_err(|e| err_keyp("error.connector.http", json!({ "detail": e.to_string() })))?;
     let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        // Kein JSON vom Server (HTML-Fehlerseite, leerer Body): die rohe
+        // serde-Meldung ('expected value at line 1 column 1') ist fuer den
+        // Nutzer unlesbar — Status + Antwort-Ausschnitt machen den Fall
+        // selbst erkennbar (SCLM /api/sessions 500-HTML, 2026-11-05).
+        let trimmed: String = text.chars().take(120).collect();
+        log::warn!("connector fetch {status}: {endpoint} non-JSON response: {trimmed}");
         err_keyp(
             "error.connector.invalid_json",
-            json!({ "detail": e.to_string() }),
+            json!({ "detail": format!("HTTP {status}: {e} (Serverantwort: {trimmed})") }),
         )
     })?;
+    if status >= 500 {
+        log::warn!("connector 5xx (fetch): GET {endpoint} status={status}");
+    }
     Ok((status, body))
 }
 

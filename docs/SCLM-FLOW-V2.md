@@ -377,3 +377,16 @@ Overlay-Haertung (`src-tauri/src/connector.rs`):
   (Session-/Admin-Codes) werden dafuer **niemals** geloggt. Damit haelt das
   Overlay beim naechsten 500 die exakte Request-Huelle fest, statt raten zu
   muessen.
+
+## 20 'Ungültiges JSON' in der Plugin-Hauptansicht: Server-Root-Cause (Omar, 2026-11-05)
+
+Das Overlay pullt für die Hauptansicht `GET /api/sessions`. Dieser Endpoint panikte
+mit nacktem 500-HTML — Auslöser war eine meiner Diagnose-Wegwerf-Sessions mit
+Übergabe-Daten (negativer qty außerhalb int64 + 1e29-scu-Ware, beide vom Server
+mit 200 gespeichert). Nach `DELETE /api/session/oy7efdcs` und `.../buolv8wh` ist
+`/api/sessions` wieder 200. Overlay-Seitig: fetch_request zeigt bei Nicht-JSON jetzt
+'Status + Serverantwort-Ausschnitt' statt roher serde-Text und loggt 5xx GETs.
+SERVER-TO-DO (SCLM-Backend, Sebo): qty/scu-Eingaben außerhalb int64/sinnvoller
+Grenzen mit 400 ablehnen statt speichern; /api/sessions serialize-härten.
+Restliche Wegwerf-Sessions ohne Overlay-Bezug, per Site-Admin löschbar: uxe v7o98 ('Omar-Diag2', leer),
+9xmcp09y ('noop', leer), 5urkexp0 ('Omar-Diag4', 2 Loot/2 Teilnehmer, Ziehung offen).
