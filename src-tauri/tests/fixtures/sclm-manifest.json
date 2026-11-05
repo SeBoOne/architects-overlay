@@ -1196,7 +1196,8 @@
       "path": "/api/session/{sid}/participants",
       "body_template": {
        "name": "{name}"
-      }
+      },
+      "prefill": false
      },
      "autocomplete": [
       {
@@ -1314,7 +1315,9 @@
       "name": "participants[].name",
       "wish_count": "participants[].wishes[].id"
      },
-     "multi": {},
+     "multi": {
+      "mode": "assign"
+     },
      "pins": [
       "participant_id"
      ],
@@ -1480,6 +1483,11 @@
        },
        "body_template": {
         "for_sale": true
+       },
+       "enabled_if": {
+        "on": "for_sale",
+        "op": "not_equals",
+        "value": true
        }
       },
       {
@@ -1518,6 +1526,11 @@
        },
        "body_template": {
         "for_sale": false
+       },
+       "enabled_if": {
+        "on": "for_sale",
+        "op": "equals",
+        "value": true
        }
       },
       {
@@ -1610,8 +1623,7 @@
        },
        "goto": "assign_participants"
       }
-     ],
-     "multi": {}
+     ]
     },
     {
      "id": "add_loot",
@@ -1691,7 +1703,8 @@
        "type": "{type}",
        "grade": "{grade}",
        "size": "{size}"
-      }
+      },
+      "prefill": false
      },
      "autocomplete": [
       {
@@ -1889,7 +1902,8 @@
       "body_template": {
        "name": "{name}",
        "scu": "{scu}"
-      }
+      },
+      "prefill": false
      },
      "autocomplete": [
       {

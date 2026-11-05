@@ -714,6 +714,27 @@
 	// results-Zweig des Cockpits: pro Teilnehmer Name + Gruppen ×N + Status
 	// bzw. Buttons (enabled_if PRO ZEILE; Reset-Buttons erscheinen nur bei
 	// gesetztem Flag — nach Reset liefert der frische Fetch die Buttons zurück).
+	/** I-SCLM Cockpit UX R2 (Punkt 5): Gewinn-Items aus den Ergebnis-Arrays.
+	 *  Objekte liefern .name/.title; Strings nur, wenn sie echte Namen sind —
+	 *  rein Lowercase-alphanumerische Tokens mit Ziffer (8-Zeichen-Codes im
+	 *  Stil 'lvm3ytne': rid/pcode/loot-id) sind ID-Müll, nie ein Gewinn;
+	 *  namen-artige Alpha-Tokens bleiben unberührt. */
+	function wonItemNames(items: unknown[]): string[] {
+		const out: string[] = [];
+		for (const item of items) {
+			if (typeof item === 'string') {
+				const s2 = item.trim();
+				if (!s2) continue;
+				if (/^[a-z0-9]+$/.test(s2) && s2.length >= 6 && /\d/.test(s2)) continue;
+				out.push(s2);
+			} else if (item && typeof item === 'object') {
+				const o = item as Record<string, unknown>;
+				const n = typeof o.name === 'string' ? o.name : typeof o.title === 'string' ? o.title : null;
+				if (n && n.trim()) out.push(n.trim());
+			}
+		}
+		return out;
+	}
 	const cockpitResultRows = $derived.by(() => {
 		const s = shown;
 		if (!cockpit || s?.type !== 'results') return [];
@@ -721,12 +742,65 @@
 		const nameKey =
 			Object.keys(mapping).find((k) => !/(id|code)$/i.test(k) && /(participant|name|title)/i.test(k)) ??
 			Object.keys(mapping)[0];
+		// I-SCLM Cockpit UX R2 (Punkt 5): Aufbau auf STRUKTURIERTEN Daten.
+		// Der bisherige flache Zip (normalizeResults auf gemappten Zeilen)
+		// schob jede `[]`-Mapping-Stringspalte in die Gewinne: Teilnehmer-
+		// namen landeten als x1-Zeile, 8-Zeichen-Codes (participant_id/rid —
+		// 'lvm3ytne'-Muster) als Item. Strukturiert: eine Zeile pro
+		// Ergebnis-OBJEKT (ROH-Body-Entity — dieselbe Array-Quelle, die der
+		// Rust-Mapping-Engine-Zip hat); Gewinne werden NUR aus den ARRAY-
+		// Feldern des Ergebnis-Objekts gruppiert (SCLM: results[].won →
+		// {name,type,grade,size}). Skalare (rid/waived/collected/name) werden
+		// nie Gewinne, bleiben aber als Zeilenwerte für enabled_if und die
+		// {rid}-Pfadauflösung der Buttons erhalten.
+		const body = res.data?.body as Record<string, unknown> | null | undefined;
+		const ent = body && typeof body === 'object' ? firstEntityName(s) : null;
+		const entries = ent ? rawArray(body, ent) : [];
+		if (entries.length > 0) {
+			// Mapping-Pfad `X[].field` → Feld des Ergebnis-Objekts (Keys
+			// folgen dem Manifest, keiner Connector-Hardcode-Kette).
+			const suffix = (p: string, k: string): string => {
+				const i = (p ?? '').indexOf('[].');
+				return i >= 0 ? p.slice(i + 3) : k;
+			};
+			return entries.map((e) => {
+				const row: Record<string, unknown> = {};
+				const itemsSrc: unknown[] = [];
+				for (const [k, path] of Object.entries(mapping)) {
+					const v = e[suffix(path, k)];
+					if (Array.isArray(v)) itemsSrc.push(...v);
+					else row[k] = v;
+				}
+				const groups = groupNames(wonItemNames(itemsSrc));
+				const flags: string[] = [];
+				for (const a of s.actions ?? []) {
+					if (isNavigationAction(a) || !a.enabled_if || a.enabled_if.value !== true) continue;
+					// I-SCLM UX R2-R1 (Review Finding 2): collect +
+					// reset_collected teilen sich enabled_if.on='collected'
+					// — ohne Dedup erschiene der Status-Chip doppelt
+					// (keyed each (fl) wirft sonst duplizierte Keys).
+					if (truthyFlagVal(row[a.enabled_if.on]) && !flags.includes(a.enabled_if.on))
+						flags.push(a.enabled_if.on);
+				}
+				return {
+					row,
+					name: formatValue(row[nameKey] ?? e.name ?? ''),
+					groups,
+					flags
+				};
+			});
+		}
+		// Fallback (Connectors ohne ROH-Body-Entity oder ohne []-Pfade):
+		// alter flacher Pfad unverändert — für SCLM greift er nie (Session-
+		// Body enthält immer results[]), andere Flows bleiben byte-identisch.
 		return rows.map((row) => {
 			const groups = groupNames(normalizeResults([row], mapping).names);
 			const flags: string[] = [];
 			for (const a of s.actions ?? []) {
 				if (isNavigationAction(a) || !a.enabled_if || a.enabled_if.value !== true) continue;
-				if (truthyFlagVal(row?.[a.enabled_if.on])) flags.push(a.enabled_if.on);
+				// Dedup wie im strukturierten Zweig (Review Finding 2).
+				if (truthyFlagVal(row?.[a.enabled_if.on]) && !flags.includes(a.enabled_if.on))
+					flags.push(a.enabled_if.on);
 			}
 			return {
 				row,
@@ -968,8 +1042,16 @@
 
 	/** Fehlende Seed-Keys aus dem Flow-Zustand vorseeden (User-Input gewinnt). */
 	function seedFromState(s: ScreenDTO, target: Record<string, string>) {
+		// I-SCLM Cockpit UX R2 (Punkt 1): Add-Formulare (Manifest-Feld
+		// prefill: false) dürfen sichtbare Nutzerfelder NICHT aus dem
+		// Flow-Zustand befüllen — sonst landet gern Event-/letzter
+		// Teilnehmername im neuen Eingabefeld. Plumbing-Keys (sid/code/
+		// Params/Header) werden weiter still geseedet; Bearbeiten-
+		// Formulare (prefill fehlt/true) bleiben vorbefüllt wie bisher.
+		const visible = s.form?.prefill === false ? formUserKeys(s) : null;
 		for (const k of seedKeys(s)) {
 			if (k in target) continue;
+			if (visible?.has(k)) continue;
 			const v = fstate[k];
 			if (typeof v === 'string' && v.trim()) target[k] = v;
 			else if (typeof v === 'number') target[k] = String(v);
@@ -982,6 +1064,23 @@
 	// das Feld nicht vom User gefüllt wurde (user input gewinnt). So fließen
 	// gepinnte/Selektions-Werte (code, sid, loot_id) in den Body, ohne dass
 	// das Manifest sie als Formular-Felder deklarieren muss.
+	/** I-SCLM Cockpit UX R2 (Punkt 2b): Modal-Fehlerzeile mit Server-Wortlaut.
+	 *  Response-Body-Feld `error` (sonst `message`) plus HTTP-Status und
+	 *  METHODE pfad — kurz gehalten (max. 160 Zeichen), Locale-Basistext. */
+	function httpErrorNote(status: number, body: unknown, method?: string | null, path?: string | null): string {
+		let note = tr('connector.flow.server_report', {
+			status: String(status),
+			method: (method ?? '').toUpperCase(),
+			path: path ?? ''
+		});
+		if (body && typeof body === 'object' && !Array.isArray(body)) {
+			const b = body as Record<string, unknown>;
+			const msg =
+				typeof b.error === 'string' ? b.error.trim() : typeof b.message === 'string' ? b.message.trim() : '';
+			if (msg) note += `: ${msg}`;
+		}
+		return note.length > 160 ? `${note.slice(0, 159)}…` : note;
+	}
 	async function submitForm() {
 		const s = shown;
 		if (!s) return;
@@ -1025,7 +1124,7 @@
 			formNote =
 				out.status < 400
 					? tr('connector.form_ok', { status: String(out.status) })
-					: tr('connector.form_http_error', { status: String(out.status) });
+					: httpErrorNote(out.status, out.body, s.form?.method, s.form?.path);
 			// Eingereichte Werte + Response-Werte in den Zustand (und Pins).
 			for (const [k, v] of Object.entries(seeded)) {
 				if (!(k in fstate)) fstate[k] = v;
@@ -1167,7 +1266,7 @@
 			actionNote =
 				out.status < 400
 					? tr('connector.form_ok', { status: String(out.status) })
-					: tr('connector.form_http_error', { status: String(out.status) });
+					: httpErrorNote(out.status, out.body, a.method, a.path);
 			if (out.status < 400) {
 				// pins_map: Antwortfelder in den Flow-Zustand pinnen (z. B. pcode).
 				for (const [key, path] of Object.entries(a.pins_map ?? {})) {
@@ -1431,6 +1530,29 @@
 	function openRowNav(a: ScreenActionDTO, row: Record<string, unknown>) {
 		const t = a.goto ? findScreen(a.goto) : null;
 		if (!t || !t.multi) return;
+		// I-SCLM Cockpit UX R2 (Punkt 4): multi.mode entscheidet die Richtung
+		// des Zeilen-Modals. 'assign' pinnt GENAU den Zeilen-Gegenstand
+		// (multiCaptured = seine loot_id) und zeigt die Teilnehmerliste mit
+		// freien Wunsch-Slots — keine Loot-Mehrfachauswahl mehr. 'wishes'
+		// (Default, Bestandsmanifeste ohne mode unverändert): Loot-Auswahl
+		// für den Zeilen-Teilnehmer.
+		const mode = t.multi.mode ?? 'wishes';
+		if (mode === 'assign') {
+			const pinKey = (shown?.pins ?? [])[0];
+			const v = pinKey ? row?.[pinKey] : undefined;
+			const captured = v === undefined || v === null ? [] : [String(v)].filter((x) => x !== '');
+			openModal(
+				mkModal({
+					kind: 'multi',
+					multi: 'assign',
+					target: t,
+					multiCaptured: captured,
+					title: `${labelOf(a.title, lang)} — ${formatValue(row?.name ?? row?.title ?? '')}`,
+					warnings: []
+				})
+			);
+			return;
+		}
 		openModal(
 			mkModal({
 				kind: 'multi',
@@ -1535,13 +1657,14 @@
 			const existing = wishIdsOf(e);
 			const merged = [...existing, ...lootIds.filter((l) => !existing.includes(l))];
 			try {
-				const out = await invoke<{ status: number }>('connector_screen_action', {
+				const out = await invoke<{ status: number; body: unknown }>('connector_screen_action', {
 					id: entry.id,
 					screenId: `${flow.id}:${t.id}`,
 					actionId: write.id,
 					values: { ...actionValues(), [targetPin]: pr.id, ...(ctx.key ? { [ctx.key]: merged } : {}) }
 				});
-				if (out.status >= 400 && !errNote) errNote = tr('connector.form_http_error', { status: String(out.status) });
+				if (out.status >= 400 && !errNote)
+					errNote = httpErrorNote(out.status, out.body, write.method, write.path);
 			} catch (err) {
 				if (!errNote) errNote = trError(err);
 			}
@@ -1617,7 +1740,7 @@
 				values: seeded
 			});
 			if (out.status >= 400) {
-				m.note = tr('connector.form_http_error', { status: String(out.status) });
+				m.note = httpErrorNote(out.status, out.body, t.form?.method, t.form?.path);
 				modalBusy = false;
 				return;
 			}
@@ -1892,6 +2015,7 @@
 						{@const pinKey = (shown.pins ?? [])[0]}
 						{@const wishMeta = cockpitWishMeta.get(String(row?.[pinKey] ?? ''))}
 						{@const btns = cockpitRowBtns(shown)}
+						{@const visBtns = btns.filter((p) => !p.a.enabled_if || rowActionEnabledFor(p.a, row))}
 						<li>
 							<div class="frow frow-static" class:is-marked={!!shown.multi && isMarked(i)}>
 								{#if shown.multi}
@@ -1914,7 +2038,7 @@
 									{#each cockpitRowNavs as a (a.id)}
 										<button class="btn-ghost fbtnrow" type="button" disabled={actionBusy} onclick={() => openRowNav(a, row)}>{rowBtnLabel(a)}</button>
 									{/each}
-									{#each btns as p (p.a.id)}
+									{#each visBtns as p (p.a.id)}
 										{#if p.kind === 'stepper'}
 											<button class="fstepbtn" type="button" title={tr('connector.flow.creator.dec')} aria-label={tr('connector.flow.creator.dec')} disabled={actionBusy} onclick={() => void stepperRun(p.a, row, p.fieldKey, -1)}>−</button>
 											{#if p.fieldKey}
@@ -1922,7 +2046,7 @@
 											{/if}
 											<button class="fstepbtn" type="button" title={tr('connector.flow.creator.inc')} aria-label={tr('connector.flow.creator.inc')} disabled={actionBusy} onclick={() => void stepperRun(p.a, row, p.fieldKey, 1)}>+</button>
 										{:else}
-											<button class="btn-ghost fbtnrow" type="button" disabled={actionBusy || !rowActionEnabledFor(p.a, row)} onclick={() => openRowBtn(p, row)}>{rowBtnLabel(p.a)}</button>
+											<button class="btn-ghost fbtnrow" type="button" disabled={actionBusy} onclick={() => openRowBtn(p, row)}>{rowBtnLabel(p.a)}</button>
 										{/if}
 									{/each}
 								</span>
@@ -1961,6 +2085,10 @@
 													<span class="fmetapair"><span class="fk">×{g.count}</span>{g.name}</span>
 												{/each}
 											</span>
+										{:else}
+											<!-- I-SCLM Cockpit UX R2 (Punkt 5): Teilnehmer ohne
+											     Gewinn — dezente Zeile, nirgends Codes. -->
+											<span class="fmeta">{tr('connector.flow.creator.results_no_win')}</span>
 										{/if}
 									</span>
 									<span class="frowbtns">
