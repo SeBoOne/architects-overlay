@@ -551,7 +551,8 @@
             "qty": "loot[].qty",
             "type": "loot[].type",
             "grade": "loot[].grade",
-            "size": "loot[].size"
+            "size": "loot[].size",
+            "for_sale": "loot[].for_sale"
           },
           "multi": {
             "max_path": "max_wishes"
@@ -1247,7 +1248,8 @@
             "type": "loot[].type",
             "grade": "loot[].grade",
             "size": "loot[].size",
-            "wish_count": "loot[].wish_count"
+            "wish_count": "loot[].wish_count",
+            "for_sale": "loot[].for_sale"
           },
           "multi": {},
           "pins": [
@@ -1620,7 +1622,12 @@
                 "de": "Teilnehmern zuordnen (POST wishes je Teilnehmer)",
                 "en": "Assign to participants (POST wishes per participant)"
               },
-              "goto": "assign_participants"
+              "goto": "assign_participants",
+              "enabled_if": {
+                "on": "for_sale",
+                "op": "not_equals",
+                "value": true
+              }
             }
           ]
         },

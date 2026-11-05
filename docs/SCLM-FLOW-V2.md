@@ -462,3 +462,26 @@ dem POST. Diagnose-Haertung: view_unknown-Faelle loggen jetzt Warn-Logs (fetch +
 screen action lookup) ins User-Journal ('connector screen action: keine Action ...').
 
 Wegwerf-Session Omar-Diag7 (qposmvsw) nach den Proben per Admin-Code geloescht.
+
+## 24. Verkauf-Interaktion 2026-11-05b (Sebo-Livetest)
+
+Befunde (Overlay-Frontend, manifest-gesteuert):
+(1) 'Verkauf aus'-Klick stumm: runAction gate 'actionIsEnabled(a)' evaluierte
+enabled_if nur gegen fstate (Flow-Zustand). enabled_if auf Zeilen-Aktionen
+referenziert Screen-Mapping-Keys (for_sale), die nur in der ZEILE existieren
+(rowCtx(row) wird als extra uebergeben, war aber ungelesen). sale_off
+(equals true auf fehlenden fstate-Key) fiel immer durch — Button sichtbar,
+nichts passierte. Server selbst in Ordnung: PATCH {for_sale:false} uebergibt
+1->0 korrekt (live verified Omar-Diag8). Fix: Gate wertet
+{...fstate, ...extra} (Zeile gewinnt).
+(2) Verkauf <-> Wuensche (live verified Omar-Diag9): Server zieht for_sale-
+Items korrekt aus der Ziehung raus; Server LOESCHT bestehende Wuensche
+automatisch beim Verkauf-Markieren; NEUE Wuensche auf Verkauf-Items werden
+serverseitig aber angenommen (200, nie gewinnbar) -> Overlay sperrt sie:
+Manifest: participant:wishes + creator:wishes_for Mapping += for_sale;
+Zuordnen-Nav am Loot-Tab enabled_if for_sale!=true. FlowRenderer:
+Tab-multi-Checkboxen und Wuensche-Modal-Zeilen mit truthyFlagVal(for_sale)
+is-off/deaktiviert + Hinweis 'im Verkauf — nicht verlosbar' (i18n
+creator.sale_hint de/en); modalSaveMulti wishes-Zweig und confirmMulti
+filtern Verkauf-Zeilen aus den POST-IDs raus (Vorauswahl alter Wuensche
+bereinigt sich beim naechsten Speichern). MANIFEST-RE-IMPORT NOETIG.

@@ -1241,8 +1241,14 @@
 			if (a.goto) go(a.goto);
 			return;
 		}
-		// enabled_if (one-way-Flags): deaktivierte Aktionen laufen nicht.
-		if (!actionIsEnabled(a)) return;
+		// enabled_if (one-way-Flag): deaktivierte Aktionen laufen nicht.
+		// Zeilen-Aktionen (extra = rowCtx(row)): enabled_if referenziert
+		// Screen-Mapping-Keys (for_sale, collected...), die NUR in der Zeile
+		// leben — nie im Flow-Zustand. Vorher nur gegen fstate evaluiert:
+		// 'sale_off' (equals true, for_sale in fstate fehlend) fiel bei
+		// jedem Klick durch — Button sichtbar, Klick stumm (Sebo-Befund
+		// 2026-11-05, docs SCLM-FLOW-V2 §24). Merge: Zeilenwert gewinnt.
+		if (!actionEnabled(a, extra ? { ...fstate, ...extra } : fstate)) return;
 		const mergedValues = { ...actionValues(), ...(extra ?? {}) };
 		// SF2-R1 D3: Pflicht-Action-Felder (z. B. pcode-Claim) vor dem Write
 		// prüfen — fehlende Werte laufen sonst als 403/400 beim Server an.
@@ -1334,8 +1340,10 @@
 	async function confirmMulti() {
 		const s = shown;
 		if (!s) return;
-		const write = (s.actions ?? []).find((a) => !isNavigationAction(a));
-		const selected = rows.filter((_, i) => isMarked(i));
+			const write = (s.actions ?? []).find((a) => !isNavigationAction(a));
+		// Verkaufte Items sind serverseitig nicht verlosbar; bereits gemarkte
+		// Zeilen (z. B. Vorauswahl alter Wünsche) fallen raus (docs §24).
+		const selected = rows.filter((r, i) => isMarked(i) && !truthyFlagVal(r?.for_sale));
 		if (selected.length === 0) return;
 		if (multiMax !== null && selected.length > multiMax) return;
 		// Pin-Keys erhalten die Auswahl als JSON-Array (apply_fill ersetzt den
@@ -1629,7 +1637,7 @@
 		const ctx = multiCtxOf(t);
 		if (m.multi === 'wishes') {
 			const ids = modalRows
-				.map((r, i) => (isModalMarked(String(i)) ? String(r[targetPin] ?? '') : ''))
+				.map((r, i) => (isModalMarked(String(i)) && !truthyFlagVal(r?.for_sale) ? String(r[targetPin] ?? '') : ''))
 				.filter((v) => v !== '');
 			if (ids.length === 0 && m.confirmStage !== 'empty') {
 				// Zweistufig (Spec 15): leere Auswahl = alle Wünsche löschen —
@@ -2049,7 +2057,7 @@
 									{/if}
 								</span>
 								<span class="frowbtns">
-									{#each cockpitRowNavs as a (a.id)}
+									{#each cockpitRowNavs.filter((a) => !a.enabled_if || rowActionEnabledFor(a, row)) as a (a.id)}
 										<button class="btn-ghost fbtnrow" type="button" disabled={actionBusy} onclick={() => openRowNav(a, row)}>{rowBtnLabel(a)}</button>
 									{/each}
 									{#each visBtns as p (p.a.id)}
@@ -2187,11 +2195,14 @@
 					{#each rows as row, i (i)}
 						<li>
 							{#if shown.type === 'list' && shown.multi}
+								{@const rowSaleOff = truthyFlagVal(row?.for_sale)}
 								<button
 									class="frow frow-mark"
 									class:is-marked={isMarked(i)}
+									class:is-off={rowSaleOff}
 									type="button"
 									aria-pressed={isMarked(i)}
+									disabled={rowSaleOff}
 									onclick={() => toggleMark(i)}
 								>
 									<span class="fcheck">{isMarked(i) ? '☑' : '☐'}</span>
@@ -2204,8 +2215,9 @@
 												{/each}
 											</span>
 										{/if}
+										{#if rowSaleOff}<span class="fassign-hint">{tr('connector.flow.creator.sale_hint')}</span>{/if}
 									</span>
-								</button>
+									</button>
 							{:else}
 								<button
 									class="frow"
@@ -2404,8 +2416,9 @@
 					{#if modal.multi === 'wishes'}
 						{@const metaKeys = Object.keys(modal?.target?.mapping ?? {}).filter((k) => k !== (modal?.target?.pins ?? [])[0] && k !== 'name' && /(qty|type|grade|size|wish_count)/i.test(k)).slice(0, 3)}
 						{#each modalRows as row, i (i)}
-							<li>
-								<button class="frow frow-mark" class:is-marked={isModalMarked(String(i))} type="button" aria-pressed={isModalMarked(String(i))} onclick={() => toggleModalMark(String(i), true)}>
+						{@const rowSaleOff = truthyFlagVal(row?.for_sale)}
+						<li>
+							<button class="frow frow-mark" class:is-marked={isModalMarked(String(i))} class:is-off={rowSaleOff} disabled={rowSaleOff} type="button" aria-pressed={isModalMarked(String(i))} onclick={() => toggleModalMark(String(i), !rowSaleOff)}>
 									<span class="fcheck">{isModalMarked(String(i)) ? '☑' : '☐'}</span>
 									<span class="fmain">
 										<span class="ftitle">{formatValue(row?.name ?? row?.title ?? '')}</span>
@@ -2416,6 +2429,7 @@
 												{/each}
 											</span>
 										{/if}
+										{#if rowSaleOff}<span class="fassign-hint">{tr('connector.flow.creator.sale_hint')}</span>{/if}
 									</span>
 								</button>
 							</li>

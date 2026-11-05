@@ -91,6 +91,7 @@
     "connector.flow.wishes_max": "Max. {max} wishes",
     "connector.flow.creator.assign_done": "Assigned loot to {n} participant(s)",
     "connector.flow.creator.assign_hint_assigned": "already assigned",
+    "connector.flow.creator.sale_hint": "for sale — not rafflable",
     "connector.flow.creator.assign_hint_full": "no free wish slots",
     "connector.flow.creator.btn_add_commodity": "+ Commodity",
     "connector.flow.creator.btn_add_loot": "+ Item",

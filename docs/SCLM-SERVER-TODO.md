@@ -70,3 +70,15 @@ Kontrakt. Nur additiv — bestehende Felder nicht umbauen.
   Client-Implementatoren vor Punkt-1-Ueberraschungen schuetzen.
 - Fehlerantworten einheitlich als JSON (auch 404/405): derzeit gemischt HTML/JSON;
   Clients die JSON erwarten, zeigen dann "Ungueltiges JSON" statt eines Hinweises.
+
+## 5. Wuensche auf Verkauf-Items ablehnen (statt stumm zu speichern)
+
+Verifiziert 2026-11-05 (Omar-Diag9): Server zieht `for_sale`-Items korrekt aus
+der Ziehung raus und loescht bestehende Wuenche automatisch beim
+Verkauf-Markieren — beides gut. Aber `POST …/wishes` mit einem `for_sale`-
+loot_id wird mit 200 `{"ok":true}` angenommen und gespeichert: tote, nie
+gewinnbare Wuensche in der DB (Teilnehmer sehen sie als ihre Wuensche).
+
+Erwartetes Verhalten: `POST …/wishes` lehnt `for_sale`-loot_ids mit klarem
+400 ab (`{"error": "Gegenstand ist fuer Verkauf markiert"}`) oder filtert sie
+mit Hinweis im Response. Overlay sperrt die Auswahl bereits clientseitig.
