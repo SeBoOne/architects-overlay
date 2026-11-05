@@ -40,6 +40,11 @@ export type ParamDTO = {
 	label: LocalizedText;
 	/** Pflichtfeld (Action-Eingabefelder, SF2-R1 D3). Default: true. */
 	required?: boolean | null;
+	/** Karten-F (d1a3343): Feld-Feldtyp — fehlt = 'text' (alle Bestandsmanifeste
+	 *  serialisieren wegen skip_serializing_if weder type noch options). */
+	type?: 'text' | 'number' | 'select' | null;
+	/** Nur bei type='select' (Validator erzwingt de UND en pro Option). */
+	options?: LocalizedText[] | null;
 };
 
 /** Manifest-deklariertes Settings-Feld (SCLM v2 Karte A, Spec 5.1): Wert pro
@@ -95,6 +100,9 @@ export type ScannedRaffleDTO = {
 	raffle_done: boolean;
 	/** sid liegt im Session-Keystore → „Öffnen“-Button (Spec 5.2). */
 	has_saved_code: boolean;
+	/** Ersteller-Cockpit v1 (Spec 15): Keystore hat admin_code für die sid →
+	 *  „Ersteller“-Button. Defensiv optional (Karte G läuft vor F-Merge). */
+	is_creator?: boolean;
 };
 
 export type ScanOutcomeDTO = {
@@ -125,6 +133,11 @@ export type ConnectorManifestDTO = {
 	settings_fields?: SettingsFieldDTO[] | null;
 	/** Sessionscan-Landliste (Karte B) — own-Mode startet mit „Meine …“-Liste. */
 	scan?: ScanDTO | null;
+	/** Ersteller-Cockpit v1 (Spec 15, Karte F): Pfad der Session-Erstellungs-
+	 *  POST (base_url-relativ, z. B. '/api/session/create'). Fehlend/leer =
+	 *  Connector unterstützt kein Erstellen → „Verlosung erstellen“-Button
+	 *  erscheint nicht (defensiv). */
+	create_endpoint?: string | null;
 	sync?: unknown;
 };
 
@@ -214,29 +227,54 @@ export type ScreenDTO = {
 
 /** Code-Einstieg eines Flows (SCLM v2 Spec 5.4): die Suchzeile (oder der
  *  Öffnen-Button) übergibt nur den Session-Code — der Core öffnet, joined
- *  automatisch und nennt den Start-Screen. */
+ *  automatisch und nennt den Start-Screen.
+ *  G-SCLM-UX v1 (Spec 15): Teilnehmer-Einstieg deklariert Join-Felder,
+ *  Admin-Einstieg (Creator-Cockpit) deklariert `admin_path` OHNE Join-Felder.
+ *  Rust serialisiert undeklarierte Felder nicht (skip_serializing_if) —
+ *  deshalb sind alle Join-Felder hier optional typisiert; fehlende Felder =
+ *  kein Teilnehmer-Beitritt (altes Verhalten bleibt gültig). */
 export type FlowOpenDTO = {
-	param: string;
+	/** Code-Param-Key; Rust-Default 'code' (wird nie serialisiert). */
+	param?: string | null;
 	session_endpoint: string;
 	headers?: Record<string, string> | null;
 	mapping: Record<string, string>;
-	match_path: string;
-	id_path: string;
-	match_setting_key: string;
-	join_endpoint: string;
+	match_path?: string | null;
+	id_path?: string | null;
+	match_setting_key?: string | null;
+	join_endpoint?: string | null;
 	join_body?: unknown | null;
 	join_headers?: Record<string, string> | null;
 	open_screen: string;
 	done_screen: string;
 	done_path: string;
+	progress_path?: string | null;
+	progress_screen?: string | null;
+	/** Admin-Guardrail-Key in der Session-Antwort (z. B. 'is_admin'). */
+	admin_path?: string | null;
+	/** Admin-Route am Teilnehmer-Einstieg → Cockpit-Flow-ID (Rust 2b). */
+	admin_flow?: string | null;
+};
+
+/** Sub-Reiter des Creator-Cockpits (Spec-Abschnitt 15; Rust: FlowTab,
+ *  snake_case wie bisher). Existiert nur bei Flows mit `tabs`; Screen-Ids
+ *  verweisen auf screens[] (vom Kern validiert). Flow ohne tabs =
+ *  bisheriges Verhalten unverändert. */
+export type FlowTabDTO = {
+	id: string;
+	screen: string;
+	label: LocalizedText;
 };
 
 export type FlowDTO = {
 	id: string;
-	title: LocalizedText;
+	title?: LocalizedText | null;
 	entry: string;
+	steps?: string[] | null;
 	screens: ScreenDTO[];
 	open?: FlowOpenDTO | null;
+	/** Karten-G/F (Spec 15): permanente Sub-Reiter — nur im Creator-Flow. */
+	tabs?: FlowTabDTO[] | null;
 };
 
 /** Antwort von connector_flow_open (Auto-Beitritt, Spec 5.4). */
@@ -255,6 +293,22 @@ export function openFlowOf(manifest: ConnectorManifestDTO): FlowDTO | null {
 	return (manifest.flows ?? []).find((f) => f.open) ?? null;
 }
 
+/** G-SCLM-UX v1 (Spec 15): Teilnehmer-Einstiegs-Flow = open-Block MIT
+ *  join_endpoint (Auto-Beitritt/Claim). Fällt defensiv auf den klassischen
+ *  open-Flow zurück (Bestandsmanifeste ohne join-Felder). */
+export function joinFlowOf(manifest: ConnectorManifestDTO): FlowDTO | null {
+	const flows = manifest.flows ?? [];
+	return flows.find((f) => f.open?.join_endpoint) ?? openFlowOf(manifest);
+}
+
+/** G-SCLM-UX v1 (Spec 15): Admin-Einstiegs-Flow (Creator-Cockpit) = open-Block
+ *  MIT admin_path UND OHNE join_endpoint — rein manifest-strukturell erkannt,
+ *  kein Connector-Wissen. Der Core guardelt zusätzlich über is_admin in der
+ *  Session-Antwort (flow_open_core, Rust-Pfad 2a). */
+export function adminFlowOf(manifest: ConnectorManifestDTO): FlowDTO | null {
+	return (manifest.flows ?? []).find((f) => !!f.open && !f.open.join_endpoint && !!f.open.admin_path) ?? null;
+}
+
 export type ConnectorEntry = {
 	id: string;
 	manifest: ConnectorManifestDTO;
@@ -270,7 +324,9 @@ export type ConnectorEntry = {
 };
 
 /** Session-Keystore-Eintrag (Spiegel zu connector_keystore.rs, Spec 5.2) —
- * Karte B/C (UI/Flow) greifen über connector_keystore_list/-find darauf zu. */
+ *  Karte B/C (UI/Flow) greifen über connector_keystore_list/-find darauf zu.
+ *  G-SCLM-UX v1 (Spec 15): `admin_code` additiv — Keystore hat Ersteller-Code
+ *  (additive Migration: alte Dateien ohne Feld → Feld fehlt = nicht Ersteller). */
 export type SessionEntryDTO = {
 	sid: string;
 	join_code: string;
@@ -278,7 +334,21 @@ export type SessionEntryDTO = {
 	participant_id?: string | null;
 	pcode?: string | null;
 	result_id?: string | null;
+	/** Ersteller-Cockpit v1: gespeicherter Ersteller-Code (None = nicht
+	 *  Ersteller bekannt). Defensiv optional (G vor F-Merge). */
+	admin_code?: string | null;
 	added: number;
+};
+
+/** Output von connector_creator_create (Spec 15, Decision 1): neue Session
+ *  per POST create_endpoint; die Codes sind NUR einmal sichtbar (Core pinnt
+ *  sie sofort in den Keystore). Das Frontend übergibt den admin_code einmal
+ *  an flow_open — danach lebt er nur noch im Keystore. */
+export type CreatorCreateDTO = {
+	sid: string;
+	name: string;
+	admin_code: string;
+	join_code: string;
 };
 
 export type FetchResultDTO = {

@@ -29,8 +29,11 @@
 		type ScanOutcomeDTO,
 		type SessionEntryDTO,
 		type ViewDTO,
-		openFlowOf
-		} from './connector';
+		openFlowOf,
+		joinFlowOf,
+		adminFlowOf,
+		type CreatorCreateDTO
+	} from './connector';
 
 	type Result = { data: FetchResultDTO | null; error: string; loading: boolean };
 
@@ -289,6 +292,16 @@
 	// defaultPrevented den Vortritt.
 	function onOwnKey(e: KeyboardEvent) {
 		if (embedded || e.key !== 'Escape' || e.defaultPrevented) return;
+		// Karten-G (Spec 15): Cockpit-Modal und Erstellungs-Modal schließen
+		// sich VOR der Kaskade Flow→Liste→Modus (Esc-Kaskade bleibt für
+		// alles ohne offenes Modal unverändert).
+		if (createModal) {
+			if (createBusy) return;
+			createModal = false;
+			e.preventDefault();
+			return;
+		}
+		if (flowModalActive) return; // FlowRenderer schließt sein Modal selbst
 		if (scan && (activeFlowRef() || viewId)) {
 			backToLanding();
 			e.preventDefault();
@@ -322,8 +335,16 @@
 	);
 	let openBusy = $state(false);
 	let openNote = $state('');
+	// Karten-G (Spec 15): Cockpit-Modal aktiv? (bind vom FlowRenderer) —
+	// solange ein Modal offen ist, gehört Esc zuerst dem Modal; die Kaskade
+	// Flow→Liste→Modus setzt erst danach wieder ein.
+	let flowModalActive = $state(false);
+	let createModal = $state(false);
+	let createBusy = $state(false);
+	let createNote = $state('');
+	let createName = $state('');
 	async function openRaffle(sid: string) {
-		const fl = openFlow;
+		const fl = joinFlow ?? openFlow;
 		if (!fl || !isTauri || openBusy) return;
 		openBusy = true;
 		openNote = '';
@@ -347,6 +368,94 @@
 					state: out.state,
 					nonce: Date.now() // Öffnungen sind user-getriggert — Zeitstempel genügt als Unique-Key
 				};
+			}
+		} catch (err) {
+			openNote = trError(err);
+		}
+		openBusy = false;
+	}
+
+	// ---- Karten-G (Spec-Abschnitt 15): Ersteller-Cockpit-Einstieg ----------
+	// create_endpoint nur wenn das Manifest es deklariert (fehlend = Button
+	// erscheint nicht, defensiv). Admin-Einstiegs-Flow manifest-strukturell
+	// erkannt (open-Block ohne join_endpoint, mit admin_path) — der Core
+	// guardelt zusätzlich per is_admin im flow_open (Rust-Pfad 2a).
+	const createEndpoint = $derived((entry.manifest.create_endpoint ?? '').trim());
+	const joinFlow = $derived(joinFlowOf(entry.manifest));
+	const adminFlow = $derived(adminFlowOf(entry.manifest));
+	let createToast = $state('');
+	let createToastTimer: ReturnType<typeof setTimeout> | null = null;
+	let createInput = $state<HTMLInputElement | null>(null);
+	// Toast auto-hide (Spec 15 Kriterium 2: Toast im Vordergrund, Liste unbewegt).
+	$effect(() => {
+		if (createToastTimer) clearTimeout(createToastTimer);
+		if (createToast) createToastTimer = setTimeout(() => (createToast = ''), 7000);
+	});
+	// Fokus in das Namensfeld, sobald das Modal montiert ist.
+	$effect(() => {
+		if (createModal && createInput) createInput.focus();
+	});
+	/** Gemeinsamer Code-Einstieg: der Core routet den Code selbst (Participant
+	 *  → Teilnehmer-Flow, Admin-Code → Creator-Flow, Screen c_overview). */
+	async function openWithCode(code: string) {
+		const fl = adminFlow ?? openFlow;
+		if (!fl) return;
+		const out = await invoke<FlowOpenOutcomeDTO>('connector_flow_open', {
+			id: entry.id,
+			flowId: fl.id, // Tauri camelCase-Kommandoargument (Rust-Parameter flow_id)
+			code
+		});
+		flowId = out.flow_id;
+		flowStart = {
+			screenId: out.screen,
+			state: out.state,
+			nonce: Date.now()
+		};
+	}
+	/** Kriterium 2: „Verlosung erstellen“ — kleines Modal über der unbewegten
+	 *  Liste; nach Erfolg flow_open(admin_code) → Cockpit direkt auf Übersicht
+	 *  (Core meldet open_screen c_overview). Codes sind nur einmal sichtbar —
+	 *  der Core pinnt sie sofort in den Keystore, das Frontend behält sie
+	 *  nicht. */
+	async function createRaffle() {
+		if (!isTauri || createBusy) return;
+		const name = createName.trim();
+		if (!name) {
+			createNote = tr('error.connector.param_required', { key: tr('connector.flow.creator.create_name_label') });
+			return;
+		}
+		createBusy = true;
+		createNote = '';
+		try {
+			const out = await invoke<CreatorCreateDTO>('connector_creator_create', {
+				id: entry.id,
+				name
+			});
+			createModal = false;
+			createToast = tr('connector.flow.creator.create_done', { name: out.name || name });
+			await openWithCode(out.admin_code);
+			void loadScan(true); // Landliste im Hintergrund auffrischen (Liste unbewegt)
+		} catch (err) {
+			createNote = trError(err);
+		}
+		createBusy = false;
+	}
+	/** Kriterium 3: „Ersteller“-Button — Cockpit mit gespeichertem admin_code
+	 *  aus dem Session-Keystore (flow_open(code)); nie sichtbare Codes. */
+	async function openCreator(sid: string) {
+		if (!isTauri || openBusy || !adminFlow) return;
+		openBusy = true;
+		openNote = '';
+		try {
+			const found = await invoke<SessionEntryDTO | null>('connector_keystore_find', {
+				id: entry.id,
+				sid
+			});
+			const code = (found?.admin_code ?? '').trim();
+			if (!code) {
+				openNote = tr('error.connector.param_required', { key: 'admin_code' });
+			} else {
+				await openWithCode(code);
 			}
 		} catch (err) {
 			openNote = trError(err);
@@ -563,6 +672,11 @@
 		</div>
 	{/if}
 
+	{#if createToast}
+		<!-- Toast nach „Verlosung erstellen“: sichtbare Info-Zeile im own-Mode,
+		     die Liste dahinter bleibt unbewegt (nur Hintergrund-Scan-Refresh). -->
+		<div class="cscan-note ctoast" role="status">{createToast}</div>
+	{/if}
 	{#if activeFlow}
 		<!-- SF1/SF4: Flow-Renderer übernimmt die komplette Screen-Kette
 		     (generisch — KEIN connector-spezifisches Wissen hier).
@@ -574,6 +688,7 @@
 			flow={activeFlow}
 			initial={flowStart?.screenId ?? null}
 			initialState={flowStart?.state ?? null}
+			bind:modalActive={flowModalActive}
 		/>
 		{/key}
 	{:else if scan && showLanding}
@@ -594,6 +709,20 @@
 				<span class="cstate" title={$t('connector.ttl_title')}>
 					{scanData.cached ? $t('connector.cached') : $t('connector.fresh')} · {scanAge()}
 				</span>
+			{/if}
+			{#if createEndpoint && adminFlow && isTauri()}
+				<!-- Karten-G (Spec 15 Kriterium 2): „Verlosung erstellen“ NUR im
+				     SCLM own-Mode-Header neben ↻ — Manifest ohne create_endpoint
+				     = Button erscheint nicht (defensive Regel). -->
+				<button
+					type="button"
+					class="btn"
+					onclick={() => {
+						createName = '';
+						createNote = '';
+						createModal = true;
+					}}
+				>{tr('connector.flow.creator.create_title')}</button>
 			{/if}
 			<button type="button" class="btn-ghost" onclick={() => void loadScan(true)}>
 				{$t('common.refresh')}
@@ -632,12 +761,26 @@
 									? $t('connector.scan_status_done')
 									: $t('connector.scan_status_pending')}
 							</span>
-							{#if it.has_saved_code && openFlow}
+							{#if it.is_creator && adminFlow}
+								<!-- Karten-G (Spec 15 Kriterium 3): „Ersteller“ öffnet
+								     das Cockpit mit dem gespeicherten admin_code aus
+								     dem Session-Keystore (flow_open(code) — der Core
+								     routet per is_admin). Beide Buttons nebeneinander
+								     bei beiden Rechten; keine Code-Zeilen/IDs sichtbar. -->
+								<button
+									type="button"
+									class="btn"
+									disabled={openBusy}
+									title={tr('connector.flow.creator.open_tip')}
+									onclick={() => void openCreator(it.sid)}
+								>{tr('connector.flow.creator.open')}</button>
+							{/if}
+							{#if it.has_saved_code && joinFlow}
 								<!-- SCLM v2 Karte C (Req. 5/6): Öffnen startet denselben
 								     Weg wie der Suchleisten-Code (gespeicherter join_code). -->
 								<button
 									type="button"
-									class="btn"
+									class="btn-ghost"
 									disabled={openBusy}
 									title={$t('connector.scan_open_tip')}
 									onclick={() => void openRaffle(it.sid)}
@@ -646,7 +789,7 @@
 								<!-- Manifest ohne open-Block: Button bleibt Platzhalter. -->
 								<button
 									type="button"
-									class="btn"
+									class="btn-ghost"
 									disabled
 									title={$t('connector.scan_flow_follows')}
 								>{$t('connector.scan_open')}</button>
@@ -766,6 +909,52 @@
 		</div>
 	{/if}
 </section>
+
+{#if createModal}
+	<!-- Karten-G (Spec 15 Kriterium 2): kleines Erstellungs-Modal über der
+	     unbewegten Liste — nur Namensfeld + Bestätigen/Abbrechen; Esc schließt
+	     es zuerst (onOwnKey), Enter bestätigt (form submit). -->
+	<div class="cmodal" role="dialog" aria-modal="true" aria-label={tr('connector.flow.creator.create_title')}>
+		<button
+			class="cmodal-backdrop"
+			type="button"
+			tabindex={-1}
+			aria-label={tr('connector.flow.creator.cancel')}
+			onclick={() => {
+				if (!createBusy) createModal = false;
+			}}
+		></button>
+		<form
+			class="cmodal-card"
+			onsubmit={(e) => {
+				e.preventDefault();
+				void createRaffle();
+			}}
+		>
+			<p class="cmodal-title">{tr('connector.flow.creator.create_title')}</p>
+			<label class="cfield">
+				<span class="cfield-label">{tr('connector.flow.creator.create_name_label')} *</span>
+				<input class="cmodal-input" bind:value={createName} bind:this={createInput} maxlength={120} autocomplete="off" />
+			</label>
+			{#if createNote}<p class="cmodal-warn" role="alert">{createNote}</p>{/if}
+			<div class="cmodal-actions">
+				<button
+					type="button"
+					class="btn-ghost"
+					disabled={createBusy}
+					onclick={() => {
+						createModal = false;
+					}}
+				>
+					{tr('connector.flow.creator.cancel')}
+				</button>
+				<button type="submit" class="btn" disabled={createBusy}>
+					{createBusy ? $t('common.sending') : tr('connector.flow.creator.confirm')}
+				</button>
+			</div>
+		</form>
+	</div>
+{/if}
 
 <!-- D-B Punkt 6: own-Mode-Esc-Kaskade (Flow → Landliste → Modus verlassen).
      embedded-Instanzen (hangar/inventory-Hooks) ignorieren den Handler. -->
@@ -969,4 +1158,37 @@
 		opacity: 0.7;
 		padding: 4px 2px;
 	}
+	/* Karten-G (Spec 15 Kriterium 2): Erstellungs-Modal + Toast. D-B Punkt 3
+	   (aus FlowRenderer übernommen): keine neuen Farben — nur Theme-Variablen
+	   bzw. color-mix aus currentColor (theme-adaptiv). */
+	.ctoast {
+		opacity: 1;
+		font-weight: 600;
+	}
+	.cmodal {
+		position: fixed; inset: 0; z-index: 1400;
+		display: flex; align-items: center; justify-content: center;
+		background: color-mix(in srgb, currentColor 35%, transparent);
+	}
+	.cmodal-backdrop {
+		position: absolute; inset: 0; border: 0; padding: 0;
+		background: transparent; cursor: default;
+	}
+	.cmodal-card {
+		position: relative;
+		width: min(360px, calc(100vw - 28px));
+		display: flex; flex-direction: column; gap: 10px;
+		padding: 14px 16px 12px;
+		border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+		border-radius: 10px;
+		background: var(--panel2);
+	}
+	.cmodal-title { margin: 0; font-weight: 700; font-size: 13.5px; }
+	.cmodal-input { max-width: 100%; }
+	.cmodal-warn {
+		margin: 0; font-size: 11.5px; color: #ff7a7a;
+		border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+		border-radius: 7px; padding: 6px 9px;
+	}
+	.cmodal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
