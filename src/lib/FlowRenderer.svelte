@@ -1234,7 +1234,7 @@
 	 *  participant_id, whole-array loot_ids …) — Cockpit-Buttons haben keine
 	 *  Eingabefelder, ihre Pin-Werte kommen direkt aus Zeile/Modal. Extra
 	 *  hat die letzte Schreibhand. */
-	async function runAction(a: ScreenActionDTO, extra?: Record<string, unknown>) {
+	async function runAction(a: ScreenActionDTO, extra?: Record<string, unknown>, screenOverride?: string) {
 		const s = shown;
 		if (!s || actionBusy) return;
 		if (isNavigationAction(a)) {
@@ -1259,7 +1259,11 @@
 		try {
 			const out = await invoke<{ status: number; body: unknown }>('connector_screen_action', {
 				id: entry.id,
-				screenId: `${flow.id}:${s.id}`,
+				// Modal-Acts (Wünsche full-replace u. a.) sind an der MODAL-
+				// Ziel-Screen des Manifests deklariert, nicht am sichtbaren
+				// Tab-Screen — Rust sucht die Action in der übergebenen
+				// Screen (view_unknown sonst, Sebo-Befund 2026-11-05 §23).
+				screenId: `${flow.id}:${screenOverride ?? s.id}`,
 				actionId: a.id,
 				values: mergedValues
 			});
@@ -1638,8 +1642,18 @@
 				const v = m.multiCtxRow[ctx.key];
 				if (typeof v === 'string' || typeof v === 'number') extra[ctx.key] = v;
 			}
+			// Sebo-Befund 2026-11-05 (docs SCLM-FLOW-V2 §23): Der Act haengt an
+			// der Modal-ZIEL-Screen (wishes_for), nicht am sichtbaren Tab-
+			// Screen (c_participants) — Rust loest die Action in der
+			// uebergebenen Screen auf. Vorher: runAction leitete sich aus
+			// `shown` (Tab) ab, Rust fand 'confirm' dort nicht und antwortete
+			// view_unknown ('Unbekannter View.' im Tab, POST lief nie raus).
+			// Zusaetzlich: Modal schliesst erst NACH dem POST (erfolgreiche
+			// Uebernahme bleibt sichtbar, Fehlermeldung bleibt im Modal-Kontext
+			// des Tabs erhalten). Der assign-Zweig nutzte die Ziel-ID schon
+			// direkt — korrekt.
+			if (write) await runAction(write, extra, t.id); // full-replace POST
 			closeModal();
-			if (write) await runAction(write, extra); // full-replace POST
 			return;
 		}
 		// assign: ein POST je gewähltem Teilnehmer — bestehende Wünsche bleiben,

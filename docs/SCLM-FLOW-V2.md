@@ -430,3 +430,35 @@ connectors keystore file (backup .bak-20261105).
 Deploy window for the whole round (coercion + logger + sid fallback): service stop
 -> keystore cleanup -> pnpm tauri build -> install -> service start. Manifest
 examples/sclm.json unchanged in this round, no re-import needed.
+
+## 23. Cockpit-Runde 2026-11-05 (Abends): Zuordnen-Mapping-Crash + Waehler-Modal-Act
+
+Sebo-Livetest nach dem Coercion-Deploy: Loot-500 weg. Zwei neue Befunde:
+
+(1) 'Zuordnen' funktionierte einmal, danach 'Mapping-Fehler: expected object at id'.
+Root-Cause: participants[].wishes ist serverseitig eine Liste NACKTER loot_id-Saiten
+(API.md §Participant, live bestaetigt). Das Manifest-Mapping der assign_participants-
+Screen deklarierte 'wish_count': 'participants[].wishes[].id' — der .id-Drall auf
+Saiten lies dot_path hart fehlschlagen und die ganze Screen-Fetch-Liste krachte, sobald
+ein Teilnehmer >=1 Wunsch hielt (leere wishes-Liste war vorher ungefaehrlich, darum
+klappte die erste Zuweisung noch). Fix doppelt: dot_path Key-Token auf Nicht-Objekt =
+leerer Treffer statt Screen-Crash (crates/connector/src/mapping.rs, tolerante DTO-Regel
+verbreitert; '[]'/'[i]' auf falsche Form bleibt harte Fehlerform) + Manifest: wish_count
+aus assign_participants-Mapping entfernt (examples/ Fixture/ Backup synchron —
+Manifest-RE-IMPORT noetig). Serverseitig existiert kein participant wish_count-Feld;
+SERVER-TODO docs/SCLM-SERVER-TODO.md Punkt 4 (additiv wish_count je Participant).
+
+(2) 'Wuensche bearbeiten': Auswahl moeglich, Speichern ohne Wirkung, danach
+'Unbekannter View.' neben '+ Teilnehmer'. Root-Cause (rekonstruiert + live eingegrenzt):
+Der modalSaveMulti wishes-Zweig rief runAction NACH closeModal; runAction leitet die
+Invoke-Screen-ID aus 'shown' ab = TAB-Screen c_participants. Der confirm-Act haengt im
+Manifest aber an der Modal-ZIEL-Screen wishes_for -> RustAction-Lookup scheiterte ->
+error.connector.view_unknown ('Unbekannter View.'), der POST lief nie raus. Live-
+Gegenprobe: Admin-POST /wishes {participant_id, loot_ids:[...], mode:wish} = 200
+{ok:true} (Server nimmt das Overlay-Request-Format an; loot[].wish_count existiert als
+int). Fix: runAction(a, extra, screenOverride) — modalSaveMulti uebergibt die Ziel-
+Screen-ID (t.id, so wie der assign-Zweig es schon immer tat); Modal schliesst erst nach
+dem POST. Diagnose-Haertung: view_unknown-Faelle loggen jetzt Warn-Logs (fetch +
+screen action lookup) ins User-Journal ('connector screen action: keine Action ...').
+
+Wegwerf-Session Omar-Diag7 (qposmvsw) nach den Proben per Admin-Code geloescht.

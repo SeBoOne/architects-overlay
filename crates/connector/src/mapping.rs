@@ -36,7 +36,13 @@ pub fn dot_path<'a>(value: &'a Value, path: &str) -> Result<Vec<&'a Value>, DotP
                         // kein Fehler (tolerante DTOs, Serde-Null-Regel).
                     }
                     Value::Null => {}
-                    _ => return Err(DotPathError(format!("expected object at '{key}'"))),
+                    // Kein Objekt = kein Schlüssel vorhanden: skilare
+                    // Array-Elemente (SCLM-Form: participants[].wishes ist
+                    // eine Liste nackter loot_id-Saiten) liefern leere Treffer
+                    // statt den ganzen Screen-Crash — eine Deko-Spalte darf
+                    // nie die Ansicht zerlegen. Falsche LISTEN-Form ('[]' auf
+                    // Nicht-Array) bleibt harte Fehlerform (wrong_shapes).
+                    _ => {}
                 },
                 Token::Iterate => match node {
                     Value::Array(items) => next.extend(items.iter()),
@@ -163,5 +169,19 @@ mod tests {
         assert!(dot_path(&data, "x[.y").is_err());
         // Leerer Pfad = „Treffer selbst" (SF3, String-Listen-Autocomplete)
         assert_eq!(dot_path(&data, "").unwrap()[0], &data);
+    }
+
+    #[test]
+    fn scalar_list_elements_are_tolerant() {
+        // SCLM-Form (API.md §Participant): participants[].wishes ist eine
+        // Liste nackter loot_id-Saiten. Ein .id-Drall liefert leere Treffer,
+        // aber KEIN Screen-Crash (docs SCLM-FLOW-V2 §23, Loot-Zuordnen-Fall).
+        let data = json!({"participants": [{"wishes": ["l1", "l2"]}]});
+        let hits = dot_path(&data, "participants[].wishes[].id").unwrap();
+        assert!(hits.is_empty());
+        // Die nackten Saiten selbst sind über leeren Pfad erreichbar:
+        let whole = dot_path(&data, "participants[].wishes[]").unwrap();
+        assert_eq!(whole.len(), 2);
+        assert_eq!(whole[0].as_str().unwrap(), "l1");
     }
 }

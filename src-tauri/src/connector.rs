@@ -1550,6 +1550,7 @@ pub(crate) fn resolve_fetch_view(
         return Ok(screen_as_view(s));
     }
     let Some(ep) = params.get("__flow_ep") else {
+        log::warn!("connector fetch: view_unknown '{view_id}' (kein Flow-Screen, kein __flow_ep)");
         return Err(err_key("error.connector.view_unknown"));
     };
     let mut endpoint = ep.clone();
@@ -1788,15 +1789,22 @@ pub async fn connector_screen_action(
             return Err(err_key("error.connector.unknown"));
         };
         let manifest = st.manifest.clone();
-        let screen = find_flow_screen(&manifest, &screen_id)
-            .ok_or_else(|| err_key("error.connector.view_unknown"))?;
+        let screen = find_flow_screen(&manifest, &screen_id).ok_or_else(|| {
+            log::warn!("connector screen action: view_unknown '{screen_id}'");
+            err_key("error.connector.view_unknown")
+        })?;
         let action = screen
             .actions
             .iter()
             .flatten()
             .find(|a| a.id == action_id)
             .cloned()
-            .ok_or_else(|| err_key("error.connector.view_unknown"))?;
+            .ok_or_else(|| {
+                log::warn!(
+                    "connector screen action: keine Action '{action_id}' auf Screen '{screen_id}'"
+                );
+                err_key("error.connector.view_unknown")
+            })?;
         (manifest, action)
     };
     let (status, resp_body) =
