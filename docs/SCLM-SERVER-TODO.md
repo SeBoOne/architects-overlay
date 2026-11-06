@@ -1,5 +1,17 @@
 # SCLM Server — Offene Aufgaben (API-Haertung)
 
+> **ERLEDIGT 2026-11-06:** Alle fünf Punkte sind auf dem Server umgesetzt (Haertung 3A/3B/3C
+> + 4A im Repo SeBoOne/sclm, main 2b118db, live deployt). Live-Gegenprobe Omar-Rev1
+> 2026-11-06: numeric size -> 400 'size muss eine Zeichenkette sein'; qty 1e20/20000 ->
+> 400 'muss zwischen 1 und 10000 sein'; qty 1.5 -> 400 Ganzzahl; Re-Wunsch auf
+> Verkauf-Item -> 400 'Gegenstand ist fuer Verkauf markiert' (loot_ids im Body);
+> participants[].wish_count/no_interest_count vorhanden; Sessions-Liste ohne Codes;
+> GET /api/public/session/<sid> 200; sid im GET-Pfad -> 404 mit Hinweis-JSON.
+> Overlay-seitige Konsequenzen: docs/SCLM-FLOW-V2.md §25 (Scan-Zweit-Endpunkt,
+> Deploy-Reihenfolge Binary vor Manifest-Re-Import). Overlay-Haertungen (Coercion,
+> qty-Klemme) bleiben als Doppel-Sicherung bestehen. Datei bleibt als
+> Vertrags-Dokumentation stehen.
+
 Stand 2026-11-05. Alle Befunde sind live auf https://sclm.site reproduziert (Wegwerf-Sessions,
 mittlerweile geloescht). Produziert durch Diagnose-Serien des Architects-Overlay-Projekts
 (Omar/Sebo). Kontext je Fundstelle: docs/SCLM-FLOW-V2.md §19 §20 §21 §23.
