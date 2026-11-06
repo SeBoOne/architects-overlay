@@ -90,6 +90,10 @@ export type ScanDTO = {
 	id_field: string;
 	name_field: string;
 	detail_endpoint: string;
+	/** Optional: eigener Detail-Endpunkt für die Ersteller-Vereinigung
+	 * (Keystore-admin_code). Fehlt er, nutzt die Vereinigung detail_endpoint
+	 * (Rust: ScanSpec.creator_detail_endpoint, docs/SCLM-FLOW-V2.md §25). */
+	creator_detail_endpoint?: string | null;
 	match_path: string;
 	match_setting_key: string;
 	headers?: Record<string, string> | null;

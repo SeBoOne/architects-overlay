@@ -192,6 +192,10 @@ pub enum SettingsFieldType {
 /// 3. pro Kandidat `detail_endpoint` mit `{code}` (= Wert von `code_field`),
 ///    darin `match_path`-Namen ci gegen den gespeicherten Wert von
 ///    `match_setting_key` (settings_fields) vergleichen.
+/// 4. Ersteller-Vereinigung: Keystore-Sessions mit gespeichertem `admin_code`
+///    werden zusätzlich geladen — über `creator_detail_endpoint` wenn gesetzt,
+///    sonst über `detail_endpoint` (gleicher `{code}`-Platzhalter, Wert =
+///    gespeicherter Admin-Code).
 #[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScanSpec {
@@ -211,6 +215,21 @@ pub struct ScanSpec {
     pub name_field: String,
     /// Detail-Endpunkt mit genau einem `{code}`-Platzhalter.
     pub detail_endpoint: String,
+    /// Optional: eigener Detail-Endpunkt NUR für die Ersteller-Vereinigung
+    /// (Sessions, die über einen gespeicherten `admin_code` bekannt sind).
+    /// Fehlt das Feld, nutzt die Vereinigung `detail_endpoint` — alte
+    /// Manifeste verhalten sich also unverändert.
+    ///
+    /// Warum es das gibt: `code_field` füllt `{code}` in BOTHen Pfaden —
+    /// Kandidaten bekommen den Listenwert (z. B. `id`/sid, wenn der Server
+    /// keine Codes mehr ausliefert), die Vereinigung immer den Keystore-
+    /// Admin-Code. Endpunkt + Token passen aber nicht mehr zusammen, sobald
+    /// der Server sid- und Code-Lesung trennt (SCLM 4A: sid ->
+    /// `/api/public/session/<sid>`, Codes -> `/api/session/<code>`). Mit diesem
+    /// Feld bleiben beide Arme korrekt adressiert, ohne dass der Kandidatenarm
+    /// wieder einen öffentlich ausgelieferten Join-Code braucht.
+    #[serde(default)]
+    pub creator_detail_endpoint: Option<String>,
     /// Dot-Path in der Detail-Antwort, der die Teilnehmernamen liefert
     /// (z. B. `participants[].name`).
     pub match_path: String,

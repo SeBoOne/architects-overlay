@@ -835,7 +835,8 @@ pub async fn connector_scan_match(
 /// Ersteller-Cockpit v1 (Scan-Vereinigung): Sessions, die dem Keystore nur
 /// durch den eigenen admin_code bekannt sind (Username nicht in den
 /// Teilnehmern), werden der Landliste zusätzlich angehängt. Detail-Fetch mit
-/// admin_code über `scan.detail_endpoint` ({code}-Platzhalter); Duplikate
+/// admin_code über `scan.creator_detail_endpoint` (falls deklariert, sonst
+/// `scan.detail_endpoint`; jeweils der `{code}`-Platzhalter). Duplikate
 /// gegen Scan-Treffer dedupt über sid. Fehler: überspringen + warn (wie bei
 /// Scan-Kandidaten — die Liste bleibt verfügbar).
 async fn creator_keystore_union(
@@ -888,9 +889,17 @@ async fn creator_keystore_union(
             async move {
                 let mut params: BTreeMap<String, String> = BTreeMap::new();
                 params.insert("code".to_owned(), code);
+                // Ersteller-Arm: hat das Manifest einen eigenen
+                // creator_detail_endpoint deklariert, wird der Admin-Code dort
+                // hingebracht (SCLM: /api/session/<admin_code>); sonst alter
+                // Weg über detail_endpoint.
+                let detail_ep = scan
+                    .creator_detail_endpoint
+                    .as_deref()
+                    .unwrap_or(&scan.detail_endpoint);
                 fetch_request(
                     &manifest,
-                    &scan.detail_endpoint,
+                    detail_ep,
                     &scan.headers.clone().unwrap_or_default(),
                     &params,
                     settings_auth,
@@ -5910,6 +5919,133 @@ mod tests {
         assert!(
             hits.iter()
                 .all(|h| h.path != "/api/session/ADM-X" && !h.path.contains("ADM-X"))
+        );
+    }
+
+    #[test]
+    fn scan_sid_arm_and_creator_union_use_different_endpoints() {
+        // SCLM 4A-Gegenstück (docs SCLM-FLOW-V2 §25): der Server liefert die
+        // Sessions-Liste ohne Codes und trennt sid-Lesung (öffentlich,
+        // /api/public/session/<sid>) von Code-Lesung (/api/session/<code>).
+        // Der Kandidatenarm darf dafür keinen Join-Code in der Liste brauchen:
+        // code_field = id_field, Kandidaten-Detail läuft über detail_endpoint
+        // mit der sid. Die Ersteller-Vereinigung hat weiterhin einen Code
+        // (Keystore-admin_code) und muss deshalb ihren eigenen Endpunkt
+        // (creator_detail_endpoint) bekommen — sonst liefen Admin-Codes gegen
+        // einen sid-only-Endpunkt und die eigenen Sessions fielen aus der
+        // Landliste.
+        let (base, rx) = start_mock_api(vec![
+            (
+                "GET",
+                "/api/sessions",
+                200,
+                r#"[{"id":"s1","name":"Öffentliche","raffle_done":false,"join_code":null},{"id":"s2","name":"Fremde","raffle_done":false,"join_code":null}]"#,
+            ),
+            (
+                "GET",
+                "/api/public/session/s1",
+                200,
+                r#"{"id":"s1","name":"Öffentliche","raffle_done":false,"participants":[{"id":"p1","name":"Semih"}]}"#,
+            ),
+            (
+                "GET",
+                "/api/public/session/s2",
+                200,
+                r#"{"id":"s2","name":"Fremde","raffle_done":false,"participants":[{"id":"p2","name":"Fremder"}]}"#,
+            ),
+            (
+                "GET",
+                "/api/session/ADM9",
+                200,
+                r#"{"id":"s9","name":"MeineEigene","is_admin":true,"raffle_done":true}"#,
+            ),
+        ]);
+        let text = format!(
+            r#"{{
+                "manifest_version": 1, "id": "sclm", "name": {{"de": "S", "en": "S"}},
+                "base_url": "{base}",
+                "placement": {{"kind": "own", "label": {{"de": "S", "en": "S"}}}},
+                "settings_fields": [{{"key": "sclm_username", "label": {{"de": "L", "en": "L"}}, "type": "text"}}],
+                "views": [],
+                "scan": {{
+                    "id": "scan1",
+                    "title": {{"de": "S", "en": "S"}},
+                    "list_endpoint": "/api/sessions",
+                    "detail_endpoint": "/api/public/session/{{code}}",
+                    "creator_detail_endpoint": "/api/session/{{code}}",
+                    "done_field": "raffle_done",
+                    "code_field": "id",
+                    "id_field": "id",
+                    "name_field": "name",
+                    "match_path": "participants[].name",
+                    "match_setting_key": "sclm_username",
+                    "concurrency": 2,
+                    "poll_seconds": 300
+                }}
+            }}"#
+        );
+        let m = connector::ConnectorManifest::parse(text.as_bytes()).expect("4A-Scan manifest");
+        assert_eq!(
+            m.scan
+                .as_ref()
+                .and_then(|s| s.creator_detail_endpoint.as_deref()),
+            Some("/api/session/{code}"),
+            "neues Scan-Feld wird gelesen"
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let conn_dir = tmp.path().join("connectors");
+        std::fs::create_dir_all(&conn_dir).unwrap();
+        std::fs::write(
+            conn_dir.join("sclm.json"),
+            serde_json::to_string_pretty(&m).unwrap(),
+        )
+        .unwrap();
+        let state = ConnectorState::load(conn_dir);
+        let ks = keystore_paths(&state).file("sclm");
+        // s9 nur durch admin_code bekannt (Username-Scan findet sie nicht).
+        keystore_upsert(
+            &ks,
+            "s9",
+            None,
+            Some("MeineEigene".to_owned()),
+            None,
+            None,
+            None,
+            Some("ADM9".to_owned()),
+        );
+        let st = settings_state_with("sclm", &[("sclm_username", "Semih")]);
+        let out = block_on_async(scan_inner(
+            &state,
+            &st,
+            &m,
+            &m.scan.clone().unwrap(),
+            "sclm",
+            true,
+            5_000,
+        ))
+        .expect("scan läuft");
+        let sids: Vec<&str> = out.items.iter().map(|i| i.sid.as_str()).collect();
+        assert_eq!(sids, vec!["s1", "s9"], "sid-Treffer + Ersteller-Arm");
+        assert!(!out.items[0].is_creator, "s1 ist nur Teilnehmer");
+        assert!(out.items[1].is_creator, "s9 kommt aus dem Keystore");
+        assert_eq!(out.skipped, 0, "{:?}", out.items);
+        let hits = mock_hits(&rx);
+        let paths: Vec<String> = hits.iter().map(|h| h.path.clone()).collect();
+        assert!(
+            paths.iter().any(|p| p == "/api/public/session/s1"),
+            "Kandidaten-Detail über sid: {paths:?}"
+        );
+        assert!(
+            paths.iter().any(|p| p == "/api/session/ADM9"),
+            "Ersteller-Detail über Admin-Code: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p == "/api/session/s1"),
+            "sid darf nie in den Code-Endpunkt laufen: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p == "/api/public/session/ADM9"),
+            "Admin-Code darf nie in den sid-Endpunkt laufen: {paths:?}"
         );
     }
 

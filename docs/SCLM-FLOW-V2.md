@@ -485,3 +485,56 @@ is-off/deaktiviert + Hinweis 'im Verkauf — nicht verlosbar' (i18n
 creator.sale_hint de/en); modalSaveMulti wishes-Zweig und confirmMulti
 filtern Verkauf-Zeilen aus den POST-IDs raus (Vorauswahl alter Wuensche
 bereinigt sich beim naechsten Speichern). MANIFEST-RE-IMPORT NOETIG.
+
+## 25. Oeffentliche Detail-Ansicht ohne Codes: SCLM 4A + Scan-Zweit-Endpunkt (Omar, 2026-11-06, direkt auf main)
+
+Server-Seite (Repo SeBoOne/sclm, main 2b118db, live nach Repull 2026-11-06):
+3B hatte join_code aus der oeffentlichen Sessions-Liste genommen (nur mit gueltigem
+Site-Secret sichtbar). Damit kippte auch die oeffentliche Detail-Ansicht, weil der alte
+"Ansehen"-Knopf den Listen-Join-Code als {code} benutzte. Sebo-Entscheidung: Session-
+Details bleiben oeffentlich ohne Verifikation lesbar, Codes bleiben privat. Neuer
+Lese-Endpunkt GET /api/public/session/<sid> (einziger Lese-Endpunkt mit sid im Pfad, ohne
+Auth/Code/Secret), Payload = Join-Code-Leser abueglich ohne join_code/admin_code/pcode,
+is_admin:false. UI: "👁 Ansehen" zurueck (openPublic(sid), myCode bleibt leer - die sid
+darf nie als X-SCLM-Code losgeschickt werden), "🔑 Ansehen mit Code" bleibt; sid im alten
+/api/session-Pfad weiterhin 404.
+
+Overlay-Konsequenz (der Rest dieses Abschnitts ist die Overlay-Arbeit):
+(1) Der Scan-Kandidatenarm liest scan.code_field aus dem LISTEN-Eintrag und ueberspringt
+    lautlos jeden Kandidaten ohne Wert (warn 'missing code field'). Mit join_code:null war
+    "Meine Verlosungen" fuer reine Teilnehmer leer; nur die Keystore-Ersteller-Vereinigung
+    (admin_code) blieb uebrig.
+(2) Ein reiner Manifest-Tausch (code_field:"id" + oeffentlicher detail_endpoint) reicht
+    NICHT: dieselbe detail_endpoint-Vorlage benutzt creator_keystore_union fuer den
+    gespeicherten admin_code. Die eigenen Ersteller-Sessions waeren gegen einen
+    sid-only-Endpunkt gelaufen und waeren aus der Landliste gefallen.
+(3) Overlay-Feld dafuer: scan.creator_detail_endpoint (optional, genau ein
+    {code}-Platzhalter, gleiche Validierung wie detail_endpoint: Pfad, base_url-relativ).
+    Kandidaten: code_field:"id" -> /api/public/session/<sid>. Ersteller-Arm: Keystore-
+    admin_code -> /api/session/<admin_code>. Ohne das Feld gilt exakt altes Verhalten
+    (Bestandsmanifeste bleiben unveraendert, Feld ist Option + serde(default)).
+(4) Manifest-Pflege (SYNC-REGEL, alle drei identisch: examples/sclm.json, Backup
+    ~/.config/architects-overlay/plugins-sclm-backup.json,
+    src-tauri/tests/fixtures/sclm-manifest.json): code_field "join_code" -> "id",
+    detail_endpoint "/api/session/{code}" -> "/api/public/session/{code}",
+    creator_detail_endpoint "/api/session/{code}". Die installierte Kopie unter
+    <app-local-data-dir>/connectors/sclm.json muss ersetzt werden - Manifeste ueberleben
+    jedes Update.
+(5) views[0].mapping.join_code bleibt im Manifest stehen, wird aber nicht gerendert
+    (flows vorhanden -> views ohne Flow-Referenz werden ignoriert); die Liste liefert den
+    Wert oeffentlich nicht mehr (null). Flow-open (/api/session/{code} + X-SCLM-Code) ist
+    davon unberuehrt: Teilnahme/Ersteller-Ablaeufe brauchen weiterhin echten Code.
+(6) DEPLOY-REIHENFOLGE: erst das neue Binary (ScanSpec hat deny_unknown_fields - ein altes
+    Binary lehnt das neue Manifest ab und der Connector faellt still weg), dann Manifest
+    austauschen, dann Service neu starten.
+(7) Gates/Tests: Unit-Tests scan_creator_detail_endpoint_is_optional_and_validated
+    (validate.rs: Feld optional, Platzhalter-/URL-Regeln) und
+    scan_sid_arm_and_creator_union_use_different_endpoints (connector.rs: Kandidaten-Detail
+    ueber sid in den oeffentlichen Endpunkt, Ersteller-Detail ueber admin_code in den
+    Code-Endpunkt, kein sid-im-Code-Endpunkt und kein Code-im-sid-Endpunkt).
+(8) Live-Gegenprobe (Frischinstanz + echte Session): 200 ohne jeden Header, keine
+    Codeschluessel und keine Code-Werte im Payload, is_admin:false, 40 Teilnehmer / 41 Loot
+    / 40 Ergebnisse; GET /api/session/<sid> weiterhin 404; unbekannter sid 404 JSON.
+(9) Vertagt/nicht genommen: serverseitig den oeffentlichen Endpunkt zusaetzlich fuer
+    Codes zu oeffnen (das waere ohne Overlay-Aenderung gegangen) - Sebo wollte die saubere
+    Trennung sid-Lesen vs. Code-Interaktion.

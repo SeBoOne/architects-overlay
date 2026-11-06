@@ -269,6 +269,26 @@ fn check_scan(m: &ConnectorManifest, report: &mut Report) {
             detail_params
         ));
     }
+    // Ersteller-Arm (optional): gleicher Maßstab wie detail_endpoint.
+    if let Some(extra) = s.creator_detail_endpoint.as_deref() {
+        if extra.trim().is_empty() || !extra.starts_with('/') {
+            report.error(format!(
+                "{tag}: creator_detail_endpoint must be a path starting with '/'"
+            ));
+        }
+        if extra.contains("file://") || extra.starts_with("http") {
+            report.error(format!(
+                "{tag}: creator_detail_endpoint must stay base_url-relative"
+            ));
+        }
+        let extra_params = extract_params(extra);
+        if extra_params != vec!["code".to_owned()] {
+            report.error(format!(
+                "{tag}: creator_detail_endpoint must contain exactly one placeholder {{code}} (got {:?})",
+                extra_params
+            ));
+        }
+    }
     for (name, template) in s.headers.iter().flatten() {
         if name.trim().is_empty() {
             report.error(format!("{tag}: empty header name"));
@@ -2293,6 +2313,51 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("must not contain placeholders")),
             "{list_ph:?}"
+        );
+    }
+
+    #[test]
+    fn scan_creator_detail_endpoint_is_optional_and_validated() {
+        // SCLM 4A (docs SCLM-FLOW-V2 §25): Kandidaten laufen über die sid
+        // (öffentlich), die Ersteller-Vereinigung über den Keystore-Admin-Code
+        // — dafür ist ein zweiter, optionaler Detail-Endpunkt im scan da.
+        let ok = SCAN_OK.replace(
+            r#""detail_endpoint": "/api/session/{code}","#,
+            r#""detail_endpoint": "/api/session/{code}",
+            "creator_detail_endpoint": "/api/session/{code}","#,
+        );
+        let r = validate_manifest(ok.as_bytes());
+        assert!(r.errors.is_empty(), "{r:?}");
+        // Fehlt das Feld: altes Verhalten, keine Fehler (Bestandsmanifeste).
+        let absent = validate_manifest(SCAN_OK.as_bytes());
+        assert!(absent.errors.is_empty(), "{absent:?}");
+        // Fremder Platzhalter ist ungebunden -> Error mit Feldname.
+        let bad_ph = SCAN_OK.replace(
+            r#""detail_endpoint": "/api/session/{code}","#,
+            r#""detail_endpoint": "/api/session/{code}",
+            "creator_detail_endpoint": "/api/session/{sid}","#,
+        );
+        let r = validate_manifest(bad_ph.as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("creator_detail_endpoint")
+                    && e.contains("exactly one placeholder {code}")),
+            "{r:?}"
+        );
+        // Absolute URLs / fremde Schemata sind verboten (gleiche Regel wie
+        // detail_endpoint — der Wert kommt aus dem Manifest, nicht vom Nutzer).
+        let bad_url = SCAN_OK.replace(
+            r#""detail_endpoint": "/api/session/{code}","#,
+            r#""detail_endpoint": "/api/session/{code}",
+            "creator_detail_endpoint": "https://evil.example/{code}","#,
+        );
+        let r = validate_manifest(bad_url.as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("creator_detail_endpoint") && e.contains("base_url-relative")),
+            "{r:?}"
         );
     }
 
