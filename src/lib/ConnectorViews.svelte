@@ -840,7 +840,13 @@
 							{/each}
 						</select>
 					{:else}
-						<input type={f.type === 'number' ? 'number' : 'text'} bind:value={formValues[f.key]} />
+						<input
+							type={f.type === 'number' ? 'number' : 'text'}
+							maxlength={f.type !== 'number' ? (f.max_length ?? undefined) : undefined}
+							min={f.type === 'number' ? (f.min ?? undefined) : undefined}
+							max={f.type === 'number' ? (f.max ?? undefined) : undefined}
+							bind:value={formValues[f.key]}
+						/>
 					{/if}
 				</label>
 			{/each}

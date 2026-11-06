@@ -555,7 +555,16 @@
             "for_sale": "loot[].for_sale"
           },
           "multi": {
-            "max_path": "max_wishes"
+            "max_path": "max_wishes",
+            "select_if": {
+              "on": "for_sale",
+              "op": "not_equals",
+              "value": true
+            },
+            "select_hint": {
+              "de": "im Verkauf — nicht verlosbar",
+              "en": "for sale — not rafflable"
+            }
           },
           "pins": [
             "loot_id"
@@ -1190,7 +1199,8 @@
                   "en": "Name (autocomplete via participant search)"
                 },
                 "type": "text",
-                "required": true
+                "required": true,
+                "max_length": 120
               }
             ],
             "method": "post",
@@ -1251,7 +1261,17 @@
             "wish_count": "loot[].wish_count",
             "for_sale": "loot[].for_sale"
           },
-          "multi": {},
+          "multi": {
+            "select_if": {
+              "on": "for_sale",
+              "op": "not_equals",
+              "value": true
+            },
+            "select_hint": {
+              "de": "im Verkauf — nicht verlosbar",
+              "en": "for sale — not rafflable"
+            }
+          },
           "pins": [
             "loot_id"
           ],
@@ -1666,7 +1686,8 @@
                   "en": "Name (autocomplete fills type/grade/size — overridable)"
                 },
                 "type": "text",
-                "required": true
+                "required": true,
+                "max_length": 120
               },
               {
                 "key": "qty",
@@ -1674,7 +1695,9 @@
                   "de": "Menge (leer = 1)",
                   "en": "Quantity (empty = 1)"
                 },
-                "type": "number"
+                "type": "number",
+                "min": 1,
+                "max": 10000
               },
               {
                 "key": "type",
@@ -1892,7 +1915,8 @@
                   "en": "Name (autocomplete via commodity search)"
                 },
                 "type": "text",
-                "required": true
+                "required": true,
+                "max_length": 120
               },
               {
                 "key": "scu",

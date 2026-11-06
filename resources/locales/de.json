@@ -91,7 +91,6 @@
     "connector.flow.wishes_max": "Max. {max} Wünsche",
     "connector.flow.creator.assign_done": "Zugeordnet: {n} Teilnehmer",
     "connector.flow.creator.assign_hint_assigned": "bereits zugeordnet",
-    "connector.flow.creator.sale_hint": "im Verkauf — nicht verlosbar",
     "connector.flow.creator.assign_hint_full": "keine freien Wunsch-Slots",
     "connector.flow.creator.btn_add_commodity": "+ Ware",
     "connector.flow.creator.btn_add_loot": "+ Gegenstand",

@@ -940,6 +940,42 @@ fn check_screen(
                 "flow '{flow_id}': screen '{sid}': multi.max_path is empty"
             ));
         }
+        // U-BUILD (docs/SCLM-FLOW-V2 §26): select_if ist die generische
+        // Waehlbarkeits-Regel pro Zeile (ersetzt das for_sale-Gating) —
+        // Bedingung wie enabled_if: then/otherwise ist hier sinnlos (Error).
+        // `on` MUSS ein Mapping-Key des Screens sein: die Regel wird gegen
+        // {Flow-Zustand, ...Zeile} ausgewertet, und nur gemappte Zeilen-Keys
+        // garantieren, dass die Zeile das Feld traegt. select_if ohne
+        // Mapping-Key ist eine tote Deklaration (Error).
+        if let Some(c) = &multi.select_if {
+            check_condition_refs(
+                flow_id,
+                &format!("screen '{sid}' multi select_if"),
+                c,
+                ids,
+                report,
+            );
+            if c.then.is_some() || c.otherwise.is_some() {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': multi select_if must not use then/otherwise"
+                ));
+            }
+            if !s.mapping.contains_key(c.on.as_str()) {
+                report.error(format!(
+                    "flow '{flow_id}': screen '{sid}': multi select_if 'on' '{}' is not a mapping key of the screen",
+                    c.on
+                ));
+            }
+        }
+        // select_hint ohne de/en-Text rendert keinen Hinweis (Error wie bei
+        // options-Eintraegen — die Deklaration waere tot).
+        if let Some(h) = &multi.select_hint
+            && (h.de.trim().is_empty() || h.en.trim().is_empty())
+        {
+            report.error(format!(
+                "flow '{flow_id}': screen '{sid}': multi select_hint without de/en text"
+            ));
+        }
     }
     // SF2: Actions — eindeutige IDs, method/path-Paarigkeit, goto-Referenzen,
     // Header-Templates gegen die deklarierten Action-Params.
@@ -1361,6 +1397,27 @@ fn check_field(view_id: &str, f: &FormField, report: &mut Report) {
             f.key
         ));
     }
+    // U-BUILD (docs/SCLM-FLOW-V2 §26): deklarierte Feldgrenzen. max_length
+    // nur im Bereich 1..=2000 (0 = tote Deklaration, >2000 = kein Manifest
+    // braucht so breite Textfelder); min/max nur als Paar sinnvoll — min > max
+    // haelt jede Koerpergroesse. Manifeste ohne diese Felder validieren wie
+    // bisher (None = kein Verhalten, Bestandsmanifeste byte-identisch).
+    if let Some(ml) = f.max_length
+        && !(1..=2000).contains(&ml)
+    {
+        report.error(format!(
+            "view '{view_id}': field '{}': max_length {ml} outside 1..=2000",
+            f.key
+        ));
+    }
+    if let (Some(lo), Some(hi)) = (f.min, f.max)
+        && lo > hi
+    {
+        report.error(format!(
+            "view '{view_id}': field '{}': min {lo} greater than max {hi}",
+            f.key
+        ));
+    }
 }
 
 /// Template-Platzhalter prüfen: Strings im Template dürfen {param} nutzen.
@@ -1743,6 +1800,147 @@ mod tests {
             r.errors.iter().any(|e| e.contains("duplicate flow id")),
             "{r:?}"
         );
+    }
+
+    // ---- U-BUILD (docs/SCLM-FLOW-V2 §26): select_if-Gating + Feldgrenzen ----
+
+    /// list-Screen mit multi + Write-Action (select_if-Unterlage).
+    const SEL_BASE: &str = r#"{"id": "w", "type": "list", "title": {"de": "w", "en": "w"}, "endpoint": "/api/w", "mapping": {"n": "n", "for_sale": "for_sale"}, "multi": {"max_path": "max_wishes"}, "actions": [{"id": "confirm", "title": {"de": "c", "en": "c"}, "method": "post", "path": "/api/w", "goto": "done"}]},
+            {"id": "done", "type": "results", "title": {"de": "r", "en": "r"}, "endpoint": "/api/r", "mapping": {"n": "n"}}"#;
+
+    #[test]
+    fn flow_select_if_checked() {
+        // select_if + select_hint auf einem Mapping-Key: valide.
+        let ok = SEL_BASE.replace(
+            r#""multi": {"max_path": "max_wishes"}"#,
+            r#""multi": {"max_path": "max_wishes", "select_if": {"on": "for_sale", "op": "not_equals", "value": true}, "select_hint": {"de": "im Verkauf", "en": "for sale"}}"#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+
+        // select_if aendert die Action-Pflicht nicht (bestehende Regel greift).
+
+        // select_if OHNE Mapping-Key des Screens -> Error (tote Deklaration:
+        // die Zeile traegt das Feld nie).
+        let bad_key = ok.replace(r#""on": "for_sale""#, r#""on": "ghost_field""#);
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &bad_key)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("select_if 'on' 'ghost_field' is not a mapping key")),
+            "{r:?}"
+        );
+
+        // then/otherwise ist wie bei enabled_if sinnlos (keine Branch-Regel) -> Error.
+        let bad_then = ok.replace(r#""value": true}"#, r#""value": true, "then": "done"}"#);
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &bad_then)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("select_if must not use")),
+            "{r:?}"
+        );
+
+        // equals/not_equals ohne value -> Error (gleiche Condition-Regel wie enabled_if).
+        let bad_value = ok.replace(
+            r#""op": "not_equals", "value": true"#,
+            r#""op": "not_equals""#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &bad_value)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("condition op requires a 'value'")),
+            "{r:?}"
+        );
+
+        // select_hint ohne de/en-Text -> Error (Hinweis waere unrendbar).
+        let bad_hint = ok.replace(
+            r#""select_hint": {"de": "im Verkauf", "en": "for sale"}"#,
+            r#""select_hint": {"de": " ", "en": "for sale"}"#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &bad_hint)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("select_hint without de/en")),
+            "{r:?}"
+        );
+
+        // exists-Op ohne value ist ok (Op-Satz wie enabled_if).
+        let exists_ok = ok.replace(r#""op": "not_equals", "value": true"#, r#""op": "exists""#);
+        let r = validate_manifest(manifest_with_flow(&flow_json("w", &exists_ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn field_bounds_checked() {
+        // Flow-Form-Screen (check_form/check_field gilt fuer Views UND Flows).
+        let base = r#"{"id": "add", "type": "form", "title": {"de": "a", "en": "a"}, "form": {"fields": [{"key": "name", "label": {"de": "n", "en": "n"}, "type": "text", "required": true}, {"key": "qty", "label": {"de": "q", "en": "q"}, "type": "number"}], "method": "post", "path": "/api/add", "body_template": {"name": "{name}", "qty": "{qty}"}}}"#;
+
+        // Gueltige Grenzen (Fixture-Aequivalent name 120 / qty 1..10000) -> durch.
+        let ok = base
+            .replace(
+                r#""type": "text", "required": true"#,
+                r#""type": "text", "required": true, "max_length": 120"#,
+            )
+            .replace(
+                r#""type": "number""#,
+                r#""type": "number", "min": 1, "max": 10000"#,
+            );
+        let r = validate_manifest(manifest_with_flow(&flow_json("add", &ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+
+        // Obergrenze 2000 ist gueltig.
+        let max_ok = base.replace(
+            r#""type": "text", "required": true"#,
+            r#""type": "text", "required": true, "max_length": 2000"#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("add", &max_ok)).as_bytes());
+        assert!(r.is_ok(), "{r:?}");
+
+        // max_length 0 -> Error (tote Deklaration).
+        let zero = base.replace(
+            r#""type": "text", "required": true"#,
+            r#""type": "text", "required": true, "max_length": 0"#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("add", &zero)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("max_length 0 outside 1..=2000")),
+            "{r:?}"
+        );
+
+        // max_length 5000 -> Error (uebererlaubter Bereich).
+        let huge = base.replace(
+            r#""type": "text", "required": true"#,
+            r#""type": "text", "required": true, "max_length": 5000"#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("add", &huge)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("max_length 5000 outside 1..=2000")),
+            "{r:?}"
+        );
+
+        // min > max -> Error.
+        let swapped = base.replace(
+            r#""type": "number""#,
+            r#""type": "number", "min": 10000, "max": 1"#,
+        );
+        let r = validate_manifest(manifest_with_flow(&flow_json("add", &swapped)).as_bytes());
+        assert!(
+            r.errors
+                .iter()
+                .any(|e| e.contains("min 10000 greater than max 1")),
+            "{r:?}"
+        );
+
+        // Manifeste OHNE die neuen Felder validieren wie bisher (base selbst).
+        let plain = validate_manifest(manifest_with_flow(&flow_json("add", base)).as_bytes());
+        assert!(plain.is_ok(), "{plain:?}");
     }
 
     #[test]

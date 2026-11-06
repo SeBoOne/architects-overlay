@@ -538,3 +538,92 @@ Overlay-Konsequenz (der Rest dieses Abschnitts ist die Overlay-Arbeit):
 (9) Vertagt/nicht genommen: serverseitig den oeffentlichen Endpunkt zusaetzlich fuer
     Codes zu oeffnen (das waere ohne Overlay-Aenderung gegangen) - Sebo wollte die saubere
     Trennung sid-Lesen vs. Code-Interaktion.
+
+## 26. Universalitaets-Audit 2026-11-06 + Schema-U: Feldtyp-Haertung und select_if-Gating (U-BUILD, feat/universal-hardening)
+
+Omar-Audit-Befund (von Sebo bestaetigt): Drei Heuristiken im allgemeinen Overlay-Code trugen
+SCLM-Form — Endpoint-Namen und Feld-Namen waren hart verdrahtet. Sie sind entfernt und durch
+Manifest-deklarierte Felder ersetzt, damit kuenftige Plugins (z. B. AAWA) dieselbe Haertung
+und dasselbe Gating ueber ihr eigenes Manifest bekommen.
+
+(1) ENTFERNT (src-tauri/src/connector.rs am Basis-HEAD 44a9320):
+    - name_hardening_applies(): 120-Name-Cap pfadgechartet auf '/loot' und '/commodities'.
+    - text_field_coercion_applies(): Zahl->String-Zwang pfadgechartet auf '/loot',
+      '/commodities', '/participants' mit hartem Schluessel-Vokabular name/type/grade/size.
+    - Der hart am Schluesselnamen 'qty' haengende Normalisierungs-Zweig (Klampe 999_999,
+      Runden von '3.6' auf 4) in harden_write_body(path).
+    ERSETZT durch harden_body_by_fields(body, &fields) — identische Aufruforte:
+    form_submit_core (Formular-Screens/Views, Manifest-Feldliste aus form.fields) und
+    screen_action_core (Flow-Action-Felder aus action.fields; Param ohne deklariertes
+    'type' gilt als nicht-deklariert und wird unbearbeitet durchgereicht, delta/scu bleiben
+    also Zahlen-Arme).
+
+(2) Neue Haertungs-Regeln (nur fuer Felder, die im Manifest formuliert sind):
+    - Feld type 'text': numerische/boolsche Body-Werte -> String ('42' -> "42", true ->
+      "true"); deklarierte max_length -> Kuerzung auf Zeichen-Laenge (Vorher: lokaler
+      Hinweis-Fehler ueber die Pfad-Heuristik).
+    - Feld type 'number' (ersetzt die qty-Heuristik): numerische Saiten -> saubere Zahl;
+      ''/'NaN'/'null'/nicht-endllich/bool -> Schluessel entfaellt (Server-Default);
+      deklarierte min/max -> Klemme; OHNE deklarierte Grenzen nur technischer
+      Ueberlauf-Schutz max 1e12 (deutlich unter i64::MAX, kein Plugin-Vokabular; Omar
+      Live-Sonde: JSON-Ints jenseits int64 range bringen den SCLM-Server auf nackten
+      HTTP 500); dezimale Werte werden NICHT gerundet — '1.5' bleibt 1.5, der Server-400
+      fuer eine krumme Menge bleibt als Diagnose sichtbar.
+    - Felder ohne Deklaration: Wert unveraendert durchgereicht — keine heuristische
+      Erziehung, der Server ist die Autoritaet. null-Keys werden weiterhin global entfernt.
+
+(3) select_if-Gating (Mehrfachauswahl im Manifest statt hartem 'for_sale'):
+    - multi (list-Screens) bekommt optional select_if: Condition (identischer Typ/Op-Satz
+      wie enabled_if: on/op/value) plus optional select_hint: LocalizedText.
+    - Validator (validate.rs, check_screen multi-Block): 'on' muss ein Mapping-Key des
+      Screens sein (sonst Validate-Fehler — die Zeile traegt undeklarierte Felder nie);
+      then/otherwise verboten (wie enabled_if); Op/value-Regeln identisch; select_hint ohne
+      de/en-Text ist Error.
+    - FlowRenderer.svelte: die vier harten for_sale-Stellen (confirmMulti-Filter,
+      modalSaveMulti-IDs, zwei {@const rowSaleOff}-Zeilen mit is-off-Klasse + Hinweis) sind
+      ersetzt durch rowSelectable(row) = evaluateCondition(select_if, {fstate, ...row}) —
+      dieselbe Funktion/Semantik wie actionEnabled fuer enabled_if im Zeilen-Kontext.
+      select_if fehlt => jede Zeile waehlbar. select_if false => Checkbox deaktiviert,
+      Zeile is-off, select_hint-Text (ohne select_hint: nur deaktiviert, kein Text).
+      confirmMulti und modalSaveMulti filteren nicht waehlbare Zeilen zusaetzlich
+      (Verteidigung in der Tiefe). Locale-Schluessel connector.flow.creator.sale_hint ist
+      entfernt (Hinweis-Text kommt aus dem Manifest); truthyFlagVal bleibt fuer raffle_done-Chips.
+    - DTO src/lib/connector.ts spiegelt select_if/select_hint (MultiSpecDTO) und
+      max_length/min/max (FormFieldDTO) mit exakten Serde-Namen.
+
+(4) Neue Manifest-Schluessel an FormField: max_length (u16, gueltige Werte 1..=2000 —
+    Validator-Fehler bei 0 oder 5000), min (f64), max (f64; min > max ist Validator-Fehler).
+    Alle drei serde-default None; deny_unknown_fields bleibt an. Formular-Grenzen im UI:
+    Textinputs bekommen maxlength, number-inputs min/max-Attribute aus der Deklaration;
+    Server-400-Anzeige in der Modalwarnung bleibt unveraendert.
+
+(5) Default-Verhalten / Kompatibilitaet: Manifeste OHNE die neuen Felder validieren und
+    haerten wie bisher, ABER das bisherige harte for_sale-Gating gibt es nicht mehr —
+    Gating wirkt ausschliesslich ueber select_if. KOMPTIBILITAETSNOTIZ: Damit das SCLM-
+    Gating (Verkaufte nicht verlosbar, docs §24) nach diesem Umbau weiterwirkt, ist ein
+    Manifest-Re-Import noetig: examples/sclm.json, Backup
+    ~/.config/architects-overlay/plugins-sclm-backup.json und
+    src-tauri/tests/fixtures/sclm-manifest.json erhalten wortgleich
+    - name-Feld max_length 120 in loot-add-/participant-add-/commodity-add-Form
+      (Server: loot/commodities 120, participants bis 200 — I-Karten-Cap-Wirkung bleibt),
+    - qty-Feld min 1 max 10000 im loot-add-Form,
+    - select_if {"on":"for_sale","op":"not_equals","value":true} + select_hint auf den
+      multi-Screens participant:wishes und creator wishes_for.
+    bestehende enabled_if (creator assign, one-way-Flags) bleibt unveraendert.
+
+(6) BEWUSST NICHT UMSETZEN (Omar-Entscheidung, nicht "fixen"): inject_session_stats
+    (participants[]/loot[]-Formkonvention, or_insert), wishIdsOf-Fallbackkette
+    (loot_id|id|item_id), Keystore-Spalten-Vokabular (join_code/admin_code/pcode/
+    participant_id/result_id), Scan-Vertragsfelder (sid/name/raffle_done), multi.mode-Enum
+    ('wishes'|'assign'). Das ist Manifest-Format-Sprache, keine SCLM-Sonderpfade.
+
+(7) Gates/Tests: validate.rs field_bounds_checked (max_length 0/5000 Error, min>max Error,
+    gueltige Werte durch, Manifeste ohne neue Felder wie bisher) und flow_select_if_checked
+    (Mapping-Key-Pflicht, then/otherwise-Verbot, Op/value-Regeln, select_hint-Textpflicht);
+    flow.rs multi_select_if_and_hint_parse; connector.rs text_field_coercion_and_declared_
+    max_length_truncates, number_field_junk_dropped_and_cleaned, number_field_declared_min_
+    max_clamps, null_keys_stripped_and_undeclared_keys_untouched,
+    name_over_declared_max_length_truncates_before_request (Request geht mit 120-Zeichen-
+    Name raus statt lokalem Fehler), screen_action_write_hardening_e2e (Action-Pfad
+    feldgetrieben), participant_long_name_reaches_server_no_local_block (121 Zeichen ohne
+    Deklaration erreichen den Server).
