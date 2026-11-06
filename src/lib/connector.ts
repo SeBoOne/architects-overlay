@@ -26,6 +26,13 @@ export type FormFieldDTO = {
 	header?: string | null;
 	/** Optional: Voreinstellung aus der Settings-Whitelist (Backend). */
 	default_source?: string | null;
+	/** U-BUILD (docs/SCLM-FLOW-V2 §26): Laengengrenze des Textfelds (Zeichen,
+	 *  1..=2000, Validator). UI setzt maxlength, der Core kuerzt deklariert. */
+	max_length?: number | null;
+	/** U-BUILD: Untergrenze des number-Felds (UI-Attribut min, Core-Klemme). */
+	min?: number | null;
+	/** U-BUILD: Obergrenze des number-Felds (UI-Attribut max, Core-Klemme). */
+	max?: number | null;
 };
 
 export type FormViewDTO = {
@@ -178,6 +185,14 @@ export type MultiSpecDTO = {
 	 *  'assign' = Teilnehmer für den Zeilen-Gegenstand auswählen,
 	 *  'wishes'/fehlt = Loot-Auswahl für den Zeilen-Teilnehmer. */
 	mode?: 'wishes' | 'assign' | null;
+	/** U-BUILD (docs/SCLM-FLOW-V2 §26): generische Waehlbarkeits-Regel pro
+	 *  Zeile (ersetzt das hart verdrahtete for_sale-Gating). Gleicher
+	 *  Condition-Typ/Op-Satz wie enabled_if; `on` ist ein Mapping-Key des
+	 *  Screens. select_if fehlt => jede Zeile waehlbar. */
+	select_if?: ConditionDTO | null;
+	/** Optionaler Hinweis (de/en) an nicht waehlbaren Zeilen; ohne select_hint
+	 *  ist die Zeile nur deaktiviert, ohne Text. */
+	select_hint?: LocalizedText | null;
 };
 
 /** Generische Screen-Aktion (SF2): Write (method+path) oder Navigation. */

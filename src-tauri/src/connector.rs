@@ -1727,8 +1727,8 @@ pub(crate) async fn form_submit_core(
     let mut body = form.body_template.clone();
     apply_fill(&mut body, &values);
     strip_unfilled(&mut body);
-    // Haertung (I-SCLM UX R2 Punkt 2a): qty-Normalisierung, name-Cap, null-Keys.
-    harden_write_body(&mut body, &path)?;
+    // Haertung (U-BUILD docs §26): manifest-Feld-getrieben (FormField), null-Keys.
+    harden_body_by_fields(&mut body, &hardening_fields_from_form(&form.fields));
     // Header aus Feldern mit `header`-Deklaration (z. B. Session-Code als
     // X-SCLM-Code — pro Formular, nicht global).
     let mut field_headers: Vec<(String, String)> = Vec::new();
@@ -1867,8 +1867,13 @@ pub(crate) async fn screen_action_core(
     let mut body = action.body_template.clone().unwrap_or(json!({}));
     apply_fill(&mut body, &values);
     strip_unfilled(&mut body);
-    // Haertung (I-SCLM UX R2 Punkt 2a): qty-Normalisierung, name-Cap, null-Keys.
-    harden_write_body(&mut body, &path)?;
+    // Haertung (U-BUILD docs §26): manifest-Feld-getrieben (Action-Param-Felder;
+    // Param ohne deklariertes 'type' = nicht-deklariert, unbearbeitet durchgereicht;
+    // deklariertes 'type' = gleiche Regeln wie Formular-Felder), null-Keys.
+    harden_body_by_fields(
+        &mut body,
+        &hardening_fields_from_params(action.fields.iter().flatten()),
+    );
     // Header-Templates der Action: Platzhalter aus den Werten (stringifiziert).
     let mut string_values: BTreeMap<String, String> = BTreeMap::new();
     for (k, v) in &values {
@@ -2848,104 +2853,156 @@ fn string_has_unfilled(v: &serde_json::Value) -> bool {
     }
 }
 
-/// I-SCLM Cockpit UX R2 (Punkt 2a): Haertung des Write-Bodies NACH dem Fill.
-/// - `qty`: leer / 'NaN' / 'null' / unparsebar -> Key entfaellt (Server-
-///   Default 1); sonst saubere Ganzzahl (auch aus Ziffern-/Dezimalstrings).
-/// - `name`: laenger als 120 Zeichen -> lokaler Hinweis-Fehler, aber NUR auf
-///   Pfaden, auf denen der Server selbst das 120-Limit erzwingt (loot- und
-///   commodities-POST, server.py add_loot/add_commodity `len(name) > 120` ->
-///   400 'Name zu lang'). Auf allen anderen Pfaden gilt unveraendert der
-///   Server-Backstop allein: participants-PATCH (Server OHNE Name-Limit),
-///   participants-POST (Serverlimit 120 bleibt Serverseite), create/settings
-///   (Serverlimit 200) — Review-Runde-1-Forderung: kein globaler Cap, der
-///   Teilnehmer-Session-Flow gegen main 37d9932 verschchaerft.
-/// - Keys, die nach dem Fill als JSON `null` dastehen, werden entfernt:
-///   unaufloesbare Platzhalter hat bereits `strip_unfilled` getilgt; das
-///   `null` kommt von explizit geleerten Frontend-Feldern und crash't
-///   Zahlen-/Text-Endpunkte des Servers (500-Kandidat).
-fn name_hardening_applies(path: &str) -> bool {
-    let p = path.to_ascii_lowercase();
-    p.contains("/loot") || p.contains("/commodities")
+/// U-BUILD (Universal-Haertung, docs/SCLM-FLOW-V2 §26): Haertung des
+/// Write-Bodies NACH dem Fill — ausschliesslich manifest-deklariert. Welche
+/// Regeln greifen, entscheidet die Feldliste des Manifests (FormField eines
+/// Formular-Screens/View, Param-Feld einer Screen-Action), nicht mehr
+/// Pfad-Substrings ('/loot', '/commodities', '/participants') oder hart
+/// verdrahtete Schluesselnamen ('qty', 'name'). Kuenftige Plugins bekommen
+/// dieselbe Haertung ueber ihr eigenes Manifest.
+/// - Keys, die nach dem Fill als JSON `null` dastehen, werden immer
+///   entfernt: unaufloesbare Platzhalter hat bereits `strip_unfilled`
+///   getilgt; das `null` kommt von explizit geleerten Frontend-Feldern und
+///   crash't Zahlen-/Text-Endpunkte des Servers (500-Kandidat).
+/// - Feld `type: text`: Zahlen/Bools im Body werden zu Strings (Server-
+///   Vertrag: Textfelder werden als Saiten concatiniert — JSON-Zahlen
+///   paniken solche Endpunkte mit nacktem 500; serde-Number-Display gibt
+///   das Original-Token zurueck, '3' bleibt '3'). Deklarierte `max_length`
+///   -> Kuerzung auf Zeichen-Laenge (Server-Limits werden vorgezogen).
+/// - Feld `type: number` (ersetzt die bisherige 'qty'-Heuristik): numerische
+///   Saiten -> saubere Zahl (Ganzzahl-Strings als Ganzzahl); ''/'NaN'/
+///   'null'/unparsebar/nicht-endlich/boolsche/hafte Werte -> Key entfaellt
+///   (Server-Default). Deklarierte `min`/`max` -> Klemme; ohne deklarierte
+///   Grenzen nur technischer Ueberlauf-Schutz (max 1e12 — deutlich unter
+///   i64::MAX, kein Plugin-Vokabular; Omar Live-Sonde: JSON-Ints jenseits
+///   int64 range bringen den Server auf nackten HTTP 500). Dezimale Werte
+///   werden NICHT gerundet (dezimale Menge bleibt dezimal — Server-400
+///   bleibt als Diagnose sichtbar).
+/// - Keys ohne Feld-Deklaration im Manifest: Wert unveraendert
+///   durchgereicht — keine heuristische Erziehung; der Server ist die
+///   Autoritaet (sein 400/500 kommt als Diagnose an, statt der Kern zu
+///   raten). Action-Param-Felder ohne deklariertes `type` gelten ebenfalls
+///   als nicht-deklariert (delta/scu bleiben wie bisher Zahlen-Arme).
+struct HardeningField<'a> {
+    key: &'a str,
+    field_type: Option<connector::manifest::FieldType>,
+    max_length: Option<usize>,
+    min: Option<f64>,
+    max: Option<f64>,
 }
-/// Pfade, deren Textfelder (name/type/grade/size) der SCLM-Server als Saiten
-/// concatiniert — hier Zahl-Zwang; andere Connector duerfen echte Zahlen-
-/// Felder behalten (Kein Blanket-Coercion ueber alle Manifest-Connectors).
-fn text_field_coercion_applies(path: &str) -> bool {
-    let p = path.to_ascii_lowercase();
-    p.contains("/loot") || p.contains("/commodities") || p.contains("/participants")
+
+/// Formular-Felder (View-Form / Flow-Form-Screen): `type` ist schema-pflichtig.
+fn hardening_fields_from_form(
+    fields: &[connector::manifest::FormField],
+) -> Vec<HardeningField<'_>> {
+    fields
+        .iter()
+        .map(|f| HardeningField {
+            key: &f.key,
+            field_type: Some(f.field_type),
+            max_length: f.max_length.map(|m| m as usize),
+            min: f.min,
+            max: f.max,
+        })
+        .collect()
 }
-fn normalize_qty_value(v: &serde_json::Value) -> Option<i64> {
-    let raw = match v {
-        serde_json::Value::Number(n) => n.as_i64().or_else(|| {
-            n.as_f64()
-                .filter(|f| f.is_finite())
-                .map(|f| f.round() as i64)
-        }),
+
+/// Action-Felder (Param): `type` ist optional — fehlend = keine Haertung
+/// deklariert (Wert wird unbearbeitet durchgereicht).
+fn hardening_fields_from_params<'p>(
+    fields: impl Iterator<Item = &'p connector::manifest::Param>,
+) -> Vec<HardeningField<'p>> {
+    fields
+        .map(|p| HardeningField {
+            key: &p.key,
+            field_type: p.field_type,
+            max_length: None,
+            min: None,
+            max: None,
+        })
+        .collect()
+}
+
+/// Zahlen-Arm eines deklarierten number-Felds: Some(gehaerteter Wert) oder
+/// None (Key entfaellt -> Server-Default). Ganzzahl-Werte verlassen als
+/// JSON-Ganzzahl, dezimale als Dezimalzahl (kein Runden).
+fn normalize_declared_number(
+    v: &serde_json::Value,
+    min: Option<f64>,
+    max: Option<f64>,
+) -> Option<serde_json::Value> {
+    let f: f64 = match v {
+        serde_json::Value::Number(n) => n.as_f64()?,
         serde_json::Value::String(s) => {
             let t = s.trim();
             if t.is_empty() || t.eq_ignore_ascii_case("nan") || t.eq_ignore_ascii_case("null") {
                 return None;
             }
-            t.parse::<i64>().ok().or_else(|| {
-                t.parse::<f64>()
-                    .ok()
-                    .filter(|f| f.is_finite())
-                    .map(|f| f.round() as i64)
-            })
+            t.parse::<f64>().ok()?
         }
-        _ => None,
+        // Bools/Listen/Objekte sind keine Zahlenwerte: Key entfaellt.
+        _ => return None,
     };
-    // Obere Schranke 999_999 (Omar Live-Sonde 2026-11-05): ein JSON-Int jenseits
-    // int64 range bringt den SCLM-Server auf nackten HTTP 500 (HTML, kein JSON) —
-    // i64::MAX selbst ist noch 200. SCLM-Loot-Mengen REALITAT << 1 Mio; die Klampe
-    // verhindert, dass Float-Saettigung (f64 -> i64::MAX) als Kanone den Server
-    // trifft. Negative bleiben durchgereicht (Server normalisiert, keine Panik).
-    raw.map(|n| if n > 999_999 { 999_999 } else { n })
+    if !f.is_finite() {
+        return None;
+    }
+    let n = match (min, max) {
+        (Some(lo), Some(hi)) => f.clamp(lo, hi),
+        (Some(lo), None) => f.max(lo),
+        (None, Some(hi)) => f.min(hi),
+        (None, None) => f.min(1e12),
+    };
+    if n.fract() == 0.0 && n >= (i64::MIN as f64) && n <= (i64::MAX as f64) {
+        Some(serde_json::Value::from(n as i64))
+    } else {
+        Some(serde_json::Value::from(n))
+    }
 }
 
-fn harden_write_body(body: &mut serde_json::Value, path: &str) -> Result<(), String> {
+fn harden_body_by_fields(body: &mut serde_json::Value, fields: &[HardeningField<'_>]) {
+    use connector::manifest::FieldType;
     let serde_json::Value::Object(map) = body else {
-        return Ok(());
+        return;
     };
     map.retain(|_, v| !v.is_null());
-    // Typ-Zwang (Omar Live-500 2026-11-05): Der SCLM-Server baut den Loot-Key
-    // 'name|type|grade|size' und Participant-Namen als Saiten — enthalten diese
-    // Textfelder eine JSON-ZAHL (Autocomplete zieht z.B. size '3' aus dem
-    // Katalog als Number, Svelte number-Bindings liefern Numbers), panikt der
-    // Server mit nacktem 500-HTML. Server-Vertrag fuer diese Felder: Text ->
-    // Zahlen werden zu Strings korrumpiert-frei coerciert (serde-Number-Display
-    // gibt das Original-Token zurueck, '3' bleibt '3'). qty/scu/delta bleiben
-    // Zahlen-Arme (Server erwartet dort Zahlen).
-    if text_field_coercion_applies(path) {
-        for key in ["name", "type", "grade", "size"] {
-            if let Some(v) = map.get(key)
-                && v.is_number()
-            {
-                let s = v.to_string();
-                map.insert(key.to_owned(), serde_json::Value::String(s));
+    for f in fields {
+        match f.field_type {
+            Some(FieldType::Text) => {
+                let Some(v) = map.get(f.key).cloned() else {
+                    continue;
+                };
+                let s: String = match &v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    serde_json::Value::Bool(b) => b.to_string(),
+                    // Listen/Objekte sind strukturierte Arme (z. B. loot_ids):
+                    // kein Text-Zwang.
+                    _ => continue,
+                };
+                let out = match f.max_length {
+                    Some(limit) if s.chars().count() > limit => {
+                        serde_json::Value::String(s.chars().take(limit).collect())
+                    }
+                    _ => serde_json::Value::String(s),
+                };
+                map.insert(f.key.to_owned(), out);
             }
+            Some(FieldType::Number) => {
+                if let Some(v) = map.get(f.key).cloned() {
+                    match normalize_declared_number(&v, f.min, f.max) {
+                        Some(n) => {
+                            map.insert(f.key.to_owned(), n);
+                        }
+                        None => {
+                            map.remove(f.key);
+                        }
+                    }
+                }
+            }
+            // select / nicht deklariert: unveraendert durchreichen.
+            _ => {}
         }
     }
-    if name_hardening_applies(path)
-        && let Some(s) = map.get("name").and_then(|v| v.as_str())
-        && s.chars().count() > 120
-    {
-        return Err(err_keyp(
-            "error.connector.name_too_long",
-            json!({ "key": "name", "limit": 120 }),
-        ));
-    }
-    if let Some(v) = map.get("qty").cloned() {
-        match normalize_qty_value(&v) {
-            Some(n) => {
-                map.insert("qty".to_owned(), json!(n));
-            }
-            None => {
-                map.remove("qty");
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Formular-Pfad: ROHE Werte einsetzen (kein JSON-Quoting — ein Session-Code
@@ -3402,10 +3459,84 @@ mod tests {
         assert_eq!(out["nested"]["keep"], json!("Sabre"));
     }
 
-    // I-SCLM Cockpit UX R2 (Punkt 2a): qty-Härtung, name-Cap, null-Keys —
-    // Root-Cause-Absicherung gegen die 500-/400-Muster des SCLM-Servers.
+    // U-BUILD (docs/SCLM-FLOW-V2 §26): Haertung ist manifest-Feld-getrieben —
+    // text-Felder coercieren Zahlen/Bools zu Strings und kuerzen deklarierte
+    // max_length; number-Felder normalisieren, klemmen deklarierte min/max und
+    // haben ohne Deklaration nur den technischen Ueberlauf-Schutz (max 1e12);
+    // nicht deklarierte Body-Keys bleiben unveraendert (Server-Backstop).
+    // Die bisherigen Pfad-/Schluessel-Heuristiken (name_hardening_applies,
+    // text_field_coercion_applies, 'qty'-Zweig @ 44a9320) sind damit ersetzt;
+    // der I-Karten-120-Cap wirkt aequivalent ueber die name-Deklaration
+    // max_length 120 (loot/commodities Server-Limit), participants ohne
+    // Deklaration bleiben bis 200 beim Server.
+    fn fields_of(specs: &[(&str, serde_json::Value)]) -> Vec<connector::manifest::FormField> {
+        specs
+            .iter()
+            .map(|(key, spec)| {
+                let mut v = spec.clone();
+                if let Some(obj) = v.as_object_mut() {
+                    obj.entry("key").or_insert_with(|| json!(key));
+                    obj.entry("label")
+                        .or_insert_with(|| json!({ "de": key, "en": key }));
+                    obj.entry("type").or_insert_with(|| json!("text"));
+                }
+                serde_json::from_value(v).expect("FormField parst")
+            })
+            .collect()
+    }
+
+    fn hardened(body: serde_json::Value, specs: &[(&str, serde_json::Value)]) -> serde_json::Value {
+        let mut b = body;
+        harden_body_by_fields(&mut b, &hardening_fields_from_form(&fields_of(specs)));
+        b
+    }
+
     #[test]
-    fn qty_hardening_junk_dropped_and_ints_cleaned() {
+    fn text_field_coercion_and_declared_max_length_truncates() {
+        // Text-Feld: Zahlen/Bools -> String (Server-Vertrag Saiten-Concat;
+        // serde-Number-Display: '3' bleibt '3').
+        let out = hardened(
+            json!({ "name": 42, "grade": true, "size": 3 }),
+            &[
+                ("name", json!({ "type": "text" })),
+                ("grade", json!({ "type": "text" })),
+                ("size", json!({ "type": "text" })),
+            ],
+        );
+        assert_eq!(out["name"], json!("42"));
+        assert_eq!(out["grade"], json!("true"));
+        assert_eq!(out["size"], json!("3"));
+        // Deklarierte max_length: 121 Zeichen -> 120 gekuerzt (I-Karten-Cap-
+        // Aequivalent: loot/commodities Server-Limit 120 wirkt per Deklaration).
+        let out2 = hardened(
+            json!({ "name": "a".repeat(121) }),
+            &[("name", json!({ "type": "text", "max_length": 120 }))],
+        );
+        assert_eq!(out2["name"].as_str().unwrap().chars().count(), 120);
+        // Grenze grenzgueltig: 120 bleibt 120.
+        let out3 = hardened(
+            json!({ "name": "b".repeat(120) }),
+            &[("name", json!({ "type": "text", "max_length": 120 }))],
+        );
+        assert_eq!(out3["name"].as_str().unwrap().chars().count(), 120);
+        // Ohne Deklaration: 121 Zeichen unveraendert (participants bis 200:
+        // Server-Backstop + httpErrorNote-Diagnose, wie auf main 37d9932).
+        let out4 = hardened(
+            json!({ "name": "a".repeat(121) }),
+            &[("name", json!({ "type": "text" }))],
+        );
+        assert_eq!(out4["name"], json!("a".repeat(121)));
+        // Kuerzung zaehlt Zeichen, nicht Bytes (Umlaute).
+        let out5 = hardened(
+            json!({ "name": "ä".repeat(121) }),
+            &[("name", json!({ "type": "text", "max_length": 120 }))],
+        );
+        assert_eq!(out5["name"].as_str().unwrap().chars().count(), 120);
+    }
+
+    #[test]
+    fn number_field_junk_dropped_and_cleaned() {
+        let fields = [("qty", json!({ "type": "number" }))];
         for junk in [
             json!(""),
             json!("NaN"),
@@ -3414,113 +3545,79 @@ mod tests {
             json!(true),
             json!([]),
         ] {
-            assert_eq!(
-                normalize_qty_value(&junk),
-                None,
+            let out = hardened(json!({ "name": "Sabre", "qty": junk }), &fields);
+            assert!(
+                out.get("qty").is_none(),
                 "junk-Key muss entfallen: {junk:?}"
             );
+            assert_eq!(out["name"], json!("Sabre"));
         }
-        assert_eq!(normalize_qty_value(&json!("4")), Some(4));
-        assert_eq!(normalize_qty_value(&json!(" 7 ")), Some(7));
-        assert_eq!(normalize_qty_value(&json!("3.6")), Some(4));
-        assert_eq!(normalize_qty_value(&json!(2)), Some(2));
-        let mut body = json!({ "name": "Sabre", "qty": "NaN" });
-        harden_write_body(&mut body, "/api/session/s1/loot").expect("hardened");
-        assert_eq!(body, json!({ "name": "Sabre" })); // qty-Key entfaellt -> Server-Default 1
-        let mut body2 = json!({ "name": "Sabre", "qty": "12" });
-        harden_write_body(&mut body2, "/api/session/s1/loot").expect("hardened");
-        assert_eq!(body2["qty"], json!(12)); // saubere Ganzzahl, kein String
-        // Klampe (Omar Live-Sonde): JSON-Int > int64 range panikt den SCLM-Server
-        // (nackter 500 HTML); Float-Saettigung (i64::MAX) wird auf 999_999 geklampt,
-        // damit kein int64-Kanonenrohr den Server trifft. 26-stellige Strings
-        // parse-nicht-i64 -> f64 -> Saettigung -> ebenfalls geklampt.
+        // Saubere Zahlen aus Ziffernstrings (kein String-Muell am Server).
+        assert_eq!(hardened(json!({ "qty": "12" }), &fields)["qty"], json!(12));
+        assert_eq!(hardened(json!({ "qty": " 7 " }), &fields)["qty"], json!(7));
+        assert_eq!(hardened(json!({ "qty": 2 }), &fields)["qty"], json!(2));
+        assert_eq!(hardened(json!({ "qty": 0 }), &fields)["qty"], json!(0)); // Server-Default-Pfad
+        // Dezimalwerte werden NICHT gerundet — der Server-400 fuer eine
+        // krumme Menge bleibt sichtbar (U-BUILD-Regel, kein Raten des Kerns).
         assert_eq!(
-            normalize_qty_value(&json!(9_223_372_036_854_775_807_i64)),
-            Some(999_999)
+            hardened(json!({ "qty": "1.5" }), &fields)["qty"],
+            json!(1.5)
+        );
+        assert_eq!(hardened(json!({ "qty": 9.5 }), &fields)["qty"], json!(9.5));
+        // Ohne deklarierte Grenzen: nur technischer Ueberlauf-Schutz 1e12
+        // (Omar Live-Sonde: JSON-Ints jenseits int64 range -> nackter Server-500;
+        // 1e12 ist deutlich unter i64::MAX und kein Plugin-Vokabular).
+        assert_eq!(
+            hardened(json!({ "qty": "99999999999999999999999999" }), &fields)["qty"],
+            json!(1_000_000_000_000_i64)
         );
         assert_eq!(
-            normalize_qty_value(&json!("99999999999999999999999999")),
-            Some(999_999)
+            hardened(json!({ "qty": 9_223_372_036_854_775_807_i64 }), &fields)["qty"],
+            json!(1_000_000_000_000_i64)
         );
-        assert_eq!(normalize_qty_value(&json!(1_000_001)), Some(999_999));
-        assert_eq!(normalize_qty_value(&json!("1000000")), Some(999_999));
-        assert_eq!(normalize_qty_value(&json!("999999")), Some(999_999));
-        assert_eq!(normalize_qty_value(&json!(0)), Some(0)); // Server-Default-Pfad bleibt
-        let mut body3 = json!({ "name": "Sabre", "qty": "99999999999999999999999999" });
-        harden_write_body(&mut body3, "/api/session/s1/loot").expect("hardened");
-        assert_eq!(body3["qty"], json!(999_999));
-        // Typ-Zwang (Omar Live-500 2026-11-05): Zahlen in Textfeldern des
-        // Loot-Key (name/type/grade/size) panikten den Server — String-Zwang.
-        let mut body4 = json!({ "name": "FR-86", "type": "MIL", "grade": "A", "size": 3 });
-        harden_write_body(&mut body4, "/api/session/s1/loot").expect("hardened");
-        assert_eq!(body4["size"], json!("3"));
-        assert_eq!(body4["type"], json!("MIL"));
-        let mut body5 = json!({ "name": 42, "qty": 7 });
-        harden_write_body(&mut body5, "/api/session/s1/loot").expect("hardened");
-        assert_eq!(body5["name"], json!("42"));
-        assert_eq!(body5["qty"], json!(7)); // qty bleibt Zahl-Arm
-        let mut body6 = json!({ "name": "P-Name", "type": 7, "grade": 9.5 });
-        harden_write_body(&mut body6, "/api/session/s1/participants").expect("hardened");
-        assert_eq!(body6["type"], json!("7"));
-        assert_eq!(body6["grade"], json!("9.5"));
+        // 1_000_001 (unter 1e12) bleibt 1_000_001 — keine SCLM-Klamme mehr.
+        assert_eq!(
+            hardened(json!({ "qty": 1_000_001 }), &fields)["qty"],
+            json!(1_000_001)
+        );
+        // Negative bleiben durchgereicht (Server normalisiert, keine Panik).
+        assert_eq!(hardened(json!({ "qty": -5 }), &fields)["qty"], json!(-5));
     }
 
     #[test]
-    fn name_cap_local_hint_and_null_keys_stripped() {
-        let long = "a".repeat(121);
-        let mut body = json!({ "name": long, "delta": 1 });
-        let err = harden_write_body(&mut body, "/api/session/s1/loot").unwrap_err();
-        assert!(err.contains("error.connector.name_too_long"), "{err}");
-        assert!(err.contains("\"limit\":120"), "{err}");
-        let ok = "b".repeat(120);
-        let mut body2 = json!({ "name": ok });
-        harden_write_body(&mut body2, "/api/session/s1/loot")
-            .expect("120 Zeichen sind grenzgültig");
-        // null-Werte (explizit geleerte Felder) verlassen den Body nie.
-        let mut body3 = json!({ "name": "ok", "qty": null, "sale_revenue": null });
-        harden_write_body(&mut body3, "/api/session/s1/loot").expect("hardened");
-        assert_eq!(body3, json!({ "name": "ok" }));
+    fn number_field_declared_min_max_clamps() {
+        // Fixture-Aequivalent: qty min 1 max 10000 (SCLM-Server-Grenze).
+        let fields = [("qty", json!({ "type": "number", "min": 1, "max": 10000 }))];
+        assert_eq!(
+            hardened(json!({ "qty": "1e20" }), &fields)["qty"],
+            json!(10000)
+        );
+        assert_eq!(
+            hardened(json!({ "qty": 9_223_372_036_854_775_807_i64 }), &fields)["qty"],
+            json!(10000)
+        );
+        assert_eq!(
+            hardened(json!({ "qty": "20000" }), &fields)["qty"],
+            json!(10000)
+        );
+        assert_eq!(hardened(json!({ "qty": -5 }), &fields)["qty"], json!(1));
+        assert_eq!(hardened(json!({ "qty": 500 }), &fields)["qty"], json!(500));
+        assert_eq!(hardened(json!({ "qty": 1 }), &fields)["qty"], json!(1));
     }
 
-    // I-SCLM Cockpit UX R2-R1 (Review-Runde 1, blockierender Punkt): Der
-    // 120-Cap ist PFADGESCHARTET auf loot/commodities — nur dort erzwingt
-    // der Server selbst das Limit (server.py add_loot L514 / add_commodity
-    // L644: len(name) > 120 -> 400 'Name zu lang'). participants-PATCH hat
-    // serverseitig GAR KEIN Name-Limit (update_participant), participants-
-    // POST und create/settings entscheiden serverseitig (120/200): 121-200
-    // Zeichen müssen bis zum Server durchreichen (Server-Backstop +
-    // httpErrorNote-Diagnose), wie auf main 37d9932.
     #[test]
-    fn name_cap_scoped_loot_and_commodities_only() {
-        let long = "a".repeat(121);
-        for path in [
-            "/api/session/s1/loot",
-            "/api/session/s1/loot/l1/qty",
-            "/api/session/s1/commodities",
-        ] {
-            let mut body = json!({ "name": long });
-            let err = harden_write_body(&mut body, path).unwrap_err();
-            assert!(
-                err.contains("error.connector.name_too_long"),
-                "{path}: {err}"
-            );
-        }
-        for path in [
-            "/api/session/s1/participants",
-            "/api/session/s1/participants/p1",
-            "/api/session/create",
-            "/api/session/s1/settings",
-        ] {
-            let mut body = json!({ "name": long });
-            harden_write_body(&mut body, path)
-                .unwrap_or_else(|e| panic!("{path} darf nicht lokal gecappt sein: {e}"));
-            assert_eq!(body["name"], json!(long));
-        }
-        // null-Entfernung und qty-Härtung bleiben GLOBAL aktiv — nur der
-        // name-Cap ist pfadgebunden.
-        let mut body = json!({ "name": long, "qty": "NaN", "x": null });
-        harden_write_body(&mut body, "/api/session/s1/participants").expect("hardened");
-        assert_eq!(body, json!({ "name": long }));
+    fn null_keys_stripped_and_undeclared_keys_untouched() {
+        // null-Werte (explizit geleerte Felder) verlassen den Body nie —
+        // global, wie bisher. Undeklarierte Keys bleiben unangetastet:
+        // delta/scu (Action-Felder ohne Typ-Deklaration) bleiben Zahlen-Arme.
+        let out = hardened(
+            json!({ "name": "ok", "qty": null, "sale_revenue": null, "delta": 2, "scu": 7.5 }),
+            &[
+                ("name", json!({ "type": "text" })),
+                ("qty", json!({ "type": "number" })),
+            ],
+        );
+        assert_eq!(out, json!({ "name": "ok", "delta": 2, "scu": 7.5 }));
     }
 
     #[test]
@@ -3599,8 +3696,8 @@ mod tests {
             "body_template": { "delta": "{delta}", "qty": "{qty}", "name": "{name}" },
             "fields": [
                 { "key": "delta", "label": { "de": "d", "en": "d" } },
-                { "key": "qty", "label": { "de": "q", "en": "q" }, "required": false },
-                { "key": "name", "label": { "de": "n", "en": "n" }, "required": false }
+                { "key": "qty", "label": { "de": "q", "en": "q" }, "required": false, "type": "number" },
+                { "key": "name", "label": { "de": "n", "en": "n" }, "required": false, "type": "text" }
             ]
         }))
         .expect("ScreenAction parst");
@@ -3625,20 +3722,30 @@ mod tests {
             json!({ "delta": 2 }),
             "Body muss gehärtet sein: {sent}"
         );
-        // Fall B (loot/qty-Pfad, Cap greift): leerer optionaler qty-String +
-        // name >120 -> lokaler Hinweis-Fehler, KEIN Request.
+        // Fall B (U-BUILD): der frühere 120-Pfad-Deckel (name_hardening_applies
+        // '/loot') ist ersatzlos weg — ohne deklarierte Grenze (max_length ist
+        // ein FormField-Schluessel, Param-Felder haben keine) bleibt der
+        // 121-Zeichen-Name ungekuerzt; der Server entscheidet. qty ('  ') faellt
+        // als leerer number-Wert raus (Deklaration 'type' wirkt FELDBASIERT,
+        // nicht pfadbasiert), delta (undeklariert) bleibt Zahl.
         let before = mock_hits(&rx).len();
         values.insert("delta".to_owned(), json!("1"));
         values.insert("qty".to_owned(), json!("  "));
         values.insert("name".to_owned(), json!("x".repeat(121)));
-        let err = block_on_async(screen_action_core(&manifest, &action, values, &st, "sclm"))
-            .unwrap_err();
-        assert!(err.contains("error.connector.name_too_long"), "{err}");
+        let (status, _) =
+            block_on_async(screen_action_core(&manifest, &action, values, &st, "sclm"))
+                .expect("Request läuft durch — Deklaration kueczt, kein lokaler Fehler");
+        assert_eq!(status, 200);
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), before + 1, "genau ein Request");
+        let sent_b: serde_json::Value = serde_json::from_str(&hits[before].body).unwrap();
         assert_eq!(
-            mock_hits(&rx).len(),
-            before,
-            "kein Request bei >120 loot-Pfad-Cap"
+            sent_b["name"],
+            json!("x".repeat(121)),
+            "kein Pfad-Deckel mehr — ohne Deklaration bleibt der Wert ungekuerzt: {sent_b}"
         );
+        assert_eq!(sent_b["delta"], json!(1));
+        assert!(sent_b.get("qty").is_none(), "deklarierter number-Fallback: leer -> Key weg");
         // Fall C (participants-Pfad, Cap greift NICHT): 121-Zeichen-Name im
         // Action-Body geht raus, Server-400 kommt als (status, body) zurück.
         let action_p: connector::flow::ScreenAction = serde_json::from_value(json!({
@@ -3683,8 +3790,8 @@ mod tests {
                 "endpoint": "",
                 "form": {
                     "fields": [
-                        { "key": "name", "label": { "de": "n", "en": "n" }, "type": "text", "required": true },
-                        { "key": "qty", "label": { "de": "q", "en": "q" }, "type": "number" },
+                        { "key": "name", "label": { "de": "n", "en": "n" }, "type": "text", "required": true, "max_length": 120 },
+                        { "key": "qty", "label": { "de": "q", "en": "q" }, "type": "number", "min": 1, "max": 10000 },
                         { "key": "type", "label": { "de": "t", "en": "t" }, "type": "text" }
                     ],
                     "method": "post", "path": "/api/session/s1/loot",
@@ -3728,7 +3835,7 @@ mod tests {
     }
 
     #[test]
-    fn name_over_limit_blocks_before_any_request() {
+    fn name_over_declared_max_length_truncates_before_request() {
         let (base, rx) = start_mock_api(vec![(
             "POST",
             "/api/session/s1/loot",
@@ -3740,11 +3847,16 @@ mod tests {
         let st = settings_state_with("sclm", &[]);
         let mut values: BTreeMap<String, serde_json::Value> = BTreeMap::new();
         values.insert("name".to_owned(), json!("a".repeat(121)));
-        let err =
-            block_on_async(form_submit_core(&manifest, &form, values, &st, "sclm")).unwrap_err();
-        assert!(err.contains("error.connector.name_too_long"), "{err}");
-        // Der Fehler ist lokal: es ging kein Request mehr raus.
-        assert!(mock_hits(&rx).is_empty());
+        let (status, _) = block_on_async(form_submit_core(&manifest, &form, values, &st, "sclm"))
+            .expect("Request läuft durch — Deklaration kueczt statt lokalem Fehler");
+        assert_eq!(status, 200);
+        // U-BUILD-Aequivalent zum I-Karten-Cap: der 120-Name geht NUR gekuerzt
+        // raus (Manifest-Deklaration max_length 120 = loot-Serverlimit), die
+        // Haertung wirkt vor dem Request — nicht mehr ueber die Pfad-Heuristik.
+        let hits = mock_hits(&rx);
+        assert_eq!(hits.len(), 1);
+        let sent: serde_json::Value = serde_json::from_str(&hits[0].body).unwrap();
+        assert_eq!(sent["name"].as_str().unwrap().chars().count(), 120);
     }
 
     #[test]

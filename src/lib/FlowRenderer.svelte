@@ -302,7 +302,12 @@
 					key: p.key,
 					label: p.label,
 					type: 'text' as const,
-					required: true
+					required: true,
+					// code_entry-Params haerten nicht (kein FormField); die
+					// Grenzen fehlen bewusst (U-BUILD docs §26).
+					max_length: null as number | null,
+					min: null as number | null,
+					max: null as number | null
 				}))
 			: (shown?.form?.fields ?? [])
 	);
@@ -488,6 +493,23 @@
 	}
 	function truthyFlagVal(v: unknown): boolean {
 		return v === true || v === 1 || v === '1' || v === 'true';
+	}
+	/** U-BUILD (docs/SCLM-FLOW-V2 §26): generische Zeilen-Waehlbarkeit eines
+	 *  multi-Screens. select_if (Manifest) wird gegen {Flow-Zustand, ...Zeile}
+	 *  ausgewertet — dieselbe Funktion/Semantik wie actionEnabled fuer
+	 *  enabled_if (Zeilen-Kontext). select_if fehlt => jede Zeile waehlbar
+	 *  (Universalitaet). Das fruehere harte for_sale-Gating ist damit
+	 *  Manifest-gesteuert: jedes Plugin steuert sein Gating ueber select_if. */
+	function rowSelectable(s: ScreenDTO | null | undefined, row: unknown): boolean {
+		const cond = s?.multi?.select_if;
+		if (!cond) return true;
+		return evaluateCondition(cond, { ...fstate, ...((row as Record<string, unknown> | null | undefined) ?? {}) });
+	}
+	/** Hinweis-Text fuer nicht waehlbare Zeilen aus dem Manifest
+	 *  (multi.select_hint); ohne select_hint: nur deaktiviert, kein Text. */
+	function selectHintOf(s: ScreenDTO | null | undefined): string {
+		const h = s?.multi?.select_hint;
+		return h ? labelOf(h, lang) : '';
 	}
 
 	// Cap der Mehrfachauswahl: multi.max_path, sonst Session-Key max_wishes
@@ -1341,9 +1363,12 @@
 		const s = shown;
 		if (!s) return;
 			const write = (s.actions ?? []).find((a) => !isNavigationAction(a));
-		// Verkaufte Items sind serverseitig nicht verlosbar; bereits gemarkte
-		// Zeilen (z. B. Vorauswahl alter Wünsche) fallen raus (docs §24).
-		const selected = rows.filter((r, i) => isMarked(i) && !truthyFlagVal(r?.for_sale));
+		// U-BUILD (docs §26): generisches select_if-Gating — Verteidigung in der
+		// Tiefe: die Checkbox ist bei select_if=false bereits deaktiviert, der
+		// Confirm filtert nicht waehlbare Zeilen zusaetzlich. Manifest ohne
+		// select_if = jede gemarkte Zeile bleibt waehlbar (Universalitaet;
+		// docs §24 Verkauf-Guard wirkt jetzt ueber die select_if-Deklaration).
+		const selected = rows.filter((r, i) => isMarked(i) && rowSelectable(s, r));
 		if (selected.length === 0) return;
 		if (multiMax !== null && selected.length > multiMax) return;
 		// Pin-Keys erhalten die Auswahl als JSON-Array (apply_fill ersetzt den
@@ -1637,7 +1662,7 @@
 		const ctx = multiCtxOf(t);
 		if (m.multi === 'wishes') {
 			const ids = modalRows
-				.map((r, i) => (isModalMarked(String(i)) && !truthyFlagVal(r?.for_sale) ? String(r[targetPin] ?? '') : ''))
+				.map((r, i) => (isModalMarked(String(i)) && rowSelectable(t, r) ? String(r[targetPin] ?? '') : ''))
 				.filter((v) => v !== '');
 			if (ids.length === 0 && m.confirmStage !== 'empty') {
 				// Zweistufig (Spec 15): leere Auswahl = alle Wünsche löschen —
@@ -1958,6 +1983,9 @@
 								class="finput"
 								type={f.type === 'number' ? 'number' : 'text'}
 								required={f.required}
+								maxlength={f.type !== 'number' ? (f.max_length ?? undefined) : undefined}
+								min={f.type === 'number' ? (f.min ?? undefined) : undefined}
+								max={f.type === 'number' ? (f.max ?? undefined) : undefined}
 								bind:value={formValues[f.key]}
 								oninput={() => {
 									const rule = (shown.autocomplete ?? []).find((a) => a.field === f.key);
@@ -2195,14 +2223,14 @@
 					{#each rows as row, i (i)}
 						<li>
 							{#if shown.type === 'list' && shown.multi}
-								{@const rowSaleOff = truthyFlagVal(row?.for_sale)}
+								{@const rowOff = !rowSelectable(shown, row)}
 								<button
 									class="frow frow-mark"
 									class:is-marked={isMarked(i)}
-									class:is-off={rowSaleOff}
+									class:is-off={rowOff}
 									type="button"
 									aria-pressed={isMarked(i)}
-									disabled={rowSaleOff}
+									disabled={rowOff}
 									onclick={() => toggleMark(i)}
 								>
 									<span class="fcheck">{isMarked(i) ? '☑' : '☐'}</span>
@@ -2215,7 +2243,7 @@
 												{/each}
 											</span>
 										{/if}
-										{#if rowSaleOff}<span class="fassign-hint">{tr('connector.flow.creator.sale_hint')}</span>{/if}
+										{#if rowOff && selectHintOf(shown)}<span class="fassign-hint">{selectHintOf(shown)}</span>{/if}
 									</span>
 									</button>
 							{:else}
@@ -2416,9 +2444,9 @@
 					{#if modal.multi === 'wishes'}
 						{@const metaKeys = Object.keys(modal?.target?.mapping ?? {}).filter((k) => k !== (modal?.target?.pins ?? [])[0] && k !== 'name' && /(qty|type|grade|size|wish_count)/i.test(k)).slice(0, 3)}
 						{#each modalRows as row, i (i)}
-						{@const rowSaleOff = truthyFlagVal(row?.for_sale)}
+						{@const rowOff = !rowSelectable(modal?.target, row)}
 						<li>
-							<button class="frow frow-mark" class:is-marked={isModalMarked(String(i))} class:is-off={rowSaleOff} disabled={rowSaleOff} type="button" aria-pressed={isModalMarked(String(i))} onclick={() => toggleModalMark(String(i), !rowSaleOff)}>
+							<button class="frow frow-mark" class:is-marked={isModalMarked(String(i))} class:is-off={rowOff} disabled={rowOff} type="button" aria-pressed={isModalMarked(String(i))} onclick={() => toggleModalMark(String(i), !rowOff)}>
 									<span class="fcheck">{isModalMarked(String(i)) ? '☑' : '☐'}</span>
 									<span class="fmain">
 										<span class="ftitle">{formatValue(row?.name ?? row?.title ?? '')}</span>
@@ -2429,7 +2457,7 @@
 												{/each}
 											</span>
 										{/if}
-										{#if rowSaleOff}<span class="fassign-hint">{tr('connector.flow.creator.sale_hint')}</span>{/if}
+										{#if rowOff && selectHintOf(modal?.target)}<span class="fassign-hint">{selectHintOf(modal?.target)}</span>{/if}
 									</span>
 								</button>
 							</li>
@@ -2494,7 +2522,7 @@
 								{/each}
 							</div>
 						{:else}
-							<input class="finput" type={f.type === 'number' ? 'number' : 'text'} bind:value={formValues[f.key]} autocomplete="off" oninput={() => { const rule = (modal?.target?.autocomplete ?? []).find((a) => a.field === f.key); if (rule) void searchAC(rule, String(formValues[f.key] ?? '')); }} />
+							<input class="finput" type={f.type === 'number' ? 'number' : 'text'} maxlength={f.type !== 'number' ? (f.max_length ?? undefined) : undefined} min={f.type === 'number' ? (f.min ?? undefined) : undefined} max={f.type === 'number' ? (f.max ?? undefined) : undefined} bind:value={formValues[f.key]} autocomplete="off" oninput={() => { const rule = (modal?.target?.autocomplete ?? []).find((a) => a.field === f.key); if (rule) void searchAC(rule, String(formValues[f.key] ?? '')); }} />
 							{#if autofilled[f.key]}<span class="fauto">{tr('connector.flow.autofill_applied')}</span>{/if}
 						{/if}
 					</label>

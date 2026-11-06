@@ -249,6 +249,18 @@ pub struct MultiSpec {
     /// `wishes` (Bestandsmanifeste bleiben byte-identisch).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<MultiMode>,
+    /// U-BUILD (docs/SCLM-FLOW-V2 §26): generische Waehlbarkeits-Regel pro
+    /// Zeile — ersetzt das hart verdrahtete `for_sale`-Gating im Renderer.
+    /// IDENTISCHER Condition-Typ/Op-Satz wie `enabled_if`; `on` muss ein
+    /// Mapping-Key des Screens sein (Validator). select_if fehlt => jede
+    /// Zeile ist waehlbar (Universalitaet, Bestandsmanifeste unveraendert).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select_if: Option<Condition>,
+    /// Optionaler Hinweis-Text (de/en), der an nicht waehlbaren Zeilen
+    /// gezeigt wird, wenn `select_if` falsch ist. Ohne select_hint: Zeile
+    /// ist nur deaktiviert, ohne Text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub select_hint: Option<LocalizedText>,
 }
 
 /// Modal-Auswahlrichtung eines multi-Screens (Siehe `MultiSpec::mode`).
@@ -746,6 +758,29 @@ mod tests {
         assert_eq!(s.screen_type, ScreenType::Wait);
         assert_eq!(s.poll_seconds, Some(15));
         assert_eq!(s.exit.as_ref().unwrap().then.as_deref(), Some("results"));
+    }
+
+    #[test]
+    fn multi_select_if_and_hint_parse() {
+        // U-BUILD: select_if/select_hint sind optionale MultiSpec-Felder —
+        // Bestandsmanifeste (ohne die Keys) parsen unveraendert.
+        let m: MultiSpec = serde_json::from_value(serde_json::json!({})).unwrap();
+        assert_eq!(m.select_if, None);
+        assert_eq!(m.select_hint, None);
+        let m2: MultiSpec = serde_json::from_value(serde_json::json!({
+            "select_if": {"on": "for_sale", "op": "not_equals", "value": true},
+            "select_hint": {"de": "im Verkauf", "en": "for sale"}
+        }))
+        .unwrap();
+        let c = m2.select_if.as_ref().unwrap();
+        assert_eq!(c.on, "for_sale");
+        assert_eq!(c.op, CondOp::NotEquals);
+        assert_eq!(c.value, Some(serde_json::Value::Bool(true)));
+        assert_eq!(m2.select_hint.as_ref().unwrap().de, "im Verkauf");
+        // deny_unknown_fields gilt weiterhin (select_if2 waere ein Tippfehler).
+        let bad: Result<MultiSpec, _> =
+            serde_json::from_str(r#"{"select_if2": {"on": "for_sale", "op": "exists"}}"#);
+        assert!(bad.is_err());
     }
 
     #[test]

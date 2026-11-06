@@ -146,6 +146,21 @@ pub struct FormField {
     /// Optional: Voreinstellung aus einem Settings-Wert (Whitelist),
     /// wenn das Feld leer bleibt — z. B. Standard-Benutzername.
     pub default_source: Option<String>,
+    /// U-BUILD (Universal-Haertung, docs/SCLM-FLOW-V2 §26): Laengengrenze des
+    /// Textfelds in Zeichen (erlaubter Bereich 1..=2000, Validator). Der Core
+    /// kuerzt deklarierte Werte lokal auf diese Laenge, bevor sie den Server
+    /// erreichen — manifest-getrieben, kein Pfad-Heuristik-Vokabular.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u16>,
+    /// U-BUILD: Untergrenze des number-Felds (f64). Deklarierte Werte werden
+    /// bei der Body-Haertung eingeklemmt; ohne Deklaration gilt nur der
+    /// technische Ueberlauf-Schutz (max 1e12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    /// U-BUILD: Obergrenze des number-Felds (f64). Klemmt bei der
+    /// Body-Haertung; `min > max` ist ein Validator-Fehler.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
