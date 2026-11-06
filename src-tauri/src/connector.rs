@@ -3745,7 +3745,10 @@ mod tests {
             "kein Pfad-Deckel mehr — ohne Deklaration bleibt der Wert ungekuerzt: {sent_b}"
         );
         assert_eq!(sent_b["delta"], json!(1));
-        assert!(sent_b.get("qty").is_none(), "deklarierter number-Fallback: leer -> Key weg");
+        assert!(
+            sent_b.get("qty").is_none(),
+            "deklarierter number-Fallback: leer -> Key weg"
+        );
         // Fall C (participants-Pfad, Cap greift NICHT): 121-Zeichen-Name im
         // Action-Body geht raus, Server-400 kommt als (status, body) zurück.
         let action_p: connector::flow::ScreenAction = serde_json::from_value(json!({
