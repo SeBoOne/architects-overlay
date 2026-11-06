@@ -627,3 +627,19 @@ und dasselbe Gating ueber ihr eigenes Manifest bekommen.
     Name raus statt lokalem Fehler), screen_action_write_hardening_e2e (Action-Pfad
     feldgetrieben), participant_long_name_reaches_server_no_local_block (121 Zeichen ohne
     Deklaration erreichen den Server).
+
+## 27. Fixture als kanonisches Manifest-Test-Asset (2026-11-06, examples-Gate-Luecke Option B)
+
+src-tauri/tests/fixtures/sclm-manifest.json ist ab jetzt das kanonische
+Manifest-Test-Asset fuer alle Validator-Tests. Die drei validate.rs-Reader, die
+vorher direkt gitignoriertes examples/sclm.json gelesen hatten (shipped_sclm_-
+manifest_validates, examples_sclm_manifest_creator_overview_max_wishes_select,
+shipped_sclm_manifest_declares_settings_fields — jetzt fixture_* benannt),
+lesen das eingecheckte Fixture. Damit ist das Gate (cargo test --workspace) in
+Frisch-Klonen/CI ohne examples/sclm.json grün; die Assertions jagen das
+Fixture weiterhin durch den echten Validator (validate_manifest +
+ConnectorManifest::parse), keine textbasierten Ersatz-Checks.
+examples/sclm.json bleibt gitignored und wird nur noch lokal von Omar gepflegt
+(Session-Codes in der 64k-Datei). Sync-Regel aus §16 bleibt: bei jeder
+Manifest-Pflege examples/sclm.json UND Fixture wortgleich halten; der Fixture-
+Diff ist der abzuprufende Teil.
