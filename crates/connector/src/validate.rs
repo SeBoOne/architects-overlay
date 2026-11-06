@@ -1604,12 +1604,13 @@ mod tests {
     }
 
     #[test]
-    fn shipped_sclm_manifest_validates() {
-        // Das mitgelieferte SCLM-Pilot-Manifest (C3) muss sauber durch den
-        // Validator laufen — genau so, wie ein Nutzer es importieren würde.
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sclm.json");
-        let text = std::fs::read_to_string(&path).expect("examples/sclm.json exists");
+    fn fixture_sclm_manifest_validates() {
+        // Das kanonische Manifest-Test-Asset src-tauri/tests/fixtures/sclm-manifest.json
+        // (eingecheckter Snapshot von Omars lokalem examples/sclm.json) muss sauber
+        // durch den Validator laufen — genau so, wie ein Nutzer es importieren würde.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src-tauri/tests/fixtures/sclm-manifest.json");
+        let text = std::fs::read_to_string(&path).expect("fixtures/sclm-manifest.json exists");
         let r = validate_manifest(text.as_bytes());
         assert!(r.is_ok(), "{r:?}");
         assert!(r.warnings.is_empty(), "{r:?}");
@@ -2142,13 +2143,18 @@ mod tests {
     }
 
     #[test]
-    fn examples_sclm_manifest_creator_overview_max_wishes_select() {
+    fn fixture_sclm_manifest_creator_overview_max_wishes_select() {
         // Review-R1 blocking-Punkt: Spec 15 (Zeile „max_wishes-Select 1–6
         // (PATCH settings, sofort)“) + Karte G Kriterium 4 verlangen die
-        // Aktion AUF c_overview (nicht nur die Settings-Form dahinter) —
-        // Karte G darf examples/sclm.json nicht anfassen.
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/sclm.json");
-        let text = std::fs::read_to_string(path).expect("examples/sclm.json ist lesbar");
+        // Aktion AUF c_overview (nicht nur die Settings-Form dahinter).
+        // Kanonisches Test-Asset: eingechecktes Fixture (Snapshot von Omars
+        // gitignoredem examples/sclm.json), damit das Gate in Frisch-Klonen
+        // ohne examples/sclm.json grün ist.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../src-tauri/tests/fixtures/sclm-manifest.json"
+        );
+        let text = std::fs::read_to_string(path).expect("fixtures/sclm-manifest.json ist lesbar");
         let report = validate_manifest(text.as_bytes());
         assert!(report.errors.is_empty(), "{report:?}");
         let m = crate::manifest::ConnectorManifest::parse(text.as_bytes()).expect("parst");
@@ -2378,12 +2384,12 @@ mod tests {
     }
 
     #[test]
-    fn shipped_sclm_manifest_declares_settings_fields() {
-        // examples/sclm.json deklariert den dedizierten SCLM-Benutzernamen
+    fn fixture_sclm_manifest_declares_settings_fields() {
+        // Das Fixture deklariert den dedizierten SCLM-Benutzernamen
         // (leer startend, KEIN uex-Pre-fill — keine default_source-Whitelist).
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sclm.json");
-        let text = std::fs::read_to_string(&path).expect("examples/sclm.json exists");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src-tauri/tests/fixtures/sclm-manifest.json");
+        let text = std::fs::read_to_string(&path).expect("fixtures/sclm-manifest.json exists");
         let m = connector_manifest_of(&text);
         assert_eq!(
             m.settings_fields
