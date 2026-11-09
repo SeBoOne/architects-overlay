@@ -124,6 +124,11 @@ pub struct LlHookDiag {
     pub matched_total: u64,
     pub last_key: Option<String>,
     pub last_down_at: Option<String>,
+    /// WH-HOOK R26: Die Combos, die der Hook AKTUELL abhört
+    /// (`"toggle=ctrl+shift+0x55"`). Kompatibles NEUES Feld: Support sieht
+    /// live, ob der Hook nach einem Rebind die neue Combo hört (Reload hat
+    /// gewirkt) oder noch die alte (Reload wirkte nicht).
+    pub targets: Vec<String>,
 }
 
 /// VK → lesbare Taste (Diagnose-Anzeige; unbekannt = Hex).
@@ -154,6 +159,7 @@ fn ll_hook_diag() -> Option<LlHookDiag> {
         matched_total: c.matched_total,
         last_key: (c.last_vk != 0).then(|| vk_name(c.last_vk)),
         last_down_at: (c.last_down_unix != 0).then(|| iso8601(c.last_down_unix)),
+        targets: c.targets,
     })
 }
 

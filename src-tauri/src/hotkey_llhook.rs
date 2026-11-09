@@ -32,6 +32,14 @@ use std::sync::atomic::Ordering;
 /// in der Hook-Chain ankommt, wenn SC fokussiert ist (H5-Verifikation).
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64};
 
+#[cfg(target_os = "windows")]
+/// WH-HOOK R26: Diagnose-Spiegel der aktuellen Hook-Ziel-Liste (gerenderte
+/// Combos `"toggle=ctrl+shift+0x55"`). Beim install und bei jedem Reload
+/// (WM_RELOAD_TARGETS) vom Hook-Thread geschrieben, von der Diagnose-IPC-
+/// Seite nur gelesen — shortcut_diag_status zeigt damit live, ob der Hook
+/// nach einem Rebind die neue Combo hört oder noch die alte.
+static LL_TARGETS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 static LL_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LL_INSTALLED_UNIX: AtomicU64 = AtomicU64::new(0);
 static LL_EVENTS: AtomicU64 = AtomicU64::new(0);
@@ -50,6 +58,10 @@ pub struct LlHookCounters {
     pub matched_total: u64,
     pub last_vk: u32,
     pub last_down_unix: u64,
+    /// WH-HOOK R26: Die Combos, die der Hook AKTUELL abhört
+    /// (`"toggle=ctrl+shift+0x55"`). Nach einem Rebind der Belegungs-Spiegel
+    /// des Live-Reloads — alte Combo = Reload wirkte nicht.
+    pub targets: Vec<String>,
 }
 
 #[cfg(target_os = "windows")]
@@ -66,6 +78,7 @@ pub fn counters() -> Option<LlHookCounters> {
         matched_total: LL_MATCHED.load(Ordering::Relaxed),
         last_vk: LL_LAST_VK.load(Ordering::Relaxed),
         last_down_unix: LL_LAST_DOWN_UNIX.load(Ordering::Relaxed),
+        targets: LL_TARGETS.lock().expect("ll targets lock").clone(),
     })
 }
 
@@ -207,6 +220,19 @@ impl ComboMatcher {
         Self { targets, mods: 0 }
     }
 
+    /// WH-HOOK R26: Ziel-Liste eines laufenden Hooks austauschen (nach
+    /// Rebind). Combos UND Modifier-Zustand werden getauscht — die Kind-
+    /// Alignierung übernimmt der Aufrufer, der beide Vektoren aus demselben
+    /// (Combo, Kind)-Paar-Vec baut (WK-R1-Lektion: Kind am Combo, nie aus
+    /// Position geraten). Modifier auf 0 zurücksetzen: ein beim Reload
+    /// noch nachwirkender Half-Held-Zustand darf den ersten Druck der
+    /// neuen Combo nicht schlucken; physisch gehaltene Mod-Tasten senden
+    /// Autorepeat-Downs und werden dadurch neu erfasst.
+    pub fn set_targets(&mut self, targets: Vec<Combo>) {
+        self.targets = targets;
+        self.mods = 0;
+    }
+
     /// Einem KeyEvent (Virtueller Keycode, down/up) folgen. Liefert den
     /// Index des Treffers, wenn eine registrierte Nicht-Modifier-Taste
     /// HERUNTERgedrückt wird und die aktuellen Modifier exakt passen.
@@ -329,6 +355,55 @@ pub fn shutdown() {
     uninstall();
 }
 
+/// WH-HOOK R26: Thread-Nachricht an den Hook-Thread, seine Ziel-Liste aus
+/// den Live-Bindings neu zu laden (nach `rebind_shortcut`). Klar getrennt
+/// von WM_QUIT (0x0012, uninstall-Pfad); alle anderen Nachrichten werden im
+/// Hook-Thread ignoriert und die Message-Loop läuft weiter.
+#[cfg(target_os = "windows")]
+const WM_RELOAD_TARGETS: u32 = 0x0400; // WM_USER-Basis
+
+/// WH-HOOK R26: Live-Refresh der Hook-Ziele nach einem Hotkey-Rebind.
+/// Lebt der Hook-Thread (`HOOK_THREAD_ID` belegt), wird ihm die Reload-
+/// Nachricht postet — der Austausch geschieht in dessen eigener Message-Loop
+/// (deadlock-frei: Hook-Proc und Handler laufen auf demselben Thread).
+/// Lebt der Thread nicht: Noop — der nächste `install()` beim SC-Start liest
+/// die Bindings ohnehin frisch. Post-Fehler: Warn + Fallback uninstall() +
+/// install(), install nur wenn das Game wirklich läuft (OverlayState vom
+/// Game-Poller — keine neue Game-Erkennung).
+#[cfg(target_os = "windows")]
+pub fn refresh_targets<R: tauri::Runtime>(app: &AppHandle<R>) {
+    let thread_id = *HOOK_THREAD_ID.lock().expect("hook thread id lock");
+    let Some(id) = thread_id else {
+        return;
+    };
+    let posted = unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::PostThreadMessageW(id, WM_RELOAD_TARGETS, 0, 0)
+    };
+    if posted != 0 {
+        return;
+    }
+    let last_err = unsafe { windows_sys::Win32::Foundation::GetLastError() };
+    log::warn!(
+        "LL-keyboard-hook target reload: PostThreadMessageW fehlgeschlagen (Win32-Fehler {last_err}) — Fallback: Hook-Neustart"
+    );
+    // Fallback: Hook neu starten (der alte Thread unhakt selbst per WM_QUIT,
+    // uninstall() hat die Thread-ID bereits abgenommen).
+    uninstall();
+    use tauri::Manager;
+    let game_running = app
+        .try_state::<crate::overlay::OverlayState>()
+        .map(|st| st.game_running.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    if game_running {
+        install(app.clone());
+    }
+}
+
+/// Nicht-Windows-Stub (gleiches Muster wie `counters`): gleiche Signatur,
+/// Noop — `rebind_shortcut` ruft damit plattformübergreifend einheitlich.
+#[cfg(not(target_os = "windows"))]
+pub fn refresh_targets<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {}
+
 #[cfg(target_os = "windows")]
 fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -345,15 +420,25 @@ fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
             .collect::<Vec<_>>()
     );
     let kinds: Vec<crate::overlay::ShortcutKind> = targets.iter().map(|(_, k)| *k).collect();
+    // WH-HOOK R26: Diagnose-Spiegel vorab setzen (ShortcutDiagSnapshot.
+    // ll_hook.targets), damit Support die Ziel-Liste auch vor/if dem
+    // Hook-Erfolg lesen kann.
+    *LL_TARGETS.lock().expect("ll targets lock") = render_targets(&targets);
 
     HOOK_CTX.with(|ctx| {
+        // WH-HOOK R26: Die Dispatch-Closure bekommt einen eigenen
+        // AppHandle-Klon (AppHandle ist ein leichtgewichtig Arc-Handle) —
+        // sonst moved sie das `app` des Threads und die Reload-Schleife
+        // dürfte read_targets(&app) nicht mehr borgen (E0382, nur auf dem
+        // Windows-Target sichtbar: CI-Check 2026-11-09).
+        let dispatch_app = app.clone();
         *ctx.borrow_mut() = Some(HookRuntime {
             matcher: std::sync::Mutex::new(ComboMatcher::new(
                 targets.into_iter().map(|(c, _)| c).collect(),
             )),
             kinds,
             dispatch: Box::new(move |kind| {
-                shortcut_diag::dispatch_kind(&app, kind);
+                shortcut_diag::dispatch_kind(&dispatch_app, kind);
             }),
         });
     });
@@ -386,8 +471,36 @@ fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
         let mut msg: MSG = std::mem::zeroed();
         loop {
             if GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) <= 0 {
+                // WM_QUIT (uninstall/shutdown) oder Fehler — unhook unten.
                 break;
             }
+            if msg.message == WM_RELOAD_TARGETS {
+                // WH-HOOK R26: rebind_shortcut hat die Combo getauscht →
+                // Live-Bindings neu lesen und Matcher + Kinds in EIGENER
+                // Message-Loop austauschen. Deadlock-frei: ll_hook_proc
+                // (Hook-Callback) und dieser Handler laufen auf demselben
+                // Thread — der Matcher wird im Callback nur kurz gehalten
+                // und der Callback bekommt hier keine App-Handles/IPC.
+                let fresh = read_targets(&app);
+                *LL_TARGETS.lock().expect("ll targets lock") = render_targets(&fresh);
+                log::info!(
+                    "LL-keyboard-hook targets reloaded after rebind: {:?}",
+                    fresh
+                        .iter()
+                        .map(|(c, k)| format!("{:?}={}", k, format_combo(c)))
+                        .collect::<Vec<_>>()
+                );
+                HOOK_CTX.with(|ctx| {
+                    if let Some(rt) = ctx.borrow_mut().as_mut() {
+                        rt.matcher
+                            .lock()
+                            .expect("ll matcher lock")
+                            .set_targets(fresh.iter().map(|(c, _)| *c).collect());
+                        rt.kinds = fresh.iter().map(|(_, k)| *k).collect();
+                    }
+                });
+            }
+            // Unbekannte Nachrichten werden ignoriert; GetMessage läuft weiter.
         }
         windows_sys::Win32::UI::WindowsAndMessaging::UnhookWindowsHookEx(hook);
         *HOOK_THREAD_ID.lock().expect("hook thread id lock") = None;
@@ -438,6 +551,18 @@ fn read_targets<R: tauri::Runtime>(
         .unwrap_or_default()
 }
 
+/// WH-HOOK R26: (Combo, Kind)-Paare als Diagnose-Strings rendern
+/// (`"toggle=ctrl+shift+0x55"`) — Spiegel für `ShortcutDiagSnapshot` und
+/// Reload-Log. Combos sind als Log-Inhalt erlaubt (sie stehen ohnehin in
+/// den Settings); nur Header/Codes bleiben aus Logs verbannt.
+#[cfg(target_os = "windows")]
+fn render_targets(targets: &[(Combo, crate::overlay::ShortcutKind)]) -> Vec<String> {
+    targets
+        .iter()
+        .map(|(c, k)| format!("{}={}", shortcut_diag::slot_name(*k), format_combo(c)))
+        .collect()
+}
+
 #[cfg(target_os = "windows")]
 fn format_combo(c: &Combo) -> String {
     let mut s = String::new();
@@ -460,9 +585,7 @@ fn format_combo(c: &Combo) -> String {
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isize) -> isize {
     unsafe {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
-        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{CallNextHookEx, KBDLLHOOKSTRUCT};
 
         // Regelpunkt: KeyEvents NORMAL durchreichen — nur die Combo-Erkennung
         // lauscht mit. Ein Blocken (kein CallNextHookEx) käme einem Tastendiebstahl
@@ -487,7 +610,7 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
         if !is_key_down && !is_key_up {
             return pass_through();
         }
-        let kb = unsafe { &*kb };
+        let kb = &*kb;
 
         // Sonde: jede sichtbare Taste zählen (down UND up), bevor gematcht
         // wird — 0 Events bei fokussiertem SC heißt „Hook sieht nichts“,
@@ -569,5 +692,85 @@ mod tests {
     fn parse_combo_still_rejects_garbage() {
         assert!(parse_combo("ctrl+NotAKey").is_none());
         assert!(parse_combo("ctrl+shift").is_none());
+    }
+
+    /// WH-HOOK R26 (Omar-User-Fall, SC im Fenstermodus): Simulation des
+    /// Reloads nach Rebind — `build_targets` aus den GEÄNDERTEN Slot-Strings
+    /// muss die neuen Combos mit ihren Kinds liefern; die alten Combos
+    /// dürfen nicht mehr vorkommen (beide Slots: Toggle + ClickThrough).
+    #[test]
+    fn build_targets_after_rebind_yields_new_combos() {
+        use crate::overlay::ShortcutKind::*;
+        let before = build_targets([
+            (Toggle, Some("ctrl+shift+U".to_string())),
+            (ClickThrough, Some("ctrl+shift+O".to_string())),
+        ]);
+        assert_eq!(
+            before,
+            vec![
+                (
+                    parse_combo("ctrl+shift+U").expect("alte Toggle-Combo"),
+                    Toggle
+                ),
+                (
+                    parse_combo("ctrl+shift+O").expect("alte ClickThrough-Combo"),
+                    ClickThrough
+                ),
+            ]
+        );
+        // Nutzer rebdet bei laufendem SC: Toggle → Ctrl+Alt+K (persistiert im
+        // JS-KeyboardEvent-Format), ClickThrough → Ctrl+Alt+J.
+        let after = build_targets([
+            (Toggle, Some("alt+control+KeyK".to_string())),
+            (ClickThrough, Some("ctrl+alt+J".to_string())),
+        ]);
+        assert_eq!(after.len(), 2, "Reload muss beide Slots behalten");
+        assert!(
+            after.contains(&(
+                parse_combo("alt+control+KeyK").expect("neue Toggle-Combo"),
+                Toggle
+            )),
+            "neue Toggle-Combo muss mit ihrem Kind drin sein"
+        );
+        assert!(
+            after.contains(&(
+                parse_combo("ctrl+alt+J").expect("neue ClickThrough-Combo"),
+                ClickThrough
+            )),
+            "neue ClickThrough-Combo muss mit ihrem Kind drin sein"
+        );
+        let old_vks: Vec<u32> = before.iter().map(|(c, _)| c.vk).collect();
+        assert!(
+            !after.iter().any(|(c, _)| old_vks.contains(&c.vk)),
+            "alte Combos dürfen im geladenen Ziel-Satz nicht mehr stehen"
+        );
+    }
+
+    /// WH-HOOK R26: die reine Hälfte des Message-Loop-Austauschs —
+    /// `ComboMatcher::set_targets` muss die Ziel-Listes eines laufenden Hooks
+    /// swapping: alte Combo matcht danach NICHT mehr, neue Combo matcht.
+    #[test]
+    fn combo_matcher_set_targets_swaps_live_targets() {
+        let mut m = ComboMatcher::new(vec![parse_combo("ctrl+shift+U").expect("alt")]);
+        m.on_key(0x11, true); // Strg halten
+        m.on_key(0x10, true); // Shift halten
+        assert_eq!(
+            m.on_key(0x55, true),
+            Some(0),
+            "alte Combo matcht vor Reload"
+        );
+        m.set_targets(vec![parse_combo("ctrl+alt+K").expect("neu")]);
+        assert_eq!(
+            m.on_key(0x55, true),
+            None,
+            "alte Combo matcht nach Reload nicht"
+        );
+        m.on_key(0x11, true); // Strg erneut (set_targets hat Mods resettet)
+        m.on_key(0x12, true); // Alt halten
+        assert_eq!(
+            m.on_key(0x4B, true),
+            Some(0),
+            "neue Combo matcht nach Reload"
+        );
     }
 }

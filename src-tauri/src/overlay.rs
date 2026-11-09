@@ -419,6 +419,11 @@ pub fn rebind_shortcut<R: Runtime>(
     }
 
     bindings.set(kind, Some(new_shortcut));
+    // WH-HOOK R26: Der LL-Hook-Fallback (SC-Fokussiert-Fall) hält eine eigene
+    // Kopie der Ziel-Combos — nach erfolgreichem Bindings-Tausch live seine
+    // Ziele nachladen lassen. Noop, wenn der Hook nicht läuft (nächster
+    // install() beim SC-Start liest ohnehin frisch); Non-Windows-Stub-Noop.
+    crate::hotkey_llhook::refresh_targets(app);
     Ok(())
 }
 
