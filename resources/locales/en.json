@@ -1099,15 +1099,15 @@
     "settings.hotkeydiag.copied": "Copied to clipboard.",
     "settings.hotkeydiag.hint": "To test: launch SC, focus it, press the toggle combo — if the LL-hook counters stay at zero, our hook receives no keys (→ send the log).",
     "settings.hotkeydiag.open_hint": "This block is hidden by default — toggle it with “:d” in the search bar.",
-    "titlebar.aria": "Fenster-Titelband",
-    "titlebar.badge": "FENSTERMODUS",
-    "titlebar.mode_aria": "Darstellungs-Modus",
+    "titlebar.aria": "Window title bar",
+    "titlebar.badge": "WINDOW MODE",
+    "titlebar.mode_aria": "Display mode",
     "titlebar.mode_overlay": "Overlay",
-    "titlebar.mode_window": "Fenster",
-    "titlebar.menu": "Menü",
-    "titlebar.settings": "Einstellungen…",
-    "titlebar.quit": "Beenden (App schließen)",
-    "titlebar.minimize": "Minimieren",
-    "titlebar.to_tray": "In den Tray (App läuft weiter)"
+    "titlebar.mode_window": "Window",
+    "titlebar.menu": "Menu",
+    "titlebar.settings": "Settings…",
+    "titlebar.quit": "Quit (close app)",
+    "titlebar.minimize": "Minimize",
+    "titlebar.to_tray": "To tray (app keeps running)"
   }
 }
