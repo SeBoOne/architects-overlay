@@ -118,7 +118,7 @@ Overlay-Fenster dynamisch dekorieren/machen statt zweites Fenster.
 **Tray-Erweiterung (`tray.rs`):**
 - Neuer Menüpunkt `window` („Fenster zeigen/verstecken") unterhalb `toggle`; Handler → `window::toggle_visible(app)` (neues Modul, analog `overlay::toggle_visible`).
 - `quit` bleibt wie gebaut (`app.exit(0)`, `tray.rs:54`) — Wunsch „Beenden weiterhin via Tray oder Button im Fenstermenü": zweiter Beenden-Pfad = Button im Fenster (ruft `app.exit(0)`-IPC oder einen `app_quit`-Command).
-- i18n-Label-Pattern beibehalten (Labels beim Build, Neustar-Caveat wie heute dokumentiert).
+- i18n-Label-Pattern beibehalten (Labels beim Build, Neustart-Caveat wie heute dokumentiert).
 
 **Lebenslauf:**
 - **CloseRequested → hide, nicht destroy:** `on_window_event`-Handler für das `window`-Label: `CloseRequested` → `api.prevent_close()` + `hide()`. Schließen-Nur-In-Tray ist damit erfüllt.
@@ -137,7 +137,7 @@ Overlay-Fenster dynamisch dekorieren/machen statt zweites Fenster.
 | Option | Beschreibung | Bewertung |
 |---|---|---|
 | **A: Pins-Overlay-Layer (EMPFEHLUNG)** | Ein dediziertes, per-Screen Pin-Webview-Fenster (decorations=false, transparent, always_on_top, skip_taskbar), das nur die gepinnten Boxen rendert; sichtbar, sobald SC läuft ODER User-Pins aktiv — unabhängig vom Overlay-Toggle | ein Fenster (nicht N), komplexe Placement-Logik bleibt überschaubar; Click-Through separat steuerbar |
-| B: Pro Pin ein Mini-Fenster | jedes Pin = eigenes 100×80-px-Fenster | N Fenster = N Mal Placement/Compositor-Regeln; Linx-Regeldruck; verwerfen |
+| B: Pro Pin ein Mini-Fenster | jedes Pin = eigenes 100×80-px-Fenster | N Fenster = N Mal Placement/Compositor-Regeln; Linux-Regeldruck; verwerfen |
 | C: Pins im Overlay-Fenster dauerhaft rendern | Overlay nie ganz hide, nur Palette ausblenden | verletzt den sauberen Hide-Vertrag (`apply_visibility`/State-Machine), Mix mit Click-Through gefährlich; verwerfen |
 
 **Mechanik (universell, keine SCLM-Hardcode — Schema-U-Disziplin):**
