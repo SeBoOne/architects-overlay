@@ -184,6 +184,15 @@ html[data-window="app-window"] .shell {
   max-height: none;
 }
 
+/* M2 (t_a931d1bb Scope 1): flexibler Container — im app-window-Zweig darf
+   die Shell auf die FENSTERBREITE wachsen (kein K2-Fixbreite-Band mehr);
+   das Fenster selbst (Geometrie-Persistenz, M1) bestimmt die Größe. Höhen-
+   seitig füllt die Shell die Fensterhöhe (flex:1 oben), Listen/Panés
+   scrollen innen wie gewohnt (global gestylte Scrollbars). */
+html[data-window="app-window"] .shell {
+  width: 100%;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
@@ -3840,4 +3849,43 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   border-radius: 4px;
   font: 11.5px/1.45 var(--font-sans);
   color: var(--alert);
+}
+
+/* ===================== M2: Fenstermodus responsive (t_a931d1bb) ===================== */
+/* ALLES hier ist strikt an html[data-window="app-window"] gekoppelt (OVERLAY-
+   REGEL) — Spotlight-Hauptfenster bleibt byte-fremd. Kompakt-Schritt über die
+   width-basierte Klasse .app-compact (Pal-W = gemessene Fensterbreite,
+   Schwellwerte in lib/window-breakpoints.ts, unit-getestet); zwischen den
+   Schritten bleibt das Layout fluide (keine Zwischen-Sprünge). */
+
+/* Scope 3 — Row-Reflow im Kompakt-Schritt: Zeilen einzeilig, Namensspalte
+   flexibel mit ellipsis, Preise rechtsbündig fix, Aktions-Buttons niemals
+   umbrechen (Mockup-Defekt „PIN-wrap“ wird bewusst NICHT nachgebaut). */
+html[data-window="app-window"] .pal-root.app-compact .m-main {
+  min-width: 0;
+}
+html[data-window="app-window"] .pal-root.app-compact .m-right {
+  flex: none;
+}
+html[data-window="app-window"] .pal-root.app-compact .m-price {
+  white-space: nowrap;
+}
+html[data-window="app-window"] .pal-root.app-compact .mrow button,
+html[data-window="app-window"] .pal-root.app-compact .mrow .btn-ghost {
+  white-space: nowrap;
+  flex: none;
+}
+
+/* Scope 2 — Hint-Zeile kompakt: erste drei Hints bleiben, alle weiteren
+   werden verborgen und als „+N“-Mehr-Anzeige sichtbar (keine stille
+   Kürzung). Der hint-more-Span wird nur gerendert, wenn N > 0. */
+html[data-window="app-window"] .hints.app-compact
+  > span:not(.hint-more):nth-child(n + 4) {
+  display: none;
+}
+html[data-window="app-window"] .hints .hint-more {
+  color: var(--fgdim);
+  font-weight: 600;
+  padding-left: 2px;
+  white-space: nowrap;
 }

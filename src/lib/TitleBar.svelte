@@ -15,6 +15,7 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { t } from '../lib/i18n';
 	import logoUrl from '../lib/assets/logo.svg';
+	import { APP_WINDOW_COMPACT_PX } from './window-breakpoints';
 
 	/** Aktiver Modus der Shell-Darstellung (kein Restart, M1 Scope 2). */
 	let mode: 'window' | 'overlay' = $state('window');
@@ -62,9 +63,17 @@
 		e.preventDefault();
 		void invoke('window_start_drag');
 	}
+
+	// M2 (t_a931d1bb Scope 4): Kompakt-Schritt des Titelbands — gemessene
+	// Bandbreite (bind:clientWidth). Unter dem Fenstermodus-Schwellwert
+	// (Mockup B ~900 px) kollabieren die rechtsseitigen Buttons auf reine
+	// Icons (Tooltips tragen die Aktion, Wordmark skaliert kleiner —
+	// mockup-Annotation „emblem+abbreviation“ bewusst NICHT nachgebaut).
+	let tbW = $state(0);
+	const compact = $derived(tbW > 0 && tbW < APP_WINDOW_COMPACT_PX);
 </script>
 
-<div class="tb" onmousedown={bandDown} role="toolbar" aria-label={$t('titlebar.aria')} tabindex="-1">
+<div class="tb" class:is-compact={compact} bind:clientWidth={tbW} onmousedown={bandDown} role="toolbar" aria-label={$t('titlebar.aria')} tabindex="-1">
 	<span class="tb-logo">
 		<img src={logoUrl} alt="" />
 		<b>Architects Overlay</b>
@@ -275,5 +284,17 @@
 	.tb-b:hover {
 		color: var(--fg);
 		border-color: var(--fgdim);
+	}
+
+	/* M2 (t_a931d1bb Scope 4): Kompakt-Schritt — rechts-Seite kollabiert auf
+	   Icon-Buttons (≡ / – / ▣) mit Tooltips (title-Attribute existieren
+	   bereits); Wordmark bleibt sichtbar, skaliert nur kleiner (einfach
+	   halten, „emblem+abbreviation“-Inkonsistenz des Mockups nicht
+	   nachgebaut). Bind:clientWidth-Gate oben; Kompakt nur unten schmal. */
+	.tb.is-compact .bl {
+		display: none;
+	}
+	.tb.is-compact .tb-logo b {
+		font-size: 9px;
 	}
 </style>

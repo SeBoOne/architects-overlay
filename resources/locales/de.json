@@ -1108,6 +1108,7 @@
     "titlebar.settings": "Einstellungen…",
     "titlebar.quit": "Beenden (App schließen)",
     "titlebar.minimize": "Minimieren",
-    "titlebar.to_tray": "In den Tray (App läuft weiter)"
+    "titlebar.to_tray": "In den Tray (App läuft weiter)",
+    "fenster.hint_more_title": "Weitere Shortcuts"
   }
 }
