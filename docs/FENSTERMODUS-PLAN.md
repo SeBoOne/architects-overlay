@@ -199,6 +199,16 @@ Overlay-Fenster dynamisch dekorieren/machen statt zweites Fenster.
 
 ---
 
+### 9.1 Beschlüsse (Sebo, 2026-11-09)
+
+1. **Fenster-Chrom: Variante B** — eigenes Titelband im Overlay-Stil (`decorations: false`), Modus-Umschalter Overlay|Fenster, Beenden im Fenster-Menü, kein ×. Mockup: `mockup-fenstermodus-b.html`.
+2. **Geometrie**: sinnvolle Default-Größe/Position; nach Move/Resize wird **immer der letzte Stand beibehalten** (Persistenz ab M1).
+3. **Standardmonitor**: Primärmonitor als Default; **zuletzt genutzter Monitor wird gemerkt** und wiederverwendet (Validität prüfen, sonst Primärmonitor).
+4. **Pins-Scope: alle** Shellboxen/Views pin-fähig; Feinschliff nach Nutzer-Feedback.
+5. **Pins-Sichtbarkeit: strikt an `game_running` gekoppelt.** Der **Fenstermodus ist das einzige Fenster, das ohne Spiel offen bleiben darf** — Pins haben keinen Sichtbarkeitskanal ohne laufendes SC.
+6. **Pins-Interaktion: anzeige-only, wenn das Overlay nicht offen ist** (kein Hover/Klick im Click-Through-Kanal). Während das Overlay sichtbar ist, darf Pin-Interaktion (Verschieben/Deckkraft/Schließen) erlaubt sein — präzisierter Vertrag gegenüber §6: Interaktivität nur im Overlay-sichtbaren Zustand.
+7. **Tray-Sprachwechsel: live nachziehen, wo technisch möglich** (Tauri-Tray-Labels zur Laufzeit austauschen); wo nicht möglich: beim Sprachwechsel **anbieten**, die App neu zu starten — nicht erzwingen.
+
 ## 10. Fazit
 
 Beide Wünsche sind mit vertretbarem Risiko umsetzbar und **ohne** Eingriff in die Overlay-Kernverträge:
