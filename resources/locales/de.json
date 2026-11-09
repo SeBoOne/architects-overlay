@@ -1116,11 +1116,12 @@
     "fenster.hint_more_title": "Weitere Shortcuts"
   },
   "pins": {
-    "pin_hint": "Route als Box anheften",
+    "pin_hint": "Box anheften (P)",
     "pin_detail": "Als Pin anheften",
-    "pin_detail_title": "Diese Route als dauerhafte Box anheften",
-    "added": "Route angeheftet",
-    "already_pinned": "Route ist bereits angeheftet",
+    "pin_short": "Anheften",
+    "pin_detail_title": "Diese Box als dauerhafte Box anheften",
+    "added": "Angeheftet",
+    "already_pinned": "Bereits angeheftet",
     "drag_title": "Box verschieben",
     "opacity_title": "Deckkraft regeln",
     "opacity": "Deckkraft",

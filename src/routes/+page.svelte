@@ -56,7 +56,7 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	import Rail from '../lib/Rail.svelte';
 	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
 	import PinWindow from '../lib/PinWindow.svelte';
-	import { isPinsWindow, type PinsState } from '../lib/pins';
+	import { isPinsWindow, type PinRow, type PinsState } from '../lib/pins';
 	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
 	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
 	import TitleBar from '../lib/TitleBar.svelte';
@@ -2056,6 +2056,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} else if (!shopErr) {
 			shopErr = String(results[1].reason);
 		}
+		// M4: gepinnte Shop-Boxen ziehen live nach; Selektion klemmen.
+		if (shopSel >= myOffers.length) shopSel = Math.max(myOffers.length - 1, 0);
+		if (tradeSel >= dealsSorted.length) tradeSel = Math.max(dealsSorted.length - 1, 0);
+		await syncPins('shop', (i) => (myOffers[i] ? shopPinSnapshot(myOffers[i]) : null));
+		await syncPins('trades', (i) => (dealsSorted[i] ? tradePinSnapshot(dealsSorted[i]) : null));
 	}
 	// Beim Betreten des Mein-Shop-Tabs laden (stale-first im Backend).
 	$effect(() => {
@@ -2097,6 +2102,23 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return (n.date_modified || 0) > seen;
 	}
 
+	// M4 R2 (Review): Auswahl im Mein-Shop-/Trades-Reiter — Träger der
+	// P-Kontextaktion an jeder Box (Analog zur Routen-Matrix: ↑↓ + P).
+	let shopSel = $state(0);
+	let tradeSel = $state(0);
+
+	function shopMove(dir: number) {
+		const last = Math.max(myOffers.length - 1, 0);
+		shopSel = Math.min(Math.max(shopSel + dir, 0), last);
+		document.querySelector(`[data-shop-offer-idx="${shopSel}"]`)?.scrollIntoView({ block: 'nearest' });
+	}
+
+	function tradeMove(dir: number) {
+		const last = Math.max(dealsSorted.length - 1, 0);
+		tradeSel = Math.min(Math.max(tradeSel + dir, 0), last);
+		document.querySelector(`[data-trade-deal-idx="${tradeSel}"]`)?.scrollIntoView({ block: 'nearest' });
+	}
+
 	async function loadDeals(bg: boolean) {
 		// Ohne Secret-Key ist der Pull nutzlos — sauberer Hinweis statt
 		// roher UEX-Auth-Meldung (Muster loadShop).
@@ -2114,6 +2136,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const r = await invoke<NegotiationsResponse>('get_my_negotiations');
 			myNegotiations = r.negotiations;
 			if (r.note) tradesNote = r.note;
+			// M4: gepinnte Trades-Boxen ziehen live nach; Selektion klemmen.
+			if (tradeSel >= dealsSorted.length) tradeSel = Math.max(dealsSorted.length - 1, 0);
+			await syncPins('trades', (i) => (dealsSorted[i] ? tradePinSnapshot(dealsSorted[i]) : null));
 		} catch (e) {
 			tradesErr = errText(e);
 		}
@@ -3265,13 +3290,91 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		};
 	}
 
-	async function pinRoute(box_index: number) {
-		const r = routes_[box_index];
-		if (!r) return;
-		const snap = routePinSnapshot(r);
+	type PinSnap = { title: string; kpi: string | null; rows: PinRow[] };
+
+	/// Anzeige-Snapshot eines Offers für die Pin-Box (generische DISPLAY-Daten).
+	function offerPinSnapshot(o: Offer): PinSnap {
+		return {
+			title: `${tr('market.tab_offers')} · ${o.title}`,
+			kpi: fmtPrice(o.price),
+			rows: [
+				{
+					idx: '01',
+					name: o.location || '—',
+					sub: `${o.operation === 'sell' ? 'WTS' : 'WTB'} · ${o.listing_type}`,
+					value: `${fmtQty(o.quantity)} ${o.unit || 'unit'}`,
+					side: o.operation
+				},
+				{
+					idx: '02',
+					name: o.seller || '—',
+					sub: tr('trades.seller'),
+					value: rel(o.updated),
+					side: null
+				}
+			]
+		};
+	}
+
+	/// Anzeige-Snapshot eines eigenen Shop-Listings für die Pin-Box.
+	function shopPinSnapshot(o: Offer): PinSnap {
+		return {
+			title: `${tr('market.tab_shop')} · ${o.title}`,
+			kpi: fmtPrice(o.price),
+			rows: [
+				{
+					idx: '01',
+					name: o.location || '—',
+					sub: `${o.operation === 'sell' ? 'WTS' : 'WTB'} · ${shopStatus(o)}`,
+					value: `${fmtQty(o.quantity)} ${o.unit || 'unit'}`,
+					side: o.operation
+				},
+				{
+					idx: '02',
+					name: o.region || '—',
+					sub: tr('trades.age'),
+					value: rel(o.updated),
+					side: null
+				}
+			]
+		};
+	}
+
+	/// Anzeige-Snapshot eines Deals (Negotiation) für die Pin-Box.
+	function tradePinSnapshot(n: Negotiation): PinSnap {
+		return {
+			title: `${tr('market.tab_trades')} · ${n.listing_title}`,
+			kpi:
+				n.deal_value !== null && n.deal_value !== undefined
+					? `${fmtPrice(n.deal_value)} ${n.deal_value_currency}`
+					: fmtPrice(n.price),
+			rows: [
+				{
+					idx: '01',
+					name: (n.is_listing_advertiser ? n.client_username || n.client_name : n.advertiser_username || n.advertiser_name) || '—',
+					sub: dealRole(n) === 'sell' ? tr('common.sell') : tr('common.buy'),
+					value: dealStatus(n),
+					side: dealRole(n)
+				},
+				{
+					idx: '02',
+					name: 'UEX',
+					sub: null,
+					value: dealTime(n.date_modified || n.date_added),
+					side: null
+				}
+			]
+		};
+	}
+
+	/// M4 R2 (Review): PIN-SCOPE KOMPLETT — alle Shellboxen/Views pin-fähig.
+	/// Ein generischer Anheft-/Sync-Pfad ({view_id, box_index} rein mechanisch,
+	/// Snapshot-Builder je View-Komponente — Schema-U); die Views 'routes',
+	/// 'offers', 'shop' und 'trades' nutzen ihn.
+	async function pinAdd(view_id: string, box_index: number, snap: PinSnap) {
 		try {
 			const ok = await invoke<boolean>('pin_add', {
-				view_id: 'routes',
+				view_id,
 				box_index,
 				opacity: 100,
 				title: snap.title,
@@ -3286,18 +3389,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		f5Clear = setTimeout(() => (f5Msg = ''), 3000);
 	}
 
-	/// Snapshot-Refresh nach jedem Routen-Reload — gepinnte Boxen ziehen
-	/// live nach (gleicher box_index in der aktualisierten Liste).
-	async function syncRoutePins() {
+	/// Snapshot-Refresh nach jedem Reload der jeweiligen View — gepinnte
+	/// Boxen ziehen live nach (gleicher box_index in der aktualisierten
+	/// Liste; `resolve` liefert null, wenn der Index nicht mehr existiert).
+	async function syncPins(view_id: string, resolve: (box_index: number) => PinSnap | null) {
 		try {
 			const st = await invoke<PinsState>('pins_state');
 			for (const p of st.pins) {
-				if (!p.pinned || p.view_id !== 'routes') continue;
-				const r = routes_[p.box_index];
-				if (!r) continue;
-				const snap = routePinSnapshot(r);
+				if (!p.pinned || p.view_id !== view_id) continue;
+				const snap = resolve(p.box_index);
+				if (!snap) continue;
 				await invoke('pin_update', {
-					view_id: 'routes',
+					view_id,
 					box_index: p.box_index,
 					title: snap.title,
 					kpi: snap.kpi,
@@ -3307,6 +3410,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		} catch {
 			/* Pins-Backend fehlt — best effort. */
 		}
+	}
+
+	async function pinRoute(box_index: number) {
+		const r = routes_[box_index];
+		if (r) await pinAdd('routes', box_index, routePinSnapshot(r));
+	}
+
+	async function pinOffer(box_index: number) {
+		const o = visOffers[box_index];
+		if (o) await pinAdd('offers', box_index, offerPinSnapshot(o));
+	}
+
+	async function pinShop(box_index: number) {
+		const o = myOffers[box_index];
+		if (o) await pinAdd('shop', box_index, shopPinSnapshot(o));
+	}
+
+	async function pinTrade(box_index: number) {
+		const n = dealsSorted[box_index];
+		if (n) await pinAdd('trades', box_index, tradePinSnapshot(n));
 	}
 
 	// Detail-Index der offenen Route (für „Als Pin anheften“ im Detail).
@@ -3343,7 +3466,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			rRefreshing = resp.refreshing;
 			rSel = 0;
 			// M4: gepinnte Routen-Boxen ziehen live nach (Snapshot-Refresh).
-			await syncRoutePins();
+			await syncPins('routes', (i) => (routes_[i] ? routePinSnapshot(routes_[i]) : null));
 		} catch (e) {
 			routes_ = [];
 			rRefreshing = false;
@@ -4369,6 +4492,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// als diesen Snapshot gibt es vom Backend nicht nachzuholen.
 			mMshown = showAll ? offers.length : Math.min(M_PAGE, offers.length);
 			mAllLoaded = true;
+			// M4: gepinnte Offer-Boxen ziehen live nach (Snapshot-Refresh);
+			// Selektion auf die neue Liste klemmen.
+			if (mSel >= visOffers.length) mSel = Math.max(visOffers.length - 1, 0);
+			await syncPins('offers', (i) => (visOffers[i] ? offerPinSnapshot(visOffers[i]) : null));
 		} catch (e) {
 			offers = [];
 			mNote = errText(e);
@@ -4939,6 +5066,44 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				}
 				return; // Routen-Tab: keine Offer-Shortcuts
 			}
+			// M4 R2 (Review): Mein-Shop-Reiter — ↑↓ wählt ein eigenes Listing,
+			// P heftet die ausgewählte Box an (Kein Offer-Detail-Zugriff hier).
+			if (mTab === 'shop') {
+				if (k === 'ArrowDown' && !inStepper && !isFieldFocused(e) && myOffers.length) {
+					shopMove(1);
+					e.preventDefault();
+					return;
+				}
+				if (k === 'ArrowUp' && !inStepper && !isFieldFocused(e) && myOffers.length) {
+					shopMove(-1);
+					e.preventDefault();
+					return;
+				}
+				if ((k === 'p' || k === 'P') && !isFieldFocused(e) && myOffers.length) {
+					void pinShop(shopSel);
+					e.preventDefault();
+					return;
+				}
+			}
+			// M4 R2 (Review): Trades-Reiter — ↑↓ wählt einen Deal, P heftet an;
+			// im offenen Deal-Chat pinnt der „Als Pin anheften“-Chip in der Leiste.
+			if (mTab === 'trades' && !tradesDeal) {
+				if (k === 'ArrowDown' && !inStepper && !isFieldFocused(e) && dealsSorted.length) {
+					tradeMove(1);
+					e.preventDefault();
+					return;
+				}
+				if (k === 'ArrowUp' && !inStepper && !isFieldFocused(e) && dealsSorted.length) {
+					tradeMove(-1);
+					e.preventDefault();
+					return;
+				}
+				if ((k === 'p' || k === 'P') && !isFieldFocused(e) && dealsSorted.length) {
+					void pinTrade(tradeSel);
+					e.preventDefault();
+					return;
+				}
+			}
 			// MQ (t_d6ff5212): Lightbox offen → sie schluckt die Tastatur. Esc
 			// schließt, alle anderen Offer-/Market-Shortcuts laufen nicht.
 			if (lightbox) {
@@ -4955,6 +5120,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			if (k === 'ArrowUp' && !offerDetail && !inStepper) {
 				mMove(-1);
+				e.preventDefault();
+				return;
+			}
+			// M4 R2 (Review): P-Kontextaktion im Angebote-Reiter — ausgewähltes
+			// Offer als Pin anheften (Detail-Fallback: Button im Popup).
+			if (mTab === 'offers' && (k === 'p' || k === 'P') && !offerDetail && !isFieldFocused(e)) {
+				void pinOffer(mSel);
 				e.preventDefault();
 				return;
 			}
@@ -6391,11 +6563,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="md-desc empty">{$t('shop.no_description')}</div>
 						{/if}
 						<div class="md-actions">
-							<!-- MQ (t_d6ff5212): Verhandlungs-Einstieg sichtbar machen. Die
-							     API bietet KEIN POST /marketplace_negotiations (Research) —
-							     Deals entstehen auf der UEX-Webseite → Deep-Link-Button. -->
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn" title={$t('trades.deal_start_title')} onclick={() => void openListingDeepLink(offerDetail!.slug)}>{$t('trades.negotiate_uex_caps')}</span>
-							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openOfferDeepLink}>{$t('trades.open_uex_caps')}</span>
+						<!-- MQ (t_d6ff5212): Verhandlungs-Einstieg sichtbar machen. Die
+						     API bietet KEIN POST /marketplace_negotiations (Research) —
+						     Deals entstehen auf der UEX-Webseite → Deep-Link-Button. -->
+						<span role="button" tabindex="0" onkeydown={keyActivate} class="btn" title={$t('trades.deal_start_title')} onclick={() => void openListingDeepLink(offerDetail!.slug)}>{$t('trades.negotiate_uex_caps')}</span>
+						<!-- M4 R2 (Review): „Als Pin anheften“ im Offer-Detail. -->
+						<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" title={$t('pins.pin_detail_title')} onclick={() => void pinOffer(visOffers.indexOf(offerDetail!))}>{$t('pins.pin_detail')}</span>
+						<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={openOfferDeepLink}>{$t('trades.open_uex_caps')}</span>
 							<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => { offerDetail = null; lightbox = null; }}>{$t('common.back')}</span>
 						</div>
 						<div class="md-note">{$t('trades.negotiate_starts_on')}<span class="src">uexcorp.space/marketplace/item/info/{offerDetail.slug}</span>{$t('trades.negotiate_browser_note')}</div>
@@ -6729,6 +6903,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								{tradesDeal.listing_title}
 							</span>
 							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('trades.open_deal_uex_title')} onclick={() => void openTradesDeal(tradesDeal!)}>{$t('trades.deal_open_uex_link')}</span>
+							<!-- M4 R2 (Review): „Als Pin anheften“ im Deal-Detail. -->
+							<span role="button" tabindex="0" onkeydown={keyActivate} class="chip" title={$t('pins.pin_detail_title')} onclick={() => void pinTrade(dealsSorted.indexOf(tradesDeal!))}>{$t('pins.pin_detail')}</span>
 							<!-- QW-4 (t_28bfd027): geschlossene Deals sind READ-ONLY. -->
 							{#if tradesDealEnded}<span class="chip warn"><span class="dot"></span>{tradesDeal.date_closed && tradesDeal.date_closed_client ? $t('trades.status_closed') : $t('trades.status_ended')}</span>{/if}
 						</div>
@@ -6821,11 +6997,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 								<div class="row-empty" style="padding: 10px 16px">{tradesNote}</div>
 							{/if}
 							<div class="mlist">
-								{#each dealsSorted as n (n.id)}
+								{#each dealsSorted as n, i (n.id)}
 									<div tabindex="-1" onkeydown={keyActivate}
 										class="mrow trow"
 										role="option"
-										aria-selected={false}
+										aria-selected={tradeSel === i}
+										class:is-sel={tradeSel === i}
+										data-trade-deal-idx={i}
 										title={$t('trades.open_deal_chat_title')}
 										onclick={() => void selectDeal(n)}
 									>
@@ -7203,15 +7381,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 												</div>
 												{/each}
 												{#each myOffers as o, i (o.id)}
-									<div tabindex="-1" onkeydown={keyActivate}
-										class="mrow"
-										role="option"
-										aria-selected={false}
-										class:is-sel={false}
-										data-shop-offer-idx={i}
-										title={$t('shop.open_listing_readonly_title')}
-										onclick={() => void openListingDeepLink(o.slug)}
-									>
+												<div tabindex="-1" onkeydown={keyActivate}
+													class="mrow"
+													role="option"
+													aria-selected={shopSel === i}
+													class:is-sel={shopSel === i}
+													data-shop-offer-idx={i}
+													title={$t('shop.open_listing_readonly_title')}
+													onclick={() => void openListingDeepLink(o.slug)}
+												>
 										<div class="m-op {o.operation}">{o.operation === 'sell' ? 'WTS' : 'WTB'}</div>
 										<div class="m-main">
 											<div class="m-title">{o.title}</div>
@@ -7226,6 +7404,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																				</div>
 																				<div class="m-right" style="gap: 4px">
 																					<button type="button" class="btn-ghost" title={$t('shop.negotiate_browser_title')} onclick={(ev) => { ev.stopPropagation(); void openListingDeepLink(o.slug); }}>💬 {$t('shop.negotiate')}</button>
+									<!-- M4 R2 (Review): Pin-Kontextaktion an der Box (kein
+									     Detail-View im Shop — die Row selbst trägt den Pin). -->
+									<button type="button" class="btn-ghost" title={$t('pins.pin_detail_title')} onclick={(ev) => { ev.stopPropagation(); void pinShop(i); }}>{$t('pins.pin_short')}</button>
 									<button type="button" class="btn-ghost" title={$t('shop.no_edit_note_title')} onclick={(ev) => { ev.stopPropagation(); void openAdvertise(o); }}>{$t('shop.new_button')}</button>
 																					<button type="button" class="btn-ghost" title={$t('shop.unlist_2step_title')} onclick={(ev) => { ev.stopPropagation(); requestDelete(o); }}>{$t('shop.unlist')}</button>
 																				</div>
@@ -7645,6 +7826,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if cfg?.uex_secret_key_set}
 							<span><kbd>F5</kbd>{$t('search.shop_sync')}</span>
 						{/if}
+						{#if myOffers.length}
+							<span><kbd>↑↓</kbd>{$t('market.tab_shop')}</span>
+							<span><kbd>P</kbd>{$t('pins.pin_hint')}</span>
+						{/if}
+						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
+					{:else if mTab === 'trades'}
+						{#if dealsSorted.length}
+							<span><kbd>↑↓</kbd>{$t('market.tab_trades')}</span>
+							<span><kbd>P</kbd>{$t('pins.pin_hint')}</span>
+						{/if}
 						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{:else if mTab === 'routes'}
 						<span><kbd>↑↓</kbd>{$t('market.tab_routes')}</span>
@@ -7656,6 +7847,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<span><kbd>↑↓</kbd>{$t('market.tab_offers')}</span>
 						<span><kbd>{$t('search.alt_hotkeys')}</kbd>{$t('search.offer')}</span>
 						<span><kbd>↵</kbd>{$t('common.detail')}</span>
+						<span><kbd>P</kbd>{$t('pins.pin_hint')}</span>
 						<span><kbd>F5</kbd>{$t('search.market_sync')}</span>
 						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{/if}
