@@ -114,3 +114,30 @@ Beispiel bei Defaults: `bind = CTRL SHIFT, U, exec, /home/sebo/.local/bin/arch-o
 **Wichtig:** Solange die Binder auf fest `CTRL SHIFT, U` stehen, muss ein
 geänderter Settings-Wert in Sebo's Hyprland-Konfig nachgezogen werden
 (C2b-Aufgabe) — die config-Werte sind ab jetzt maßgeblich.
+
+## Windows: LL-Hook-Ziele laden beim Rebind neu (WH-HOOK R26 — 2026-11-06)
+
+Der `WH_KEYBOARD_LL`-Fallback-Hook (SC fokussiert, t_ed01e8f7) las seine
+Toggle/Click-through-Combos **einmal beim Hook-Thread-Start** und danach nie
+wieder. Rebdet ein Nutzer (typisch: SC im **Fenstermodus** mit eigener Combo)
+ein Kürzel bei laufendem SC, hörte der Hook weiter die **alte** Combo; die neue
+wirkte nur über `RegisterHotKey` — und der ist bekanntlich tot, solange SC
+fokussiert ist. **Workaround vor dem Fix: Overlay-App neu starten.**
+
+Fix: `rebind_shortcut` ruft nach erfolgreichem `bindings.set()`
+`hotkey_llhook::refresh_targets(app)`. Lebt der Hook-Thread, bekommt er die
+Thread-Nachricht `WM_USER 0x0400` und **lädt die Live-Bindings in seiner
+eigenen Message-Loop neu** — Matcher + Kinds werden austauscht (Hook-Callback
+und Handler laufen auf demselben Thread; `ll_hook_proc` bleibt lock-only ohne
+App-Handle/IPC, LL-Hook-Time-limit unkritisch). Klar getrennt von `WM_QUIT`
+(0x0012, uninstall). Lebt der Thread nicht: Noop (nächster `install()` beim
+SC-Start liest ohnehin frisch). Post-Fehler: Warn + Fallback
+uninstall()+install() — install nur bei tatsächlich laufendem Game
+(OverlayState vom Game-Poller). Mode-Hotkeys (F1..F12) bleiben Nicht-Hook-Ziele.
+
+**Diagnose-Weg (`shortcut_diag_status`):** neues Feld `ll_hook.targets` zeigt
+live, welche Combos der Hook aktuell abhört (`"toggle=ctrl+shift+0x55"`,
+`"click_through=..."`). Steht dort nach einem Rebind noch die alte Combo, hat
+der Reload nicht gewirkt; steht die neue, wirkt der Fix. Reload-Ereignis im
+Log: `LL-keyboard-hook targets reloaded after rebind: ...`. Live-Beweis gegen
+die Windows-Testnutzer-Instanz: Omar post-Merge.
