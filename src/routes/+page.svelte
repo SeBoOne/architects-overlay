@@ -3429,6 +3429,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			if (label === 'app-window' || window.location.hash === '#/window') {
 				isWindowMode = true;
 				window.addEventListener('ao-window-open-config', () => openConfig());
+				// M3 (t_d9c09acf Scope 3): Fenster-Menü „Hilfe/Über" dockt an das
+				// bestehende Info-Popup (t_f178b084) an.
+				window.addEventListener('ao-window-open-info', () => openInfo());
 			}
 			// Persistierte Einstellungen (Palette + Detail-Variante) vor dem
 			// ersten Paint anwenden — verhindert einen Palette-Flash.
@@ -5011,7 +5014,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	     (jetzt größere, Abschnitts-) Popup ohne internen Scroll vollständig
 	     in die Shell passt (max-height 84vh bleibt die Obergrenze). -->
 	{#if isWindowMode}
-		<TitleBar />
+		<TitleBar shortcutToggle={cfg?.shortcut_toggle ?? ''} />
 	{/if}
 	<div
 		class="shell"

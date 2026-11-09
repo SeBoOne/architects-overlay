@@ -193,6 +193,7 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
             api.prevent_close();
             let _ = handler.hide();
             sync_tray_check(handler.app_handle(), false);
+            emit_visibility(handler.app_handle(), false);
         }
         // M1 Scope 4: Geometrie debounced persistieren (Moved feuert pro
         // Frame beim Ziehen — hier nur Zwischespeicher, Persist macht der
@@ -286,12 +287,22 @@ pub fn window_state<R: Runtime>(app: AppHandle<R>) -> WindowState {
     }
 }
 
+/// M3 (t_d9c09acf Scope 2): Sichtbarkeits-Event ans app-window-Frontend.
+/// Der Titelband-Mode-Umschalter muss nach Tray-Re-Show den echten Zustand
+/// zeigen (Reviewer M1-R1 Befund a): ohne Event bleibt 'overlay' stehen,
+/// obwohl das Fenster sichtbar ist. Best-Effort — Fenster kann fehlen.
+fn emit_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
+    use tauri::Emitter;
+    let _ = app.emit_to(APP_WINDOW_LABEL, "ao:window-visibility", visible);
+}
+
 /// Fenster zeigen (Tray/Toggle-Pfad) + Fokus. Trägt die Checkbox an.
 pub fn show<R: Runtime>(app: &AppHandle<R>) {
     if let Some(win) = app.get_webview_window(APP_WINDOW_LABEL) {
         let _ = win.show();
         let _ = win.set_focus();
         sync_tray_check(app, true);
+        emit_visibility(app, true);
     }
 }
 
@@ -300,6 +311,7 @@ pub fn hide<R: Runtime>(app: &AppHandle<R>) {
     if let Some(win) = app.get_webview_window(APP_WINDOW_LABEL) {
         let _ = win.hide();
         sync_tray_check(app, false);
+        emit_visibility(app, false);
     }
 }
 

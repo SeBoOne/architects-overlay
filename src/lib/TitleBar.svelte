@@ -13,14 +13,34 @@
 	// Drag: das ganze Band ist der Griff (onmousedown ohne Buttons/Interaktive
 	// Elemente → window_start_drag, Backend start_dragging).
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
 	import { t } from '../lib/i18n';
 	import logoUrl from '../lib/assets/logo.svg';
 	import { APP_WINDOW_COMPACT_PX } from './window-breakpoints';
+
+	/** Hotkey-Label für „Overlay einblenden“ (Mockup B Menü) — cfg.shortcut_toggle. */
+	let { shortcutToggle = '' }: { shortcutToggle?: string } = $props();
 
 	/** Aktiver Modus der Shell-Darstellung (kein Restart, M1 Scope 2). */
 	let mode: 'window' | 'overlay' = $state('window');
 	/** Menü-Popover offen. */
 	let menuOpen = $state(false);
+
+	// M3 (t_d9c09acf Scope 2, Reviewer M1-R1 Befund a): der Mode-Umschalter
+	// muss den ECHTEN Darstellungsmodus spiegeln. Zeigt das Backend das
+	// Fenster wieder (Tray „Fenstermodus zeigen/verstecken" nach dem
+	// Overlay-Modus), kommt das Sichtbarkeits-Event `ao:window-visibility`
+	// (window.rs emit_visibility) — der Mode springt auf 'window'. Hide-Events
+	// berühren den Mode bewusst nicht: versteckt ist das Titelband unsichtbar,
+	// und der Overlay-Wechsel versteckt das Fenster selbst.
+	$effect(() => {
+		const unlisten = listen<boolean>('ao:window-visibility', (e) => {
+			if (e.payload === true) mode = 'window';
+		});
+		return () => {
+			void unlisten.then((u) => u());
+		};
+	});
 
 	function setMode(next: 'window' | 'overlay') {
 		if (next === mode) return;
@@ -46,6 +66,37 @@
 		// Einstellungen (F12): gleicher In-App-Pfad wie der Rail-Zahnrad —
 		// das Event erreicht den Parent-Shell-Code über ein Custom-Event.
 		window.dispatchEvent(new CustomEvent('ao-window-open-config'));
+	}
+
+	function openInfo() {
+		menuOpen = false;
+		// M3 Scope 3: Hilfe/Über dockt an die BESTEHENDE Info-Popup-Routine
+		// (t_f178b084) an — kein neues Über-Fenster erfunden.
+		window.dispatchEvent(new CustomEvent('ao-window-open-info'));
+	}
+
+	// M3 Scope 3: Fenster-Menü-Endstand (Mockup B) — Overlay einblenden mit
+	// Hotkey-Label, Klick-Durchlass umschalten, Fenstermodus zeigen/verstecken.
+	function showOverlay() {
+		menuOpen = false;
+		// Overlay-Sichtbarkeit folgt game_running (overlay.rs-Vertrag) — der
+		// Aufruf setzt user_visible, kein Fenstermodus-Eingriff.
+		void invoke('overlay_set_visible', { visible: true });
+	}
+
+	async function toggleClickThrough() {
+		menuOpen = false;
+		try {
+			const s = await invoke<{ click_through: boolean }>('overlay_get_state');
+			void invoke('overlay_set_click_through', { ignore: !s.click_through });
+		} catch (e) {
+			console.warn('overlay_get_state failed', e);
+		}
+	}
+
+	function toggleWindowMode() {
+		menuOpen = false;
+		void invoke('window_toggle');
 	}
 
 	function minimize() {
@@ -103,8 +154,22 @@
 			<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 			<div class="tb-scrim" onclick={() => (menuOpen = false)}></div>
 			<div class="tb-pop" role="menu">
+				<button type="button" role="menuitem" onclick={showOverlay}>
+					{$t('titlebar.menu_overlay')}
+					<span class="k">{shortcutToggle}</span>
+				</button>
+				<button type="button" role="menuitem" onclick={toggleClickThrough}>
+					{$t('titlebar.menu_click_through')}
+				</button>
+				<button type="button" role="menuitem" onclick={toggleWindowMode}>
+					{$t('titlebar.menu_window_toggle')}
+				</button>
+				<div class="msep"></div>
 				<button type="button" role="menuitem" onclick={openSettings}>
 					{$t('titlebar.settings')}<span class="k">F12</span>
+				</button>
+				<button type="button" role="menuitem" onclick={openInfo}>
+					{$t('titlebar.menu_about')}
 				</button>
 				<div class="msep"></div>
 				<button type="button" role="menuitem" class="danger" onclick={quit}>

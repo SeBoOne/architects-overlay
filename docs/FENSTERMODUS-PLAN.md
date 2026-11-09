@@ -126,6 +126,19 @@ Overlay-Fenster dynamisch dekorieren/machen statt zweites Fenster.
 - **Persistenz:** Fensterposition/Größe/Monitor in `app_settings` (neue Felder `window_geometry: {x,y,w,h,monitor_name}`). Beim Wiederherstellen Monitor-Validität prüfen (Monitor weg → Primärmonitor). Speichern on move/resize (debounced).
 - **Beide offen gleichzeitig:** unabhängig — Overlay folgt `user_visible && game_running`, Fenster folgt nur Tray. `config_open`-Flag (`overlay.rs:515–519`) bleibt Overlay-lokal. Events erreichen beide Fenster; Visibility-Events des Overlays dürfen den Fenstermodus **nicht** anfassen (gewollte Trennung dokumentieren).
 
+**Status M3 (t_d9c09acf) — implementiert:**
+
+- **Semantik-Contract (Mockup-Tray §3), umgesetzt und verifiziert:**
+  | Aktion | Verhalten |
+  |---|---|
+  | Overlay ein/aus (Hotkey/Tray/„Overlay einblenden") | Overlay-Sichtbarkeit toggelt (`user_visible && game_running`), Pins/Pins-Plan unberührt, Prozess läuft weiter |
+  | Fenster minimieren | Rest läuft weiter (nativer Minimize, kein Sondercode) |
+  | Fenster ×/„In den Tray" | `CloseRequested → prevent_close + hide`, Fenster versteckt, Prozess läuft weiter |
+  | Beenden (Tray oder Fenster-Menü) | `app.exit(0)` — alles beendet, Exit-Code 0 (systemd `Restart=no`, kein Loop) |
+- **Tray-Live-Sprachwechsel (Sebo §9.1.7):** Tauri 2.12 erlaubt `MenuItem/CheckMenuItem::set_text` zur Laufzeit → `tray.rs` hält Handles (`TrayMenuItems`) und `settings_set_language` ruft `tray::apply_language` — Labels wechseln LIVE, die Neustart-Fallback-Rückfrage (Modal/Toast) ist dadurch obsolet. Grenze: Rust-seitig nur en/de (Community-Locale-Files erreichen das Tray nicht — dokumentiert, Frontend-Pipeline bleibt der Ort für beliebige Sprachen).
+- **TitleBar-Mode-State-Sync (Reviewer M1-R1 Befund a):** `window.rs` emittiert bei Show/Hide (inkl. Close→Tray-Pfad) `ao:window-visibility` ans `app-window`; der Titelband-Umschalter spiegelt bei `true` → `mode='window'` — nach Tray-Re-Show zeigt der Umschalter den echten Modus statt hängendem 'overlay'.
+- **Fenster-Menü-Endstand (Mockup B):** Overlay einblenden (mit Hotkey-Label aus `shortcut_toggle`), Klick-Durchlass umschalten, Fenstermodus zeigen/verstecken, Einstellungen… (F12), Hilfe/Über (docked an die bestehende Info-Popup-Routine t_f178b084, nichts neu erfunden), Beenden rot.
+
 ---
 
 ## 6. Entscheidungspunkt 5 — Dauerhafte Shellboxen („Pins")
