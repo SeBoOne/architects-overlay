@@ -381,6 +381,9 @@ pub fn settings_set_language(
     let mut s = state.inner.lock().expect("settings lock");
     s.set_language(code);
     state.persist(&s);
+    // M3 (t_d9c09acf Scope 1): Tray-Labels ziehen live nach — Tauri 2 erlaubt
+    // set_text zur Laufzeit, kein Neustart-Angebot nötig (tray.rs-Merktext).
+    crate::tray::apply_language(&app);
     Ok(SettingsSnapshot::from_settings(
         &s,
         crate::overlay::global_shortcuts_active(&app),

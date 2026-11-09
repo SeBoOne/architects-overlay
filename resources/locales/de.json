@@ -1109,6 +1109,10 @@
     "titlebar.quit": "Beenden (App schließen)",
     "titlebar.minimize": "Minimieren",
     "titlebar.to_tray": "In den Tray (App läuft weiter)",
+    "titlebar.menu_overlay": "Overlay einblenden",
+    "titlebar.menu_click_through": "Klick-Durchlass umschalten",
+    "titlebar.menu_window_toggle": "Fenstermodus zeigen/verstecken",
+    "titlebar.menu_about": "Hilfe / Über",
     "fenster.hint_more_title": "Weitere Shortcuts"
   }
 }

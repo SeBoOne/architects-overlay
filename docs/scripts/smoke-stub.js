@@ -76,7 +76,16 @@ const stubState = {
 	// spiegelt settings_set_language wie scale; locale_list/locale_import
 	// bedienen das Array. Die Probe kann __stubState.locales vor dem Open
 	// vorbefüllen (Boot-Pfad locale_list).
-	language: 'en',
+	// M3b (t_d9c09acf): Sprache aus localStorage['__probeLang'] (Default en) —
+	// der Probe-Reload kann die Runde deterministisch setzen, ohne dass
+	// addScriptToEvaluateOnNewDocument-Akkumulation die Reihenfolge verfälscht.
+	language: (function () {
+		try { return window.localStorage.getItem('__probeLang') || 'en'; } catch (e) { return 'en'; }
+	})(),
+	// M3 (t_d9c09acf): Hotkey-Label des Fenster-Menüs „Overlay einblenden"
+	// (SettingsSnapshot.shortcut_toggle, Default wie crates/settings).
+	shortcut_toggle: 'Ctrl+Shift+U',
+	shortcut_click_through: 'Ctrl+Shift+K',
 	locales: []
 };
 window.__stubState = stubState;
@@ -91,9 +100,25 @@ window.__TAURI_INTERNALS__ = {
 	metadata: { currentWindow: { label: 'spotlight' } },
 	invoke: async (cmd, args) => {
 		const a = args || {};
-		if (cmd === 'plugin:event|listen' || cmd === 'plugin:event|unlisten') return 0;
+		// M3 (t_d9c09acf): letzter IPC-Aufruf für Probes (Klick-Durchlass-Flip).
+		globalThis.__lastInvoke = { cmd, args: a };
+		// M3 (t_d9c09acf): alle Invokes (Probes prüfen gegen Hintergrund-Listen
+		// wie trade-sync-Listen, die __lastInvoke überschreiben können).
+		(globalThis.__invokes = globalThis.__invokes || []).push({ cmd, args: a });
+		if (cmd === 'plugin:event|listen' || cmd === 'plugin:event|unlisten') {
+			// M3: TitleBar-Visibility-Sync (window.rs emit_visibility →
+			// ao:window-visibility). Handler-Funktion merken — die API übergibt
+			// den Callback dank identity-transformCallback direkt.
+			if (cmd.endsWith('|listen') && typeof a.handler === 'function') {
+				(globalThis.__evtListeners = globalThis.__evtListeners || new Map())
+					.set(a.event, [...((globalThis.__evtListeners.get(a.event) || [])), a.handler]);
+			}
+			return 0;
+		}
 		if (cmd === 'plugin:event|emit') return undefined;
 		switch (cmd) {
+			case 'overlay_set_click_through':
+				return true;
 			case 'overlay_get_state':
 				return { visible: true, game_running: true, click_through: false };
 			case 'overlay_set_visible':
@@ -1290,6 +1315,13 @@ window.__TAURI_INTERNALS__ = {
 			default:
 				return null;
 		}
+	}
+};
+
+/* M3 (t_d9c09acf): Backend-Events ans Frontend feuern (Titelband-Mode-Sync). */
+window.__stubFireTauriEvent = (event, payload) => {
+	for (const h of (globalThis.__evtListeners && globalThis.__evtListeners.get(event)) || []) {
+		h({ event, id: 0, payload });
 	}
 };
 

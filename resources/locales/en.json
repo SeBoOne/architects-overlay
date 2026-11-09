@@ -1109,6 +1109,10 @@
     "titlebar.quit": "Quit (close app)",
     "titlebar.minimize": "Minimize",
     "titlebar.to_tray": "To tray (app keeps running)",
+    "titlebar.menu_overlay": "Show overlay",
+    "titlebar.menu_click_through": "Toggle click-through",
+    "titlebar.menu_window_toggle": "Show/hide window mode",
+    "titlebar.menu_about": "Help / About",
     "fenster.hint_more_title": "More shortcuts"
   }
 }
