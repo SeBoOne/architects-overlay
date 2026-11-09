@@ -1114,5 +1114,18 @@
     "titlebar.menu_window_toggle": "Show/hide window mode",
     "titlebar.menu_about": "Help / About",
     "fenster.hint_more_title": "More shortcuts"
+  },
+  "pins": {
+    "pin_hint": "Pin as route box",
+    "pin_detail": "Pin as box",
+    "pin_detail_title": "Pin this route as permanent box",
+    "added": "Route pinned",
+    "already_pinned": "Route is already pinned",
+    "drag_title": "Drag box",
+    "opacity_title": "Adjust opacity",
+    "opacity": "Opacity",
+    "unpin_title": "Unpin (back to overlay)",
+    "close_title": "Close pin (remove)",
+    "empty": ""
   }
 }

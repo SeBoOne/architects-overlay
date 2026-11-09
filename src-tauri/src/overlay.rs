@@ -566,6 +566,10 @@ pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
             if !running && std::env::var_os("ARCH_OVERLAY_SMOKE").is_some() {
                 return;
             }
+            // M4 (t_7bf507e6): Pins ziehen strikt mit (§9.1.5 — kein eigener
+            // Sichtbarkeitskanal ohne laufendes SC). Fail-soft: ohne pins-State
+            // (init fehlgeschlagen) tut der Hook nichts.
+            crate::pins::sync_game_running(app, running);
             apply_visibility(app, effective_visible(st.inner()));
             emit_state(app);
         }
@@ -602,6 +606,10 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                     .try_state::<OverlayState>()
                     .map(|st| effective_visible(st.inner()))
                     .unwrap_or(visible);
+            // M4 (t_7bf507e6): Pin-Fenster-Input-Modus wechselt mit dem
+            // Overlay-Zustand (§9.1.6 — interagierbar NUR bei sichtbarem
+            // Overlay; sonst click-through/ignore). Fail-soft.
+            crate::pins::sync_overlay_visibility(&worker, visible);
             if visible {
                 // P3 (t_d340f851): opening ALWAYS behaves as focus mode — the
                 // compositor focus dispatch below takes keyboard focus regard-

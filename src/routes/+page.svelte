@@ -54,6 +54,9 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
+	import PinWindow from '../lib/PinWindow.svelte';
+	import { isPinsWindow, type PinsState } from '../lib/pins';
 	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
 	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
 	import TitleBar from '../lib/TitleBar.svelte';
@@ -285,6 +288,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// rendert das Titelband (Variante B) über der Shell — die Shell selbst
 	// bleibt der gleiche Code (keine Overlay-spezifischen Fixierungs-Annahmen).
 	let isWindowMode = $state(false);
+	// M4 (t_7bf507e6): Label `pins-<n>` = Pin-Fenster — rendert NUR gepinnte
+	// Boxen (PinWindow), keine Shell. Boot-Frontend-Zweig in boot() unten.
+	let isPins = $state(false);
+	let pinLabel = $state('');
 	let overlay = $state<OverlayState | null>(null);
 	let phase = $state<Phase>('loading');
 	let input = $state('');
@@ -3228,6 +3235,88 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	let rLoadingRef: boolean = false;
+	// ---- M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“ -----------------------
+	// P-Kontextaktion an jeder Box (Sebo §9.1.4) + „Als Pin anheften“ im
+	// Detail. Snapshot = generische DISPLAY-Daten (title/kpi/rows) — die
+	// Pin-Verwaltung im Backend bleibt rein mechanisch (Schema-U).
+
+	/// Anzeige-Snapshot einer Route für die Pin-Box (mockup-pin.html-Layout:
+	/// zwei Steps Kauf/Verkauf + Marge als KPI).
+	function routePinSnapshot(r: TradeRoute) {
+		return {
+			title: `${tr('market.tab_routes')} · ${r.commodity}`,
+			kpi: `+${(r.margin * 100).toFixed(0)} %`,
+			rows: [
+				{
+					idx: '01',
+					name: r.buy_terminal,
+					sub: `${r.buy_chain} · ${tr('common.buy')}`,
+					value: fmtPrice(r.buy_price),
+					side: 'buy'
+				},
+				{
+					idx: '02',
+					name: r.sell_terminal,
+					sub: `${r.sell_chain} · ${tr('common.sell')}`,
+					value: fmtPrice(r.sell_price),
+					side: 'sell'
+				}
+			]
+		};
+	}
+
+	async function pinRoute(box_index: number) {
+		const r = routes_[box_index];
+		if (!r) return;
+		const snap = routePinSnapshot(r);
+		try {
+			const ok = await invoke<boolean>('pin_add', {
+				view_id: 'routes',
+				box_index,
+				opacity: 100,
+				title: snap.title,
+				kpi: snap.kpi,
+				rows: snap.rows
+			});
+			f5Msg = tr(ok ? 'pins.added' : 'pins.already_pinned');
+		} catch (e) {
+			f5Msg = errText(e);
+		}
+		if (f5Clear) clearTimeout(f5Clear);
+		f5Clear = setTimeout(() => (f5Msg = ''), 3000);
+	}
+
+	/// Snapshot-Refresh nach jedem Routen-Reload — gepinnte Boxen ziehen
+	/// live nach (gleicher box_index in der aktualisierten Liste).
+	async function syncRoutePins() {
+		try {
+			const st = await invoke<PinsState>('pins_state');
+			for (const p of st.pins) {
+				if (!p.pinned || p.view_id !== 'routes') continue;
+				const r = routes_[p.box_index];
+				if (!r) continue;
+				const snap = routePinSnapshot(r);
+				await invoke('pin_update', {
+					view_id: 'routes',
+					box_index: p.box_index,
+					title: snap.title,
+					kpi: snap.kpi,
+					rows: snap.rows
+				});
+			}
+		} catch {
+			/* Pins-Backend fehlt — best effort. */
+		}
+	}
+
+	// Detail-Index der offenen Route (für „Als Pin anheften“ im Detail).
+	let rDetailIdx = $state(0);
+
+	function openRouteDetailNow() {
+		rDetailIdx = rSel;
+		if (routes_.length) rDetail = routes_[rSel] ?? null;
+	}
+
 	async function loadRoutes() {
 		if (rLoadingRef) return;
 		rLoadingRef = true;
@@ -3253,6 +3342,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			rSweptAt = resp.swept_at;
 			rRefreshing = resp.refreshing;
 			rSel = 0;
+			// M4: gepinnte Routen-Boxen ziehen live nach (Snapshot-Refresh).
+			await syncRoutePins();
 		} catch (e) {
 			routes_ = [];
 			rRefreshing = false;
@@ -3363,6 +3454,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		el?.scrollIntoView({ block: 'nearest' });
 	}
 	function openRouteDetail() {
+		// M4: Detail-Index für „Als Pin anheften“ im Detail-Popup merken.
+		rDetailIdx = rSel;
 		if (routes_.length) rDetail = routes_[rSel] ?? null;
 	}
 	/** Gewinn = Einheit * Preisdifferenz * Menge (RB2: budget-gekappt). */
@@ -3422,6 +3515,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const label = getCurrentWindow().label;
 			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
+			// M4 (t_7bf507e6): Pin-Fenster-Zweig — NUR PinWindow rendern, keine
+			// Shell/Palette. Settings/i18n laufen trotzdem (Palette-Tokens +
+			// Sprache für die Box-Labels), der Rest der Boot-Logik ist egal.
+			if (isPinsWindow(label)) {
+				isPins = true;
+				pinLabel = label;
+			}
 			// M1 (t_90cb34ee): Fenstermodus-Zweig — erkennt am Label (und an der
 			// Hash-Route #/window, falls die URL sie trägt). Kein Spotlight-Boot:
 			// Overlay-State/Tray-Listener sind Overlay-lokal (bewusste Trennung
@@ -4830,6 +4930,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					e.preventDefault();
 					return;
 				}
+				// M4 (t_7bf507e6): P-Kontextaktion an jeder Box — selektierte
+				// Route als Pin anheften (Detail-Fallback: Button im Popup).
+				if ((k === 'p' || k === 'P') && !rDetail && !isFieldFocused(e)) {
+					void pinRoute(rSel);
+					e.preventDefault();
+					return;
+				}
 				return; // Routen-Tab: keine Offer-Shortcuts
 			}
 			// MQ (t_d6ff5212): Lightbox offen → sie schluckt die Tastatur. Esc
@@ -5009,6 +5116,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 <svelte:window onkeydown={onKey} />
 
 <main class="pal-root" class:app-compact={appCompact} bind:clientWidth={palW}>
+	<!-- M4 (t_7bf507e6): Pin-Fenster-Zweig — NUR die gepinnten Boxen, keine
+	     Shell. Das Fenster selbst wird vom Backend gesteuert (Sichtbarkeit
+	     strikt an game_running gekoppelt, Input-Modus an den Overlay-Zustand). -->
+	{#if isPins}
+		<PinWindow label={pinLabel} />
+	{:else}
 	<!-- UG (t_a1f0d83f): shell-info — solange das Info-Popup offen ist,
 	     bekommt die content-driven Shell ein min-height-Floor, damit das
 	     (jetzt größere, Abschnitts-) Popup ohne internen Scroll vollständig
@@ -6496,6 +6609,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 											{/if}
 						<div class="md-note">{$t('routes.price_asof_source', { date: rSweptAt ? new Date(rSweptAt * 1000).toLocaleString('de-DE') : '—' })}</div>
 							<div class="md-actions">
+								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" title={$t('pins.pin_detail_title')} onclick={() => void pinRoute(rDetailIdx)}>{$t('pins.pin_detail')}</span>
 								<span role="button" tabindex="0" onkeydown={keyActivate} class="btn-ghost" onclick={() => (rDetail = null)}>{$t('common.back_esc')}</span>
 							</div>
 						</div>
@@ -7535,6 +7649,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					{:else if mTab === 'routes'}
 						<span><kbd>↑↓</kbd>{$t('market.tab_routes')}</span>
 						<span><kbd>↵</kbd>{$t('common.detail')}</span>
+						<span><kbd>P</kbd>{$t('pins.pin_hint')}</span>
 						<span><kbd>F5</kbd>{$t('search.route_sweep')}</span>
 						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{:else}
@@ -7719,4 +7834,5 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{/if}
 		</div><!-- /shell-main -->
 	</div>
+	{/if}
 </main>

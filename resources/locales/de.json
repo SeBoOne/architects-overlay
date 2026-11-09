@@ -1114,5 +1114,18 @@
     "titlebar.menu_window_toggle": "Fenstermodus zeigen/verstecken",
     "titlebar.menu_about": "Hilfe / Über",
     "fenster.hint_more_title": "Weitere Shortcuts"
+  },
+  "pins": {
+    "pin_hint": "Route als Box anheften",
+    "pin_detail": "Als Pin anheften",
+    "pin_detail_title": "Diese Route als dauerhafte Box anheften",
+    "added": "Route angeheftet",
+    "already_pinned": "Route ist bereits angeheftet",
+    "drag_title": "Box verschieben",
+    "opacity_title": "Deckkraft regeln",
+    "opacity": "Deckkraft",
+    "unpin_title": "Lösen (zurück zur normalen View)",
+    "close_title": "Box schließen (Pin entfernen)",
+    "empty": ""
   }
 }
