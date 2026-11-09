@@ -426,13 +426,19 @@ fn hook_thread<R: tauri::Runtime>(app: AppHandle<R>) {
     *LL_TARGETS.lock().expect("ll targets lock") = render_targets(&targets);
 
     HOOK_CTX.with(|ctx| {
+        // WH-HOOK R26: Die Dispatch-Closure bekommt einen eigenen
+        // AppHandle-Klon (AppHandle ist ein leichtgewichtig Arc-Handle) —
+        // sonst moved sie das `app` des Threads und die Reload-Schleife
+        // dürfte read_targets(&app) nicht mehr borgen (E0382, nur auf dem
+        // Windows-Target sichtbar: CI-Check 2026-11-09).
+        let dispatch_app = app.clone();
         *ctx.borrow_mut() = Some(HookRuntime {
             matcher: std::sync::Mutex::new(ComboMatcher::new(
                 targets.into_iter().map(|(c, _)| c).collect(),
             )),
             kinds,
             dispatch: Box::new(move |kind| {
-                shortcut_diag::dispatch_kind(&app, kind);
+                shortcut_diag::dispatch_kind(&dispatch_app, kind);
             }),
         });
     });
@@ -579,9 +585,7 @@ fn format_combo(c: &Combo) -> String {
 #[cfg(target_os = "windows")]
 unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isize) -> isize {
     unsafe {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            CallNextHookEx, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
-        };
+        use windows_sys::Win32::UI::WindowsAndMessaging::{CallNextHookEx, KBDLLHOOKSTRUCT};
 
         // Regelpunkt: KeyEvents NORMAL durchreichen — nur die Combo-Erkennung
         // lauscht mit. Ein Blocken (kein CallNextHookEx) käme einem Tastendiebstahl
@@ -606,7 +610,7 @@ unsafe extern "system" fn ll_hook_proc(n_code: i32, w_param: usize, l_param: isi
         if !is_key_down && !is_key_up {
             return pass_through();
         }
-        let kb = unsafe { &*kb };
+        let kb = &*kb;
 
         // Sonde: jede sichtbare Taste zählen (down UND up), bevor gematcht
         // wird — 0 Events bei fokussiertem SC heißt „Hook sieht nichts“,
