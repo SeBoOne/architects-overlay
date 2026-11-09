@@ -20,6 +20,7 @@
 
 #[cfg(desktop)]
 pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    use tauri::Manager;
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tauri::tray::TrayIconBuilder;
 
@@ -32,14 +33,36 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     } else {
         ("Toggle overlay", "Open config", "Quit")
     };
+    // M1 (t_90cb34ee, Scope 5): „Fenstermodus zeigen/verstecken" als Checkbox
+    // unterhalb `toggle` — Zustand wird von window::show/hide live nachgezogen
+    // (window::WindowTrayItem). i18n-Pattern wie oben; Live-Sprachwechsel
+    // bleibt M3 (Sebo §9.1.7, Feinschliff).
+    let window_label = if de {
+        "Fenstermodus zeigen/verstecken"
+    } else {
+        "Toggle window mode"
+    };
     let toggle = MenuItem::with_id(app, "toggle", toggle_label, true, None::<&str>)?;
+    let window_toggle = tauri::menu::CheckMenuItem::with_id(
+        app,
+        "window_toggle",
+        window_label,
+        true,
+        false,
+        None::<&str>,
+    )?;
     let config = MenuItem::with_id(app, "config", config_label, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&toggle, &config, &separator, &quit])?;
+    let menu = Menu::with_items(app, &[&toggle, &window_toggle, &config, &separator, &quit])?;
 
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-drake-32.png"))
         .expect("embedded tray icon decodes");
+
+    // M1: Handle für den Checkbox-Zustand an window.rs übergeben.
+    if let Some(item) = app.try_state::<crate::window::WindowTrayItem<R>>() {
+        *item.0.lock().expect("tray item lock") = Some(window_toggle);
+    }
 
     let result = TrayIconBuilder::with_id("architects-overlay-tray")
         .icon(icon)
@@ -48,6 +71,9 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "toggle" => crate::overlay::toggle_visible(app),
+            // M1: Checkbox-Zustand zieht window::toggle_visible selbst nach
+            // (show/hide rufen sync_tray_check).
+            "window_toggle" => crate::window::toggle_visible(app),
             "config" => crate::overlay::open_config_from_tray(app),
             // Clean exit (code 0): the systemd unit is transient with
             // `Restart=no` (verified in the tray triage), so the unit stops

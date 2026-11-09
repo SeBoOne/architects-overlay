@@ -42,6 +42,7 @@ function keyActivate(e: KeyboardEvent) {
 	//
 	// Zustände: idle · typing · loading · error · offline · market
 	import { getCurrentWindow } from '@tauri-apps/api/window';
+import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/window-breakpoints';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	// TW (t_f178b084): Info-Popup — Laufzeit-Version aus tauri packageInfo
@@ -53,6 +54,9 @@ function keyActivate(e: KeyboardEvent) {
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
+	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
+	import TitleBar from '../lib/TitleBar.svelte';
 	// C2 (t_91124322): Manifest-Connectors — generische Views (table/cards/
 	// detail/calendar/form) + Placement (own/replace/embed). KEIN connector-
 	// spezifisches Wissen im Kern; alles lebt in den Manifesten.
@@ -277,6 +281,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// ---- Zustand -------------------------------------------------------------
 	let isSpotlight = $state(false);
+	// M1 (t_90cb34ee): Label `app-window` = Fenstermodus-Fenster. Der Zweig
+	// rendert das Titelband (Variante B) über der Shell — die Shell selbst
+	// bleibt der gleiche Code (keine Overlay-spezifischen Fixierungs-Annahmen).
+	let isWindowMode = $state(false);
 	let overlay = $state<OverlayState | null>(null);
 	let phase = $state<Phase>('loading');
 	let input = $state('');
@@ -670,6 +678,30 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	);
 	// Palletten-Breite (bind:clientWidth) → Rail-Kollaps auf reine Icons, wenn schmal.
 	let palW = $state(0);
+	// M2 (t_a931d1bb): Kompakt-Schritt des Fenstermodus (app-window) —
+	// Schwellwerte in lib/window-breakpoints.ts (unit-getestet). Nur im
+	// app-window wirksam; Spotlight-Hauptfenster behält seinen 553er-Rail-
+	// Kollaps unverändert (OVERLAY-REGEL).
+	const appCompact = $derived(calcAppCompact(palW, isWindowMode));
+	// Hint-Zeile (M2 Scope 2): im Kompakt-Schritt die ersten drei Hints
+	// zeigen, alle weiteren als „+N“-Mehr-Anzeige (statt stiller Kürzung).
+	// hintCount zählt die gerenderten Hint-Spans — die Zeile ist je
+	// Phase/Tab unterschiedlich lang (bedingte Blöcke), daher via
+	// MutationObserver gemessen statt markup-dupliziert gezählt.
+	let hintsEl: HTMLDivElement | undefined = $state();
+	let hintCount = $state(0);
+	$effect(() => {
+		if (!hintsEl) return;
+		const el = hintsEl;
+		const count = () => {
+			hintCount = el.querySelectorAll(':scope > span:not(.hint-more)').length;
+		};
+		count();
+		const mo = new MutationObserver(count);
+		mo.observe(el, { childList: true, subtree: true });
+		return () => mo.disconnect();
+	});
+	const hintMore = $derived(calcHintMore(hintCount, appCompact));
 
 	// ---- Hangar (Karte t_317f19c5) ------------------------------------------
 	// Schiffe/Fahrzeuge/Module mit Versicherung — Backend-Tabelle `hangar`
@@ -3390,6 +3422,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const label = getCurrentWindow().label;
 			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
+			// M1 (t_90cb34ee): Fenstermodus-Zweig — erkennt am Label (und an der
+			// Hash-Route #/window, falls die URL sie trägt). Kein Spotlight-Boot:
+			// Overlay-State/Tray-Listener sind Overlay-lokal (bewusste Trennung
+			// gemäß Sonde §5 „Beide offen gleichzeitig").
+			if (label === 'app-window' || window.location.hash === '#/window') {
+				isWindowMode = true;
+				window.addEventListener('ao-window-open-config', () => openConfig());
+			}
 			// Persistierte Einstellungen (Palette + Detail-Variante) vor dem
 			// ersten Paint anwenden — verhindert einen Palette-Flash.
 			await loadSettings();
@@ -4965,11 +5005,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 <svelte:window onkeydown={onKey} />
 
-<main class="pal-root" bind:clientWidth={palW}>
+<main class="pal-root" class:app-compact={appCompact} bind:clientWidth={palW}>
 	<!-- UG (t_a1f0d83f): shell-info — solange das Info-Popup offen ist,
 	     bekommt die content-driven Shell ein min-height-Floor, damit das
 	     (jetzt größere, Abschnitts-) Popup ohne internen Scroll vollständig
 	     in die Shell passt (max-height 84vh bleibt die Obergrenze). -->
+	{#if isWindowMode}
+		<TitleBar />
+	{/if}
 	<div
 		class="shell"
 		class:in-detail={inDetail}
@@ -5099,7 +5142,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		<!-- PB (t_1c9bc240, B1): Rail zeigt die persistierten Mode-Hotkeys. -->
 		<Rail
 				mode={mode}
-				compact={palW > 0 && palW < 553}
+				compact={appCompact || (!isWindowMode && palW > 0 && palW < 553)}
 				onselect={setMode}
 				hotkeys={cfg?.mode_hotkeys ?? undefined}
 				ownEntries={ownList.map((c) => ({
@@ -7468,9 +7511,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 		<!-- Fußzeile (bleibt in allen Zuständen stehen → kein Layoutsprung) —
 		     EINZIGE dynamische Hint-Zeile (P6): Inhalt wechselt je Ansicht
-		     (Search / Detail / Market) und trägt das F5-Sync-Feedback (P4). -->
+		     (Search / Detail / Market) und trägt das F5-Sync-Feedback (P4).
+		     M2 (t_a931d1bb Scope 2): im Fenstermodus-Kompakt-Schritt zeigt
+		     diese Zeile nur die ersten drei Hints + „+N“-Mehr-Anzeige —
+		     versteckt via CSS unter app-window.app-compact (nicht stille
+		     Kürzung), N = hintMore (lib/window-breakpoints). -->
 		<div class="foot">
-			<div class="hints">
+			<div class="hints" class:app-compact={appCompact} bind:this={hintsEl}>
 				{#if phase === 'market'}
 					<!-- PB (t_1c9bc240, B2): der F5-Hinweis erscheint nur an Orten mit
 					     Resync-Bezug (Angebote, Mein Shop, Routen) — nie global. -->
@@ -7514,8 +7561,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<span><kbd>↵</kbd>{$t('common.detail')}</span>
 					<span><kbd>Esc</kbd>{$t('search.back')}</span>
 					<span><kbd>{hotkeyFor(cfg, 'market')}</kbd>{$t('nav.marketplace')}</span>
-				{/if}
-			</div>
+					{/if}
+					<!-- M2 (t_a931d1bb): „+N“-Mehr-Anzeige statt stiller Kürzung —
+					     nur im Fenstermodus-Kompakt-Schritt sichtbar (CSS-Scoping
+					     app-window.app-compact); die Hidden-Spans bleiben im DOM. -->
+					{#if hintMore > 0}
+						<span class="hint-more" title={$t('fenster.hint_more_title')}>+{hintMore}</span>
+					{/if}
+				</div>
 			{#if f5Msg}
 				<span class="f5-msg" role="status">{f5Msg}</span>
 			{/if}

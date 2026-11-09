@@ -141,3 +141,18 @@ live, welche Combos der Hook aktuell abhört (`"toggle=ctrl+shift+0x55"`,
 der Reload nicht gewirkt; steht die neue, wirkt der Fix. Reload-Ereignis im
 Log: `LL-keyboard-hook targets reloaded after rebind: ...`. Live-Beweis gegen
 die Windows-Testnutzer-Instanz: Omar post-Merge.
+
+## Fenstermodus (M1 — t_90cb34ee): Kürzel-Koexistenz
+
+Der Fenstermodus-Fenster (`app-window`, M1) lebt neben dem Overlay-Spotlight —
+die globalen Kürzel verhalten sich fensterunabhängig (Sonde §4-Matrix):
+
+| Kürzel | Mechanismus | Bei offenem + fokussiertem `app-window` |
+|---|---|---|
+| Overlay-Toggle (Strg+Shift+U o. ä.) | GlobalShortcut / Windows-LL-Hook bei laufendem SC / Hyprland-Compositor-Bind | ✅ wirkt weiter (OS-Ebene, fensteragnostisch) |
+| Klick-Durchlass (Strg+Shift+O o. ä.) | dito — Eigenschaft `set_ignore_cursor_events` gilt nur am `spotlight`-Fenster | ✅ wirkt weiter; das Fenster bleibt normal klickbar |
+| Modi F1–F12 / Connector-Hotkeys / F5 | Frontend-Keydown im Webview | ✅ wirksam, solange das Fenster fokussiert ist (wie im Overlay) |
+| Esc im Fenster | Frontend | ✅ interne Zurück-Navigation — schließt das Fenster NICHT (nur Tray/Menü) |
+
+Der Fenstermodus-Code (`src-tauri/src/window.rs`) greift in KEINEN
+Shortcut-Pfad ein — Koexistenz ist Architekturmerkmal, nicht Zusatzcode.
