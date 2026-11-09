@@ -441,6 +441,9 @@ struct RawConfig {
     /// M1 (t_90cb34ee): Fenstermodus-Geometrie (Position/Größe/Monitor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     window: Option<WindowSection>,
+    /// M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“ — Tray/Restore-Set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pins: Option<PinsSection>,
 }
 
 /// M1 (t_90cb34ee): Fenstermodus-Abschnitt. Nur die Geometrie —
@@ -462,6 +465,65 @@ pub struct WindowGeometry {
     pub w: u32,
     pub h: u32,
     pub monitor: String,
+}
+
+/// M4 (t_7bf507e6): Eine generische Anzeige-Zeile im Pin-Inhalts-Snapshot.
+/// Rein darstellerisch (keine Plugin-Semantik): `side` ist "buy"/"sell"
+/// oder None — die Farbwahl macht nur die Pin-Ansicht daraus.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PinRow {
+    /// Anzeige-Index („01“, „02“, …) — vom View-Komponenten-Treiber gesetzt.
+    pub idx: String,
+    /// Haupttext (z. B. Terminalname).
+    pub name: String,
+    /// Optionale Unterzeile (z. B. „Stanton · Kauf · Bestand 640 SCU“).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub: Option<String>,
+    /// Rechte Kennzahl (z. B. Preis).
+    pub value: String,
+    /// "buy"/"sell" oder None — steuert nur die Anzeige-Farbe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<String>,
+}
+
+/// M4 (t_7bf507e6): Pin-Eintrag — VERTRAG (Sebo §9.1.4–6): mechanischer
+/// Kern `{view_id, screen, box_index, opacity, pinned}` plus Box-Position
+/// (x/y relativ zur Screen-Ecke, Ergebnis des Edge-Snapping) plus
+/// Anzeige-Snapshot (title/kpi/rows) des Overlay-Frontends. Der Snapshot
+/// ist generische DISPLAY-Daten, die die View-Komponente beim Anheften
+/// erzeugt — die Pin-Verwaltung kennt keine Plugin-Semantik (Schema-U).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PinEntry {
+    /// View-Kennung (z. B. "routes") — mechanisch, kein Plugin-Vokabular.
+    pub view_id: String,
+    /// Monitor-Name des Screens, auf dem die Box lebt.
+    pub screen: String,
+    /// Index der Box in der View-Liste (View-lokal).
+    pub box_index: u32,
+    /// Deckkraft in % — clamp 20..=100 (Pins-Vertrag).
+    pub opacity: u32,
+    /// false = „gelöst“ (Restore überspringt; Eintrag bleibt für Re-Pin).
+    pub pinned: bool,
+    /// Box-Position relativ zur Screen-Ecke (px, nach Edge-Snapping).
+    pub x: i32,
+    pub y: i32,
+    /// Anzeige-Snapshot: Kopftext der Box (z. B. „Route · Gold Ore“).
+    pub title: String,
+    /// Optionale Kennzahl im Kopf (z. B. „+27 %“).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kpi: Option<String>,
+    /// Inhalts-Zeilen (generisch darstellbar).
+    #[serde(default)]
+    pub rows: Vec<PinRow>,
+}
+
+/// M4: `[pins]`-Sektion — globaler An/Aus-Schalter + Pin-Set.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PinsSection {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub list: Vec<PinEntry>,
 }
 
 /// C2 (t_91124322): Connector-Abschnitt der Config — Maps pro Connector-ID.
@@ -735,6 +797,8 @@ pub struct Settings {
     updater_base_url: String,
     /// M1 (t_90cb34ee): letzte Fenstermodus-Geometrie (None = Default).
     window_geometry: Option<WindowGeometry>,
+    /// M4 (t_7bf507e6): Pins-Sektion (Tray-Schalter + Pin-Set).
+    pins: Option<PinsSection>,
 }
 
 impl Default for Settings {
@@ -762,6 +826,7 @@ impl Default for Settings {
             updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
             window_geometry: None,
+            pins: None,
         }
     }
 }
@@ -912,6 +977,7 @@ impl Settings {
                 .as_ref()
                 .and_then(|w| w.geometry.clone())
                 .filter(|g| g.w > 0 && g.h > 0),
+            pins: raw.pins.clone(),
         };
         // TF t_0d510f31: migrierte Legacy-Werte zurück in die Datei
         // schreiben, damit der alte Gitea-Eintrag dauerhaft verschwindet.
@@ -956,6 +1022,7 @@ impl Settings {
             updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
             window_geometry: None,
+            pins: None,
         }
     }
 
@@ -1248,6 +1315,32 @@ impl Settings {
         self.window_geometry = geometry;
     }
 
+    // ---- M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“ ----------------------
+
+    /// Pins-Sektion (None = nie benutzt — kein Pin-Fenster beim Start).
+    pub fn pins(&self) -> Option<&PinsSection> {
+        self.pins.as_ref()
+    }
+
+    /// Setzt die Pins-Sektion (persist via save).
+    pub fn set_pins(&mut self, pins: Option<PinsSection>) {
+        self.pins = pins;
+    }
+
+    /// Veränderbare Pin-Liste — erzeugt die Sektion lazily (pin_add ohne
+    /// Vorgeschichte). Persist via save.
+    pub fn pins_mut_entry(&mut self) -> &mut Vec<PinEntry> {
+        self.pins
+            .get_or_insert_with(PinsSection::default)
+            .list
+            .as_mut()
+    }
+
+    /// Veränderbare Pins-Sektion — erzeugt sie lazily (Tray-Schalter).
+    pub fn pins_mut_or_default(&mut self) -> &mut PinsSection {
+        self.pins.get_or_insert_with(PinsSection::default)
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -1285,6 +1378,7 @@ impl Settings {
             window: Some(WindowSection {
                 geometry: self.window_geometry.clone(),
             }),
+            pins: self.pins.clone(),
         };
         let content = toml::to_string_pretty(&raw)
             .map_err(|e| SettingsError::Parse(format!("serialize: {e}")))?;
@@ -2081,5 +2175,72 @@ mod tests {
         // Länge > LANGUAGE_MAX_LEN → Default.
         let long = "a".repeat(LANGUAGE_MAX_LEN + 1);
         assert_eq!(norm_language(Some(&long)), "en");
+    }
+
+    // ---- M4 (t_7bf507e6): Pins-Sektion ---------------------------------------
+
+    /// Vertrags-Shape {view_id, screen, box_index, opacity, pinned} rundet
+    /// durch die TOML-Datei; fehlender Abschnitt bleibt None (kein Pin-
+    /// Fenster beim Start ohne Nutzungs-Historie).
+    #[test]
+    fn pins_roundtrip_and_default_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        // Default: keine Pins-Sektion.
+        let s = Settings::load_from(&path).unwrap();
+        assert!(s.pins().is_none());
+
+        let mut s = Settings::with_path(path.clone());
+        s.set_pins(Some(PinsSection {
+            enabled: true,
+            list: vec![PinEntry {
+                view_id: "routes".into(),
+                screen: "DP-3".into(),
+                box_index: 2,
+                opacity: 55,
+                pinned: true,
+                x: 3200,
+                y: 80,
+                title: "Route · Gold Ore (Raw)".into(),
+                kpi: Some("+27 %".into()),
+                rows: vec![
+                    PinRow {
+                        idx: "01".into(),
+                        name: "Port Tressler".into(),
+                        sub: Some("Stanton · Kauf".into()),
+                        value: "4812".into(),
+                        side: Some("buy".into()),
+                    },
+                    PinRow {
+                        idx: "02".into(),
+                        name: "Levski".into(),
+                        sub: Some("Nyx · Verkauf".into()),
+                        value: "6104".into(),
+                        side: Some("sell".into()),
+                    },
+                ],
+            }],
+        }));
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        let pins = loaded.pins().expect("pins section persists");
+        assert!(pins.enabled);
+        assert_eq!(pins.list.len(), 1);
+        let pin = &pins.list[0];
+        // Mechanischer Kern exakt laut Vertrag.
+        assert_eq!(
+            (
+                pin.view_id.as_str(),
+                pin.screen.as_str(),
+                pin.box_index,
+                pin.opacity,
+                pin.pinned
+            ),
+            ("routes", "DP-3", 2, 55, true)
+        );
+        assert_eq!(pin.rows.len(), 2);
+        assert_eq!(pin.rows[1].side.as_deref(), Some("sell"));
+        assert_eq!(pin.kpi.as_deref(), Some("+27 %"));
     }
 }

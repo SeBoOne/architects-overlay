@@ -34,6 +34,8 @@ pub struct TrayMenuItems<R: tauri::Runtime>(pub Mutex<Option<TrayHandles<R>>>);
 pub struct TrayHandles<R: tauri::Runtime> {
     toggle: MenuItem<R>,
     window_toggle: tauri::menu::CheckMenuItem<R>,
+    /// M4 (t_7bf507e6): „Pin-Boxen anzeigen“ — Checkbox nach window_toggle.
+    pins_toggle: tauri::menu::CheckMenuItem<R>,
     config: MenuItem<R>,
     quit: MenuItem<R>,
 }
@@ -42,11 +44,22 @@ pub struct TrayHandles<R: tauri::Runtime> {
 /// sonst en-Default. Bewusst NUR en/de (Rust-Seite kennt keine Locale-Files;
 /// Community-Sprachen zeigen tray-seitig den en-Default — dokumentierte
 /// Grenze, Frontend-Pipeline bleibt der Ort für beliebige Sprachen).
-pub fn labels(de: bool) -> (&'static str, &'static str, &'static str, &'static str) {
+pub fn labels(
+    de: bool,
+) -> (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static str,
+) {
     if de {
         (
             "Overlay ein-/ausblenden",
             "Fenstermodus zeigen/verstecken",
+            // M4: Checkbox-Zustand = Pins-Sichtbarkeit (wirkt nur bei
+            // game_running — §9.1.5).
+            "Pin-Boxen anzeigen",
             "Config öffnen",
             "Beenden",
         )
@@ -54,6 +67,7 @@ pub fn labels(de: bool) -> (&'static str, &'static str, &'static str, &'static s
         (
             "Toggle overlay",
             "Toggle window mode",
+            "Show pin boxes",
             "Open config",
             "Quit",
         )
@@ -66,7 +80,7 @@ pub fn labels(de: bool) -> (&'static str, &'static str, &'static str, &'static s
 /// Neustart-Fallback-Rückfrage (Toast/Modal) obsolet.
 pub fn apply_language<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let de = crate::app_settings::SettingsState::current_language_is_de();
-    let (toggle_label, window_label, config_label, quit_label) = labels(de);
+    let (toggle_label, window_label, pins_label, config_label, quit_label) = labels(de);
     let Some(state) = app.try_state::<TrayMenuItems<R>>() else {
         return;
     };
@@ -76,6 +90,7 @@ pub fn apply_language<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     };
     let _ = h.toggle.set_text(toggle_label);
     let _ = h.window_toggle.set_text(window_label);
+    let _ = h.pins_toggle.set_text(pins_label);
     let _ = h.config.set_text(config_label);
     let _ = h.quit.set_text(quit_label);
 }
@@ -86,7 +101,7 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     use tauri::tray::TrayIconBuilder;
 
     let de = crate::app_settings::SettingsState::current_language_is_de();
-    let (toggle_label, window_label, config_label, quit_label) = labels(de);
+    let (toggle_label, window_label, pins_label, config_label, quit_label) = labels(de);
     let toggle = MenuItem::with_id(app, "toggle", toggle_label, true, None::<&str>)?;
     let window_toggle = tauri::menu::CheckMenuItem::with_id(
         app,
@@ -96,10 +111,36 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         false,
         None::<&str>,
     )?;
+    // M4 (t_7bf507e6): Checkbox „Pin-Boxen anzeigen“ nach window_toggle —
+    // Zustand = Pins-Sichtbarkeit (wirkt nur bei game_running, §9.1.5);
+    // der Persistenz-Stand kommt aus der Settings-Sektion.
+    let pins_checked = {
+        let st = app.state::<crate::app_settings::SettingsState>();
+        let s = st.inner.lock().expect("settings lock");
+        s.pins().map(|p| p.enabled).unwrap_or(false)
+    };
+    let pins_toggle = tauri::menu::CheckMenuItem::with_id(
+        app,
+        "pins_toggle",
+        pins_label,
+        true,
+        pins_checked,
+        None::<&str>,
+    )?;
     let config = MenuItem::with_id(app, "config", config_label, true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
     let separator = PredefinedMenuItem::separator(app)?;
-    let menu = Menu::with_items(app, &[&toggle, &window_toggle, &config, &separator, &quit])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &toggle,
+            &window_toggle,
+            &pins_toggle,
+            &config,
+            &separator,
+            &quit,
+        ],
+    )?;
 
     let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-drake-32.png"))
         .expect("embedded tray icon decodes");
@@ -108,6 +149,7 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     app.manage(TrayMenuItems::<R>(Mutex::new(Some(TrayHandles {
         toggle: toggle.clone(),
         window_toggle: window_toggle.clone(),
+        pins_toggle: pins_toggle.clone(),
         config: config.clone(),
         quit: quit.clone(),
     }))));
@@ -115,6 +157,11 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     // M1: Handle für den Checkbox-Zustand an window.rs übergeben.
     if let Some(item) = app.try_state::<crate::window::WindowTrayItem<R>>() {
         *item.0.lock().expect("tray item lock") = Some(window_toggle);
+    }
+    // M4: Handle für die pins_toggle-Checkbox an pins.rs übergeben —
+    // pin_add/pins_set_enabled/sync_all ziehen den Zustand live nach.
+    if let Some(item) = app.try_state::<crate::pins::PinsTrayItem<R>>() {
+        *item.0.lock().expect("tray item lock") = Some(pins_toggle);
     }
 
     let result = TrayIconBuilder::with_id("architects-overlay-tray")
@@ -127,6 +174,9 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
             // M1: Checkbox-Zustand zieht window::toggle_visible selbst nach
             // (show/hide rufen sync_tray_check).
             "window_toggle" => crate::window::toggle_visible(app),
+            // M4: Checkbox-Zustand zieht pins::pins_set_enabled selbst nach
+            // (sync_all ruft sync_tray_check).
+            "pins_toggle" => crate::pins::tray_toggle(app),
             "config" => crate::overlay::open_config_from_tray(app),
             // Clean exit (code 0): the systemd unit is transient with
             // `Restart=no` (verified in the tray triage), so the unit stops
@@ -157,9 +207,15 @@ mod tests {
 
     #[test]
     fn labels_de_and_en_are_complete_and_distinct() {
-        let (t_de, w_de, c_de, q_de) = labels(true);
-        let (t_en, w_en, c_en, q_en) = labels(false);
-        for (de, en) in [(t_de, t_en), (w_de, w_en), (c_de, c_en), (q_de, q_en)] {
+        let (t_de, w_de, p_de, c_de, q_de) = labels(true);
+        let (t_en, w_en, p_en, c_en, q_en) = labels(false);
+        for (de, en) in [
+            (t_de, t_en),
+            (w_de, w_en),
+            (p_de, p_en),
+            (c_de, c_en),
+            (q_de, q_en),
+        ] {
             assert!(!de.is_empty() && !en.is_empty());
             assert_ne!(de, en, "de/en-Label identisch — Mapping kaputt");
         }

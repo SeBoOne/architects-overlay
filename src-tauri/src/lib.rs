@@ -62,6 +62,12 @@ mod updater;
 #[cfg(desktop)]
 mod window;
 
+/// M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“ — dediziertes Pin-Fenster
+/// pro Screen, Deckkraft, Persistenz, tray pins_toggle. Overlay-Kernverträge
+/// unberührt (nur Hook-Aufrufe in set_game_running/apply_visibility).
+#[cfg(desktop)]
+mod pins;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -177,6 +183,16 @@ pub fn run() {
             window::window_start_drag,
             window::window_minimize,
             window::window_quit,
+            // M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“.
+            pins::pins_state,
+            pins::pins_for_screen,
+            pins::pins_set_enabled,
+            pins::pin_add,
+            pins::pin_unpin,
+            pins::pin_remove,
+            pins::pin_set_opacity,
+            pins::pin_move,
+            pins::pin_update,
         ]);
     }
 
@@ -257,6 +273,13 @@ pub fn run() {
                 // ein scheiternder Fensterbau darf das Overlay nicht blockieren.
                 if let Err(err) = window::init(app) {
                     log::warn!("app-window unavailable ({err}) — Fenstermodus deaktiviert");
+                }
+
+                // M4 (t_7bf507e6): Pin-Fenster (hidden) für Screens mit aktiven
+                // Pins — sichtbar NUR bei game_running (§9.1.5). Fail-soft wie
+                // der Tray/Fenstermodus.
+                if let Err(err) = pins::init(app) {
+                    log::warn!("pins unavailable ({err}) — Pins deaktiviert");
                 }
 
                 // Local control socket: lets the desktop session (e.g. Hyprland

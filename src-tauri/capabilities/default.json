@@ -5,7 +5,8 @@
   "windows": [
     "main",
     "spotlight",
-    "app-window"
+    "app-window",
+    "pins-*"
   ],
   "permissions": [
     "core:default",
