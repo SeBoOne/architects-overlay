@@ -438,6 +438,30 @@ struct RawConfig {
     /// C2 (t_91124322): Connector-Zustand (Aktivierung/Auth/Hotkey-Slots).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     connectors: Option<ConnectorsSection>,
+    /// M1 (t_90cb34ee): Fenstermodus-Geometrie (Position/Größe/Monitor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    window: Option<WindowSection>,
+}
+
+/// M1 (t_90cb34ee): Fenstermodus-Abschnitt. Nur die Geometrie —
+/// `None` = noch nie verschoben/vergrößert (Default-Geometrie gilt).
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct WindowSection {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    geometry: Option<WindowGeometry>,
+}
+
+/// M1 (t_90cb34ee): Persistierte Fenstermodus-Geometrie (Sebo-Beschluss
+/// §9.1.2+3): Default einmalig, danach IMMER der letzte Stand. `monitor`
+/// ist der Monitor-Name zum Zeitpunkt des Speicherns — beim Restore wird
+/// die Gültigkeit geprüft (Monitor weg → Primärmonitor zentriert).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowGeometry {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    pub monitor: String,
 }
 
 /// C2 (t_91124322): Connector-Abschnitt der Config — Maps pro Connector-ID.
@@ -709,6 +733,8 @@ pub struct Settings {
     updater_interval_hours: u32,
     updater_repo: String,
     updater_base_url: String,
+    /// M1 (t_90cb34ee): letzte Fenstermodus-Geometrie (None = Default).
+    window_geometry: Option<WindowGeometry>,
 }
 
 impl Default for Settings {
@@ -735,6 +761,7 @@ impl Default for Settings {
             updater_interval_hours: UPDATER_INTERVAL_DEFAULT,
             updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
+            window_geometry: None,
         }
     }
 }
@@ -878,6 +905,13 @@ impl Settings {
                 .as_ref()
                 .map(|c| c.hotkeys.clone())
                 .unwrap_or_default(),
+            // M1 (t_90cb34ee): Geometrie — fehlend/kaputt (w/h = 0) → None
+            // (Default-Geometrie, kein Sanity-Wert in den Restore-Pfad).
+            window_geometry: raw
+                .window
+                .as_ref()
+                .and_then(|w| w.geometry.clone())
+                .filter(|g| g.w > 0 && g.h > 0),
         };
         // TF t_0d510f31: migrierte Legacy-Werte zurück in die Datei
         // schreiben, damit der alte Gitea-Eintrag dauerhaft verschwindet.
@@ -921,6 +955,7 @@ impl Settings {
             updater_interval_hours: UPDATER_INTERVAL_DEFAULT,
             updater_repo: UPDATER_REPO_DEFAULT.to_owned(),
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
+            window_geometry: None,
         }
     }
 
@@ -1201,6 +1236,18 @@ impl Settings {
         self.updater_base_url = url;
     }
 
+    // ---- M1 (t_90cb34ee): Fenstermodus-Geometrie ----------------------------
+
+    /// Letzte persistierte Fenstermodus-Geometrie (None = Default gilt).
+    pub fn window_geometry(&self) -> Option<&WindowGeometry> {
+        self.window_geometry.as_ref()
+    }
+
+    /// Setzt die Fenstermodus-Geometrie in memory (persist via save).
+    pub fn set_window_geometry(&mut self, geometry: Option<WindowGeometry>) {
+        self.window_geometry = geometry;
+    }
+
     /// Write the config file atomically (temp file + rename). On Unix the
     /// file is created with 0600 permissions so the API key stays user-only.
     pub fn save(&self) -> Result<()> {
@@ -1234,6 +1281,9 @@ impl Settings {
                 auth: self.connectors_auth.clone(),
                 fields: self.connectors_settings.clone(),
                 hotkeys: self.connectors_hotkeys.clone(),
+            }),
+            window: Some(WindowSection {
+                geometry: self.window_geometry.clone(),
             }),
         };
         let content = toml::to_string_pretty(&raw)
@@ -1364,6 +1414,54 @@ mod tests {
             None
         );
         assert!(loaded3.connector_setting_values_set("sclm").is_empty());
+    }
+
+    /// M1 (t_90cb34ee): Fenstermodus-Geometrie — TOML-Roundtrip, None-Reset
+    /// und Sanity-Filter (w/h = 0 in der Datei → None, Default-Geometrie).
+    #[test]
+    fn window_geometry_roundtrip_and_sanity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        // Fresh config: keine Geometrie → None (Default-Geometrie gilt).
+        let s = Settings::load_from(&path).unwrap();
+        assert_eq!(s.window_geometry(), None);
+
+        // Persistierte Geometrie überlebt Reload.
+        let mut s = Settings::with_path(path.clone());
+        s.set_window_geometry(Some(WindowGeometry {
+            x: -100,
+            y: 200,
+            w: 1280,
+            h: 860,
+            monitor: "DP-3".into(),
+        }));
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(
+            loaded.window_geometry(),
+            Some(&WindowGeometry {
+                x: -100,
+                y: 200,
+                w: 1280,
+                h: 860,
+                monitor: "DP-3".into(),
+            })
+        );
+
+        // None setzt zurück (Default wieder hergestellt).
+        let mut s = loaded;
+        s.set_window_geometry(None);
+        s.save().unwrap();
+        assert_eq!(Settings::load_from(&path).unwrap().window_geometry(), None);
+
+        // Kaputte Datei-Werte (w=0) werden beim Load weggefiltert.
+        std::fs::write(
+            &path,
+            "[window]\ngeometry = { x = 0, y = 0, w = 0, h = 800, monitor = \"HDMI-A-2\" }\n",
+        )
+        .unwrap();
+        assert_eq!(Settings::load_from(&path).unwrap().window_geometry(), None);
     }
 
     fn tmp_path(tmp: &tempfile::TempDir, name: &str) -> PathBuf {

@@ -56,6 +56,11 @@ mod trade;
 mod tray;
 #[cfg(desktop)]
 mod updater;
+/// M1 (t_90cb34ee): Fenstermodus — zweites WebviewWindow (`app-window`,
+/// decorations=false mit eigenem Titelband Variante B), Close→Tray,
+/// Geometrie-/Monitor-Persistenz. Overlay-Kernverträge unberührt.
+#[cfg(desktop)]
+mod window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -164,6 +169,14 @@ pub fn run() {
             // Ersteller-Cockpit v1 (Spec 15, Karte F): „Verlosung erstellen“.
             connector::connector_creator_create,
             overlay::overlay_config_closed,
+            // M1 (t_90cb34ee): Fenstermodus — Titelband + Tray/Lebenslauf.
+            window::window_show,
+            window::window_hide,
+            window::window_toggle,
+            window::window_state,
+            window::window_start_drag,
+            window::window_minimize,
+            window::window_quit,
         ]);
     }
 
@@ -238,6 +251,13 @@ pub fn run() {
                 // Create the spotlight window, register its global shortcuts and start
                 // the game-detection poller. Also creates our shared overlay state.
                 overlay::init(app)?;
+
+                // M1 (t_90cb34ee): Fenstermodus-Fenster (hidden) erzeugen —
+                // sichtbar erst per Tray/Toggle. Fail-soft wie der Tray:
+                // ein scheiternder Fensterbau darf das Overlay nicht blockieren.
+                if let Err(err) = window::init(app) {
+                    log::warn!("app-window unavailable ({err}) — Fenstermodus deaktiviert");
+                }
 
                 // Local control socket: lets the desktop session (e.g. Hyprland
                 // keybinds on Wayland, where global shortcuts are unreliable) drive

@@ -53,6 +53,9 @@ function keyActivate(e: KeyboardEvent) {
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
+	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
+	import TitleBar from '../lib/TitleBar.svelte';
 	// C2 (t_91124322): Manifest-Connectors — generische Views (table/cards/
 	// detail/calendar/form) + Placement (own/replace/embed). KEIN connector-
 	// spezifisches Wissen im Kern; alles lebt in den Manifesten.
@@ -277,6 +280,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// ---- Zustand -------------------------------------------------------------
 	let isSpotlight = $state(false);
+	// M1 (t_90cb34ee): Label `app-window` = Fenstermodus-Fenster. Der Zweig
+	// rendert das Titelband (Variante B) über der Shell — die Shell selbst
+	// bleibt der gleiche Code (keine Overlay-spezifischen Fixierungs-Annahmen).
+	let isWindowMode = $state(false);
 	let overlay = $state<OverlayState | null>(null);
 	let phase = $state<Phase>('loading');
 	let input = $state('');
@@ -3390,6 +3397,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const label = getCurrentWindow().label;
 			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
+			// M1 (t_90cb34ee): Fenstermodus-Zweig — erkennt am Label (und an der
+			// Hash-Route #/window, falls die URL sie trägt). Kein Spotlight-Boot:
+			// Overlay-State/Tray-Listener sind Overlay-lokal (bewusste Trennung
+			// gemäß Sonde §5 „Beide offen gleichzeitig").
+			if (label === 'app-window' || window.location.hash === '#/window') {
+				isWindowMode = true;
+				window.addEventListener('ao-window-open-config', () => openConfig());
+			}
 			// Persistierte Einstellungen (Palette + Detail-Variante) vor dem
 			// ersten Paint anwenden — verhindert einen Palette-Flash.
 			await loadSettings();
@@ -4970,6 +4985,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	     bekommt die content-driven Shell ein min-height-Floor, damit das
 	     (jetzt größere, Abschnitts-) Popup ohne internen Scroll vollständig
 	     in die Shell passt (max-height 84vh bleibt die Obergrenze). -->
+	{#if isWindowMode}
+		<TitleBar />
+	{/if}
 	<div
 		class="shell"
 		class:in-detail={inDetail}

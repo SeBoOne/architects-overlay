@@ -160,6 +160,30 @@ html[data-window="main"] body {
   background: var(--app-bg);
 }
 
+/* M1 (t_90cb34ee): Fenstermodus-Fenster (`app-window`) — ein NORMALES
+   Fenster (transparent(false)) mit eigenem Titelband (Variante B,
+   TitleBar.svelte). Opaker Grund wie das Hauptfenster; das Titelband selbst
+   trägt seine Styles (Tokens, siehe unten). Das Overlay (spotlight) bleibt
+   unangetastet — dieser Zweig darf byte-fremd sein. */
+html[data-window="app-window"] body {
+  background: var(--app-bg);
+}
+
+/* Fenstermodus-Layout: Titelband oben, Shell füllt den Rest. Die Shell
+   behält ihre K2-Fixbreite (responsive = M2, bewusst nicht in M1). */
+html[data-window="app-window"] .pal-root {
+  height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+html[data-window="app-window"] .shell {
+  margin: 0 auto;
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
 ::selection {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
