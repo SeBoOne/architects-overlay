@@ -5059,7 +5059,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				}
 				// M4 (t_7bf507e6): P-Kontextaktion an jeder Box — selektierte
 				// Route als Pin anheften (Detail-Fallback: Button im Popup).
-				if ((k === 'p' || k === 'P') && !rDetail && !isFieldFocused(e)) {
+				// t_df166209 (Befund 3): Daten-Guard wie in shop/trades.
+				if ((k === 'p' || k === 'P') && !rDetail && !isFieldFocused(e) && routes_.length) {
 					void pinRoute(rSel);
 					e.preventDefault();
 					return;

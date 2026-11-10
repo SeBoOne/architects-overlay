@@ -1113,20 +1113,18 @@
     "titlebar.menu_click_through": "Klick-Durchlass umschalten",
     "titlebar.menu_window_toggle": "Fenstermodus zeigen/verstecken",
     "titlebar.menu_about": "Hilfe / Über",
-    "fenster.hint_more_title": "Weitere Shortcuts"
-  },
-  "pins": {
-    "pin_hint": "Box anheften (P)",
-    "pin_detail": "Als Pin anheften",
-    "pin_short": "Anheften",
-    "pin_detail_title": "Diese Box als dauerhafte Box anheften",
-    "added": "Angeheftet",
-    "already_pinned": "Bereits angeheftet",
-    "drag_title": "Box verschieben",
-    "opacity_title": "Deckkraft regeln",
-    "opacity": "Deckkraft",
-    "unpin_title": "Lösen (zurück zur normalen View)",
-    "close_title": "Box schließen (Pin entfernen)",
-    "empty": ""
+    "fenster.hint_more_title": "Weitere Shortcuts",
+    "pins.pin_hint": "Box anheften (P)",
+    "pins.pin_detail": "Als Pin anheften",
+    "pins.pin_short": "Anheften",
+    "pins.pin_detail_title": "Diese Box als dauerhafte Box anheften",
+    "pins.added": "Angeheftet",
+    "pins.already_pinned": "Bereits angeheftet",
+    "pins.drag_title": "Box verschieben",
+    "pins.opacity_title": "Deckkraft regeln",
+    "pins.opacity": "Deckkraft",
+    "pins.unpin_title": "Lösen (zurück zur normalen View)",
+    "pins.close_title": "Box schließen (Pin entfernen)",
+    "pins.empty": ""
   }
 }
