@@ -36,6 +36,8 @@ use serde::Serialize;
 use tauri::webview::WebviewWindowBuilder;
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow};
 
+use crate::window::MonitorRect;
+
 /// Box-Standardbreite (Pins-Vertrag).
 pub const PIN_BOX_W: u32 = 356;
 
@@ -97,6 +99,144 @@ pub fn pins_effective_visible(enabled: bool, pinned_count: usize, game_running: 
 /// Primärmonitor an Index 0 (gleiche Konvention wie window::monitor_rects).
 pub fn screen_index_of(monitors: &[MonitorName], name: &str) -> Option<usize> {
     monitors.iter().position(|m| m.0 == name)
+}
+
+/// Unified Monitor-Enumeration (t_56262ccf — Monitor-Identitäts-Mismatch):
+/// DIE EINE Identitäts-Quelle für Capture (pin_add), Lookup
+/// (ensure_pin_windows/screen_name_for) und Geometrie (window::record_geometry).
+///
+/// Name-Quelle festgenagelt: Auf Hyprland liefert `hyprctl -j monitors` das
+/// `name`-Feld (wl_output-Name, z. B. `DP-3`) als Source of Truth. Beleg
+/// (Omar-Diagnose am laufenden System, 2026-11-10): hyprctl meldet
+/// `name='DP-3', model='CU34G2XP'` — tauri `current_monitor().name()` lieferte
+/// dort den MODEL-String (`CU34G2XP`), `available_monitors().name()` den
+/// wl_output-Namen (`DP-3`) → 5 persistierte Pins mit screen='CU34G2XP'
+/// lösten in screen_index_of nie auf. Die Rects beider Quellen liegen im
+/// selben Hyprland-Layout-Raum (verifiziert t_317b9d15).
+/// Ohne Hyprland (und auf Windows/macOS): tauri available_monitors() —
+/// Primärmonitor an Index 0 (gleiche Konvention wie window::monitor_rects).
+pub fn monitor_list<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorRect> {
+    #[cfg(target_os = "linux")]
+    if let Some(list) = hyprland_monitor_list() {
+        return primary_first(app, list);
+    }
+    let mut list: Vec<MonitorRect> = app
+        .available_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|m| {
+            let pos = m.position();
+            let size = m.size();
+            m.name().map(|n| MonitorRect {
+                name: n.to_string(),
+                x: pos.x,
+                y: pos.y,
+                w: size.width,
+                h: size.height,
+            })
+        })
+        .collect();
+    primary_first_in_place(app, &mut list);
+    list
+}
+
+/// Stellt die Primärmonitor-zuerst-Konvention über die Namen her (in-place).
+fn primary_first_in_place<R: Runtime>(app: &AppHandle<R>, list: &mut [MonitorRect]) {
+    let primary = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .and_then(|m| m.name().map(|n| n.to_string()));
+    if let Some(p) = primary
+        && let Some(pos) = list.iter().position(|m| m.name == p)
+        && pos > 0
+    {
+        list.swap(0, pos);
+    }
+}
+
+fn primary_first<R: Runtime>(app: &AppHandle<R>, mut list: Vec<MonitorRect>) -> Vec<MonitorRect> {
+    primary_first_in_place(app, &mut list);
+    list
+}
+
+/// Hyprland-Monitorliste via `hyprctl -j monitors` (nur Linux/Hyprland):
+/// `name`-Feld als Identität (wl_output-Name — NICHT `model`/`description`,
+/// genau das war der Mismatch). Rects sind Layout-Px wie available_monitors.
+#[cfg(target_os = "linux")]
+fn hyprland_monitor_list() -> Option<Vec<MonitorRect>> {
+    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
+    let out = crate::overlay::hyprctl_limited(&["-j", "monitors"])?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let arr = v.as_array()?;
+    let mut list = Vec::new();
+    for m in arr {
+        let name = m.get("name")?.as_str()?.to_string();
+        let x = m.get("x")?.as_i64()? as i32;
+        let y = m.get("y")?.as_i64()? as i32;
+        let w = m.get("width")?.as_i64()? as u32;
+        let h = m.get("height")?.as_i64()? as u32;
+        list.push(MonitorRect { name, x, y, w, h });
+    }
+    (!list.is_empty()).then_some(list)
+}
+
+/// Monitor-Identität über Geometrie auflösen (Capture-Pfad): exakte
+/// Position+Größe zuerst, sonst der Monitor, der das Zentrum des Rects
+/// enthält (Layout-Raum-Konsistenz t_317b9d15 — die Rects von
+/// current_monitor und monitor_list stammen aus demselben Koordinatenraum,
+/// nur der NAME divergiert auf Hyprland). Liefert den EINHEITLICHEN Namen.
+pub fn monitor_name_by_rect(
+    monitors: &[MonitorRect],
+    rect: (i32, i32, u32, u32),
+) -> Option<String> {
+    let (rx, ry, rw, rh) = rect;
+    if let Some(m) = monitors
+        .iter()
+        .find(|m| m.x == rx && m.y == ry && m.w == rw && m.h == rh)
+    {
+        return Some(m.name.clone());
+    }
+    let cx = rx + rw as i32 / 2;
+    let cy = ry + rh as i32 / 2;
+    monitors
+        .iter()
+        .find(|m| cx >= m.x && cx < m.x + m.w as i32 && cy >= m.y && cy < m.y + m.h as i32)
+        .map(|m| m.name.clone())
+}
+
+/// Boot-Repair (pure, t_56262ccf Punkt 3): gepinnte Einträge mit nicht
+/// auflösbarem Screen auf den Primärmonitor (Index 0) ummappen — einmalig,
+/// der Aufrufer persistiert. Liefert die Anzahl der Repairs; leere
+/// Monitorliste (sollte nicht passieren) repariert nichts.
+pub fn repair_unresolvable_screens(
+    entries: &mut [settings::PinEntry],
+    monitors: &[MonitorRect],
+) -> usize {
+    let Some(primary) = monitors.first().map(|m| m.name.clone()) else {
+        return 0;
+    };
+    let mut repaired = 0;
+    for e in entries.iter_mut().filter(|e| e.pinned) {
+        if !monitors.iter().any(|m| m.name == e.screen) {
+            repaired += 1;
+            e.screen = primary.clone();
+        }
+    }
+    repaired
+}
+
+/// Rect des Monitors, auf dem ein Fenster aktuell lebt (physical). Nur die
+/// Geometrie interessiert — der NAME von current_monitor() ist auf Hyprland
+/// unzuverlässig (Model-String) und wird bewusst NICHT verwendet.
+fn current_monitor_rect<R: Runtime>(win: &WebviewWindow<R>) -> Option<(i32, i32, u32, u32)> {
+    let m = win.current_monitor().ok().flatten()?;
+    let pos = m.position();
+    let size = m.size();
+    Some((pos.x, pos.y, size.width, size.height))
 }
 
 /// Monitor-Name (Wrapper für Tests/Docs).
@@ -178,32 +318,52 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         s.pins().map(|p| p.enabled).unwrap_or(false)
     };
     app.manage(PinsEnabled(AtomicBool::new(enabled)));
+    // Boot-Repair (t_56262ccf Punkt 3): Einträge mit nicht auflösbarem
+    // Screen (z. B. persistierte Hyprland-Model-Strings 'CU34G2XP') einmalig
+    // auf den Primärmonitor ummappen UND persistieren.
+    let monitors = monitor_list(app.handle());
+    let repaired = {
+        let st = app.state::<crate::app_settings::SettingsState>();
+        let mut s = st.inner.lock().expect("settings lock");
+        let n = repair_unresolvable_screens(s.pins_mut_entry(), &monitors);
+        if n > 0 {
+            crate::app_settings::persist_settings(&s);
+            log::warn!("pins: Boot-Repair: {n} Pin-Einträge auf Primärmonitor umgemappt");
+        }
+        n
+    };
+    if repaired == 0 && monitors.is_empty() {
+        log::warn!("pins: keine Monitore enumerierbar — Pins bleiben unaufgelöst");
+    }
     ensure_pin_windows(app.handle())?;
     Ok(())
 }
 
-/// Monitor-Liste als Namen (Primärmonitor zuerst — window::monitor_rects
-/// hält den Primärmonitor an Index 0; hier eigenständig enumerieren,
-/// damit pins.rs ohne Cross-Modul-Abhängigkeit testbar bleibt).
+/// Lookup-Pfade als Namen (abgeleitet aus monitor_list — unified
+/// Enumeration, t_56262ccf; die alte available_monitors-only-Version
+/// divergierte auf Hyprland vom Capture-Pfad).
 fn monitor_names<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorName> {
-    let primary = app
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .and_then(|m| m.name().map(|n| n.to_string()));
-    let mut list: Vec<MonitorName> = app
-        .available_monitors()
-        .unwrap_or_default()
+    monitor_list(app)
         .into_iter()
-        .filter_map(|m| m.name().map(|n| MonitorName(n.to_string())))
-        .collect();
-    if let Some(p) = primary.as_ref()
-        && let Some(pos) = list.iter().position(|m| &m.0 == p)
-        && pos > 0
-    {
-        list.swap(0, pos);
+        .map(|m| MonitorName(m.name))
+        .collect()
+}
+
+/// Lookup-Pfad (t_56262ccf): Screen-Index über die unified Enumeration —
+/// nicht auflösbar → FAIL-SOFT-FALLBACK auf den Primärmonitor (Index 0)
+/// mit SICHTBAREM log::warn (Journal-Filter ≥WARN), statt still zu
+/// überspringen und die Pins für immer unsichtbar zu lassen.
+fn screen_index_resolved_or_primary(names: &[MonitorName], screen: &str) -> Option<usize> {
+    match screen_index_of(names, screen) {
+        Some(idx) => Some(idx),
+        None if !names.is_empty() => {
+            log::warn!(
+                "pins: Screen {screen:?} nicht auflösbar (erwartet: Monitor-Namen) — Fallback auf Primärmonitor"
+            );
+            Some(0)
+        }
+        None => None,
     }
-    list
 }
 
 /// Stellt sicher, dass für jeden Screen mit aktiven Pins ein Fenster
@@ -228,8 +388,8 @@ fn ensure_pin_windows<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     };
     let names = monitor_names(app);
     for screen in screens {
-        let Some(idx) = screen_index_of(&names, &screen) else {
-            log::info!("pins: screen {screen:?} nicht mehr vorhanden — übersprungen");
+        let Some(idx) = screen_index_resolved_or_primary(&names, &screen) else {
+            log::warn!("pins: keine Monitore enumerierbar — Screen {screen:?} übersprungen");
             continue;
         };
         let label = label_for_screen(idx);
@@ -512,10 +672,19 @@ pub fn pin_add<R: Runtime>(
     kpi: Option<String>,
     rows: Vec<PinRowDto>,
 ) -> bool {
-    let screen = app
-        .get_webview_window(crate::overlay::SPOTLIGHT_LABEL)
-        .and_then(|w| w.current_monitor().ok().flatten())
-        .and_then(|m| m.name().map(|n| n.to_string()))
+    // Capture (t_56262ccf): Identität über die unified Enumeration — der
+    // NAME von current_monitor() ist auf Hyprland der Model-String
+    // ('CU34G2XP' statt 'DP-3') und war die Wurzel des Mismatch. Die
+    // Geometrie des current_monitor wird gegen monitor_list aufgelöst
+    // (selber Layout-Raum, t_317b9d15). Fail-soft: nicht auflösbar →
+    // Primärmonitor-Name persistieren (statt leer abzubrechen).
+    let monitors = monitor_list(&app);
+    let spotlight = app.get_webview_window(crate::overlay::SPOTLIGHT_LABEL);
+    let current = spotlight.as_ref().and_then(|w| current_monitor_rect(w));
+    let screen = current
+        .as_ref()
+        .and_then(|r| monitor_name_by_rect(&monitors, *r))
+        .or_else(|| monitors.first().map(|m| m.name.clone()))
         .unwrap_or_default();
     if screen.is_empty() {
         return false;
@@ -536,10 +705,7 @@ pub fn pin_add<R: Runtime>(
         .filter(|e| e.pinned && e.screen == screen)
         .map(|e| 44 + 34 * e.rows.len().max(1) as i32)
         .collect();
-    let screen_size = app
-        .get_webview_window(crate::overlay::SPOTLIGHT_LABEL)
-        .and_then(|w| w.current_monitor().ok().flatten())
-        .map(|m| (m.size().width as i32, m.size().height as i32));
+    let screen_size = current.map(|(_, _, w, h)| (w as i32, h as i32));
     let (sw, sh) = screen_size.unwrap_or((1920, 1080));
     let (x, y) = default_placement(sw, sh, &heights);
     section.push(settings::PinEntry {
@@ -918,6 +1084,114 @@ mod tests {
         assert_eq!(screen_index_of(&m, "DP-3"), Some(0));
         assert_eq!(screen_index_of(&m, "HDMI-A-2"), Some(1));
         assert_eq!(screen_index_of(&m, "eDP-1"), None);
+    }
+
+    /// t_56262ccf (Fail-soft-Fallback): nicht auflösbare Screens werden
+    /// NICHT still übersprungen — Fallback auf Primärmonitor (Index 0).
+    /// Die alte Logik sprang still ab (Info-Log, im Journal unsichtbar
+    /// bei Filter ≥WARN) → Pins nie sichtbar.
+    #[test]
+    fn unresolvable_screen_falls_back_to_primary() {
+        let m = [MonitorName("DP-3".into()), MonitorName("HDMI-A-2".into())];
+        // Persistierter Model-String aus dem Lokaltest-Befund:
+        assert_eq!(screen_index_resolved_or_primary(&m, "CU34G2XP"), Some(0));
+        // Auflösbarer Name bleibt exakt:
+        assert_eq!(screen_index_resolved_or_primary(&m, "HDMI-A-2"), Some(1));
+        // Leere Monitorliste (keine Enumeration): None, kein Fake-Index.
+        assert_eq!(screen_index_resolved_or_primary(&[], "DP-3"), None);
+    }
+
+    /// t_56262ccf (Identitäts-Helfer): Capture über Geometrie — ein
+    /// Monitor, dessen rect exakt passt, liefert den EINHEITLICHEN Namen
+    /// (wl_output-Name 'DP-3'), egal welchen Namens-String die
+    /// current_monitor()-API zurückgab (Model-String 'CU34G2XP').
+    #[test]
+    fn identity_resolves_by_rect_not_by_name_string() {
+        let monitors = [
+            MonitorRect {
+                name: "DP-3".into(),
+                x: 0,
+                y: 0,
+                w: 3440,
+                h: 1440,
+            },
+            MonitorRect {
+                name: "HDMI-A-2".into(),
+                x: 1825,
+                y: -1920,
+                w: 1080,
+                h: 1920,
+            },
+        ];
+        // Exakter Rect-Match (Sebo-Layout, t_317b9d15):
+        assert_eq!(
+            monitor_name_by_rect(&monitors, (0, 0, 3440, 1440)),
+            Some("DP-3".into())
+        );
+        assert_eq!(
+            monitor_name_by_rect(&monitors, (1825, -1920, 1080, 1920)),
+            Some("HDMI-A-2".into())
+        );
+        // Kein exakter Match → Zentrum-Kontainment (Skalierungs-Toleranz):
+        assert_eq!(
+            monitor_name_by_rect(&monitors, (2, 2, 3436, 1436)),
+            Some("DP-3".into())
+        );
+        // Ganz daneben → None (Caller fällt auf Primärmonitor zurück).
+        assert_eq!(monitor_name_by_rect(&monitors, (9999, 9999, 10, 10)), None);
+    }
+
+    /// t_56262ccf (Boot-Repair): persistierte Einträge mit nicht
+    /// auflösbarem Screen werden beim Init auf den Primärmonitor
+    /// umgemappt (einmalig, persistiert); auflösbare bleiben unangetastet,
+    /// nicht-gepinnte werden nicht repariert, leere Monitorliste = no-op.
+    #[test]
+    fn boot_repair_remaps_unresolvable_screens() {
+        let mk = |screen: &str, pinned: bool| settings::PinEntry {
+            view_id: "routes".into(),
+            screen: screen.into(),
+            box_index: 0,
+            opacity: 100,
+            pinned,
+            x: 0,
+            y: 0,
+            title: "t".into(),
+            kpi: None,
+            rows: Vec::new(),
+        };
+        let monitors = [
+            MonitorRect {
+                name: "DP-3".into(),
+                x: 0,
+                y: 0,
+                w: 3440,
+                h: 1440,
+            },
+            MonitorRect {
+                name: "HDMI-A-2".into(),
+                x: 1825,
+                y: -1920,
+                w: 1080,
+                h: 1920,
+            },
+        ];
+        let mut entries = vec![
+            mk("CU34G2XP", true),  // Model-String → Reparatur auf DP-3
+            mk("CU34G2XP", false), // nicht gepinnt → keine Reparatur
+            mk("HDMI-A-2", true),  // auflösbar → unverändert
+        ];
+        let repaired = repair_unresolvable_screens(&mut entries, &monitors);
+        assert_eq!(repaired, 1);
+        assert_eq!(entries[0].screen, "DP-3");
+        assert!(entries[0].pinned);
+        assert_eq!(entries[1].screen, "CU34G2XP"); // ungepinnt bleibt
+        assert_eq!(entries[2].screen, "HDMI-A-2");
+        // Keine Monitore: no-op (nichts wird blind auf "" gemappt).
+        let mut entries2 = vec![mk("CU34G2XP", true)];
+        assert_eq!(repair_unresolvable_screens(&mut entries2, &[]), 0);
+        assert_eq!(entries2[0].screen, "CU34G2XP");
+        // Zweiter Lauf nach Reparatur: idempotent (0 Repairs).
+        assert_eq!(repair_unresolvable_screens(&mut entries, &monitors), 0);
     }
 
     /// Regression t_ef8222da (M4-Crash-Loop, tao-Panik in

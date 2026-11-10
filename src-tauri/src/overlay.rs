@@ -715,7 +715,7 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
 /// `None` = Spawn-Fehler oder Timeout (Kind wird gekillt); die Anrufer
 /// fallen auf ihre ohnehin vorhandenen Best-Effort-Pfade.
 #[cfg(target_os = "linux")]
-fn hyprctl_limited(args: &[&str]) -> Option<std::process::Output> {
+pub(crate) fn hyprctl_limited(args: &[&str]) -> Option<std::process::Output> {
     const BUDGET: std::time::Duration = std::time::Duration::from_millis(800);
     let start = std::time::Instant::now();
     let mut child = std::process::Command::new("hyprctl")

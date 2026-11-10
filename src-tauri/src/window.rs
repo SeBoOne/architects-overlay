@@ -229,12 +229,29 @@ fn record_geometry<R: Runtime>(window: &WebviewWindow<R>, x: i32, y: i32) {
         y,
         w: size.width,
         h: size.height,
-        monitor: window
-            .current_monitor()
-            .ok()
-            .flatten()
-            .and_then(|m| m.name().map(|n| n.to_string()))
-            .unwrap_or_default(),
+        // Monitor-Identität über die unified Enumeration auflösen
+        // (t_56262ccf): current_monitor().name() liefert auf Hyprland den
+        // Model-String ('CU34G2XP') — persistierte Geometrie mit solch einem
+        // monitor-Namen löste in resolve_geometry nie auf (Fenster sprang
+        // stillschweigend auf Primärmonitor-zentriert). Gleiche Rect-Auflösung
+        // wie der Pin-Capture-Pfad.
+        monitor: {
+            let monitors = crate::pins::monitor_list(app);
+            window
+                .current_monitor()
+                .ok()
+                .flatten()
+                .and_then(|m| {
+                    let pos = m.position();
+                    let size = m.size();
+                    crate::pins::monitor_name_by_rect(
+                        &monitors,
+                        (pos.x, pos.y, size.width, size.height),
+                    )
+                })
+                .or_else(|| monitors.first().map(|m| m.name.clone()))
+                .unwrap_or_default()
+        },
     });
     if pending
         .save_scheduled
