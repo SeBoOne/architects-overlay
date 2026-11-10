@@ -9,13 +9,24 @@
 	import { listen } from '@tauri-apps/api/event';
 	import { onMount } from 'svelte';
 	import { t } from '../lib/i18n';
-	import { PINS_CHANGED_EVENT, type PinEntry } from './pins';
+	import { PINS_CHANGED_EVENT, type PinEntry, clampBoxToViewport, pinBoxEstHeight } from './pins';
 
 	let { label }: { label: string } = $props();
 
 	let pins = $state<PinEntry[]>([]);
 	let interactive = $state(false);
 	let dragPin: PinEntry | null = $state(null);
+	// Viewport des Pin-Fensters (t_01f1a9ed Punkt 3): Basis für den
+	// Box-Clamp — das Fenster sollte zwar den ganzen Screen abdecken
+	// (Backend-Geometrie), aber verwahrte Koordinaten dürfen die Box nie
+	// vollständig aus dem Viewport treiben.
+	let vw = $state(0);
+	let vh = $state(0);
+
+	function measureViewport() {
+		vw = window.innerWidth;
+		vh = window.innerHeight;
+	}
 
 	const PRESETS = [20, 55, 100];
 
@@ -28,6 +39,8 @@
 	}
 
 	onMount(() => {
+		measureViewport();
+		window.addEventListener('resize', measureViewport);
 		void load();
 		void listen(PINS_CHANGED_EVENT, () => void load());
 		// Overlay-Sichtbarkeit → Input-Modus-Anzeige (Backend steuert die
@@ -100,10 +113,11 @@
 
 <div class="pins-root">
 	{#each pins as pin (pin.view_id + ':' + pin.screen + ':' + pin.box_index)}
+		{@const pos = clampBoxToViewport(pin.x, pin.y, 356, pinBoxEstHeight(pin.rows.length), vw, vh)}
 		<article
 			class="pin"
 			class:dragging={dragPin === pin}
-			style={`left:${pin.x}px; top:${pin.y}px; opacity:${pin.opacity / 100}`}
+			style={`left:${pos.x}px; top:${pos.y}px; opacity:${pin.opacity / 100}`}
 		>
 			<header class="pin-head" title={$t('pins.drag_title')}>
 				<button

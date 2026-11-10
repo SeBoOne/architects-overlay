@@ -53,3 +53,25 @@ export const PIN_BOX_W = 356;
 export function pinBoxEstHeight(rows: number): number {
 	return 44 + 34 * Math.max(rows, 1);
 }
+
+/// Box-Position an den Viewport clamplen (t_01f1a9ed Punkt 3): eine Box darf
+/// nie vollständig außerhalb liegen — alte/verwahrte Koordinaten (z. B. vom
+/// Monitor eines anderen Screens) führen sonst ins Nichts. Die Box bleibt
+/// mindestens EDGE-gesichtbar: x wird in [0, vw - min(w, vw)] geclampt
+/// (dito y), damit immer ein streifbarer Rand steht. Drag-Snapping bleibt
+/// unangetastet (läuft separat über pin_move/snap_to_edge im Backend).
+export function clampBoxToViewport(
+	x: number,
+	y: number,
+	w: number,
+	h: number,
+	vw: number,
+	vh: number
+): { x: number; y: number } {
+	const max_x = Math.max(0, vw - Math.min(w, vw));
+	const max_y = Math.max(0, vh - Math.min(h, vh));
+	return {
+		x: Math.min(Math.max(x, 0), max_x),
+		y: Math.min(Math.max(y, 0), max_y)
+	};
+}

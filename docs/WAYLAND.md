@@ -223,6 +223,12 @@ windowrulev2 = nodecorate, class:^(architects-overlay)$
 # windowrulev2 = noinput, class:^(architects-overlay)$
 ```
 
+Pin-Fenster (M4, t_01f1a9ed Punkt 4) teilen dieselbe WM_CLASS
+`architects-overlay` (Tauri setzt die Klasse app-weit, das Title-Attribut
+„Pins“ ist nur der Titel) — obige class-basierten Regeln (float/nodecorate)
+greifen daher automatisch AUCH für `pins-<idx>`; es ist KEINE zusätzliche
+title-basierte Rule nötig (und keine, die an `title:.*Pins` hängt).
+
 hyprland.lua (Omarchy, wie in `~/.config/hypr/hyprland.lua`):
 
 ```lua

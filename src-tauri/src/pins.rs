@@ -232,11 +232,43 @@ pub fn repair_unresolvable_screens(
 /// Rect des Monitors, auf dem ein Fenster aktuell lebt (physical). Nur die
 /// Geometrie interessiert — der NAME von current_monitor() ist auf Hyprland
 /// unzuverlässig (Model-String) und wird bewusst NICHT verwendet.
+///
+/// ACHTUNG (t_01f1a9ed): `current_monitor()` liefert None für ein NIE
+/// gemapptes Fenster — der Pin-Pfad darf damit KEINE Geometrie mehr
+/// auflösen (siehe `rect_for_screen`); der Helfer bleibt nur für den
+/// Capture-Pfad in `pin_add` (Spotlight-Fenster ist dort bereits gemappt).
 fn current_monitor_rect<R: Runtime>(win: &WebviewWindow<R>) -> Option<(i32, i32, u32, u32)> {
     let m = win.current_monitor().ok().flatten()?;
     let pos = m.position();
     let size = m.size();
     Some((pos.x, pos.y, size.width, size.height))
+}
+
+/// Geometrie-Quelle für Pin-Fenster (t_01f1a9ed): Rect aus der unified
+/// Monitor-Enumeration über den Screen-Index IM LABEL — NICHT über
+/// `win.current_monitor()` (liefert None vor dem ersten Map → Geometrie
+/// wurde komplett übersprungen → show() mit Tauri-Default 800×600).
+pub fn rect_for_screen(monitors: &[MonitorRect], idx: usize) -> Option<(i32, i32, u32, u32)> {
+    monitors.get(idx).map(|m| (m.x, m.y, m.w, m.h))
+}
+
+/// Rect eines Pin-Fensters aus dem Label auflösen; nicht auflösbar →
+/// Fallback Primärmonitor (Index 0) mit SICHTBAREM log::warn (gleiche
+/// Fail-soft-Disziplin wie `screen_index_resolved_or_primary`).
+fn pin_window_rect<R: Runtime>(
+    monitors: &[MonitorRect],
+    win: &WebviewWindow<R>,
+) -> Option<(i32, i32, u32, u32)> {
+    let idx = screen_of_label(win.label());
+    let rect = idx.and_then(|i| rect_for_screen(monitors, i));
+    if rect.is_some() {
+        return rect;
+    }
+    log::warn!(
+        "pins: Rect für Label {:?} nicht auflösbar — Fallback auf Primärmonitor",
+        win.label()
+    );
+    rect_for_screen(monitors, 0)
 }
 
 /// Monitor-Name (Wrapper für Tests/Docs).
@@ -461,20 +493,31 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
         )
     };
     let visible = pins_effective_visible(enabled, pinned_count, game_running);
+    // Geometrie-Quelle (t_01f1a9ed): unified Monitor-Enumeration, aufgelöst
+    // über den Screen-Index im Label — NICHT win.current_monitor() (None vor
+    // dem ersten Map → Geometrie wurde komplett übersprungen → show() mit
+    // Tauri-Default 800×600, Boxen außerhalb des Viewports geclippt).
+    let monitors = monitor_list(app);
     for win in pin_windows(app) {
         if visible {
-            // Position: Fenster deckt den ganzen Screen ab — Placement
-            // macht das Frontend in CSS (persistierte x/y der Boxen).
-            if let Some(m) = win.current_monitor().ok().flatten() {
-                let pos = m.position();
-                let size = m.size();
-                let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
-                let _ = win.set_size(tauri::PhysicalSize::new(size.width, size.height));
+            let rect = pin_window_rect(&monitors, &win);
+            if let Some((x, y, w, h)) = rect {
+                // VOR dem Map: Fenster deckt den ganzen Screen ab —
+                // Placement macht das Frontend in CSS (persistierte x/y).
+                let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                let _ = win.set_size(tauri::PhysicalSize::new(w, h));
             }
             // Input-Modus NUR im Moment des show() — erst mappen, dann
             // Shape stellen (tao paniziert auf nicht gemappten Fenstern,
             // t_ef8222da). pin_input_mode liefert hier immer Some.
             let _ = win.show();
+            // NACH dem Map nochmal (idempotent, billiger Satz): fängt
+            // Wayland-Async-Mapping ab, das die Pre-Show-Geometrie
+            // verwerfen kann (t_01f1a9ed Punkt 2).
+            if let Some((x, y, w, h)) = rect {
+                let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                let _ = win.set_size(tauri::PhysicalSize::new(w, h));
+            }
             if let Some(ignore) = pin_input_mode(overlay_visible, true) {
                 let _ = win.set_ignore_cursor_events(ignore);
             }
@@ -1192,6 +1235,72 @@ mod tests {
         assert_eq!(entries2[0].screen, "CU34G2XP");
         // Zweiter Lauf nach Reparatur: idempotent (0 Repairs).
         assert_eq!(repair_unresolvable_screens(&mut entries, &monitors), 0);
+    }
+
+    /// t_01f1a9ed (Punkt 1): Geometrie aus dem resolved Rect — der
+    /// Screen-Index im Label wählt den Monitor aus der unified Enumeration;
+    /// Index außerhalb der Liste → None (Caller: Fallback + warn).
+    #[test]
+    fn rect_for_screen_resolves_by_label_index() {
+        let monitors = [
+            MonitorRect {
+                name: "DP-3".into(),
+                x: 0,
+                y: 0,
+                w: 3440,
+                h: 1440,
+            },
+            MonitorRect {
+                name: "HDMI-A-2".into(),
+                x: 1825,
+                y: -1920,
+                w: 1080,
+                h: 1920,
+            },
+        ];
+        assert_eq!(rect_for_screen(&monitors, 0), Some((0, 0, 3440, 1440)));
+        assert_eq!(
+            rect_for_screen(&monitors, 1),
+            Some((1825, -1920, 1080, 1920))
+        );
+        // Kein dritter Monitor → None (kein Fake-Rect).
+        assert_eq!(rect_for_screen(&monitors, 2), None);
+        assert_eq!(rect_for_screen(&[], 0), None);
+    }
+
+    /// t_01f1a9ed (Punkt 1, Fallback): Label-Index nicht auflösbar →
+    /// Primärmonitor-Rect (Index 0); leere Monitorliste → None.
+    #[test]
+    fn pin_window_rect_falls_back_to_primary() {
+        // Simulierte Auflösungslogik wie pin_window_rect (pure Teil):
+        let monitors = [MonitorRect {
+            name: "DP-3".into(),
+            x: 0,
+            y: 0,
+            w: 3440,
+            h: 1440,
+        }];
+        let resolve = |idx: Option<usize>| -> Option<(i32, i32, u32, u32)> {
+            idx.and_then(|i| rect_for_screen(&monitors, i))
+                .or_else(|| rect_for_screen(&monitors, 0))
+        };
+        // 'pins-5' auf Ein-Monitor-Setup → Index 5 existiert nicht → Primary.
+        assert_eq!(resolve(screen_of_label("pins-5")), Some((0, 0, 3440, 1440)));
+        // Gültiger Index bleibt exakt:
+        assert_eq!(resolve(screen_of_label("pins-0")), Some((0, 0, 3440, 1440)));
+        // Fremdes Label (None) → trotzdem Primary-Fallback.
+        assert_eq!(
+            resolve(screen_of_label("app-window")),
+            Some((0, 0, 3440, 1440))
+        );
+        // Leere Monitorliste: auch der Fallback liefert None.
+        let empty: [MonitorRect; 0] = [];
+        assert_eq!(
+            screen_of_label("pins-0")
+                .and_then(|i| rect_for_screen(&empty, i))
+                .or_else(|| rect_for_screen(&empty, 0)),
+            None
+        );
     }
 
     /// Regression t_ef8222da (M4-Crash-Loop, tao-Panik in
