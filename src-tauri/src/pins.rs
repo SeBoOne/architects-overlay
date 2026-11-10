@@ -363,6 +363,7 @@ fn pinned_count<R: Runtime>(app: &AppHandle<R>) -> usize {
 
 /// DTO für das Frontend (Mirror von settings::PinEntry).
 #[derive(Debug, Serialize, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct PinDto {
     pub view_id: String,
     pub screen: String,
@@ -377,6 +378,7 @@ pub struct PinDto {
 }
 
 #[derive(Debug, Serialize, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct PinRowDto {
     pub idx: String,
     pub name: String,
@@ -386,6 +388,7 @@ pub struct PinRowDto {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub struct PinsState {
     pub enabled: bool,
     pub game_running: bool,
@@ -425,7 +428,7 @@ fn screen_name_for<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<String
     names.get(idx).map(|m| m.0.clone())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pins_state<R: Runtime>(app: AppHandle<R>) -> PinsState {
     let st = app.state::<crate::app_settings::SettingsState>();
     let s = st.inner.lock().expect("settings lock");
@@ -445,7 +448,7 @@ pub fn pins_state<R: Runtime>(app: AppHandle<R>) -> PinsState {
 }
 
 /// Pins für ein Pin-Fenster nach Label (nur der eigene Screen).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pins_for_screen<R: Runtime>(app: AppHandle<R>, label: String) -> Vec<PinDto> {
     let Some(screen) = screen_name_for(&app, &label) else {
         return Vec::new();
@@ -467,7 +470,7 @@ pub fn pins_for_screen<R: Runtime>(app: AppHandle<R>, label: String) -> Vec<PinD
 /// Der Screen ist der Monitor des Overlay-Fensters (das Overlay liegt
 /// immer da, wo der Nutzer pinnt). Duplikate (view_id/screen/box_index,
 /// aktiv) werden verhindert.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pin_add<R: Runtime>(
     app: AppHandle<R>,
     view_id: String,
@@ -537,7 +540,7 @@ pub fn pin_add<R: Runtime>(
 }
 
 /// „Lösen“: pinned=false (Eintrag bleibt, Restore überspringt ihn).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pin_unpin<R: Runtime>(
     app: AppHandle<R>,
     view_id: String,
@@ -568,7 +571,7 @@ pub fn pin_unpin<R: Runtime>(
 }
 
 /// „Schließen“: Pin-Eintrag entfernt (Plugin/View läuft weiter).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pin_remove<R: Runtime>(
     app: AppHandle<R>,
     view_id: String,
@@ -595,7 +598,7 @@ pub fn pin_remove<R: Runtime>(
 }
 
 /// Deckkraft setzen (20–100, clamp).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pin_set_opacity<R: Runtime>(
     app: AppHandle<R>,
     view_id: String,
@@ -623,7 +626,7 @@ pub fn pin_set_opacity<R: Runtime>(
 /// Drag-Ende: Position zurückmelden → Edge-Snapping + Persistenz
 /// (x/y screen-relativ). Drag ist nur im Overlay-sichtbaren Zustand
 /// möglich — das Frontend ruft das nur dann auf.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pin_move<R: Runtime>(
     app: AppHandle<R>,
     view_id: String,
@@ -652,6 +655,7 @@ pub fn pin_move<R: Runtime>(
 /// Drag-Geometrie (gebündelt, statt 7 Einzelargumenten — clippy
 /// too_many_arguments an Tauri-Command-Fn-Signaturen).
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub struct PinDrag {
     pub x: i32,
     pub y: i32,
@@ -663,7 +667,7 @@ pub struct PinDrag {
 
 /// Snapshot-Refresh (Overlay-Datenreload): Overlays melden frische
 /// Anzeige-Daten für bereits gepinnte Boxen — generisch, view-lokal.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pin_update<R: Runtime>(
     app: AppHandle<R>,
     view_id: String,
@@ -702,7 +706,7 @@ pub fn pin_update<R: Runtime>(
 }
 
 /// Tray-Schalter „Pin-Boxen anzeigen“: enabled setzen + Sync.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub fn pins_set_enabled<R: Runtime>(app: AppHandle<R>, on: bool) {
     if let Some(st) = app.try_state::<PinsEnabled>() {
         st.0.store(on, Ordering::SeqCst);
@@ -749,6 +753,48 @@ fn notify_changed<R: Runtime>(app: &AppHandle<R>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M4-Fix (t_df166209, Befund 2): Tauri-Command-Args + Serde-DTOs
+    /// WERDEN snake_case — das Frontend ruft alles mit {view_id,
+    /// box_index, screen_w …} (pins.ts-Spiegel). Ohne rename_all
+    /// mappt Tauri v2 auf camelCase → „missing required key viewId“.
+    #[test]
+    fn dto_serializes_snake_case() {
+        let dto = PinDto {
+            view_id: "routes".into(),
+            screen: "Monitor 0".into(),
+            box_index: 3,
+            opacity: 100,
+            pinned: true,
+            x: 10,
+            y: 20,
+            title: "t".into(),
+            kpi: None,
+            rows: Vec::new(),
+        };
+        let js = serde_json::to_value(&dto).unwrap();
+        assert!(js.get("view_id").is_some());
+        assert!(js.get("box_index").is_some());
+        assert!(js.get("viewId").is_none());
+
+        let drag: PinDrag = serde_json::from_value(serde_json::json!({
+            "x": 1, "y": 2, "w": 356, "h": 78,
+            "screen_w": 1920, "screen_h": 1080
+        }))
+        .expect("snake_case-Keys (screen_w/screen_h) müssen deserialisieren");
+        assert_eq!(drag.screen_w, 1920);
+        assert_eq!(drag.screen_h, 1080);
+
+        let st = PinsState {
+            enabled: false,
+            game_running: true,
+            overlay_visible: false,
+            pins: Vec::new(),
+        };
+        let js = serde_json::to_value(&st).unwrap();
+        assert!(js.get("game_running").is_some());
+        assert!(js.get("overlay_visible").is_some());
+    }
 
     /// §9.1.5: Sichtbarkeit strikt an game_running gekoppelt.
     #[test]

@@ -1113,20 +1113,18 @@
     "titlebar.menu_click_through": "Toggle click-through",
     "titlebar.menu_window_toggle": "Show/hide window mode",
     "titlebar.menu_about": "Help / About",
-    "fenster.hint_more_title": "More shortcuts"
-  },
-  "pins": {
-    "pin_hint": "Pin as box (P)",
-    "pin_detail": "Pin as box",
-    "pin_short": "Pin",
-    "pin_detail_title": "Pin this box as permanent box",
-    "added": "Pinned",
-    "already_pinned": "Already pinned",
-    "drag_title": "Drag box",
-    "opacity_title": "Adjust opacity",
-    "opacity": "Opacity",
-    "unpin_title": "Unpin (back to overlay)",
-    "close_title": "Close pin (remove)",
-    "empty": ""
+    "fenster.hint_more_title": "More shortcuts",
+    "pins.pin_hint": "Pin as box (P)",
+    "pins.pin_detail": "Pin as box",
+    "pins.pin_short": "Pin",
+    "pins.pin_detail_title": "Pin this box as permanent box",
+    "pins.added": "Pinned",
+    "pins.already_pinned": "Already pinned",
+    "pins.drag_title": "Drag box",
+    "pins.opacity_title": "Adjust opacity",
+    "pins.opacity": "Opacity",
+    "pins.unpin_title": "Unpin (back to overlay)",
+    "pins.close_title": "Close pin (remove)",
+    "pins.empty": ""
   }
 }
