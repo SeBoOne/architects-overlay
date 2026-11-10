@@ -78,7 +78,10 @@ function patchPosFor(pin: PinEntry) {
 }
 
 // Popover-Position: neben der Box (Klick-Position), an den Screen-Rand
-// geclampt (keine fixed-Positionierung — Modal-Regeln, absolute im Patch).
+// geclampt (keine fixed-Positionierung — Modal-Regeln). Die Koordinaten sind
+// VIEWPORT-absolut; das Popover wird deshalb als Geschwister der .patch-Divs
+// direkt unter .patch-layer gerendert (position:absolute; inset:0 = Viewport-
+// Anker), NIE als Kind eines .patch — sonst doppelter Offset (Review R1).
 function popoverPosFor(pin: PinEntry) {
 	return popoverPos(pin, vw, vh);
 }
@@ -198,23 +201,26 @@ onMount(() => {
 				aria-label={$t('pins.drag_title')}
 				tabindex="-1"
 				onpointerdown={(e) => onGrab(e, pin)}
-			>
-				{#if openKey === patchKey(pin)}
-					<div
-						class="pin-popover"
-						style={`left:${popoverPosFor(pin).x}px; top:${popoverPosFor(pin).y}px`}
-					>
-						<button type="button" class="pbtn" onclick={() => cycleOpacity(pin)} title="{$t('pins.opacity_title')}">◐</button>
-						<button type="button" class="pbtn" onclick={() => stepOpacity(pin, -5)} title="{$t('pins.opacity_title')}">−</button>
-						<button type="button" class="pbtn" onclick={() => stepOpacity(pin, 5)} title="{$t('pins.opacity_title')}">+</button>
-						{#each PRESETS as p (p)}
-							<button type="button" class="pbtn" class:active={pin.opacity === p} onclick={() => stepOpacity(pin, p - pin.opacity)} title="{$t('pins.opacity_title')}">{p}</button>
-						{/each}
-						<button type="button" class="pbtn" onclick={() => unpin(pin)} title="{$t('pins.unpin_title')}">⌐</button>
-						<button type="button" class="pbtn" onclick={() => remove(pin)} title="{$t('pins.close_title')}">✕</button>
-					</div>
-				{/if}
-			</div>
+			></div>
+		{/each}
+		{#each patchPins as pin (patchKey(pin))}
+			{#if openKey === patchKey(pin)}
+				<!-- Geschwister von .patch unter .patch-layer (Viewport-Anker) —
+				     NICHT Kind von .patch, sonst doppelter Offset (Review R1). -->
+				<div
+					class="pin-popover"
+					style={`left:${popoverPosFor(pin).x}px; top:${popoverPosFor(pin).y}px`}
+				>
+					<button type="button" class="pbtn" onclick={() => cycleOpacity(pin)} title="{$t('pins.opacity_title')}">◐</button>
+					<button type="button" class="pbtn" onclick={() => stepOpacity(pin, -5)} title="{$t('pins.opacity_title')}">−</button>
+					<button type="button" class="pbtn" onclick={() => stepOpacity(pin, 5)} title="{$t('pins.opacity_title')}">+</button>
+					{#each PRESETS as p (p)}
+						<button type="button" class="pbtn" class:active={pin.opacity === p} onclick={() => stepOpacity(pin, p - pin.opacity)} title="{$t('pins.opacity_title')}">{p}</button>
+					{/each}
+					<button type="button" class="pbtn" onclick={() => unpin(pin)} title="{$t('pins.unpin_title')}">⌐</button>
+					<button type="button" class="pbtn" onclick={() => remove(pin)} title="{$t('pins.close_title')}">✕</button>
+				</div>
+			{/if}
 		{/each}
 	</div>
 {/if}
@@ -238,10 +244,14 @@ onMount(() => {
 	.patch.dragging {
 		cursor: grabbing;
 	}
-	/* Mini-Controller-Popover: Overlay-Tokens, absolute im Patch-Anker
-	   (kein position:fixed — Modal-Regeln). */
+	/* Mini-Controller-Popover: Overlay-Tokens; Geschwister der .patch-Divs
+	   unter .patch-layer → Viewport-Anker (position:absolute; inset:0) passt
+	   zu den viewport-absoluten popoverPos-Koordinaten (kein position:fixed).
+	   pointer-events:auto — die Layer selbst ist none, das Popover muss aber
+	   klickbar sein (Klicks im Popover schließen nicht). */
 	.pin-popover {
 		position: absolute;
+		pointer-events: auto;
 		display: flex;
 		gap: 4px;
 		align-items: center;
