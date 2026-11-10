@@ -56,6 +56,7 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	import Rail from '../lib/Rail.svelte';
 	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
 	import PinWindow from '../lib/PinWindow.svelte';
+	import PinPatches from '../lib/PinPatches.svelte';
 	import { isPinsWindow, type PinRow, type PinsState } from '../lib/pins';
 	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
 	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
@@ -5301,6 +5302,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	     in die Shell passt (max-height 84vh bleibt die Obergrenze). -->
 	{#if isWindowMode}
 		<TitleBar shortcutToggle={cfg?.shortcut_toggle ?? ''} />
+	{/if}
+	<!-- M4-E (t_34efb781): Pin-Patches im Spotlight — unsichtbare Interaktions-
+	     Flächen für die gepinnten Boxen (das Pin-Fenster ist dauerhaft input-
+	     transparent, das Spotlight hebt sich über die Pin-Fenster und fängt
+	     früher alle Klicks). Geschwister VOR dem .shell-Band: Shell-/UI-Elemente
+	     gewinnen jeden Überlapp (visuell + Hit-Testing). -->
+	{#if isSpotlight}
+		<PinPatches overlay={overlay} />
 	{/if}
 	<div
 		class="shell"

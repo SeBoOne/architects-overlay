@@ -1,9 +1,11 @@
 <script lang="ts">
-	// M4 (t_7bf507e6): Das PIN-FENSTER-Frontend — rendert NUR gepinnte Boxen
-	// (Mockup mockup-pin.html: Kopf Griff|Titel|Kennzahl|Deckkraft|lösen|
-	// schließen, inhaltsgetriebene Höhe). Interaktion nur, wenn das Overlay
-	// sichtbar ist (Backend setzt set_ignore_cursor_events entsprechend —
-	// §9.1.6); im Click-Through-Zustand sind die Buttons reine Anzeige.
+	// M4 (t_7bf507e6) + M4-E (t_34efb781): Das PIN-FENSTER-Frontend — rendert
+	// NUR gepinnte Boxen (Mockup mockup-pin.html: Kopf Griff|Titel|Kennzahl|
+	// Deckkraft|lösen|schließen, inhaltsgetriebene Höhe). REIN ANZEIGE:
+	// das Pin-Fenster ist dauerhaft input-transparent (§9.1.6 präzisiert —
+	// M4-E t_34efb781); die Interaktion läuft über unsichtbare Patch-Flächen
+	// im Spotlight-Webview (PinPatches.svelte), NICHT über dieses Fenster.
+	// Die Buttons im Kopf sind reine Anzeige (kein Interaktionskanal).
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
@@ -14,8 +16,6 @@
 	let { label }: { label: string } = $props();
 
 	let pins = $state<PinEntry[]>([]);
-	let interactive = $state(false);
-	let dragPin: PinEntry | null = $state(null);
 	// Viewport des Pin-Fensters (t_01f1a9ed Punkt 3): Basis für den
 	// Box-Clamp — das Fenster sollte zwar den ganzen Screen abdecken
 	// (Backend-Geometrie), aber verwahrte Koordinaten dürfen die Box nie
@@ -27,8 +27,6 @@
 		vw = window.innerWidth;
 		vh = window.innerHeight;
 	}
-
-	const PRESETS = [20, 55, 100];
 
 	async function load() {
 		try {
@@ -43,72 +41,8 @@
 		window.addEventListener('resize', measureViewport);
 		void load();
 		void listen(PINS_CHANGED_EVENT, () => void load());
-		// Overlay-Sichtbarkeit → Input-Modus-Anzeige (Backend steuert die
-		// echten Fenster-Events; hier nur für den Cursor-Kontrast im CSS).
-		void listen<{ overlay_visible: boolean }>('ao:pins-mode', (e) => {
-			interactive = e.payload.overlay_visible;
-		});
 	});
 
-	// Drag NUR im Overlay-sichtbaren Zustand (§9.1.6 — Backend sperrt den
-	// Input ohnehin); nach dem Loslassen Position zurückmelden → Edge-Snap.
-	function onGrab(e: MouseEvent, pin: PinEntry) {
-		if (!interactive) return;
-		e.preventDefault();
-		dragPin = pin;
-		const move = (ev: MouseEvent) => {
-			if (!dragPin) return;
-			dragPin = { ...dragPin, x: pin.x + ev.movementX, y: pin.y + ev.movementY };
-		};
-		const up = () => {
-			const p = dragPin;
-			dragPin = null;
-			window.removeEventListener('mousemove', move);
-			window.removeEventListener('mouseup', up);
-			if (p) {
-				void invoke('pin_move', {
-					view_id: p.view_id,
-					screen: p.screen,
-					box_index: p.box_index,
-					drag: {
-						x: p.x,
-						y: p.y,
-						w: 356,
-						h: 44 + 34 * p.rows.length,
-						screen_w: window.innerWidth,
-						screen_h: window.innerHeight
-					}
-				});
-			}
-		};
-		window.addEventListener('mousemove', move);
-		window.addEventListener('mouseup', up);
-	}
-
-	function setOpacity(pin: PinEntry, opacity: number) {
-		void invoke('pin_set_opacity', {
-			view_id: pin.view_id,
-			screen: pin.screen,
-			box_index: pin.box_index,
-			opacity
-		});
-	}
-
-	function unpin(pin: PinEntry) {
-		void invoke('pin_unpin', {
-			view_id: pin.view_id,
-			screen: pin.screen,
-			box_index: pin.box_index
-		});
-	}
-
-	function remove(pin: PinEntry) {
-		void invoke('pin_remove', {
-			view_id: pin.view_id,
-			screen: pin.screen,
-			box_index: pin.box_index
-		});
-	}
 </script>
 
 <div class="pins-root">
@@ -116,7 +50,6 @@
 		{@const pos = clampBoxToViewport(pin.x, pin.y, 356, pinBoxEstHeight(pin.rows.length), vw, vh)}
 		<article
 			class="pin"
-			class:dragging={dragPin === pin}
 			style={`left:${pos.x}px; top:${pos.y}px; opacity:${pin.opacity / 100}`}
 		>
 			<header class="pin-head" title={$t('pins.drag_title')}>
@@ -124,7 +57,6 @@
 					type="button"
 					class="pin-grip"
 					aria-label={$t('pins.drag_title')}
-					onmousedown={(e) => onGrab(e, pin)}
 				><i></i><i></i><i></i></button>
 				<span class="pin-title">{pin.title}</span>
 				{#if pin.kpi}<span class="pin-kpi">{pin.kpi}</span>{/if}
@@ -133,21 +65,18 @@
 					class="pin-btn"
 					title={$t('pins.opacity_title')}
 					aria-label={$t('pins.opacity_title')}
-					onclick={() => setOpacity(pin, pin.opacity >= 100 ? 20 : pin.opacity >= 55 ? 100 : 55)}
 				>◐</button>
 				<button
 					type="button"
 					class="pin-btn"
 					title={$t('pins.unpin_title')}
 					aria-label={$t('pins.unpin_title')}
-					onclick={() => unpin(pin)}
 				>⌐</button>
 				<button
 					type="button"
 					class="pin-btn"
 					title={$t('pins.close_title')}
 					aria-label={$t('pins.close_title')}
-					onclick={() => remove(pin)}
 				>✕</button>
 			</header>
 			<div class="pin-body">
@@ -162,30 +91,6 @@
 					</div>
 				{/each}
 			</div>
-			{#if interactive}
-				<footer class="pin-foot">
-					<span>{$t('pins.opacity')}</span>
-					<input
-						type="range"
-						min="20"
-						max="100"
-						step="1"
-						value={pin.opacity}
-						aria-label={$t('pins.opacity_title')}
-						oninput={(e) => setOpacity(pin, Number((e.currentTarget as HTMLInputElement).value))}
-					/>
-					{#each PRESETS as p (p)}
-						<button
-							type="button"
-							class="pin-btn"
-							class:active={pin.opacity === p}
-							onclick={() => setOpacity(pin, p)}
-						>{p}</button>
-					{/each}
-					<span class="sp"></span>
-					<span class="pin-val">{pin.opacity} %</span>
-				</footer>
-			{/if}
 		</article>
 	{/each}
 	{#if pins.length === 0}
@@ -219,9 +124,6 @@
 		);
 		box-shadow: 0 16px 40px rgba(0, 0, 0, 0.72);
 		transition: opacity 0.12s linear;
-	}
-	.pin.dragging {
-		outline: 1px dashed var(--accent);
 	}
 	.pin-head {
 		display: flex;
@@ -279,11 +181,6 @@
 		color: var(--fg);
 		border-color: var(--fgdim);
 	}
-	.pin-btn.active {
-		color: var(--on-accent);
-		background: var(--accent);
-		border-color: var(--accent);
-	}
 	.pin-body {
 		padding: 9px 11px 4px;
 	}
@@ -325,21 +222,6 @@
 	}
 	.pin-step .pr.sell {
 		color: var(--sell);
-	}
-	.pin-foot {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 7px 10px;
-		background: var(--panel3);
-		border-top: 1px solid var(--lineb);
-		font: 700 9.5px/1 var(--font-mono, monospace);
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: var(--fgfaint);
-	}
-	.pin-foot .sp {
-		flex: 1;
 	}
 	.pins-empty {
 		display: none;

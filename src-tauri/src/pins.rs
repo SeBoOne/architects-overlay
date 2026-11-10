@@ -10,20 +10,24 @@
 //!   (`pins_toggle`, Checkbox „Pin-Boxen anzeigen“) ist eine NECESSARY-
 //!   Bedingung, nie hinreichend: effektiv sichtbar = enabled && pinned &&
 //!   game_running.
-//! - **Interaktion:** anzeige-only, solange das Overlay NICHT sichtbar ist
-//!   (Pin-Fenster dann `set_ignore_cursor_events(true)`). Ist das Overlay
-//!   sichtbar, dürfen Pins interagierbar sein (§9.1.6) — der Input-Modus
-//!   des Pin-Fensters wechselt mit dem Overlay-Zustand, ganzer Fenster-
-//!   Modus (kein per-Region — tao/Wayland kann keine Input-Shapes).
+//! - **Interaktion (§9.1.6, präzisiert M4-E t_34efb781):** das Pin-Fenster
+//!   ist REIN ANZEIGE — IMMER `set_ignore_cursor_events(true)` (Konstante,
+//!   kein Moduswechsel mit dem Overlay-Zustand). Die Interaktion läuft über
+//!   unsichtbare PATCH-Flächen IM SPOTLIGHT-Webview (PinPatches.svelte:
+//!   Drag → pin_move, Klick → Controller-Popover), die nur bei sichtbarem
+//!   Overlay gerendert werden. Kein per-Region-Input-Shape (tao/Wayland
+//!   kann das nicht) — der STICKING-CONFLICT (Spotlight hebt sich beim
+//!   show() über gleichrangige always-on-top-Pin-Fenster) wird durch die
+//!   Bauform gelöst: das Spotlight ist die EINZIGE interaktive Ebene.
 //! - **Persistenz:** Pin-Eintrag `{view_id, screen, box_index, opacity,
 //!   pinned}` (+ Box-Position x/y + Anzeige-Snapshot) in app_settings
 //!   (`[pins]`-Sektion), Restore beim Start — effektiv sichtbar erst bei
 //!   game_running. Deckkraft pro Box, CSS opacity auf dem INHALT (Range
 //!   20–100 %, Presets 20/55/100 — clamp in `clamp_opacity`).
 //! - **Placement:** Box-Standardbreite 356px, Edge-Snapping L/R/T/B in
-//!   `snap_to_edge` (Drag nur im Overlay-sichtbaren Zustand — der Input-
-//!   Modus ist im unsichtbaren Overlay-Zustand gesperrt, daraus folgt die
-//!   Drag-Beschränkung automatisch).
+//!   `snap_to_edge` (Drag nur im Overlay-sichtbaren Zustand — die Patch-
+//!   Flächen im Spotlight existieren nur dann, daraus folgt die Drag-
+//!   Beschränkung automatisch).
 //! - **Universalität (Schema-U):** die Pin-Verwaltung ist rein mechanisch
 //!   ({view_id, screen, box_index}); Plugin-Semantik kommt NUR aus dem
 //!   Anzeige-Snapshot, den die View-Komponente des Overlay-Frontends beim
@@ -73,7 +77,7 @@ pub fn clamp_opacity(pct: u32) -> u32 {
     pct.clamp(OPACITY_MIN, OPACITY_MAX)
 }
 
-/// Input-Modus-Entscheidung (pure Logik, t_ef8222da): für ein
+/// Input-Modus-Entscheidung (pure Logik, t_ef8222da / t_34efb781): für ein
 /// sichtbares/gemapptes Pin-Fenster wird der neue Ignore-Modus
 /// zurückgegeben; für ein hidden/nicht gemapptes Fenster `None` —
 /// dann wird KEINE Window-Mutation gestellt. Grund: tao paniziert in
@@ -81,11 +85,16 @@ pub fn clamp_opacity(pct: u32) -> u32 {
 /// wenn das GTK-Window nicht existiert/nicht gemappt ist — der Request
 /// darf auf versteckten Pin-Fenstern gar nicht erst in die Queue.
 /// Muster §9.1.6: Input-Modus nur im Moment des show() setzen.
-pub fn pin_input_mode(overlay_visible: bool, pin_visible: bool) -> Option<bool> {
+///
+/// M4-E (t_34efb781): das Pin-Fenster ist REIN ANZEIGE (Konstante) —
+/// immer `ignore=true` (input-transparent). Die Interaktion läuft über
+/// unsichtbare Patch-Flächen im Spotlight-Webview; der Overlay-Zustand
+/// spielt für den Input-Modus KEINE Rolle mehr (§9.1.6, präzisiert).
+pub fn pin_input_mode(pin_visible: bool) -> Option<bool> {
     if !pin_visible {
         return None;
     }
-    Some(!overlay_visible)
+    Some(true)
 }
 
 /// Effective Sichtbarkeit der Pins (reine Logik, game_running-Vertrag
@@ -475,10 +484,11 @@ fn pin_windows<R: Runtime>(app: &AppHandle<R>) -> Vec<WebviewWindow<R>> {
 
 /// Zentrale Sichtbarkeits-/Input-Synchronisation (vom Overlay-/Game-Pfad
 /// gerufen): zeigt Pin-Fenster nur bei effektiv sichtbaren Pins und
-/// setzt den Input-Modus (§9.1.6: interagierbar NUR bei sichtbarem
-/// Overlay; sonst click-through/ignore).
+/// setzt den Input-Modus (§9.1.6, präzisiert M4-E t_34efb781): das
+/// Pin-Fenster ist REIN ANZEIGE (Konstante `ignore=true`), die
+/// Interaktion läuft über unsichtbare Patch-Flächen im Spotlight-Webview.
 pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
-    let (enabled, pinned_count, game_running, overlay_visible) = {
+    let (enabled, pinned_count, game_running) = {
         let st = app.state::<crate::app_settings::SettingsState>();
         let s = st.inner.lock().expect("settings lock");
         let pinned = s
@@ -494,9 +504,6 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
             pinned,
             crate::overlay::snapshot(app)
                 .map(|o| o.game_running)
-                .unwrap_or(false),
-            crate::overlay::snapshot(app)
-                .map(|o| o.visible)
                 .unwrap_or(false),
         )
     };
@@ -523,7 +530,6 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
             // Shape stellen (tao paniziert auf nicht gemappten Fenstern,
             // t_ef8222da). pin_input_mode liefert hier immer Some.
             let _ = win.show();
-            mark_mapped(win.label(), true);
             // NACH dem Map nochmal (idempotent, billiger Satz): fängt
             // Wayland-Async-Mapping ab, das die Pre-Show-Geometrie
             // verwerfen kann (t_01f1a9ed Punkt 2).
@@ -531,49 +537,23 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
                 let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
                 let _ = win.set_size(tauri::PhysicalSize::new(w, h));
             }
-            if let Some(ignore) = pin_input_mode(overlay_visible, true) {
+            if let Some(ignore) = pin_input_mode(true) {
                 let _ = win.set_ignore_cursor_events(ignore);
             }
         } else {
             // Hide OHNE Follow-up-Window-Mutation: kein set_ignore auf
             // versteckten Fenstern (tao-Panik-Pfad).
             let _ = win.hide();
-            mark_mapped(win.label(), false);
         }
-        // Input-Modus ans Frontend melden (nur Cursor-Kontrast — die echte
-        // Gate ist das set_ignore_cursor_events oben).
-        let _ =
-            tauri::Emitter::emit_to(app, win.label(), "ao:pins-mode", overlay_visible && visible);
     }
     sync_tray_check(app, enabled);
 }
 
-/// Eigenes Mapped-Tracking pro Pin-Fenster (t_2a02f139-Folge, Sebo-Befund
-/// „Pins nicht interagierbar bei offenem Overlay"): `win.is_visible()` ist
-/// auf Wayland/Hyprland unzuverlässig (meldet gemappte Fenster als false)
-/// — sync_overlay_visibility übersprang dann den Input-Mode-Wechsel und
-/// die Pins blieben dauerhaft click-through. Wir wissen aus sync_all
-/// (show/hide), welche Fenster gemappt sind — hier spiegeln, nicht fragen.
-static MAPPED_LABELS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
-
-fn mark_mapped(label: &str, mapped: bool) {
-    let mut v = MAPPED_LABELS.lock().expect("pins mapped lock");
-    if mapped {
-        if !v.iter().any(|l| l == label) {
-            v.push(label.to_string());
-        }
-    } else {
-        v.retain(|l| l != label);
-    }
-}
-
-fn is_mapped_label(label: &str) -> bool {
-    MAPPED_LABELS
-        .lock()
-        .expect("pins mapped lock")
-        .iter()
-        .any(|l| l == label)
-}
+// NOTE t_34efb781: das frühere „Mapped-Tracking“ von Pin-Fenstern ist ent-
+// fallen — sein einziger Verbraucher war der Input-Modus-Flip in
+// `sync_overlay_visibility`, und PINS SIND JETZT REIN ANZEIGE (Konstante).
+// Window-Mutation passieren weiterhin NUR im Moment des show() (Panic-Gate
+// bleibt via Bauform erfüllt), es gibt aber keinen Zustand mehr zu spiegeln.
 
 /// Tray-Checkbox nachziehen (fail-soft — Tray darf fehlen).
 fn sync_tray_check<R: Runtime>(app: &AppHandle<R>, checked: bool) {
@@ -592,49 +572,19 @@ pub fn sync_game_running<R: Runtime>(app: &AppHandle<R>, _running: bool) {
     }
 }
 
-/// Overlay-Sichtbarkeitswechsel (aus overlay::apply_visibility): wechselt
-/// den Input-Modus der Pin-Fenster mit (§9.1.6).
-pub fn sync_overlay_visibility<R: Runtime>(app: &AppHandle<R>, overlay_visible: bool) {
-    if app.try_state::<PinsEnabled>().is_none() {
-        return;
-    }
-    let visible = pins_effective_visible(
-        app.try_state::<PinsEnabled>()
-            .map(|e| e.0.load(Ordering::SeqCst))
-            .unwrap_or(false),
-        pinned_count(app),
-        crate::overlay::snapshot(app)
-            .map(|o| o.game_running)
-            .unwrap_or(false),
-    );
-    if !visible {
-        return; // unsichtbare Pins haben keinen Input-Modus
-    }
-    for win in pin_windows(app) {
-        // Nur gemappte Fenster anfassen: ein hidden (nie gezeigtes oder
-        // wieder verstecktes) Pin-Fenster bekommt KEINEN Input-Shape —
-        // tao paniziert in CursorIgnoreEvents auf nicht gemappten
-        // Fenstern (t_ef8222da). Beim nächsten show() setzt sync_all den
-        // Modus korrekt (§9.1.6).
-        // t_2a02f139-Folge: Mapping-Status kommt aus dem EIGENEN Tracking
-        // (mark_mapped in sync_all) — win.is_visible() meldet auf
-        // Wayland/Hyprland gemappte Fenster unzuverlässig als false und
-        // ließ die Pins dauerhaft click-through (Sebo-Befund 2026-11-10).
-        if !is_mapped_label(win.label()) {
-            continue;
-        }
-        if let Some(ignore) = pin_input_mode(overlay_visible, true) {
-            let _ = win.set_ignore_cursor_events(ignore);
-        }
-    }
-}
-
-fn pinned_count<R: Runtime>(app: &AppHandle<R>) -> usize {
-    let st = app.state::<crate::app_settings::SettingsState>();
-    let s = st.inner.lock().expect("settings lock");
-    s.pins()
-        .map(|p| p.list.iter().filter(|e| e.pinned).count())
-        .unwrap_or(0)
+/// Overlay-Sichtbarkeitswechsel (aus overlay::apply_visibility): KEINE
+/// Window-Mutation mehr (§9.1.6, präzisiert M4-E t_34efb781) — das
+/// Pin-Fenster ist REIN ANZEIGE (Konstante `ignore=true`), der Input-Modus
+/// wechselt nicht mit dem Overlay-Zustand. Die Interaktion läuft über
+/// unsichtbare PATCH-Flächen im Spotlight-Webview; der Overlay-Zustand
+/// wird vom Backend-Konstantenpfad hier nicht mehr gespiegelt. Die
+/// Naht bleibt (overlay.rs ruft sie weiter) — Fail-soft, ohne State.
+pub fn sync_overlay_visibility<R: Runtime>(app: &AppHandle<R>, _overlay_visible: bool) {
+    // Konstante: nichts zu tun. Der Input-Modus des Pin-Fensters ist
+    // ausschließlich im Moment des show() gesetzt (sync_all, §9.1.6) —
+    // Overlay-Visibility toggelt KEINE Window-Mutation mehr (Fail-soft:
+    // keine State-Anfrage, kein Window-Touch).
+    let _ = app;
 }
 
 // ---------------------------------------------------------------------------
@@ -674,6 +624,11 @@ pub struct PinsState {
     pub game_running: bool,
     pub overlay_visible: bool,
     pub pins: Vec<PinDto>,
+    /// M4-E (t_34efb781): Monitor des SPOTLIGHT-Fensters (derselbe
+    /// Aufnahme-Pfad wie `pin_add` — unified Enumeration, t_56262ccf).
+    /// Die Patch-Flächen im Spotlight rendern nur Pins DIESER Screens
+    /// — die Spot-Viewport-Koordinaten decken exakt diesen Monitor ab.
+    pub spotlight_screen: String,
 }
 
 fn to_dto(e: &settings::PinEntry) -> PinDto {
@@ -708,6 +663,20 @@ fn screen_name_for<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<String
     names.get(idx).map(|m| m.0.clone())
 }
 
+/// Monitor des Spotlight-Fensters (derselbe Aufnahme-Pfad wie `pin_add`):
+/// Rect aus `current_monitor_rect` → Auflösung über die unified Enumeration
+/// (t_56262ccf). Kein Spotlight/kein Monitor → leerer String (Call-Filter
+/// im Frontend: `pin.screen === spotlight_screen`).
+pub fn spotlight_screen_of<R: Runtime>(app: &AppHandle<R>) -> String {
+    let monitors = monitor_list(app);
+    let spotlight = app.get_webview_window(crate::overlay::SPOTLIGHT_LABEL);
+    let current = spotlight.as_ref().and_then(current_monitor_rect);
+    current
+        .and_then(|r| monitor_name_by_rect(&monitors, r))
+        .or_else(|| monitors.first().map(|m| m.name.clone()))
+        .unwrap_or_default()
+}
+
 #[tauri::command(rename_all = "snake_case")]
 pub fn pins_state<R: Runtime>(app: AppHandle<R>) -> PinsState {
     let st = app.state::<crate::app_settings::SettingsState>();
@@ -724,6 +693,7 @@ pub fn pins_state<R: Runtime>(app: AppHandle<R>) -> PinsState {
             .pins()
             .map(|p| p.list.iter().map(to_dto).collect())
             .unwrap_or_default(),
+        spotlight_screen: spotlight_screen_of(&app),
     }
 }
 
@@ -1073,13 +1043,15 @@ mod tests {
 
         let st = PinsState {
             enabled: false,
-            game_running: true,
+            game_running: false,
             overlay_visible: false,
             pins: Vec::new(),
+            spotlight_screen: "DP-3".into(),
         };
         let js = serde_json::to_value(&st).unwrap();
         assert!(js.get("game_running").is_some());
         assert!(js.get("overlay_visible").is_some());
+        assert!(js.get("spotlight_screen").is_some());
     }
 
     /// §9.1.5: Sichtbarkeit strikt an game_running gekoppelt.
@@ -1352,30 +1324,19 @@ mod tests {
     /// CursorIgnoreEvents auf nicht gemapptem Pin-Fenster): die pure
     /// Logik darf für versteckte Pin-Fenster NIEMALS einen Input-Shape-
     /// Request ergeben — Szenarien aus der FIX-KARTE.
+    /// M4-E (t_34efb781): das Pin-Fenster ist REIN ANZEIGE — sichtbare
+    /// Fenster bekommen IMMER `ignore=true`, der Overlay-Zustand spielt
+    /// KEINE Rolle mehr (§9.1.6 präzisiert; Interaktion über Spotlight-
+    /// Patches).
     #[test]
     fn input_mode_never_touches_hidden_pin_windows() {
         // Boot ohne SC: Pins restauriert, game_running=false → Pin-Fenster
         // hidden → KEIN Call (vorher: unconditional set_ignore → Panik).
-        assert_eq!(pin_input_mode(false, false), None);
-        assert_eq!(pin_input_mode(true, false), None);
+        assert_eq!(pin_input_mode(false), None);
         // Overlay-Toggle bei hiddenem Pin-Fenster → kein Call.
-        assert_eq!(pin_input_mode(true, false), None);
-        // Overlay-Toggle bei sichtbarem Pin-Fenster → Call mit korrektem Modus:
-        // Overlay sichtbar → interagierbar (ignore=false), sonst click-through.
-        assert_eq!(pin_input_mode(true, true), Some(false));
-        assert_eq!(pin_input_mode(false, true), Some(true));
-    }
-}
-
-#[cfg(test)]
-mod mapped_tracking_tests {
-    // Mapped-Tracking (t_2a02f139-Folge): show→true, hide→false, unbekannt→false.
-    #[test]
-    fn mark_mapped_tracks_show_hide() {
-        super::mark_mapped("pins-99", true);
-        assert!(super::is_mapped_label("pins-99"));
-        super::mark_mapped("pins-99", false);
-        assert!(!super::is_mapped_label("pins-99"));
-        assert!(!super::is_mapped_label("pins-98")); // nie gemappt
+        assert_eq!(pin_input_mode(false), None);
+        // Sichtbares Pin-Fenster → IMMER input-transparent (Konstante,
+        // unabhängig vom Overlay-Zustand — der Parameter ist entfallen).
+        assert_eq!(pin_input_mode(true), Some(true));
     }
 }
