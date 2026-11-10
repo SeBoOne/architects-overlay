@@ -523,6 +523,7 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
             // Shape stellen (tao paniziert auf nicht gemappten Fenstern,
             // t_ef8222da). pin_input_mode liefert hier immer Some.
             let _ = win.show();
+            mark_mapped(win.label(), true);
             // NACH dem Map nochmal (idempotent, billiger Satz): fängt
             // Wayland-Async-Mapping ab, das die Pre-Show-Geometrie
             // verwerfen kann (t_01f1a9ed Punkt 2).
@@ -537,6 +538,7 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
             // Hide OHNE Follow-up-Window-Mutation: kein set_ignore auf
             // versteckten Fenstern (tao-Panik-Pfad).
             let _ = win.hide();
+            mark_mapped(win.label(), false);
         }
         // Input-Modus ans Frontend melden (nur Cursor-Kontrast — die echte
         // Gate ist das set_ignore_cursor_events oben).
@@ -544,6 +546,33 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
             tauri::Emitter::emit_to(app, win.label(), "ao:pins-mode", overlay_visible && visible);
     }
     sync_tray_check(app, enabled);
+}
+
+/// Eigenes Mapped-Tracking pro Pin-Fenster (t_2a02f139-Folge, Sebo-Befund
+/// „Pins nicht interagierbar bei offenem Overlay"): `win.is_visible()` ist
+/// auf Wayland/Hyprland unzuverlässig (meldet gemappte Fenster als false)
+/// — sync_overlay_visibility übersprang dann den Input-Mode-Wechsel und
+/// die Pins blieben dauerhaft click-through. Wir wissen aus sync_all
+/// (show/hide), welche Fenster gemappt sind — hier spiegeln, nicht fragen.
+static MAPPED_LABELS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn mark_mapped(label: &str, mapped: bool) {
+    let mut v = MAPPED_LABELS.lock().expect("pins mapped lock");
+    if mapped {
+        if !v.iter().any(|l| l == label) {
+            v.push(label.to_string());
+        }
+    } else {
+        v.retain(|l| l != label);
+    }
+}
+
+fn is_mapped_label(label: &str) -> bool {
+    MAPPED_LABELS
+        .lock()
+        .expect("pins mapped lock")
+        .iter()
+        .any(|l| l == label)
 }
 
 /// Tray-Checkbox nachziehen (fail-soft — Tray darf fehlen).
@@ -587,7 +616,11 @@ pub fn sync_overlay_visibility<R: Runtime>(app: &AppHandle<R>, overlay_visible: 
         // tao paniziert in CursorIgnoreEvents auf nicht gemappten
         // Fenstern (t_ef8222da). Beim nächsten show() setzt sync_all den
         // Modus korrekt (§9.1.6).
-        if !win.is_visible().unwrap_or(false) {
+        // t_2a02f139-Folge: Mapping-Status kommt aus dem EIGENEN Tracking
+        // (mark_mapped in sync_all) — win.is_visible() meldet auf
+        // Wayland/Hyprland gemappte Fenster unzuverlässig als false und
+        // ließ die Pins dauerhaft click-through (Sebo-Befund 2026-11-10).
+        if !is_mapped_label(win.label()) {
             continue;
         }
         if let Some(ignore) = pin_input_mode(overlay_visible, true) {
@@ -1331,5 +1364,18 @@ mod tests {
         // Overlay sichtbar → interagierbar (ignore=false), sonst click-through.
         assert_eq!(pin_input_mode(true, true), Some(false));
         assert_eq!(pin_input_mode(false, true), Some(true));
+    }
+}
+
+#[cfg(test)]
+mod mapped_tracking_tests {
+    // Mapped-Tracking (t_2a02f139-Folge): show→true, hide→false, unbekannt→false.
+    #[test]
+    fn mark_mapped_tracks_show_hide() {
+        super::mark_mapped("pins-99", true);
+        assert!(super::is_mapped_label("pins-99"));
+        super::mark_mapped("pins-99", false);
+        assert!(!super::is_mapped_label("pins-99"));
+        assert!(!super::is_mapped_label("pins-98")); // nie gemappt
     }
 }
