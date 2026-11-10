@@ -609,6 +609,10 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
             // M4 (t_7bf507e6): Pin-Fenster-Input-Modus wechselt mit dem
             // Overlay-Zustand (§9.1.6 — interagierbar NUR bei sichtbarem
             // Overlay; sonst click-through/ignore). Fail-soft.
+            // M4-E (t_34efb781): KEIN Moduswechsel mehr — Pins sind REIN
+            // ANZEIGE (Konstante ignore=true), die Interaktion läuft über die
+            // Patch-Flächen im
+            // Spotlight-Webview. Die Naht bleibt (Fail-soft, kein State).
             crate::pins::sync_overlay_visibility(&worker, visible);
             if visible {
                 // P3 (t_d340f851): opening ALWAYS behaves as focus mode — the

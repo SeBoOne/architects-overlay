@@ -32,6 +32,9 @@ export type PinsState = {
 	game_running: boolean;
 	overlay_visible: boolean;
 	pins: PinEntry[];
+	/// M4-E (t_34efb781): Label des Spotlight-Screens (pins.rs
+	/// spotlight_screen_of) — Patch-Flächen nur für Pins dieses Screens.
+	spotlight_screen?: string;
 };
 
 /// Label-Präfix der Pin-Fenster (MUST match pins.rs PINS_LABEL_PREFIX).
