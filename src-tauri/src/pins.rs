@@ -71,6 +71,21 @@ pub fn clamp_opacity(pct: u32) -> u32 {
     pct.clamp(OPACITY_MIN, OPACITY_MAX)
 }
 
+/// Input-Modus-Entscheidung (pure Logik, t_ef8222da): für ein
+/// sichtbares/gemapptes Pin-Fenster wird der neue Ignore-Modus
+/// zurückgegeben; für ein hidden/nicht gemapptes Fenster `None` —
+/// dann wird KEINE Window-Mutation gestellt. Grund: tao paniziert in
+/// `WindowRequest::CursorIgnoreEvents` (`window.window().unwrap()`),
+/// wenn das GTK-Window nicht existiert/nicht gemappt ist — der Request
+/// darf auf versteckten Pin-Fenstern gar nicht erst in die Queue.
+/// Muster §9.1.6: Input-Modus nur im Moment des show() setzen.
+pub fn pin_input_mode(overlay_visible: bool, pin_visible: bool) -> Option<bool> {
+    if !pin_visible {
+        return None;
+    }
+    Some(!overlay_visible)
+}
+
 /// Effective Sichtbarkeit der Pins (reine Logik, game_running-Vertrag
 /// §9.1.5): enabled (Tray-Schalter) UND mindestens ein aktiver Pin UND
 /// das Spiel läuft. Ohne laufendes SC gibt es KEINEN Kanal.
@@ -287,7 +302,6 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
     };
     let visible = pins_effective_visible(enabled, pinned_count, game_running);
     for win in pin_windows(app) {
-        let _ = win.set_ignore_cursor_events(!overlay_visible || !visible);
         if visible {
             // Position: Fenster deckt den ganzen Screen ab — Placement
             // macht das Frontend in CSS (persistierte x/y der Boxen).
@@ -297,8 +311,16 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
                 let _ = win.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
                 let _ = win.set_size(tauri::PhysicalSize::new(size.width, size.height));
             }
+            // Input-Modus NUR im Moment des show() — erst mappen, dann
+            // Shape stellen (tao paniziert auf nicht gemappten Fenstern,
+            // t_ef8222da). pin_input_mode liefert hier immer Some.
             let _ = win.show();
+            if let Some(ignore) = pin_input_mode(overlay_visible, true) {
+                let _ = win.set_ignore_cursor_events(ignore);
+            }
         } else {
+            // Hide OHNE Follow-up-Window-Mutation: kein set_ignore auf
+            // versteckten Fenstern (tao-Panik-Pfad).
             let _ = win.hide();
         }
         // Input-Modus ans Frontend melden (nur Cursor-Kontrast — die echte
@@ -345,7 +367,17 @@ pub fn sync_overlay_visibility<R: Runtime>(app: &AppHandle<R>, overlay_visible: 
         return; // unsichtbare Pins haben keinen Input-Modus
     }
     for win in pin_windows(app) {
-        let _ = win.set_ignore_cursor_events(!overlay_visible);
+        // Nur gemappte Fenster anfassen: ein hidden (nie gezeigtes oder
+        // wieder verstecktes) Pin-Fenster bekommt KEINEN Input-Shape —
+        // tao paniziert in CursorIgnoreEvents auf nicht gemappten
+        // Fenstern (t_ef8222da). Beim nächsten show() setzt sync_all den
+        // Modus korrekt (§9.1.6).
+        if !win.is_visible().unwrap_or(false) {
+            continue;
+        }
+        if let Some(ignore) = pin_input_mode(overlay_visible, true) {
+            let _ = win.set_ignore_cursor_events(ignore);
+        }
     }
 }
 
@@ -886,5 +918,23 @@ mod tests {
         assert_eq!(screen_index_of(&m, "DP-3"), Some(0));
         assert_eq!(screen_index_of(&m, "HDMI-A-2"), Some(1));
         assert_eq!(screen_index_of(&m, "eDP-1"), None);
+    }
+
+    /// Regression t_ef8222da (M4-Crash-Loop, tao-Panik in
+    /// CursorIgnoreEvents auf nicht gemapptem Pin-Fenster): die pure
+    /// Logik darf für versteckte Pin-Fenster NIEMALS einen Input-Shape-
+    /// Request ergeben — Szenarien aus der FIX-KARTE.
+    #[test]
+    fn input_mode_never_touches_hidden_pin_windows() {
+        // Boot ohne SC: Pins restauriert, game_running=false → Pin-Fenster
+        // hidden → KEIN Call (vorher: unconditional set_ignore → Panik).
+        assert_eq!(pin_input_mode(false, false), None);
+        assert_eq!(pin_input_mode(true, false), None);
+        // Overlay-Toggle bei hiddenem Pin-Fenster → kein Call.
+        assert_eq!(pin_input_mode(true, false), None);
+        // Overlay-Toggle bei sichtbarem Pin-Fenster → Call mit korrektem Modus:
+        // Overlay sichtbar → interagierbar (ignore=false), sonst click-through.
+        assert_eq!(pin_input_mode(true, true), Some(false));
+        assert_eq!(pin_input_mode(false, true), Some(true));
     }
 }
