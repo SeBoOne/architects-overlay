@@ -368,6 +368,14 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         log::warn!("pins: keine Monitore enumerierbar — Pins bleiben unaufgelöst");
     }
     ensure_pin_windows(app.handle())?;
+    // Boot-Sync (t_01f1a9ed-Folge, R1-befund Omar): Der Game-Poller-First-Tick
+    // kann VOR diesem init laufen (overlay::init startet den Poller vor
+    // pins::init in lib.rs-Setup-Reihenfolge) — die Transition
+    // false→true feuert dann sync_game_running, während PinsEnabled noch
+    // nicht existiert → Early-Return → sync_all NIE wieder (keine weitere
+    // Transition, solange das Spiel durchläuft). Einmaliger Boot-Sync am
+    // Ende des init deckt genau diesen Fall deterministisch ab.
+    sync_all(app.handle());
     Ok(())
 }
 
@@ -493,6 +501,10 @@ pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
         )
     };
     let visible = pins_effective_visible(enabled, pinned_count, game_running);
+    log::info!(
+        "pins: sync_all visible={visible} (enabled={enabled} pinned={pinned_count} game_running={game_running}) windows={}",
+        pin_windows(app).len()
+    );
     // Geometrie-Quelle (t_01f1a9ed): unified Monitor-Enumeration, aufgelöst
     // über den Screen-Index im Label — NICHT win.current_monitor() (None vor
     // dem ersten Map → Geometrie wurde komplett übersprungen → show() mit
