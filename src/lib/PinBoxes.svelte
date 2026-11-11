@@ -354,12 +354,19 @@ onMount(() => {
 			{@const scale = liveScale(pin)}
 			{@const pos = boxPosFor(live)}
 			{@const Content = pinContentFor(pin.content?.type)}
+			<!-- M6-F2-Hotfix: `zoom` skaliert unter WebKitGTK 2.54.1 AUCH die
+			     left/top-Offsets (empirisch verifiziert, wkzoom3-Test: left:100px
+			     mit zoom:1.6 rendert bei x=160) — die Box wanderte bei scale>100
+			     off-screen rechts (2333×1.6=3733 > 3440) und „verschwand“.
+			     transform:scale() skaliert nur die Darstellung ab transform-origin,
+			     die Layout-Offsets bleiben — Patch-Geometrie (patchPos, skalierte
+			     Größe) und gerenderte Box decken sich damit wieder exakt. -->
 			<article
 				class="pin"
 				class:interactive
 				class:dragging={dragPin === pin}
 				class:resizing={resizePin !== null && boxKey(resizePin.pin) === boxKey(pin)}
-				style={`left:${pos.x}px; top:${pos.y}px; opacity:${pin.opacity / 100}; zoom:${scale / 100}`}
+				style={`left:${pos.x}px; top:${pos.y}px; opacity:${pin.opacity / 100}; transform: scale(${scale / 100}); transform-origin: 0 0`}
 			>
 				<header
 					class="pin-head"
