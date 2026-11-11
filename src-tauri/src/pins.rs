@@ -392,6 +392,10 @@ pub struct PinDto {
     pub title: String,
     pub kpi: Option<String>,
     pub rows: Vec<PinRowDto>,
+    /// M6-F1 (t_58d46923): generischer Content-Deskriptor (MIRROR von
+    /// settings::PinEntry.content) — Kontext-adaptive Renderer der Pin-Ansicht.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Clone, serde::Deserialize)]
@@ -440,6 +444,7 @@ fn to_dto(e: &settings::PinEntry) -> PinDto {
                 side: r.side.clone(),
             })
             .collect(),
+        content: e.content.clone(),
     }
 }
 
@@ -482,6 +487,7 @@ pub fn pins_state<R: tauri::Runtime>(app: AppHandle<R>) -> PinsState {
 /// immer da, wo der Nutzer pinnt). Duplikate (view_id/screen/box_index,
 /// aktiv) werden verhindert.
 #[tauri::command(rename_all = "snake_case")]
+#[allow(clippy::too_many_arguments)] // Tauri-Command-Signatur — Arg-Bündelung wie PinDrag würde das snake_case-Invoke-Contract sprengen
 pub fn pin_add<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
@@ -490,6 +496,9 @@ pub fn pin_add<R: tauri::Runtime>(
     title: String,
     kpi: Option<String>,
     rows: Vec<PinRowDto>,
+    // M6-F1 (t_58d46923): optionaler generischer Content-Deskriptor —
+    // ohne Wert bleibt die Box beim rows-Snapshot (Bestand verträglich).
+    content: Option<serde_json::Value>,
 ) -> bool {
     // Capture (t_56262ccf): Identität über die unified Enumeration — der
     // NAME von current_monitor() ist auf Hyprland der Model-String
@@ -547,6 +556,7 @@ pub fn pin_add<R: tauri::Runtime>(
                 side: r.side,
             })
             .collect(),
+        content,
     });
     crate::app_settings::persist_settings(&s);
     // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
@@ -762,6 +772,10 @@ pub fn pin_update<R: tauri::Runtime>(
     title: String,
     kpi: Option<String>,
     rows: Vec<PinRowDto>,
+    // M6-F1 (t_58d46923): Content-Deskriptor im Refresh — Some überschreibt,
+    // None lässt den bestehenden Wert unangetastet (Snapshot-Builder ohne
+    // Content-Support altert nichts weg).
+    content: Option<serde_json::Value>,
 ) -> bool {
     let st = app.state::<crate::app_settings::SettingsState>();
     let mut s = st.inner.lock().expect("settings lock");
@@ -781,6 +795,9 @@ pub fn pin_update<R: tauri::Runtime>(
                     side: r.side.clone(),
                 })
                 .collect();
+            if content.is_some() {
+                e.content = content.clone();
+            }
             hit = true;
         }
     }
@@ -849,11 +866,18 @@ mod tests {
             title: "t".into(),
             kpi: None,
             rows: Vec::new(),
+            content: Some(serde_json::json!({ "type": "deal-chat" })),
         };
         let js = serde_json::to_value(&dto).unwrap();
         assert!(js.get("view_id").is_some());
         assert!(js.get("box_index").is_some());
         assert!(js.get("viewId").is_none());
+        // M6-F1: Content-Deskriptor snake_case-Key + optional (None → weggelassen).
+        assert!(js.get("content").is_some());
+        let mut dto_wo = dto.clone();
+        dto_wo.content = None;
+        let js2 = serde_json::to_value(&dto_wo).unwrap();
+        assert!(js2.get("content").is_none());
 
         let drag: PinDrag = serde_json::from_value(serde_json::json!({
             "x": 1, "y": 2, "w": 356, "h": 78,
@@ -1045,6 +1069,7 @@ mod tests {
             title: "t".into(),
             kpi: None,
             rows: Vec::new(),
+            content: None,
         };
         let monitors = [
             MonitorRect {

@@ -515,6 +515,13 @@ pub struct PinEntry {
     /// Inhalts-Zeilen (generisch darstellbar).
     #[serde(default)]
     pub rows: Vec<PinRow>,
+    /// M6-F1 (t_58d46923): optionaler Content-Deskriptor für kontext-
+    /// adaptive Pin-Inhalte — generisches JSON `{ "type": "...", ... }`
+    /// ohne Plugin-Semantik in der Verwaltung. Die Interpretation macht
+    /// ausschließlich die Pin-Ansicht (Renderer-Registry des Frontends);
+    /// ohne Feld rendert die Box weiterhin den rows-Snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<serde_json::Value>,
 }
 
 /// M4: `[pins]`-Sektion — globaler An/Aus-Schalter + Pin-Set.
@@ -2220,6 +2227,13 @@ mod tests {
                         side: Some("sell".into()),
                     },
                 ],
+                // M6-F1 (t_58d46923): generischer Content-Deskriptor — TOML-
+                // Roundtrip; None bleibt None (Bestand verträglich).
+                content: Some(serde_json::json!({
+                    "type": "deal-chat",
+                    "hash": "abc123",
+                    "id_negotiation": 42
+                })),
             }],
         }));
         s.save().unwrap();
@@ -2242,5 +2256,21 @@ mod tests {
         assert_eq!(pin.rows.len(), 2);
         assert_eq!(pin.rows[1].side.as_deref(), Some("sell"));
         assert_eq!(pin.kpi.as_deref(), Some("+27 %"));
+        // M6-F1 (t_58d46923): Content-Deskriptor überlebt Persist+Load.
+        assert_eq!(
+            pin.content
+                .as_ref()
+                .and_then(|c| c.get("type"))
+                .and_then(|t| t.as_str()),
+            Some("deal-chat")
+        );
+        // Bestand: Pin ohne content-Feld lädt mit None (serde(default)).
+        let legacy_json = r#"{
+            "view_id": "offers", "screen": "DP-3", "box_index": 1,
+            "opacity": 100, "pinned": true, "x": 10, "y": 20,
+            "title": "Offer", "rows": []
+        }"#;
+        let legacy: PinEntry = serde_json::from_str(legacy_json).unwrap();
+        assert!(legacy.content.is_none());
     }
 }

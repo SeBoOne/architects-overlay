@@ -1,3 +1,12 @@
+<script lang="ts" module>
+	// M6-F1 (t_58d46923): Content-Renderer-Registry — DealChat als erster
+	// registrierter Content-Typ (Proof of Concept, Universality-Regel:
+	// keine SCLM-/DealChat-Semantik in der Pin-Box selbst).
+	import PinChat from './PinChat.svelte';
+	import { registerPinContent } from './pin-content';
+	registerPinContent('deal-chat', PinChat);
+</script>
+
 <script lang="ts">
 // M5 (t_d10a0d84): Pins als DOM-Boxen IM SPOTLIGHT-Webview — die früheren
 // pins-<idx>-Fenster (M4, verworfen: Wayland/GTK3 input regions unzuverlässig,
@@ -24,6 +33,7 @@ import { t } from './i18n';
 import { listen } from '@tauri-apps/api/event';
 import { PINS_CHANGED_EVENT, PIN_BOX_W, pinBoxEstHeight, type PinEntry } from './pins';
 import { dragBasePos, patchPos, popoverPos } from './pin-patches';
+import { pinContentFor } from './pin-content';
 
 type OverlayState = {
 	visible: boolean;
@@ -254,6 +264,7 @@ onMount(() => {
 			     sonst würde die Box erst beim Release/Reload springen (Sebo-Befund). -->
 			{@const live = dragPin && boxKey(dragPin) === boxKey(pin) ? dragPin : pin}
 			{@const pos = boxPosFor(live)}
+			{@const Content = pinContentFor(pin.content?.type)}
 			<article
 				class="pin"
 				class:interactive
@@ -289,16 +300,23 @@ onMount(() => {
 					{/if}
 				</header>
 				<div class="pin-body">
-					{#each pin.rows as row (row.idx)}
-						<div class="pin-step">
-							<span class="idx">{row.idx}</span>
-							<span class="nm">
-								{row.name}
-								{#if row.sub}<small>{row.sub}</small>{/if}
-							</span>
-							<span class="pr {row.side ?? ''}">{row.value}</span>
-						</div>
-					{/each}
+					{#if Content}
+						<!-- M6-F1: kontext-adaptiver Content-Renderer (z. B. DealChat).
+						     interactive = Overlay-aktiv-Gate (M4-E/M5-Vertrag) — der
+						     Inline-Composer rendert nur bei interaktivem Spotlight. -->
+						<Content {pin} {interactive} />
+					{:else}
+						{#each pin.rows as row (row.idx)}
+							<div class="pin-step">
+								<span class="idx">{row.idx}</span>
+								<span class="nm">
+									{row.name}
+									{#if row.sub}<small>{row.sub}</small>{/if}
+								</span>
+								<span class="pr {row.side ?? ''}">{row.value}</span>
+							</div>
+						{/each}
+					{/if}
 				</div>
 			</article>
 		{/each}

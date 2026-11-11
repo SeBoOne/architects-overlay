@@ -8,8 +8,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const LOCALES_DIR = new URL('../../resources/locales/', import.meta.url).pathname;
+// fileURLToPath statt .pathname — .pathname hält Leerzeichen URL-kodiert
+// (%20) und bricht in Verzeichnissen mit Leerzeichen im Pfad (ENOENT).
+const LOCALES_DIR = fileURLToPath(new URL('../../resources/locales/', import.meta.url));
 
 function loadStrings(loc: string): Record<string, string> {
 	const doc = JSON.parse(readFileSync(join(LOCALES_DIR, `${loc}.json`), 'utf8'));

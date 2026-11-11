@@ -1124,6 +1124,7 @@
     "pins.opacity_title": "Adjust opacity",
     "pins.opacity": "Opacity",
     "pins.unpin_title": "Unpin (back to overlay)",
+    "pins.chat_title": "Deal chat",
     "pins.close_title": "Close pin (remove)",
     "pins.empty": ""
   }

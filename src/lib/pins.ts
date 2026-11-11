@@ -25,7 +25,17 @@ export type PinEntry = {
 	title: string;
 	kpi: string | null;
 	rows: PinRow[];
+	/// M6-F1 (t_58d46923): optionaler generischer Content-Deskriptor für
+	/// kontext-adaptive Pin-Inhalte — `{ type: '...', ...payload }`. Die
+	/// Interpretation macht ausschließlich die Renderer-Registry
+	/// (pin-content.ts); ohne Feld rendert die Box den rows-Snapshot.
+	content?: PinContent | null;
 };
+
+/// Generischer Content-Deskriptor — bewusst offen (kein Plugin-Vokabular
+/// in der Pin-Verwaltung, Schema-U): `type` wählt den Renderer, der Rest
+/// ist Payload des Content-Typs.
+export type PinContent = { type: string; [key: string]: unknown };
 
 export type PinsState = {
 	enabled: boolean;

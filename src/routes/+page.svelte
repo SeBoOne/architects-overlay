@@ -56,7 +56,7 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	import Rail from '../lib/Rail.svelte';
 	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
 	import PinBoxes from '../lib/PinBoxes.svelte';
-	import { PINS_CHANGED_EVENT, type PinRow, type PinsState } from '../lib/pins';
+	import { PINS_CHANGED_EVENT, type PinRow, type PinsState, type PinContent } from '../lib/pins';
 	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
 	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
 	import TitleBar from '../lib/TitleBar.svelte';
@@ -3299,7 +3299,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		};
 	}
 
-	type PinSnap = { title: string; kpi: string | null; rows: PinRow[] };
+	type PinSnap = { title: string; kpi: string | null; rows: PinRow[]; content?: PinContent | null };
 
 	/// Anzeige-Snapshot eines Offers für die Pin-Box (generische DISPLAY-Daten).
 	function offerPinSnapshot(o: Offer): PinSnap {
@@ -3350,7 +3350,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	/// Anzeige-Snapshot eines Deals (Negotiation) für die Pin-Box.
+	/// M6-F1 (t_58d46923): Content-Deskriptor 'deal-chat' — der Pin rendert
+	/// den Chat-Verlauf + Inline-Composer (Renderer-Registry, PinChat.svelte).
+	/// rows bleiben als Fallback-/Geometrie-Snapshot (Platzierung, Popover).
 	function tradePinSnapshot(n: Negotiation): PinSnap {
+		const counterpart =
+			(n.is_listing_advertiser ? n.client_username || n.client_name : n.advertiser_username || n.advertiser_name) || '—';
+		const own = (n.is_listing_advertiser ? n.advertiser_username || n.advertiser_name : n.client_username || n.client_name) || '';
 		return {
 			title: `${tr('market.tab_trades')} · ${n.listing_title}`,
 			kpi:
@@ -3360,7 +3366,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			rows: [
 				{
 					idx: '01',
-					name: (n.is_listing_advertiser ? n.client_username || n.client_name : n.advertiser_username || n.advertiser_name) || '—',
+					name: counterpart,
 					sub: dealRole(n) === 'sell' ? tr('common.sell') : tr('common.buy'),
 					value: dealStatus(n),
 					side: dealRole(n)
@@ -3372,7 +3378,15 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					value: dealTime(n.date_modified || n.date_added),
 					side: null
 				}
-			]
+			],
+			content: {
+				type: 'deal-chat',
+				hash: n.hash,
+				id_negotiation: n.id,
+				who: counterpart,
+				own_username: own,
+				ended: !!(n.date_closed || n.date_closed_client)
+			}
 		};
 	}
 
@@ -3388,7 +3402,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				opacity: 100,
 				title: snap.title,
 				kpi: snap.kpi,
-				rows: snap.rows
+				rows: snap.rows,
+				// M6-F1 (t_58d46923): optionaler generischer Content-Deskriptor.
+				content: snap.content ?? null
 			});
 			f5Msg = tr(ok ? 'pins.added' : 'pins.already_pinned');
 		} catch (e) {
@@ -3413,7 +3429,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					box_index: p.box_index,
 					title: snap.title,
 					kpi: snap.kpi,
-					rows: snap.rows
+					rows: snap.rows,
+					// M6-F1: Content-Deskriptor mitziehen (Some überschreibt, null
+					// lässt den bestehenden Wert — Backend-Kontrakt pin_update).
+					content: snap.content ?? null
 				});
 			}
 		} catch {
