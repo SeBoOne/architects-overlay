@@ -517,13 +517,76 @@ pub struct PinEntry {
     pub rows: Vec<PinRow>,
 }
 
-/// M4: `[pins]`-Sektion — globaler An/Aus-Schalter + Pin-Set.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Pins-Vertrag: Deckkraft-Range 20..=100 % (M4, `clamp_opacity` im
+/// pins-Backend nutzt dieselben Grenzen).
+pub const PIN_OPACITY_MIN: u32 = 20;
+pub const PIN_OPACITY_MAX: u32 = 100;
+
+/// M6-F3: Default für `PinsSection::default_opacity` (neue Pins erben ihn).
+pub fn default_pins_opacity() -> u32 {
+    PIN_OPACITY_MAX
+}
+
+/// M6-F3: Defaults der 3 vordefinierten Deckkraft-Werte (M4-Vertrag).
+pub fn default_pins_presets() -> Vec<u32> {
+    vec![20, 55, 100]
+}
+
+/// M6-F3: Deckkraft-Wert clampen auf den Pins-Vertrag 20..=100.
+pub fn norm_pins_opacity(pct: u32) -> u32 {
+    pct.clamp(PIN_OPACITY_MIN, PIN_OPACITY_MAX)
+}
+
+/// M6-F3: Presets normalisieren — genau 3 Werte, je geclampt (20..=100),
+/// sortiert, ohne Duplikate. Schrumpft die Liste durch Dedup/Kappung unter
+/// 3, werden fehlende Werte aus den Defaults (die noch nicht enthalten
+/// sind) aufgefüllt — das UI kann sich auf 3 Buttons verlassen.
+pub fn norm_pins_presets(values: &[u32]) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::with_capacity(3);
+    for &v in values {
+        let v = norm_pins_opacity(v);
+        if !out.contains(&v) {
+            out.push(v);
+        }
+    }
+    for d in default_pins_presets() {
+        if out.len() >= 3 {
+            break;
+        }
+        if !out.contains(&d) {
+            out.push(d);
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// M4: `[pins]`-Sektion — globaler An/Aus-Schalter + Pin-Set + M6-F3:
+/// globaler Standard-Deckkraft-Wert (neue Pins erben ihn) und die 3
+/// vordefinierten Werte (editierbar, normiert via `norm_pins_presets`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PinsSection {
     #[serde(default)]
     pub enabled: bool,
+    /// M6-F3: globaler Standard-Deckkraft-Wert (20..=100) für NEUE Pins.
+    #[serde(default = "default_pins_opacity")]
+    pub default_opacity: u32,
+    /// M6-F3: die 3 vordefinierten Werte (je 20..=100, sortiert).
+    #[serde(default = "default_pins_presets")]
+    pub presets: Vec<u32>,
     #[serde(default)]
     pub list: Vec<PinEntry>,
+}
+
+impl Default for PinsSection {
+    fn default() -> Self {
+        PinsSection {
+            enabled: false,
+            default_opacity: default_pins_opacity(),
+            presets: default_pins_presets(),
+            list: Vec::new(),
+        }
+    }
 }
 
 /// C2 (t_91124322): Connector-Abschnitt der Config — Maps pro Connector-ID.
@@ -1339,6 +1402,35 @@ impl Settings {
     /// Veränderbare Pins-Sektion — erzeugt sie lazily (Tray-Schalter).
     pub fn pins_mut_or_default(&mut self) -> &mut PinsSection {
         self.pins.get_or_insert_with(PinsSection::default)
+    }
+
+    /// M6-F3: globaler Standard-Deckkraft-Wert für NEUE Pins. Fehlende
+    /// Sektion → Default; hand-editierte Werte in der Datei werden beim
+    /// Lesen normiert (clamp 20..=100).
+    pub fn pins_default_opacity(&self) -> u32 {
+        self.pins
+            .as_ref()
+            .map(|p| norm_pins_opacity(p.default_opacity))
+            .unwrap_or_else(default_pins_opacity)
+    }
+
+    /// M6-F3: die 3 vordefinierten Deckkraft-Werte (normiert beim Lesen —
+    /// genau 3, je 20..=100, sortiert).
+    pub fn pins_presets(&self) -> Vec<u32> {
+        self.pins
+            .as_ref()
+            .map(|p| norm_pins_presets(&p.presets))
+            .unwrap_or_else(default_pins_presets)
+    }
+
+    /// M6-F3: globalen Standard-Deckkraft-Wert setzen (geclampt persistiert).
+    pub fn set_pins_default_opacity(&mut self, pct: u32) {
+        self.pins_mut_or_default().default_opacity = norm_pins_opacity(pct);
+    }
+
+    /// M6-F3: die 3 Presets setzen (normiert persistiert — genau 3).
+    pub fn set_pins_presets(&mut self, values: &[u32]) {
+        self.pins_mut_or_default().presets = norm_pins_presets(values);
     }
 
     /// Write the config file atomically (temp file + rename). On Unix the
@@ -2194,34 +2286,35 @@ mod tests {
         let mut s = Settings::with_path(path.clone());
         s.set_pins(Some(PinsSection {
             enabled: true,
-            list: vec![PinEntry {
-                view_id: "routes".into(),
-                screen: "DP-3".into(),
-                box_index: 2,
-                opacity: 55,
-                pinned: true,
-                x: 3200,
-                y: 80,
-                title: "Route · Gold Ore (Raw)".into(),
-                kpi: Some("+27 %".into()),
-                rows: vec![
-                    PinRow {
-                        idx: "01".into(),
-                        name: "Port Tressler".into(),
-                        sub: Some("Stanton · Kauf".into()),
-                        value: "4812".into(),
-                        side: Some("buy".into()),
-                    },
-                    PinRow {
-                        idx: "02".into(),
-                        name: "Levski".into(),
-                        sub: Some("Nyx · Verkauf".into()),
-                        value: "6104".into(),
-                        side: Some("sell".into()),
-                    },
-                ],
-            }],
+            ..Default::default()
         }));
+        s.pins_mut_or_default().list = vec![PinEntry {
+            view_id: "routes".into(),
+            screen: "DP-3".into(),
+            box_index: 2,
+            opacity: 55,
+            pinned: true,
+            x: 3200,
+            y: 80,
+            title: "Route · Gold Ore (Raw)".into(),
+            kpi: Some("+27 %".into()),
+            rows: vec![
+                PinRow {
+                    idx: "01".into(),
+                    name: "Port Tressler".into(),
+                    sub: Some("Stanton · Kauf".into()),
+                    value: "4812".into(),
+                    side: Some("buy".into()),
+                },
+                PinRow {
+                    idx: "02".into(),
+                    name: "Levski".into(),
+                    sub: Some("Nyx · Verkauf".into()),
+                    value: "6104".into(),
+                    side: Some("sell".into()),
+                },
+            ],
+        }];
         s.save().unwrap();
         let loaded = Settings::load_from(&path).unwrap();
         let pins = loaded.pins().expect("pins section persists");
@@ -2242,5 +2335,47 @@ mod tests {
         assert_eq!(pin.rows.len(), 2);
         assert_eq!(pin.rows[1].side.as_deref(), Some("sell"));
         assert_eq!(pin.kpi.as_deref(), Some("+27 %"));
+    }
+
+    /// M6-F3: norm_pins_opacity — Pins-Vertrag 20..=100.
+    #[test]
+    fn pins_norm_opacity_clamps() {
+        assert_eq!(norm_pins_opacity(0), PIN_OPACITY_MIN);
+        assert_eq!(norm_pins_opacity(19), PIN_OPACITY_MIN);
+        assert_eq!(norm_pins_opacity(55), 55);
+        assert_eq!(norm_pins_opacity(100), PIN_OPACITY_MAX);
+        assert_eq!(norm_pins_opacity(1000), PIN_OPACITY_MAX);
+    }
+
+    /// M6-F3: norm_pins_presets — genau 3 Werte, geclampt/sortiert/dedup.
+    #[test]
+    fn pins_norm_presets_normalizes() {
+        assert_eq!(norm_pins_presets(&[10, 55, 250]), vec![20, 55, 100]);
+        assert_eq!(norm_pins_presets(&[100, 20, 55]), vec![20, 55, 100]);
+        // Duplikate → Default-Auffüllung, immer 3 Werte.
+        assert_eq!(norm_pins_presets(&[30, 30, 80]), vec![20, 30, 80]);
+        assert_eq!(norm_pins_presets(&[]), vec![20, 55, 100]);
+        assert_eq!(norm_pins_presets(&[42]).len(), 3);
+    }
+
+    /// M6-F3: Default-Deckkraft + Presets persistieren (Roundtrip) und
+    /// fehlende Sektion liefert die Defaults.
+    #[test]
+    fn pins_default_opacity_and_presets_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        // Fehlende Sektion → Defaults.
+        let s = Settings::load_from(&path).unwrap();
+        assert_eq!(s.pins_default_opacity(), 100);
+        assert_eq!(s.pins_presets(), vec![20, 55, 100]);
+
+        let mut s = Settings::with_path(path.clone());
+        s.set_pins_default_opacity(35);
+        s.set_pins_presets(&[30, 60, 999]);
+        s.save().unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.pins_default_opacity(), 35);
+        assert_eq!(loaded.pins_presets(), vec![30, 60, 100]);
     }
 }

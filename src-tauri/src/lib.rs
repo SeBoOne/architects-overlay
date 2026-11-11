@@ -136,6 +136,8 @@ pub fn run() {
             routes::vehicles_scu,
             routes::location_suggest,
             app_settings::settings_get,
+            app_settings::settings_set_pins_default_opacity,
+            app_settings::settings_set_pins_presets,
             app_settings::settings_set_updater_enabled,
             app_settings::settings_set_updater_interval,
             updater::updater_status,

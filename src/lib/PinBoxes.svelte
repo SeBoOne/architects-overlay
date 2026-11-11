@@ -22,7 +22,7 @@ import { onMount } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { t } from './i18n';
 import { listen } from '@tauri-apps/api/event';
-import { PINS_CHANGED_EVENT, PIN_BOX_W, pinBoxEstHeight, type PinEntry } from './pins';
+import { PINS_CHANGED_EVENT, PIN_BOX_W, pinBoxEstHeight, type PinEntry, type PinsState } from './pins';
 import { patchPos, popoverPos } from './pin-patches';
 
 type OverlayState = {
@@ -40,7 +40,9 @@ let vh = $state(0);
 let dragPin: PinEntry | null = $state(null);
 let openKey = $state<string | null>(null);
 
-const PRESETS = [20, 55, 100];
+// M6-F3: die vordefinierten Werte kommen aus den Settings (editierbar);
+// Default bis zum ersten pins_state-Load = der M4-Vertrag.
+let presets = $state<number[]>([20, 55, 100]);
 
 // Interaktions-Gate: Palette offen UND laufendes SC UND kein Click-Through
 // UND nicht pins-only (M4-E-Mechanik übernommen + Pins-only-Gate M5).
@@ -67,9 +69,12 @@ const boxPins = $derived(pins.filter((p) => p.pinned && p.screen === spotlightSc
 
 async function load() {
 	try {
-		const st = await invoke<{ pins: PinEntry[]; spotlight_screen: string }>('pins_state');
+		const st = await invoke<PinsState>('pins_state');
 		pins = st.pins;
-		spotlightScreen = st.spotlight_screen;
+		spotlightScreen = st.spotlight_screen ?? '';
+		// M6-F3: editierbare Presets aus den Settings übernehmen (normiert vom
+		// Backend — genau 3 Werte; defensive Fallback bei leerer Liste).
+		if (st.presets?.length) presets = st.presets;
 		dbg(
 			`load pins=${pins.length} boxPins=${pins.filter((p) => p.pinned && p.screen === spotlightScreen).length} screen=${spotlightScreen} vw=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
 		);
@@ -171,8 +176,10 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 	window.addEventListener('pointerup', up);
 }
 
+// M6-F3: Preset-Zyklus über die (editierbare) Presets-Liste — der nächste
+// Wert ÜBER dem aktuellen, Wrap zum kleinsten (Verhalten wie M4 bei 20/55/100).
 function cycleOpacity(pin: PinEntry) {
-	const next = pin.opacity >= 100 ? 20 : pin.opacity >= 55 ? 100 : 55;
+	const next = presets.find((p) => p > pin.opacity) ?? presets[0];
 	void invoke('pin_set_opacity', {
 		view_id: pin.view_id,
 		screen: pin.screen,
@@ -296,7 +303,7 @@ onMount(() => {
 					<button type="button" class="pbtn" onclick={() => cycleOpacity(pin)} title={$t('pins.opacity_title')}>◐</button>
 					<button type="button" class="pbtn" onclick={() => stepOpacity(pin, -5)} title={$t('pins.opacity_title')}>−</button>
 					<button type="button" class="pbtn" onclick={() => stepOpacity(pin, 5)} title={$t('pins.opacity_title')}>+</button>
-					{#each PRESETS as p (p)}
+					{#each presets as p (p)}
 						<button type="button" class="pbtn" class:active={pin.opacity === p} onclick={() => stepOpacity(pin, p - pin.opacity)} title={$t('pins.opacity_title')}>{p}</button>
 					{/each}
 					<button type="button" class="pbtn" onclick={() => remove(pin)} title={$t('pins.close_title')}>✕</button>
