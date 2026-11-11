@@ -993,11 +993,18 @@ fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
 /// Pure + exact-string tested: negative monitor coordinates (rotated/above
 /// layouts, e.g. HDMI-A-2 at 1825,-1920) must survive formatting verbatim.
 fn geometry_dispatch_lua(pid: u32, pos: (i32, i32), size: (u32, u32)) -> (String, String) {
+    let _ = pid; // signature stays pid-agnostic: title-only selector (see above)
     // Multi-monitor window-selection-2026-11-11: `pid:` alone matches EVERY
     // toplevel of our process — the Fenstermodus window shares pid + WM class
     // with the spotlight. The TITLE criterion disambiguates: the dispatches
     // must never drag the Fenstermodus window onto the overlay's monitor.
-    let sel = format!("pid:{pid},title:{SPOTLIGHT_TITLE}");
+    // Live-geprüft (Hyprland/Omarchy 0.56.2): `pid:X,title:Y` AND-Kriterien
+    // matchen NICHT (Warnung "window not found"), aber der reine `title:`
+    // Selektor matcht exakt (exact match, Spaces erlaubt). Der `title:`-Selektor
+    // des Spotlight-Titels ist eindeutig: nur der Spotlight trägt
+    // SPOTLIGHT_TITLE; die Fenstermodus-Window (APP_WINDOW_TITLE) und GTK-Dialoge
+    // tragen andere Titel.
+    let sel = format!("title:{SPOTLIGHT_TITLE}");
     (
         format!(
             "hl.dsp.window.resize({{ x = {}, y = {}, window = \"{sel}\" }})",
@@ -1138,11 +1145,11 @@ fn no_warps_lua(option: &str, enable: bool) -> String {
 ///
 /// Die WM-Klasse allein ist mehrdeutig: das Fenstermodus-Fenster (`app-window`
 /// = window-selection-2026-11-11) teilt pid + WM-Klasse mit dem Spotlight —
-/// nur der Titel unterscheidet. `pid:` + `title:` sind AND-verknüpfte
-/// Selektor-Kriterien (Hyprland: Komma-Kriterien); live verifiziert 2026-11-11
-/// (`hyprctl dispatch 'hl.dsp.focus({ window = "pid:…,title:…" })'` parst).
+/// nur der Titel unterscheidet. Live-geprüft (Hyprland/Omarchy 0.56.2):
+/// `pid:X,title:Y` AND-Kriterien matchen NICHT (Warnung "window not found"),
+/// aber der reine `title:`-Selektor matcht exakt (exact match, Spaces erlaubt).
 pub fn spotlight_compositor_selector() -> String {
-    format!("class:{SPOTLIGHT_WM_CLASS},title:{SPOTLIGHT_TITLE}")
+    format!("title:{SPOTLIGHT_TITLE}")
 }
 
 /// Cursor-Warp-Unterdrückung um den Fokus-Dispatch: Hyprland zentriert den
@@ -1663,21 +1670,21 @@ mod tests {
         let (resize, mov) = geometry_dispatch_lua(4242, (1825, -1920), (1080, 1920));
         assert_eq!(
             resize,
-            "hl.dsp.window.resize({ x = 1080, y = 1920, window = \"pid:4242,title:SC Architects Spotlight\" })"
+            "hl.dsp.window.resize({ x = 1080, y = 1920, window = \"title:SC Architects Spotlight\" })"
         );
         assert_eq!(
             mov,
-            "hl.dsp.window.move({ x = 1825, y = -1920, window = \"pid:4242,title:SC Architects Spotlight\" })"
+            "hl.dsp.window.move({ x = 1825, y = -1920, window = \"title:SC Architects Spotlight\" })"
         );
         // DP-3: 3440x1440 at 0,0 — the identity case (dispatch is a no-op change).
         let (resize, mov) = geometry_dispatch_lua(4242, (0, 0), (3440, 1440));
         assert_eq!(
             resize,
-            "hl.dsp.window.resize({ x = 3440, y = 1440, window = \"pid:4242,title:SC Architects Spotlight\" })"
+            "hl.dsp.window.resize({ x = 3440, y = 1440, window = \"title:SC Architects Spotlight\" })"
         );
         assert_eq!(
             mov,
-            "hl.dsp.window.move({ x = 0, y = 0, window = \"pid:4242,title:SC Architects Spotlight\" })"
+            "hl.dsp.window.move({ x = 0, y = 0, window = \"title:SC Architects Spotlight\" })"
         );
     }
 
