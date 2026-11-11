@@ -5,7 +5,7 @@
 // die Pin-Boxen nutzen (window.innerWidth/Height — CSS-px
 // des Vollbild-Viewports; DPR wirkt auf beide Seiten identisch, daher kein
 // separater Skalierungsschritt).
-import { PIN_BOX_W, pinBoxEstHeight, snapBoxToScreen, type PinEntry } from './pins.ts';
+import { PIN_BOX_W, pinBoxSize, snapBoxToScreen, type PinEntry } from './pins.ts';
 
 /// Popover-Maße (CSS-px) — Mini-Controller neben der Box.
 export const POPOVER_W = 260;
@@ -16,16 +16,19 @@ export const POPOVER_H = 160;
 /// EDGE_MARGIN-Grenzen wie das Backend beim pin_move, damit Anzeige ==
 /// Persistenz (der Drop-Ort bleibt nach dem Load exakt erhalten). Keine
 /// Snap-Zonen der eigenen Art mehr — nur noch der eine, geteilte Clamp.
+/// M6-F2 (t_3ff5e552): die Box-Maße rechnen mit dem Größenfaktor — die
+/// Patch-Geometrie re-rendert nach jedem Resize mit der neuen Größe.
 export function patchPos(pin: PinEntry, vw: number, vh: number): { x: number; y: number } {
-	return snapBoxToScreen(pin.x, pin.y, PIN_BOX_W, pinBoxEstHeight(pin.rows.length), vw, vh);
+	const { w, h } = pinBoxSize(pin.rows.length, pin.scale);
+	return snapBoxToScreen(pin.x, pin.y, w, h, vw, vh);
 }
 
 /// Popover-Position: unter der Box, horizontal an der Box-Mitte orientiert,
 /// an den Viewport-Rand geclampt (Modal-Regeln — kein position:fixed).
 export function popoverPos(pin: PinEntry, vw: number, vh: number): { x: number; y: number } {
 	const pos = patchPos(pin, vw, vh);
-	const h = pinBoxEstHeight(pin.rows.length);
-	const x = Math.max(0, Math.min(pos.x + PIN_BOX_W / 2, Math.max(0, vw - POPOVER_W)));
+	const { w, h } = pinBoxSize(pin.rows.length, pin.scale);
+	const x = Math.max(0, Math.min(pos.x + w / 2, Math.max(0, vw - POPOVER_W)));
 	const y = Math.max(0, Math.min(pos.y + h, Math.max(0, vh - POPOVER_H)));
 	return { x, y };
 }

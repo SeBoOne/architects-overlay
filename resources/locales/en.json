@@ -1125,6 +1125,8 @@
     "pins.opacity": "Opacity",
     "pins.unpin_title": "Unpin (back to overlay)",
     "pins.close_title": "Close pin (remove)",
+    "pins.size_title": "Adjust size",
+    "pins.resize_title": "Resize box (drag corner)",
     "pins.empty": ""
   }
 }

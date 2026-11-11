@@ -486,6 +486,11 @@ pub struct PinRow {
     pub side: Option<String>,
 }
 
+/// M6-F2: Default-Größenfaktor (100 %) für alte Config-Dateien.
+pub fn default_pin_scale() -> u32 {
+    100
+}
+
 /// M4 (t_7bf507e6): Pin-Eintrag — VERTRAG (Sebo §9.1.4–6): mechanischer
 /// Kern `{view_id, screen, box_index, opacity, pinned}` plus Box-Position
 /// (x/y relativ zur Screen-Ecke, Ergebnis des Edge-Snapping) plus
@@ -507,6 +512,10 @@ pub struct PinEntry {
     /// Box-Position relativ zur Screen-Ecke (px, nach Edge-Snapping).
     pub x: i32,
     pub y: i32,
+    /// M6-F2 (t_3ff5e552): Größenfaktor in % — clamp 50..=200 (Default 100).
+    /// Persistiert wie Position/Deckkraft; Patch-Geometrie rechnet mit.
+    #[serde(default = "default_pin_scale")]
+    pub scale: u32,
     /// Anzeige-Snapshot: Kopftext der Box (z. B. „Route · Gold Ore“).
     pub title: String,
     /// Optionale Kennzahl im Kopf (z. B. „+27 %“).
@@ -2202,6 +2211,7 @@ mod tests {
                 pinned: true,
                 x: 3200,
                 y: 80,
+                scale: 100,
                 title: "Route · Gold Ore (Raw)".into(),
                 kpi: Some("+27 %".into()),
                 rows: vec![

@@ -42,6 +42,8 @@ const PIN_KEYS = [
 	'pins.opacity',
 	'pins.unpin_title',
 	'pins.close_title',
+	'pins.size_title',
+	'pins.resize_title',
 	'pins.empty'
 ];
 

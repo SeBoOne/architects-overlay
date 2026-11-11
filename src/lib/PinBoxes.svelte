@@ -22,7 +22,7 @@ import { onMount } from 'svelte';
 import { invoke } from '@tauri-apps/api/core';
 import { t } from './i18n';
 import { listen } from '@tauri-apps/api/event';
-import { PINS_CHANGED_EVENT, PIN_BOX_W, pinBoxEstHeight, type PinEntry } from './pins';
+import { PINS_CHANGED_EVENT, PIN_BOX_W, SCALE_STEP, clampScale, pinBoxEstHeight, pinBoxSize, type PinEntry } from './pins';
 import { patchPos, popoverPos } from './pin-patches';
 
 type OverlayState = {
@@ -38,6 +38,7 @@ let spotlightScreen = $state('');
 let vw = $state(0);
 let vh = $state(0);
 let dragPin: PinEntry | null = $state(null);
+let resizePin: { pin: PinEntry; scale: number } | null = $state(null);
 let openKey = $state<string | null>(null);
 
 const PRESETS = [20, 55, 100];
@@ -85,6 +86,13 @@ function measure() {
 
 function boxPosFor(pin: PinEntry) {
 	return patchPos(pin, vw, vh);
+}
+
+// M6-F2 (t_3ff5e552): effektiver Größenfaktor — beim Corner-Resize die
+// Live-Skalierung, sonst der persistierte Wert (Legacy: undefined → 100).
+function liveScale(pin: PinEntry): number {
+	if (resizePin && boxKey(resizePin.pin) === boxKey(pin)) return resizePin.scale;
+	return clampScale(pin.scale ?? 100);
 }
 
 // Popover-Position: neben der Box, an den Screen-Rand geclampt (keine
@@ -148,10 +156,13 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 				// Subpixel-clientX/Y (reale Maus) durften den pin_move-Invoke
 				// als i32-Contract still verwerfen lassen → Drop-Ort verlor
 				// sich. Backend akzeptiert zusätzlich f64 (Runden im Rust).
+				// M6-F2: w/h sind die SKALIERTEN Box-Maße (zoom-Layer) — dieselbe
+				// Mathe wie pinBoxSize/patchPos, sonst snappt das Backend an der
+				// unskalierten Größe.
 				x: Math.round(p.x),
 				y: Math.round(p.y),
-				w: PIN_BOX_W,
-				h: pinBoxEstHeight(p.rows.length),
+				w: pinBoxSize(p.rows.length, p.scale).w,
+				h: pinBoxSize(p.rows.length, p.scale).h,
 				screen_w: window.innerWidth,
 				screen_h: window.innerHeight
 			};
@@ -169,6 +180,68 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 	};
 	window.addEventListener('pointermove', move);
 	window.addEventListener('pointerup', up);
+}
+
+// M6-F2 (t_3ff5e552): Resize am Corner-Handle (unten rechts). Der Griff
+// zieht die Box-Ecke; der Faktor ergibt sich aus dem Pointer-Abstand zur
+// Box-Ecke (oben links) relativ zum Layoutmaß — horizontal UND vertikal
+// gemittelt, clamp 50–200. Beim Release: auf SCALE_STEP runden, dann
+// `pin_resize` (Größe + neu gesnappte Position, Persistenz im Backend).
+function onResizeStart(e: PointerEvent, pin: PinEntry) {
+	if (!interactive) return;
+	e.preventDefault();
+	e.stopPropagation();
+	openKey = null;
+	const origin = boxPosFor(pin);
+	const startRows = pin.rows.length;
+	resizePin = { pin, scale: liveScale(pin) };
+	dbg(`resize start scale=${resizePin.scale} origin=(${origin.x},${origin.y})`);
+	const move = (ev: PointerEvent) => {
+		if (!resizePin) return;
+		const sx = ((ev.clientX - origin.x) / PIN_BOX_W) * 100;
+		const sy = ((ev.clientY - origin.y) / pinBoxEstHeight(startRows)) * 100;
+		resizePin = { pin, scale: clampScale((sx + sy) / 2) };
+	};
+	const up = () => {
+		const r = resizePin;
+		resizePin = null;
+		window.removeEventListener('pointermove', move);
+		window.removeEventListener('pointerup', up);
+		if (!r) return;
+		const scale = Math.round(r.scale / SCALE_STEP) * SCALE_STEP;
+		const { w, h } = pinBoxSize(startRows, scale);
+		dbg(`resize end scale=${scale} w=${w} h=${h}`);
+		void invoke('pin_resize', {
+			view_id: r.pin.view_id,
+			screen: r.pin.screen,
+			box_index: r.pin.box_index,
+			scale,
+			drag: {
+				x: Math.round(r.pin.x),
+				y: Math.round(r.pin.y),
+				w,
+				h,
+				screen_w: window.innerWidth,
+				screen_h: window.innerHeight
+			}
+		}).catch((err) => dbg(`pin_resize FAILED ${String(err)}`));
+		void load();
+	};
+	window.addEventListener('pointermove', move);
+	window.addEventListener('pointerup', up);
+}
+
+// M6-F2: Größe ± im Controller-Popover (Schritt SCALE_STEP, Clamp im Backend;
+// Anker oben links — Position bleibt, die Box wächst nach rechts/unten).
+function stepScale(pin: PinEntry, delta: number) {
+	const next = clampScale(liveScale(pin) + delta);
+	void invoke('pin_set_scale', {
+		view_id: pin.view_id,
+		screen: pin.screen,
+		box_index: pin.box_index,
+		scale: next
+	});
+	void load();
 }
 
 function cycleOpacity(pin: PinEntry) {
@@ -234,14 +307,24 @@ onMount(() => {
 	<div class="pin-layer" class:display-only={pinsOnly} class:dragging={dragPin !== null}>
 		{#each boxPins as pin (boxKey(pin))}
 			<!-- Drag-Live-Feedback: der gezogene Pin rendert aus dragPin (clientX-Delta),
-			     sonst würde die Box erst beim Release/Reload springen (Sebo-Befund). -->
-			{@const live = dragPin && boxKey(dragPin) === boxKey(pin) ? dragPin : pin}
+			     sonst würde die Box erst beim Release/Reload springen (Sebo-Befund).
+			     Resize-Live-Feedback analog: resizePin überschreibt den Faktor →
+			     die Patch-Geometrie (boxPosFor → patchPos) rechnet sofort mit der
+			     neuen Größe. -->
+			{@const live =
+				dragPin && boxKey(dragPin) === boxKey(pin)
+					? dragPin
+					: resizePin && boxKey(resizePin.pin) === boxKey(pin)
+						? { ...pin, scale: resizePin.scale }
+						: pin}
+			{@const scale = liveScale(pin)}
 			{@const pos = boxPosFor(live)}
 			<article
 				class="pin"
 				class:interactive
 				class:dragging={dragPin === pin}
-				style={`left:${pos.x}px; top:${pos.y}px; opacity:${pin.opacity / 100}`}
+				class:resizing={resizePin !== null && boxKey(resizePin.pin) === boxKey(pin)}
+				style={`left:${pos.x}px; top:${pos.y}px; opacity:${pin.opacity / 100}; zoom:${scale / 100}`}
 			>
 				<header
 					class="pin-head"
@@ -283,6 +366,16 @@ onMount(() => {
 						</div>
 					{/each}
 				</div>
+				{#if interactive}
+					<!-- M6-F2: Corner-Resize-Griff (unten rechts, Winkel-Marker). -->
+					<button
+						type="button"
+						class="pin-resize"
+						title={$t('pins.resize_title')}
+						aria-label={$t('pins.resize_title')}
+						onpointerdown={(e) => onResizeStart(e, pin)}
+					><i></i></button>
+				{/if}
 			</article>
 		{/each}
 		{#each boxPins as pin (boxKey(pin))}
@@ -299,6 +392,9 @@ onMount(() => {
 					{#each PRESETS as p (p)}
 						<button type="button" class="pbtn" class:active={pin.opacity === p} onclick={() => stepOpacity(pin, p - pin.opacity)} title={$t('pins.opacity_title')}>{p}</button>
 					{/each}
+					<!-- M6-F2: Größen-Step ± (50–200 %, Backend-Clamp). -->
+					<button type="button" class="pbtn" onclick={() => stepScale(pin, -SCALE_STEP)} title={$t('pins.size_title')}>⤡−</button>
+					<button type="button" class="pbtn" onclick={() => stepScale(pin, SCALE_STEP)} title={$t('pins.size_title')}>⤢+</button>
 					<button type="button" class="pbtn" onclick={() => remove(pin)} title={$t('pins.close_title')}>✕</button>
 				</div>
 			{/if}
@@ -350,6 +446,38 @@ onMount(() => {
 	}
 	.pin.interactive.dragging .pin-head {
 		cursor: grabbing;
+	}
+	/* M6-F2: Corner-Resize-Griff — unten rechts über der clip-path-Ecke.
+	   Position absolute im Box-Kontext: das zoom der Box skaliert den Griff
+	   mit, was ok ist (Trefferfläche wächst mit der Box). */
+	.pin-resize {
+		position: absolute;
+		right: 2px;
+		bottom: 2px;
+		width: 16px;
+		height: 16px;
+		display: none;
+		background: transparent;
+		border: 0;
+		padding: 0;
+		cursor: nwse-resize;
+	}
+	.pin-resize i {
+		position: absolute;
+		right: 2px;
+		bottom: 2px;
+		width: 9px;
+		height: 9px;
+		border-right: 2px solid var(--fgdim);
+		border-bottom: 2px solid var(--fgdim);
+		display: block;
+	}
+	.pin.interactive .pin-resize {
+		display: block;
+	}
+	.pin.interactive .pin-resize:hover i,
+	.pin.resizing .pin-resize i {
+		border-color: var(--accent);
 	}
 	.pin-grip {
 		display: flex;

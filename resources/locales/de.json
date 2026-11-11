@@ -1125,6 +1125,8 @@
     "pins.opacity": "Deckkraft",
     "pins.unpin_title": "Lösen (zurück zur normalen View)",
     "pins.close_title": "Box schließen (Pin entfernen)",
+    "pins.size_title": "Größe regeln",
+    "pins.resize_title": "Boxgröße ändern (Ecke ziehen)",
     "pins.empty": ""
   }
 }
