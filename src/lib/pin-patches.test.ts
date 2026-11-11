@@ -32,13 +32,13 @@ test('Patch innerhalb des Viewports bleibt unverändert', () => {
 	assert.deepEqual(p, { x: 500, y: 300 });
 });
 
-test('verwahrte Koordinaten → randberührt geclampt (nie vollständig draußen)', () => {
+test('verwahrte Koordinaten → randberührt an der Persistenz-Marge geclampt (t_88fb1585: Mirror von snap_to_edge, EDGE_MARGIN 8)', () => {
 	assert.deepEqual(patchPos(pin({ x: 3400, y: -50 }), 3440, 1440), {
-		x: 3440 - PIN_BOX_W,
-		y: 0
+		x: 3440 - PIN_BOX_W - 8,
+		y: 8
 	});
 	const h = pinBoxEstHeight(3);
-	assert.equal(patchPos(pin({ rows: new Array(3).fill(pin().rows[0]), y: 1600 }), 3440, 1440).y, 1440 - h);
+	assert.equal(patchPos(pin({ rows: new Array(3).fill(pin().rows[0]), y: 1600 }), 3440, 1440).y, 1440 - h - 8);
 });
 
 test('Popover: unter der Box, an der Box-Mitte orientiert', () => {
@@ -52,7 +52,8 @@ test('Popover: unter der Box, an der Box-Mitte orientiert', () => {
 test('Popover: rechte/untere Randlage → in den Viewport zurückgeclampt', () => {
 	const right = popoverPos(pin({ x: 3440 - PIN_BOX_W, y: 0 }), 3440, 1440);
 	assert.equal(right.x, 3440 - POPOVER_W);
-	assert.equal(right.y, pinBoxEstHeight(1));
+	// Box clampt auf die Persistenz-Marge (y=8) — Popover hängt darunter.
+	assert.equal(right.y, 8 + pinBoxEstHeight(1));
 	const bottom = popoverPos(pin({ x: 0, y: 1440 - pinBoxEstHeight(1) }), 3440, 1440);
 	assert.equal(bottom.y, 1440 - POPOVER_H);
 });

@@ -1080,6 +1080,36 @@ fn compositor_focus_dedupe(class: &str, target: u8) {
     compositor_focus(class);
 }
 
+/// `cursor:<opt>` via Lua-Bridge setzen — Hyprland >= 0.56 verwirft
+/// `hyprctl keyword` ("keyword can't work with non-legacy parsers. Use
+/// eval.", Omarchy 0.56.2 live verifiziert); `hl.config({...})` über
+/// `hyprctl eval` ist der funktionierende Weg (live: getoption schlägt
+/// um). Rückgabe true = eval-Pfad hat geantwortet; `keyword` nur als
+/// Fallback für ältere Hyprland-Installs ohne Bridge-Restriktion.
+#[cfg(target_os = "linux")]
+fn hypr_eval_kw_config(option: &str, enable: bool) -> bool {
+    let lua = no_warps_lua(option, enable);
+    let ok = hyprctl_limited(&["eval", &lua])
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if ok {
+        return true;
+    }
+    let val = if enable { "true" } else { "false" };
+    let _ = hyprctl_limited(&["keyword", option, val]);
+    false
+}
+
+/// Lua-String für den Keyword-Ersatz — rein, damit unit-testbar (die
+/// Klammer-Verschachtelung `hl.config({cursor={no_warps=true}})` ist
+/// fehleranfällig; "a:b" → "{a={b=VAL}}").
+#[cfg(target_os = "linux")]
+fn no_warps_lua(option: &str, enable: bool) -> String {
+    let val = if enable { "true" } else { "false" };
+    let path = option.replace(':', "={");
+    ["hl.config({", &path, "=", val, "}})"].concat()
+}
+
 /// Cursor-Warp-Unterdrückung um den Fokus-Dispatch: Hyprland zentriert den
 /// Cursor im fokussierten Fenster — `cursor:no_warps` temporär setzen und
 /// den vorherigen Wert zurückstellen (nur Hyprland; andere Compositor no-op).
@@ -1097,18 +1127,28 @@ fn compositor_focus(class: &str) {
         // Hyprland installs.
         // t_2d2f0f30: Hyprland WARPT den Cursor beim Fokus-Dispatch in die
         // Fenstermitte — `cursor:no_warps` temporär setzen und den
-        // vorherigen Wert zurückstellen (getoption liefert z.B.
-        // "int: 0" / "int: 1"; str-Kürzung im Fehlerfall einfach weg).
+        // vorherigen Wert zurückstellen.
+        // t_88fb1585 (M5-R2): Hyprland >= 0.56 (Omarchy live verifiziert,
+        // 0.56.2) verwirft `hyprctl keyword` komplett ("keyword can't work
+        // with non-legacy parsers. Use eval.") — der alte keyword-Weg war
+        // dort wirkungslos, jeder der 3 Retry-Dispatches warpte. Der
+        // funktionierende Weg ist die Lua-Bridge:
+        //   hyprctl eval 'hl.config({cursor={no_warps=true}})'
+        // (live verifiziert: getoption schlägt danach auf true um). Der
+        // getoption-Vorherwert wird vollständig geparst ("bool: false" →
+        // "false", nicht der letzte Buchstabe) und über denselben eval-Weg
+        // zurückgestellt; `keyword` bleibt als Fallback für ältere
+        // Hyprland-Installs ohne Bridge-Restriktion.
         let prev_warp = hyprctl_limited(&["getoption", "cursor:no_warps"])
             .and_then(|o| {
                 String::from_utf8_lossy(&o.stdout)
-                    .into_owned()
-                    .chars()
-                    .last()
+                    .split_whitespace()
+                    .next_back()
+                    .map(String::from)
             })
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "0".into());
-        let _ = hyprctl_limited(&["keyword", "cursor:no_warps", "true"]);
+            .filter(|v| v == "true" || v == "false")
+            .unwrap_or_else(|| "false".into());
+        let _ = hypr_eval_kw_config("cursor:no_warps", true);
         let lua = format!("hl.dsp.focus({{ window = \"class:{class}\" }})");
         let ok = match hyprctl_limited(&["dispatch", &lua]) {
             Some(o) => {
@@ -1129,7 +1169,7 @@ fn compositor_focus(class: &str) {
         }
         // Warp-Unterdrückung zurückstellen (auch im Fehlerpfad — der alte
         // Wert soll in jedem Fall wieder stehen).
-        let _ = hyprctl_limited(&["keyword", "cursor:no_warps", &prev_warp]);
+        let _ = hypr_eval_kw_config("cursor:no_warps", prev_warp == "true");
     }
     #[cfg(not(target_os = "linux"))]
     let _ = class;
@@ -1515,6 +1555,21 @@ mod tests {
     use super::*;
     use tauri::Manager;
     use tauri::test::mock_app;
+
+    /// t_88fb1585: der eval-Ersatz für `hyprctl keyword` baut
+    /// `hl.config({cursor={no_warps=…}})` — genau dieser String ist live auf
+    /// Omarchy (Hyprland 0.56.2) verifiziert (getoption schlägt um).
+    #[test]
+    fn no_warps_lua_builds_bridge_config_call() {
+        assert_eq!(
+            no_warps_lua("cursor:no_warps", true),
+            "hl.config({cursor={no_warps=true}})"
+        );
+        assert_eq!(
+            no_warps_lua("cursor:no_warps", false),
+            "hl.config({cursor={no_warps=false}})"
+        );
+    }
 
     fn managed_app() -> tauri::App<tauri::test::MockRuntime> {
         let app = mock_app();
