@@ -38,6 +38,7 @@
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tauri::Emitter;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager};
@@ -328,6 +329,8 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         let n = repair_unresolvable_screens(s.pins_mut_entry(), &monitors);
         if n > 0 {
             crate::app_settings::persist_settings(&s);
+            // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+            let _ = app.emit(PINS_CHANGED_EVENT, true);
             log::warn!("pins: Boot-Repair: {n} Pin-Einträge auf Primärmonitor umgemappt");
         }
         n
@@ -546,6 +549,8 @@ pub fn pin_add<R: tauri::Runtime>(
             .collect(),
     });
     crate::app_settings::persist_settings(&s);
+    // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+    let _ = app.emit(PINS_CHANGED_EVENT, true);
     drop(s);
     notify_changed(&app);
     crate::overlay::refresh_visibility(&app);
@@ -573,6 +578,8 @@ pub fn pin_unpin<R: tauri::Runtime>(
         }
         if hit {
             crate::app_settings::persist_settings(&s);
+            // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+            let _ = app.emit(PINS_CHANGED_EVENT, true);
         }
         hit
     };
@@ -600,6 +607,8 @@ pub fn pin_remove<R: tauri::Runtime>(
         let removed = list.len() != before;
         if removed {
             crate::app_settings::persist_settings(&s);
+            // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+            let _ = app.emit(PINS_CHANGED_EVENT, true);
         }
         removed
     };
@@ -632,6 +641,8 @@ pub fn pin_set_opacity<R: tauri::Runtime>(
     }
     if hit {
         crate::app_settings::persist_settings(&s);
+        // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+        let _ = app.emit(PINS_CHANGED_EVENT, true);
     }
     hit
 }
@@ -661,6 +672,12 @@ pub fn pin_move<R: tauri::Runtime>(
     }
     if hit {
         crate::app_settings::persist_settings(&s);
+        // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+        let _ = app.emit(PINS_CHANGED_EVENT, true);
+        // Auch Drag-Änderungen an ALLE Pin-Anzeigen funken (vormals nur
+        // pin_add) — sonst sieht die Box den eigenen Drag erst beim
+        // nächsten vollen Reload.
+        let _ = app.emit(PINS_CHANGED_EVENT, true);
     }
     hit
 }
@@ -712,6 +729,8 @@ pub fn pin_update<R: tauri::Runtime>(
     }
     if hit {
         crate::app_settings::persist_settings(&s);
+        // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+        let _ = app.emit(PINS_CHANGED_EVENT, true);
         drop(s);
         notify_changed(&app);
     }
@@ -730,6 +749,8 @@ pub fn pins_set_enabled<R: tauri::Runtime>(app: AppHandle<R>, on: bool) {
         let entry = s.pins_mut_or_default();
         entry.enabled = on;
         crate::app_settings::persist_settings(&s);
+        // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
+        let _ = app.emit(PINS_CHANGED_EVENT, true);
     }
     sync_tray_check(&app, on);
     notify_changed(&app);
