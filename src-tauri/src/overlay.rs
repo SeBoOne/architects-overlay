@@ -21,7 +21,7 @@ use crate::i18n_err::{err_key, err_keyp};
 use crate::shortcut_diag;
 use serde_json::json;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
 use tauri::webview::WebviewWindow;
@@ -493,10 +493,16 @@ pub fn set_click_through<R: Runtime>(app: &AppHandle<R>, ignore: bool) -> bool {
                 // Switching INTO focus mode must also move keyboard focus to
                 // the overlay — under Hyprland/Wayland the game would other-
                 // wise keep swallowing every keystroke (practical report).
+                // t_2d2f0f30 (Sebo-Befund „Maus springt mehrfach in die
+                // Mitte"): der Fokus-Dispatch zentriert den Cursor (Hyprland
+                // warpt beim focus-Dispatch) — also nur bei ECHTEM
+                // Zielwechsel und ohne Warp (wrapper setzt cursor:no_warps
+                // temporär). apply_visibility läuft mehrfach pro Öffnen;
+                // ohne Dedupe purzelt der Cursor 3-4× pro Toggle.
                 if !ignore {
-                    compositor_focus(SPOTLIGHT_WM_CLASS);
+                    compositor_focus_dedupe(SPOTLIGHT_WM_CLASS, FOCUS_TARGET_SPOTLIGHT);
                 } else {
-                    compositor_focus("starcitizen.exe");
+                    compositor_focus_dedupe("starcitizen.exe", FOCUS_TARGET_GAME);
                 }
             }
         }
@@ -696,6 +702,9 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                         }
                         compositor_focus(&label);
                     }
+                    // Retry-Kette abgeschlossen: Ziel gilt als gesetzt
+                    // (Dedupe-Basis für die apply_visibility-Pfade).
+                    LAST_FOCUS_TARGET.store(FOCUS_TARGET_SPOTLIGHT, Ordering::SeqCst);
                 });
                 // v2 (t_6d26985e): arm the stay_focused bridge AFTER the map,
                 // from the app itself — the SC focus-steal workaround keeps
@@ -740,7 +749,7 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
             } else {
                 let _ = win.hide();
                 // Hand keyboard focus back to the game.
-                compositor_focus("starcitizen.exe");
+                compositor_focus_dedupe("starcitizen.exe", FOCUS_TARGET_GAME);
             }
         }
     });
@@ -1054,6 +1063,26 @@ fn reassert_place_after_map<R: Runtime>(win: &WebviewWindow<R>) {
 /// `hyprctl` (present on the target desktop; a no-op everywhere else):
 /// show → focus the spotlight so search typing works, hide → hand focus back
 /// to the game.
+/// Letztes Fokus-Ziel (t_2d2f0f30): 0 = unbekannt, 1 = Spotlight, 2 = Spiel.
+/// Dedupe-Basis gegen mehrfaches Cursor-Zentrieren pro apply_visibility.
+pub static LAST_FOCUS_TARGET: AtomicU8 = AtomicU8::new(0);
+pub const FOCUS_TARGET_SPOTLIGHT: u8 = 1;
+pub const FOCUS_TARGET_GAME: u8 = 2;
+
+/// Fokus-Dispatch nur bei echtem Zielwechsel (apply_visibility läuft
+/// mehrfach pro Öffnungszyklus; jeder Dispatch warpt den Hyprland-Cursor
+/// in die Fenstermitte — Sebo-Befund 2026-11-10).
+fn compositor_focus_dedupe(class: &str, target: u8) {
+    if LAST_FOCUS_TARGET.load(Ordering::SeqCst) == target {
+        return;
+    }
+    LAST_FOCUS_TARGET.store(target, Ordering::SeqCst);
+    compositor_focus(class);
+}
+
+/// Cursor-Warp-Unterdrückung um den Fokus-Dispatch: Hyprland zentriert den
+/// Cursor im fokussierten Fenster — `cursor:no_warps` temporär setzen und
+/// den vorherigen Wert zurückstellen (nur Hyprland; andere Compositor no-op).
 fn compositor_focus(class: &str) {
     #[cfg(target_os = "linux")]
     {
@@ -1066,6 +1095,20 @@ fn compositor_focus(class: &str) {
         // `hl.dsp.focus({ window = "class:X" })` is the reliable one
         // (verified live); the plain form stays as fallback for non-Omarchy
         // Hyprland installs.
+        // t_2d2f0f30: Hyprland WARPT den Cursor beim Fokus-Dispatch in die
+        // Fenstermitte — `cursor:no_warps` temporär setzen und den
+        // vorherigen Wert zurückstellen (getoption liefert z.B.
+        // "int: 0" / "int: 1"; str-Kürzung im Fehlerfall einfach weg).
+        let prev_warp = hyprctl_limited(&["getoption", "cursor:no_warps"])
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .into_owned()
+                    .chars()
+                    .last()
+            })
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "0".into());
+        let _ = hyprctl_limited(&["keyword", "cursor:no_warps", "true"]);
         let lua = format!("hl.dsp.focus({{ window = \"class:{class}\" }})");
         let ok = match hyprctl_limited(&["dispatch", &lua]) {
             Some(o) => {
@@ -1084,6 +1127,9 @@ fn compositor_focus(class: &str) {
         if !ok {
             let _ = hyprctl_limited(&["dispatch", "focuswindow", &format!("class:{class}")]);
         }
+        // Warp-Unterdrückung zurückstellen (auch im Fehlerpfad — der alte
+        // Wert soll in jedem Fall wieder stehen).
+        let _ = hyprctl_limited(&["keyword", "cursor:no_warps", &prev_warp]);
     }
     #[cfg(not(target_os = "linux"))]
     let _ = class;

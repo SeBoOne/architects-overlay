@@ -93,6 +93,8 @@ function popoverPosFor(pin: PinEntry) {
 	return popoverPos(pin, vw, vh);
 }
 
+const DRAG_THRESHOLD = 4; // px — darunter gilt der Grab als Klick (Popover)
+
 // Drag NUR bei interaktivem Spotlight (Palette offen); ohne Drag-Bewegung
 // (Klick auf den Kopf) öffnet das Controller-Popover.
 function onGrab(e: PointerEvent, pin: PinEntry) {
@@ -103,9 +105,19 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 	e.preventDefault();
 	openKey = null;
 	dragPin = pin;
+	// Delta über clientX/Y (Start-Position merken): ev.movementX/Y ist ein
+	// Pointer-Lock-Feature und liefert ohne Pointer-Lock (Wayland/WebKitGTK)
+	// konstant 0 — der Drag starb still und jeder Grab öffnete das Popover
+	// (Sebo-Befund 2026-11-10). Plus Schwelle: < DRAG_THRESHOLD ist ein Klick.
+	const startX = e.clientX;
+	const startY = e.clientY;
+	let dx = 0;
+	let dy = 0;
 	const move = (ev: PointerEvent) => {
 		if (!dragPin) return;
-		dragPin = { ...dragPin, x: pin.x + ev.movementX, y: pin.y + ev.movementY };
+		dx = ev.clientX - startX;
+		dy = ev.clientY - startY;
+		dragPin = { ...pin, x: pin.x + dx, y: pin.y + dy };
 	};
 	const up = (ev: PointerEvent) => {
 		const p = dragPin;
@@ -113,8 +125,8 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 		window.removeEventListener('pointermove', move);
 		window.removeEventListener('pointerup', up);
 		if (!p) return;
-		const moved = Math.abs(ev.movementX) + Math.abs(ev.movementY);
-		if (moved > 0) {
+		const moved = Math.abs(dx) + Math.abs(dy);
+		if (moved > DRAG_THRESHOLD) {
 			void invoke('pin_move', {
 				view_id: p.view_id,
 				screen: p.screen,
@@ -159,14 +171,10 @@ function stepOpacity(pin: PinEntry, delta: number) {
 	void load();
 }
 
-function unpin(pin: PinEntry) {
-	void invoke('pin_unpin', {
-		view_id: pin.view_id,
-		screen: pin.screen,
-		box_index: pin.box_index
-	});
-	void load();
-}
+// „Lösen“ (unpin) entfernt (Sebo-Befund 2026-11-10): semantisch identisch
+// zu „Schließen“ (pin entfernt, Plugin/View läuft weiter) — zwei Buttons
+// für denselben Effekt verwirrten. pin_unpin bleibt im Backend bestehen
+// (API-Vertrag), wird im UI aber nicht mehr angeboten.
 
 function remove(pin: PinEntry) {
 	void invoke('pin_remove', {
@@ -232,13 +240,6 @@ onMount(() => {
 						<button
 							type="button"
 							class="pin-btn"
-							title={$t('pins.unpin_title')}
-							aria-label={$t('pins.unpin_title')}
-							onclick={() => unpin(pin)}
-						>⌐</button>
-						<button
-							type="button"
-							class="pin-btn"
 							title={$t('pins.close_title')}
 							aria-label={$t('pins.close_title')}
 							onclick={() => remove(pin)}
@@ -273,7 +274,6 @@ onMount(() => {
 					{#each PRESETS as p (p)}
 						<button type="button" class="pbtn" class:active={pin.opacity === p} onclick={() => stepOpacity(pin, p - pin.opacity)} title={$t('pins.opacity_title')}>{p}</button>
 					{/each}
-					<button type="button" class="pbtn" onclick={() => unpin(pin)} title={$t('pins.unpin_title')}>⌐</button>
 					<button type="button" class="pbtn" onclick={() => remove(pin)} title={$t('pins.close_title')}>✕</button>
 				</div>
 			{/if}
