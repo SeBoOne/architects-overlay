@@ -500,9 +500,9 @@ pub fn set_click_through<R: Runtime>(app: &AppHandle<R>, ignore: bool) -> bool {
                 // temporär). apply_visibility läuft mehrfach pro Öffnen;
                 // ohne Dedupe purzelt der Cursor 3-4× pro Toggle.
                 if !ignore {
-                    compositor_focus_dedupe(SPOTLIGHT_WM_CLASS, FOCUS_TARGET_SPOTLIGHT);
+                    compositor_focus_dedupe(&spotlight_compositor_selector(), FOCUS_TARGET_SPOTLIGHT);
                 } else {
-                    compositor_focus_dedupe("starcitizen.exe", FOCUS_TARGET_GAME);
+                    compositor_focus_dedupe("class:starcitizen.exe", FOCUS_TARGET_GAME);
                 }
             }
         }
@@ -688,7 +688,6 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // show() the compositor does not know the window yet
                 // ("hl.focus: window not found"), so the immediate attempt
                 // always missed (verified via compositor_focus logging).
-                let label = SPOTLIGHT_WM_CLASS.to_string();
                 let win_probe = win.clone();
                 std::thread::spawn(move || {
                     for wait in [300u64, 600, 1200] {
@@ -700,7 +699,7 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                         if !win_probe.is_visible().unwrap_or(false) {
                             return;
                         }
-                        compositor_focus(&label);
+                        compositor_focus(&spotlight_compositor_selector());
                     }
                     // Retry-Kette abgeschlossen: Ziel gilt als gesetzt
                     // (Dedupe-Basis für die apply_visibility-Pfade).
@@ -756,7 +755,7 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // hier Lösen — die Pins sind im Pins-only-Zustand rein
                 // Anzeige (PinBoxes: interactive=false), die Bridge wird
                 // beim nächsten Show-Pfad neu bewaffnet.
-                compositor_focus_dedupe("starcitizen.exe", FOCUS_TARGET_GAME);
+                compositor_focus_dedupe("class:starcitizen.exe", FOCUS_TARGET_GAME);
                 #[cfg(target_os = "linux")]
                 std::thread::spawn(move || {
                     // Kurz verzögert + außerhalb des Main-Threads: der
@@ -769,7 +768,7 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
             } else {
                 let _ = win.hide();
                 // Hand keyboard focus back to the game.
-                compositor_focus_dedupe("starcitizen.exe", FOCUS_TARGET_GAME);
+                compositor_focus_dedupe("class:starcitizen.exe", FOCUS_TARGET_GAME);
             }
         }
     });
@@ -994,13 +993,18 @@ fn place_on_pointer_monitor<R: Runtime>(win: &WebviewWindow<R>) {
 /// Pure + exact-string tested: negative monitor coordinates (rotated/above
 /// layouts, e.g. HDMI-A-2 at 1825,-1920) must survive formatting verbatim.
 fn geometry_dispatch_lua(pid: u32, pos: (i32, i32), size: (u32, u32)) -> (String, String) {
+    // Multi-monitor window-selection-2026-11-11: `pid:` alone matches EVERY
+    // toplevel of our process — the Fenstermodus window shares pid + WM class
+    // with the spotlight. The TITLE criterion disambiguates: the dispatches
+    // must never drag the Fenstermodus window onto the overlay's monitor.
+    let sel = format!("pid:{pid},title:{SPOTLIGHT_TITLE}");
     (
         format!(
-            "hl.dsp.window.resize({{ x = {}, y = {}, window = \"pid:{pid}\" }})",
+            "hl.dsp.window.resize({{ x = {}, y = {}, window = \"{sel}\" }})",
             size.0, size.1
         ),
         format!(
-            "hl.dsp.window.move({{ x = {}, y = {}, window = \"pid:{pid}\" }})",
+            "hl.dsp.window.move({{ x = {}, y = {}, window = \"{sel}\" }})",
             pos.0, pos.1
         ),
     )
@@ -1092,12 +1096,12 @@ pub const FOCUS_TARGET_GAME: u8 = 2;
 /// Fokus-Dispatch nur bei echtem Zielwechsel (apply_visibility läuft
 /// mehrfach pro Öffnungszyklus; jeder Dispatch warpt den Hyprland-Cursor
 /// in die Fenstermitte — Sebo-Befund 2026-11-10).
-fn compositor_focus_dedupe(class: &str, target: u8) {
+fn compositor_focus_dedupe(selector: &str, target: u8) {
     if LAST_FOCUS_TARGET.load(Ordering::SeqCst) == target {
         return;
     }
     LAST_FOCUS_TARGET.store(target, Ordering::SeqCst);
-    compositor_focus(class);
+    compositor_focus(selector);
 }
 
 /// `cursor:<opt>` via Lua-Bridge setzen — Hyprland >= 0.56 verwirft
@@ -1130,10 +1134,25 @@ fn no_warps_lua(option: &str, enable: bool) -> String {
     ["hl.config({", &path, "=", val, "}})"].concat()
 }
 
+/// Spotlight-Selektor für compositor-seitige Dispatches (Fokus + Geometrie).
+///
+/// Die WM-Klasse allein ist mehrdeutig: das Fenstermodus-Fenster (`app-window`
+/// = window-selection-2026-11-11) teilt pid + WM-Klasse mit dem Spotlight —
+/// nur der Titel unterscheidet. `pid:` + `title:` sind AND-verknüpfte
+/// Selektor-Kriterien (Hyprland: Komma-Kriterien); live verifiziert 2026-11-11
+/// (`hyprctl dispatch 'hl.dsp.focus({ window = "pid:…,title:…" })'` parst).
+pub fn spotlight_compositor_selector() -> String {
+    format!("class:{SPOTLIGHT_WM_CLASS},title:{SPOTLIGHT_TITLE}")
+}
+
 /// Cursor-Warp-Unterdrückung um den Fokus-Dispatch: Hyprland zentriert den
 /// Cursor im fokussierten Fenster — `cursor:no_warps` temporär setzen und
 /// den vorherigen Wert zurückstellen (nur Hyprland; andere Compositor no-op).
-fn compositor_focus(class: &str) {
+///
+/// `selector` ist ein vollständiger Hyprland-Selektor (z. B. `class:X,title:Y`
+/// — seit window-selection-2026-11-11 sind reine `class:`-Selektoren mehrdeutig,
+/// wenn die Fenstermodus-Fenster gemappt ist).
+fn compositor_focus(selector: &str) {
     #[cfg(target_os = "linux")]
     {
         if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
@@ -1169,30 +1188,30 @@ fn compositor_focus(class: &str) {
             .filter(|v| v == "true" || v == "false")
             .unwrap_or_else(|| "false".into());
         let _ = hypr_eval_kw_config("cursor:no_warps", true);
-        let lua = format!("hl.dsp.focus({{ window = \"class:{class}\" }})");
+        let lua = format!("hl.dsp.focus({{ window = \"{selector}\" }})");
         let ok = match hyprctl_limited(&["dispatch", &lua]) {
             Some(o) => {
                 log::info!(
-                    "compositor_focus({class}): status={:?} out={:?}",
+                    "compositor_focus({selector}): status={:?} out={:?}",
                     o.status.code(),
                     String::from_utf8_lossy(&o.stdout).trim()
                 );
                 o.status.success()
             }
             None => {
-                log::info!("compositor_focus({class}): spawn failed or timed out");
+                log::info!("compositor_focus({selector}): spawn failed or timed out");
                 false
             }
         };
         if !ok {
-            let _ = hyprctl_limited(&["dispatch", "focuswindow", &format!("class:{class}")]);
+            let _ = hyprctl_limited(&["dispatch", "focuswindow", selector]);
         }
         // Warp-Unterdrückung zurückstellen (auch im Fehlerpfad — der alte
         // Wert soll in jedem Fall wieder stehen).
         let _ = hypr_eval_kw_config("cursor:no_warps", prev_warp == "true");
     }
     #[cfg(not(target_os = "linux"))]
-    let _ = class;
+    let _ = selector;
 }
 
 /// Window title of the spotlight window as mapped by the compositor. Used to
@@ -1402,7 +1421,7 @@ fn restore_focus_ownership<R: Runtime>(app: &AppHandle<R>) {
         .map(|w| w.is_visible().unwrap_or(false))
         .unwrap_or(false);
     if still_visible {
-        compositor_focus(SPOTLIGHT_WM_CLASS);
+        compositor_focus(&spotlight_compositor_selector());
     }
 }
 
@@ -1440,6 +1459,14 @@ fn parse_openwindow(line: &str) -> Option<(String, String, String)> {
 /// pid+class with the overlay, but is not the main window (title differs).
 /// The GTK file chooser spawned by `<input type="file">` matches exactly this.
 fn is_in_process_dialog(class: &str, title: &str) -> bool {
+    // Fenstermodus-Fenster (app-window, Titel "SC Architects Overlay") teilt
+    // pid + WM-Klasse mit dem Spotlight — aber es ist KEIN Dialog. Ohne diese
+    // Ausnahme würde das socket2-openwindow-Event des Fenstermodus-Fensters
+    // den Dialog-Suspend (Fokus-Brücke disarm) fälschlich auslösen.
+    // window-selection-fix (window-selection-2026-10-31).
+    if class == SPOTLIGHT_WM_CLASS && title == crate::window::APP_WINDOW_TITLE {
+        return false;
+    }
     class == SPOTLIGHT_WM_CLASS && title != SPOTLIGHT_TITLE
 }
 
@@ -1636,21 +1663,21 @@ mod tests {
         let (resize, mov) = geometry_dispatch_lua(4242, (1825, -1920), (1080, 1920));
         assert_eq!(
             resize,
-            "hl.dsp.window.resize({ x = 1080, y = 1920, window = \"pid:4242\" })"
+            "hl.dsp.window.resize({ x = 1080, y = 1920, window = \"pid:4242,title:SC Architects Spotlight\" })"
         );
         assert_eq!(
             mov,
-            "hl.dsp.window.move({ x = 1825, y = -1920, window = \"pid:4242\" })"
+            "hl.dsp.window.move({ x = 1825, y = -1920, window = \"pid:4242,title:SC Architects Spotlight\" })"
         );
         // DP-3: 3440x1440 at 0,0 — the identity case (dispatch is a no-op change).
         let (resize, mov) = geometry_dispatch_lua(4242, (0, 0), (3440, 1440));
         assert_eq!(
             resize,
-            "hl.dsp.window.resize({ x = 3440, y = 1440, window = \"pid:4242\" })"
+            "hl.dsp.window.resize({ x = 3440, y = 1440, window = \"pid:4242,title:SC Architects Spotlight\" })"
         );
         assert_eq!(
             mov,
-            "hl.dsp.window.move({ x = 0, y = 0, window = \"pid:4242\" })"
+            "hl.dsp.window.move({ x = 0, y = 0, window = \"pid:4242,title:SC Architects Spotlight\" })"
         );
     }
 
@@ -1856,6 +1883,9 @@ mod tests {
         assert!(is_in_process_dialog(SPOTLIGHT_WM_CLASS, "Datei auswählen"));
         assert!(!is_in_process_dialog(SPOTLIGHT_WM_CLASS, SPOTLIGHT_TITLE));
         assert!(!is_in_process_dialog("firefox", "Whatever"));
+        // window-selection-fix: das Fenstermodus-Fenster (app-window) teilt
+        // pid + WM-Klasse, ist aber KEIN Dialog — kein Dialog-Suspend.
+        assert!(!is_in_process_dialog(SPOTLIGHT_WM_CLASS, crate::window::APP_WINDOW_TITLE));
     }
 
     /// FP (t_1042447d): the dialog suspend must disarm EVERY own-class window,

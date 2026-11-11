@@ -50,6 +50,16 @@ use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow};
 /// Label des Fenstermodus-Webviews (Capabilities + Frontend-Zweig).
 pub const APP_WINDOW_LABEL: &str = "app-window";
 
+/// Window title of the Fenstermodus window as mapped by the compositor.
+///
+/// The Fenstermodus window shares the WM class AND the process pid with the
+/// spotlight — only the title differs. Every compositor-side discriminator
+/// (focus dispatches, dialog detection, geometry selectors) MUST treat this
+/// title as NOT-the-spotlight; ambiguity was the root cause of the
+/// multi-monitor bug (Fenster sprang beim Overlay-Show zum Overlay-Monitor,
+/// window-selection-2026-11-11).
+pub const APP_WINDOW_TITLE: &str = "SC Architects Overlay";
+
 /// Default-Geometrie (Plan §9 Frage 2, Sebo-Beschluss §9.1.2):
 /// 1200×800, zentriert auf dem Primärmonitor — einmalig; danach gilt immer
 /// die zuletzt persistierte Geometrie.
@@ -167,7 +177,7 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         // Fenstermodus über das Label (Modul-Doc oben: warum kein `#` im Pfad).
         WebviewUrl::App("index.html".into()),
     )
-    .title("SC Architects Overlay")
+    .title(APP_WINDOW_TITLE)
     .decorations(false) // eigenes Titelband (Variante B) — Frontend-Chrome
     .transparent(false) // NORMALES Fenster (Kontrastvertrag zum Spotlight)
     .resizable(true)
