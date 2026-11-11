@@ -420,6 +420,10 @@ pub struct PinDto {
     /// settings::PinEntry.content) — Kontext-adaptive Renderer der Pin-Ansicht.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<serde_json::Value>,
+    /// M6-F4 (t_7a548e85): stabile Inhalts-Identität (MIRROR von
+    /// settings::PinEntry.key) — Snapshot-Refresh matcht key-first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, serde::Deserialize)]
@@ -475,6 +479,7 @@ fn to_dto(e: &settings::PinEntry) -> PinDto {
             })
             .collect(),
         content: e.content.clone(),
+        key: e.key.clone(),
     }
 }
 
@@ -530,6 +535,10 @@ pub fn pin_add<R: tauri::Runtime>(
     // M6-F1 (t_58d46923): optionaler generischer Content-Deskriptor —
     // ohne Wert bleibt die Box beim rows-Snapshot (Bestand verträglich).
     content: Option<serde_json::Value>,
+    // M6-F4 (t_7a548e85): optionale stabile Inhalts-Identität (opaker
+    // String der View) — Snapshot-Refresh matcht key-first statt
+    // Positions-Index; ohne Wert bleibt der Index (Bestand verträglich).
+    key: Option<String>,
 ) -> bool {
     // Capture (t_56262ccf): Identität über die unified Enumeration — der
     // NAME von current_monitor() ist auf Hyprland der Model-String
@@ -559,6 +568,16 @@ pub fn pin_add<R: tauri::Runtime>(
         .any(|e| e.pinned && e.view_id == view_id && e.screen == screen && e.box_index == box_index)
     {
         return false; // bereits angeheftet
+    }
+    // M6-F4 (t_7a548e85): identischer Inhalt (gleicher Key) derselben View
+    // ist bereits gepinnt → kein zweiter Klon (Liste kann umsortieren; der
+    // box_index allein beweist keine Verschiedenheit).
+    if key.as_ref().is_some_and(|k| {
+        section
+            .iter()
+            .any(|e| e.pinned && e.view_id == view_id && e.key.as_deref() == Some(k.as_str()))
+    }) {
+        return false;
     }
     // Placement: rechte Kante, gestapelt über die Höhen der vorhandenen
     // aktiven Boxen desselben Screens (Höhe ~ Kopf + Zeilen, grob).
@@ -592,6 +611,7 @@ pub fn pin_add<R: tauri::Runtime>(
             })
             .collect(),
         content,
+        key,
     });
     crate::app_settings::persist_settings(&s);
     // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
@@ -889,6 +909,10 @@ pub fn pin_update<R: tauri::Runtime>(
     // None lässt den bestehenden Wert unangetastet (Snapshot-Builder ohne
     // Content-Support altert nichts weg).
     content: Option<serde_json::Value>,
+    // M6-F4 (t_7a548e85): optionaler neuer Key im Refresh — Some schreibt
+    // die stabile Identität fort (z. B. nach Leg-Wechsel im Detail), None
+    // lässt den bestehenden Wert unangetastet (Bestand verträglich).
+    key: Option<String>,
 ) -> bool {
     let st = app.state::<crate::app_settings::SettingsState>();
     let mut s = st.inner.lock().expect("settings lock");
@@ -910,6 +934,9 @@ pub fn pin_update<R: tauri::Runtime>(
                 .collect();
             if content.is_some() {
                 e.content = content.clone();
+            }
+            if key.is_some() {
+                e.key = key.clone();
             }
             hit = true;
         }
@@ -981,6 +1008,7 @@ mod tests {
             kpi: None,
             rows: Vec::new(),
             content: Some(serde_json::json!({ "type": "deal-chat" })),
+            key: None,
         };
         let js = serde_json::to_value(&dto).unwrap();
         assert!(js.get("view_id").is_some());
@@ -1027,6 +1055,31 @@ mod tests {
         assert!(js.get("game_running").is_some());
         assert!(js.get("overlay_visible").is_some());
         assert!(js.get("spotlight_screen").is_some());
+    }
+
+    /// M6-F4 (t_7a548e85): Key-Spiegel — PinDto trägt die stabile
+    /// Inhalts-Identität des Eintrags (key-first Snapshot-Refresh); ohne
+    /// Key (Bestand) bleibt das Feld weg (snake_case-Vertrag unberührt).
+    #[test]
+    fn dto_mirrors_key_and_omits_legacy_none() {
+        let mut e = settings::PinEntry {
+            view_id: "routes".into(),
+            screen: "DP-3".into(),
+            box_index: 0,
+            opacity: 100,
+            pinned: true,
+            x: 0,
+            y: 0,
+            title: "t".into(),
+            kpi: None,
+            rows: Vec::new(),
+            key: Some("42:7:9".into()),
+        };
+        let js = serde_json::to_value(to_dto(&e)).unwrap();
+        assert_eq!(js.get("key").and_then(|v| v.as_str()), Some("42:7:9"));
+        e.key = None;
+        let js = serde_json::to_value(to_dto(&e)).unwrap();
+        assert!(js.get("key").is_none());
     }
 
     /// §9.1.5: Sichtbarkeit strikt an game_running gekoppelt.
@@ -1217,6 +1270,7 @@ mod tests {
             kpi: None,
             rows: Vec::new(),
             content: None,
+            key: None,
         };
         let monitors = [
             MonitorRect {

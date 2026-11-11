@@ -1299,6 +1299,56 @@ window.__TAURI_INTERNALS__ = {
 				if (!t) return null;
 				return { commodity_id: cid, commodity: '', buys: t.buys, sells: t.sells };
 			}
+			case 'pins_state': {
+				// M6-F4 (t_7a548e85): Pin-Spiegel für Probes — Liste inkl.
+				// gelöster Einträge (Frontend filtert p.pinned).
+				const list = (globalThis.__pins = globalThis.__pins || []);
+				return {
+					enabled: true,
+					game_running: true,
+					overlay_visible: true,
+					pins: list.map((p) => ({ ...p, rows: (p.rows || []).map((r) => ({ ...r })) })),
+					spotlight_screen: 'DP-3'
+				};
+			}
+			case 'pin_add': {
+				const list = (globalThis.__pins = globalThis.__pins || []);
+				if (list.some((p) => p.pinned && p.view_id === a.view_id && p.screen === 'DP-3' && p.box_index === a.box_index)) return false;
+				// M6-F4: identischer Inhalt (gleicher Key) → kein Klon.
+				if (a.key && list.some((p) => p.pinned && p.view_id === a.view_id && p.key === a.key)) return false;
+				list.push({
+					view_id: a.view_id, screen: 'DP-3', box_index: a.box_index,
+					opacity: a.opacity ?? 100, pinned: true,
+					x: 10, y: 10 + list.filter((p) => p.pinned).length * 90,
+					title: a.title, kpi: a.kpi ?? null, rows: a.rows || [], key: a.key ?? null
+				});
+				return true;
+			}
+			case 'pin_update': {
+				const list = globalThis.__pins || [];
+				let hit = false;
+				for (const p of list) {
+					if (p.pinned && p.view_id === a.view_id && p.box_index === a.box_index) {
+						p.title = a.title;
+						p.kpi = a.kpi ?? null;
+						p.rows = a.rows || [];
+						if (a.key != null) p.key = a.key;
+						hit = true;
+					}
+				}
+				return hit;
+			}
+			case 'pin_unpin': {
+				const list = globalThis.__pins || [];
+				let hit = false;
+				for (const p of list) {
+					if (p.pinned && p.view_id === a.view_id && p.screen === a.screen && p.box_index === a.box_index) {
+						p.pinned = false;
+						hit = true;
+					}
+				}
+				return hit;
+			}
 			case 'marketplace_photo': {
 				// M3a-R1 (t_f2e70b16): Bild-Proxy-Stub. Der echte Pfad (CDN
 				// octet-stream+nosniff → Backend-Fetch → Base64-Data-URI) ist

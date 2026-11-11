@@ -32,6 +32,9 @@ export type PinEntry = {
 	/// Interpretation macht ausschließlich die Renderer-Registry
 	/// (pin-content.ts); ohne Feld rendert die Box den rows-Snapshot.
 	content?: PinContent | null;
+	/** M6-F4 (t_7a548e85): optionale stabile Inhalts-Identität (opaker
+	 *  String der View) — Snapshot-Refresh matcht key-first. */
+	key?: string | null;
 };
 
 /// Generischer Content-Deskriptor — bewusst offen (kein Plugin-Vokabular

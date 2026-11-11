@@ -531,6 +531,13 @@ pub struct PinEntry {
     /// ohne Feld rendert die Box weiterhin den rows-Snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content: Option<serde_json::Value>,
+    /// M6-F4 (t_7a548e85): optionale stabile Inhalts-Identität — opaker
+    /// String der View-Komponente. Der Snapshot-Refresh matcht bevorzugt
+    /// über den Key statt über den Positions-Index: Listen, die durch
+    /// Filter umsortieren/abschneiden, ziehen den Pin sonst auf den
+    /// FALSchen Eintrag (Commodity-Sprung). Generisch, keine View-Semantik.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// Pins-Vertrag: Deckkraft-Range 20..=100 % (M4, `clamp_opacity` im
@@ -2302,6 +2309,8 @@ mod tests {
         let mut s = Settings::with_path(path.clone());
         s.set_pins(Some(PinsSection {
             enabled: true,
+            default_opacity: 55,
+            presets: vec![20, 55, 100],
             list: vec![PinEntry {
                 view_id: "routes".into(),
                 screen: "DP-3".into(),
@@ -2336,35 +2345,9 @@ mod tests {
                     "hash": "abc123",
                     "id_negotiation": 42
                 })),
+                key: Some("c:1:2".into()),
             }],
         }));
-        s.pins_mut_or_default().list = vec![PinEntry {
-            view_id: "routes".into(),
-            screen: "DP-3".into(),
-            box_index: 2,
-            opacity: 55,
-            pinned: true,
-            x: 3200,
-            y: 80,
-            title: "Route · Gold Ore (Raw)".into(),
-            kpi: Some("+27 %".into()),
-            rows: vec![
-                PinRow {
-                    idx: "01".into(),
-                    name: "Port Tressler".into(),
-                    sub: Some("Stanton · Kauf".into()),
-                    value: "4812".into(),
-                    side: Some("buy".into()),
-                },
-                PinRow {
-                    idx: "02".into(),
-                    name: "Levski".into(),
-                    sub: Some("Nyx · Verkauf".into()),
-                    value: "6104".into(),
-                    side: Some("sell".into()),
-                },
-            ],
-        }];
         s.save().unwrap();
         let loaded = Settings::load_from(&path).unwrap();
         let pins = loaded.pins().expect("pins section persists");
@@ -2393,6 +2376,15 @@ mod tests {
                 .and_then(|t| t.as_str()),
             Some("deal-chat")
         );
+        // M6-F4 (t_7a548e85): stabile Identität persistiert + roundtrip;
+        // fehlendes Feld (Bestand) → None.
+        assert_eq!(pin.key.as_deref(), Some("c:1:2"));
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("c:1:2"), "{raw}");
+        let legacy: PinEntry =
+            toml::from_str("view_id = \"routes\"\nscreen = \"DP-3\"\nbox_index = 0\nopacity = 100\npinned = true\nx = 0\ny = 0\ntitle = \"t\"\n").unwrap();
+        assert!(legacy.key.is_none());
+
         // Bestand: Pin ohne content-Feld lädt mit None (serde(default)).
         let legacy_json = r#"{
             "view_id": "offers", "screen": "DP-3", "box_index": 1,
@@ -2443,5 +2435,6 @@ mod tests {
         let loaded = Settings::load_from(&path).unwrap();
         assert_eq!(loaded.pins_default_opacity(), 35);
         assert_eq!(loaded.pins_presets(), vec![30, 60, 100]);
+
     }
 }
