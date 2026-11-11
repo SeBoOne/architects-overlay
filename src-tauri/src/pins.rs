@@ -1,33 +1,36 @@
-//! M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“.
+//! M4 (t_7bf507e6) + M5 (t_d10a0d84): Dauerhafte Shellboxen „Pins“.
 //!
-//! Verträge (docs/FENSTERMODUS-PLAN.md §6 + §9.1.4–6 — bindend):
+//! Verträge (docs/FENSTERMODUS-PLAN.md §6-Revision M5 + §9.1.4–6 — bindend):
 //!
-//! - **Träger:** EIN dediziertes WebviewWindow pro Screen mit gepinnten
-//!   Boxen (Sonde §6 Option A): Label `pins-<idx>`, decorations=false,
-//!   transparent, always_on_top, skip_taskbar — NICHT pro Pin ein Fenster.
+//! - **Träger (M5 — EIN-FENSTER-ARCHITEKTUR):** Pins sind DOM-Boxen IM
+//!   SPOTLIGHT-Webview (`PinBoxes.svelte`), NICHT eigene WebviewWindows.
+//!   Die früheren `pins-<idx>`-Fenster (M4 Option A) sind entfernt —
+//!   Lokaltest-Beweis (Sebo, 2026-11-10, Wayland/GTK3): input regions
+//!   unzuverlässig, always-on-top-Stacking-Fight mit dem Spotlight.
+//! - **Spotlight-Lebenslauf:** NEUER Zustand „pins-only“ (overlay.rs
+//!   `apply_visibility`): gemappt BLEIBT, solange `pins.enabled &&
+//!   gepinnte>0 && game_running` — auch wenn die Palette verborgen ist.
+//!   Klick-Modus = der bewährte complete-through (`set_ignore_cursor_events(true)`).
 //! - **Sichtbarkeit: strikt an `game_running` gekoppelt** (§9.1.5) — Pins
 //!   haben KEINEN Sichtbarkeitskanal ohne laufendes SC. Der Tray-Schalter
 //!   (`pins_toggle`, Checkbox „Pin-Boxen anzeigen“) ist eine NECESSARY-
 //!   Bedingung, nie hinreichend: effektiv sichtbar = enabled && pinned &&
 //!   game_running.
-//! - **Interaktion (§9.1.6, präzisiert M4-E t_34efb781):** das Pin-Fenster
-//!   ist REIN ANZEIGE — IMMER `set_ignore_cursor_events(true)` (Konstante,
-//!   kein Moduswechsel mit dem Overlay-Zustand). Die Interaktion läuft über
-//!   unsichtbare PATCH-Flächen IM SPOTLIGHT-Webview (PinPatches.svelte:
-//!   Drag → pin_move, Klick → Controller-Popover), die nur bei sichtbarem
-//!   Overlay gerendert werden. Kein per-Region-Input-Shape (tao/Wayland
-//!   kann das nicht) — der STICKING-CONFLICT (Spotlight hebt sich beim
-//!   show() über gleichrangige always-on-top-Pin-Fenster) wird durch die
-//!   Bauform gelöst: das Spotlight ist die EINZIGE interaktive Ebene.
+//! - **Interaktion:** die Boxen sind interaktiv, SOBALD das Spotlight
+//!   interaktiv ist (Palette offen): Drag → `pin_move`, Klick → Controller-
+//!   Popover (Deckkraft, Lösen, Schließen). Palette zu → reine Anzeige (das
+//!   Fenster ist komplett durchlässig — DOM-Interaktion ist ohnehin weg).
 //! - **Persistenz:** Pin-Eintrag `{view_id, screen, box_index, opacity,
 //!   pinned}` (+ Box-Position x/y + Anzeige-Snapshot) in app_settings
 //!   (`[pins]`-Sektion), Restore beim Start — effektiv sichtbar erst bei
 //!   game_running. Deckkraft pro Box, CSS opacity auf dem INHALT (Range
 //!   20–100 %, Presets 20/55/100 — clamp in `clamp_opacity`).
 //! - **Placement:** Box-Standardbreite 356px, Edge-Snapping L/R/T/B in
-//!   `snap_to_edge` (Drag nur im Overlay-sichtbaren Zustand — die Patch-
-//!   Flächen im Spotlight existieren nur dann, daraus folgt die Drag-
-//!   Beschränkung automatisch).
+//!   `snap_to_edge` (Drag läuft im Frontend, das Backend snappt + persistiert).
+//! - **Monitor-Identität (t_56262ccf, bleibt):** die unified Enumeration
+//!   (`monitor_list`/`hyprland_monitor_list`/`repair_unresolvable_screens`)
+//!   dient jetzt der Box-Placement-Validierung (Capture-Pfad `pin_add`,
+//!   Spotlight-Screen-Zuordnung) und der M1-Fenster-Geometrie.
 //! - **Universalität (Schema-U):** die Pin-Verwaltung ist rein mechanisch
 //!   ({view_id, screen, box_index}); Plugin-Semantik kommt NUR aus dem
 //!   Anzeige-Snapshot, den die View-Komponente des Overlay-Frontends beim
@@ -37,8 +40,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Serialize;
-use tauri::webview::WebviewWindowBuilder;
-use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow};
+use tauri::{AppHandle, Manager};
 
 use crate::window::MonitorRect;
 
@@ -52,20 +54,16 @@ pub const OPACITY_MAX: u32 = 100;
 /// Edge-Snapping-Mindestabstand zum Screen-Rand (px).
 pub const EDGE_MARGIN: i32 = 8;
 
-/// Label-Präfix der Pin-Fenster (`pins-0`, `pins-1`, … — Index in die
-/// Monitor-Liste). Frontend-Zweig erkennt am Präfix (`data-window="pins"`).
-pub const PINS_LABEL_PREFIX: &str = "pins-";
-
 /// Tray-Checkbox-Handle (vom tray::init gesetzt) — Zustand zieht
 /// `pins_set_enabled`/init live nach (Muster wie WindowTrayItem).
-pub struct PinsTrayItem<R: Runtime>(pub Mutex<Option<tauri::menu::CheckMenuItem<R>>>);
+pub struct PinsTrayItem<R: tauri::Runtime>(pub Mutex<Option<tauri::menu::CheckMenuItem<R>>>);
 
 /// In-memory Zustandsflag (vom Backend-Logikpfad gesetzt), damit die
 /// Tray-Checkbox und `pins_state` denselben Stand sehen.
 #[derive(Default)]
 pub struct PinsEnabled(AtomicBool);
 
-/// Ereignis ans Pin-Fenster-Frontend: Pin-Set hat sich geändert.
+/// Ereignis ans Spotlight-Frontend: Pin-Set hat sich geändert.
 pub const PINS_CHANGED_EVENT: &str = "ao:pins-changed";
 
 // ---------------------------------------------------------------------------
@@ -77,26 +75,6 @@ pub fn clamp_opacity(pct: u32) -> u32 {
     pct.clamp(OPACITY_MIN, OPACITY_MAX)
 }
 
-/// Input-Modus-Entscheidung (pure Logik, t_ef8222da / t_34efb781): für ein
-/// sichtbares/gemapptes Pin-Fenster wird der neue Ignore-Modus
-/// zurückgegeben; für ein hidden/nicht gemapptes Fenster `None` —
-/// dann wird KEINE Window-Mutation gestellt. Grund: tao paniziert in
-/// `WindowRequest::CursorIgnoreEvents` (`window.window().unwrap()`),
-/// wenn das GTK-Window nicht existiert/nicht gemappt ist — der Request
-/// darf auf versteckten Pin-Fenstern gar nicht erst in die Queue.
-/// Muster §9.1.6: Input-Modus nur im Moment des show() setzen.
-///
-/// M4-E (t_34efb781): das Pin-Fenster ist REIN ANZEIGE (Konstante) —
-/// immer `ignore=true` (input-transparent). Die Interaktion läuft über
-/// unsichtbare Patch-Flächen im Spotlight-Webview; der Overlay-Zustand
-/// spielt für den Input-Modus KEINE Rolle mehr (§9.1.6, präzisiert).
-pub fn pin_input_mode(pin_visible: bool) -> Option<bool> {
-    if !pin_visible {
-        return None;
-    }
-    Some(true)
-}
-
 /// Effective Sichtbarkeit der Pins (reine Logik, game_running-Vertrag
 /// §9.1.5): enabled (Tray-Schalter) UND mindestens ein aktiver Pin UND
 /// das Spiel läuft. Ohne laufendes SC gibt es KEINEN Kanal.
@@ -104,15 +82,40 @@ pub fn pins_effective_visible(enabled: bool, pinned_count: usize, game_running: 
     enabled && pinned_count > 0 && game_running
 }
 
-/// Screen-Bitmap für die Pin-Fenster-Verwaltung: Monitor-Name → Index.
-/// Primärmonitor an Index 0 (gleiche Konvention wie window::monitor_rects).
-pub fn screen_index_of(monitors: &[MonitorName], name: &str) -> Option<usize> {
-    monitors.iter().position(|m| m.0 == name)
+/// Spotlight-Modus (M5 §6-Revision — pure Berechnung, unit-getestet).
+///
+/// - `Palette`: die Palette ist effektiv sichtbar (`config_open ||
+///   user_visible && game_running`) — Spotlight gemappt + interaktiv.
+/// - `PinsOnly`: Palette verborgen, ABER Pins aktiv (enabled ∧ gepinnte>0 ∧
+///   game_running) — Spotlight bleibt gemappt, complete-through, nur die
+///   Pin-Boxen als DOM sichtbar.
+/// - `Hidden`: weder Palette noch Pins — Spotlight hide (alter Vertrag).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpotlightMode {
+    Palette,
+    PinsOnly,
+    Hidden,
+}
+
+/// Berechnet den Spotlight-Modus aus den vier Eingängen (pure, §6-Tabelle).
+pub fn spotlight_mode(
+    palette_visible: bool,
+    pins_enabled: bool,
+    pinned_count: usize,
+    game_running: bool,
+) -> SpotlightMode {
+    if palette_visible {
+        SpotlightMode::Palette
+    } else if pins_effective_visible(pins_enabled, pinned_count, game_running) {
+        SpotlightMode::PinsOnly
+    } else {
+        SpotlightMode::Hidden
+    }
 }
 
 /// Unified Monitor-Enumeration (t_56262ccf — Monitor-Identitäts-Mismatch):
-/// DIE EINE Identitäts-Quelle für Capture (pin_add), Lookup
-/// (ensure_pin_windows/screen_name_for) und Geometrie (window::record_geometry).
+/// DIE EINE Identitäts-Quelle für Capture (pin_add) und Spotlight-Screen-
+/// Zuordnung (spotlight_screen_of).
 ///
 /// Name-Quelle festgenagelt: Auf Hyprland liefert `hyprctl -j monitors` das
 /// `name`-Feld (wl_output-Name, z. B. `DP-3`) als Source of Truth. Beleg
@@ -124,7 +127,7 @@ pub fn screen_index_of(monitors: &[MonitorName], name: &str) -> Option<usize> {
 /// selben Hyprland-Layout-Raum (verifiziert t_317b9d15).
 /// Ohne Hyprland (und auf Windows/macOS): tauri available_monitors() —
 /// Primärmonitor an Index 0 (gleiche Konvention wie window::monitor_rects).
-pub fn monitor_list<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorRect> {
+pub fn monitor_list<R: tauri::Runtime>(app: &AppHandle<R>) -> Vec<MonitorRect> {
     #[cfg(target_os = "linux")]
     if let Some(list) = hyprland_monitor_list() {
         return primary_first(app, list);
@@ -150,7 +153,7 @@ pub fn monitor_list<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorRect> {
 }
 
 /// Stellt die Primärmonitor-zuerst-Konvention über die Namen her (in-place).
-fn primary_first_in_place<R: Runtime>(app: &AppHandle<R>, list: &mut [MonitorRect]) {
+fn primary_first_in_place<R: tauri::Runtime>(app: &AppHandle<R>, list: &mut [MonitorRect]) {
     let primary = app
         .primary_monitor()
         .ok()
@@ -164,7 +167,10 @@ fn primary_first_in_place<R: Runtime>(app: &AppHandle<R>, list: &mut [MonitorRec
     }
 }
 
-fn primary_first<R: Runtime>(app: &AppHandle<R>, mut list: Vec<MonitorRect>) -> Vec<MonitorRect> {
+fn primary_first<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    mut list: Vec<MonitorRect>,
+) -> Vec<MonitorRect> {
     primary_first_in_place(app, &mut list);
     list
 }
@@ -241,59 +247,13 @@ pub fn repair_unresolvable_screens(
 /// Rect des Monitors, auf dem ein Fenster aktuell lebt (physical). Nur die
 /// Geometrie interessiert — der NAME von current_monitor() ist auf Hyprland
 /// unzuverlässig (Model-String) und wird bewusst NICHT verwendet.
-///
-/// ACHTUNG (t_01f1a9ed): `current_monitor()` liefert None für ein NIE
-/// gemapptes Fenster — der Pin-Pfad darf damit KEINE Geometrie mehr
-/// auflösen (siehe `rect_for_screen`); der Helfer bleibt nur für den
-/// Capture-Pfad in `pin_add` (Spotlight-Fenster ist dort bereits gemappt).
-fn current_monitor_rect<R: Runtime>(win: &WebviewWindow<R>) -> Option<(i32, i32, u32, u32)> {
+fn current_monitor_rect<R: tauri::Runtime>(
+    win: &tauri::WebviewWindow<R>,
+) -> Option<(i32, i32, u32, u32)> {
     let m = win.current_monitor().ok().flatten()?;
     let pos = m.position();
     let size = m.size();
     Some((pos.x, pos.y, size.width, size.height))
-}
-
-/// Geometrie-Quelle für Pin-Fenster (t_01f1a9ed): Rect aus der unified
-/// Monitor-Enumeration über den Screen-Index IM LABEL — NICHT über
-/// `win.current_monitor()` (liefert None vor dem ersten Map → Geometrie
-/// wurde komplett übersprungen → show() mit Tauri-Default 800×600).
-pub fn rect_for_screen(monitors: &[MonitorRect], idx: usize) -> Option<(i32, i32, u32, u32)> {
-    monitors.get(idx).map(|m| (m.x, m.y, m.w, m.h))
-}
-
-/// Rect eines Pin-Fensters aus dem Label auflösen; nicht auflösbar →
-/// Fallback Primärmonitor (Index 0) mit SICHTBAREM log::warn (gleiche
-/// Fail-soft-Disziplin wie `screen_index_resolved_or_primary`).
-fn pin_window_rect<R: Runtime>(
-    monitors: &[MonitorRect],
-    win: &WebviewWindow<R>,
-) -> Option<(i32, i32, u32, u32)> {
-    let idx = screen_of_label(win.label());
-    let rect = idx.and_then(|i| rect_for_screen(monitors, i));
-    if rect.is_some() {
-        return rect;
-    }
-    log::warn!(
-        "pins: Rect für Label {:?} nicht auflösbar — Fallback auf Primärmonitor",
-        win.label()
-    );
-    rect_for_screen(monitors, 0)
-}
-
-/// Monitor-Name (Wrapper für Tests/Docs).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MonitorName(pub String);
-
-/// Label des Pin-Fensters für den n-ten Screen.
-pub fn label_for_screen(idx: usize) -> String {
-    format!("{PINS_LABEL_PREFIX}{idx}")
-}
-
-/// Screen-Index aus einem Pin-Fenster-Label (None bei fremden Labels).
-pub fn screen_of_label(label: &str) -> Option<usize> {
-    label
-        .strip_prefix(PINS_LABEL_PREFIX)
-        .and_then(|rest| rest.parse::<usize>().ok())
 }
 
 /// Edge-Snapping L/R/T/B (Pins-Vertrag): die Box wird auf den Screen
@@ -348,10 +308,9 @@ pub fn default_placement(screen_w: i32, screen_h: i32, occupied_heights: &[i32])
 // App-Laufzeit
 // ---------------------------------------------------------------------------
 
-/// Erzeugt die Pin-Fenster (hidden) für alle Screens, auf denen aktive
-/// Pins existieren, und verwaltet Sichtbarkeit/Input-Modus. Kein Fenster
-/// ohne Nutzungs-Historie (R1: zweite Webviews nur bei Bedarf).
-pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+/// Initialisiert die Pins-Zustände (KEINE Fenster mehr — M5: die Boxen
+/// leben im Spotlight-Webview).
+pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     app.manage(PinsTrayItem::<R>(Mutex::new(None)));
     let enabled = {
         let st = app.state::<crate::app_settings::SettingsState>();
@@ -376,187 +335,28 @@ pub fn init<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
     if repaired == 0 && monitors.is_empty() {
         log::warn!("pins: keine Monitore enumerierbar — Pins bleiben unaufgelöst");
     }
-    ensure_pin_windows(app.handle())?;
-    // Boot-Sync (t_01f1a9ed-Folge, R1-befund Omar): Der Game-Poller-First-Tick
-    // kann VOR diesem init laufen (overlay::init startet den Poller vor
-    // pins::init in lib.rs-Setup-Reihenfolge) — die Transition
-    // false→true feuert dann sync_game_running, während PinsEnabled noch
-    // nicht existiert → Early-Return → sync_all NIE wieder (keine weitere
-    // Transition, solange das Spiel durchläuft). Einmaliger Boot-Sync am
-    // Ende des init deckt genau diesen Fall deterministisch ab.
-    sync_all(app.handle());
     Ok(())
 }
 
-/// Lookup-Pfade als Namen (abgeleitet aus monitor_list — unified
-/// Enumeration, t_56262ccf; die alte available_monitors-only-Version
-/// divergierte auf Hyprland vom Capture-Pfad).
-fn monitor_names<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorName> {
-    monitor_list(app)
-        .into_iter()
-        .map(|m| MonitorName(m.name))
-        .collect()
-}
-
-/// Lookup-Pfad (t_56262ccf): Screen-Index über die unified Enumeration —
-/// nicht auflösbar → FAIL-SOFT-FALLBACK auf den Primärmonitor (Index 0)
-/// mit SICHTBAREM log::warn (Journal-Filter ≥WARN), statt still zu
-/// überspringen und die Pins für immer unsichtbar zu lassen.
-fn screen_index_resolved_or_primary(names: &[MonitorName], screen: &str) -> Option<usize> {
-    match screen_index_of(names, screen) {
-        Some(idx) => Some(idx),
-        None if !names.is_empty() => {
-            log::warn!(
-                "pins: Screen {screen:?} nicht auflösbar (erwartet: Monitor-Namen) — Fallback auf Primärmonitor"
-            );
-            Some(0)
-        }
-        None => None,
-    }
-}
-
-/// Stellt sicher, dass für jeden Screen mit aktiven Pins ein Fenster
-/// existiert. Idempotent — bestehende Fenster bleiben unangetastet.
-fn ensure_pin_windows<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
-    let screens = {
+/// Pin-Aktivität für die Spotlight-Modus-Berechnung (M5): (enabled,
+/// pinned_count) — game_running kommt aus dem Overlay-State des Callers.
+pub fn pins_activity<R: tauri::Runtime>(app: &AppHandle<R>) -> (bool, usize) {
+    let enabled = app
+        .try_state::<PinsEnabled>()
+        .map(|e| e.0.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    let pinned = {
         let st = app.state::<crate::app_settings::SettingsState>();
         let s = st.inner.lock().expect("settings lock");
-        let mut set: Vec<String> = s
-            .pins()
-            .map(|p| {
-                p.list
-                    .iter()
-                    .filter(|e| e.pinned)
-                    .map(|e| e.screen.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
-        set.sort();
-        set.dedup();
-        set
-    };
-    let names = monitor_names(app);
-    for screen in screens {
-        let Some(idx) = screen_index_resolved_or_primary(&names, &screen) else {
-            log::warn!("pins: keine Monitore enumerierbar — Screen {screen:?} übersprungen");
-            continue;
-        };
-        let label = label_for_screen(idx);
-        if app.get_webview_window(&label).is_some() {
-            continue;
-        }
-        WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-            .title("Pins")
-            .decorations(false)
-            .transparent(true)
-            .resizable(false)
-            .maximizable(false)
-            .minimizable(false)
-            .closable(false)
-            .skip_taskbar(true)
-            .always_on_top(true)
-            .shadow(false)
-            .focused(false)
-            .visible(false) // Sichtbarkeit NUR über game_running (§9.1.5)
-            .build()?;
-        log::info!("pins: Fenster {label} erzeugt (hidden) für Screen {screen:?}");
-    }
-    Ok(())
-}
-
-/// Alle Pin-Fenster (Labels nach PINS_LABEL_PREFIX).
-fn pin_windows<R: Runtime>(app: &AppHandle<R>) -> Vec<WebviewWindow<R>> {
-    let mut out: Vec<WebviewWindow<R>> = Vec::new();
-    let windows = app.webview_windows();
-    let mut labels: Vec<String> = windows
-        .keys()
-        .filter(|l| l.starts_with(PINS_LABEL_PREFIX))
-        .cloned()
-        .collect();
-    labels.sort();
-    for l in labels {
-        if let Some(w) = app.get_webview_window(&l) {
-            out.push(w);
-        }
-    }
-    out
-}
-
-/// Zentrale Sichtbarkeits-/Input-Synchronisation (vom Overlay-/Game-Pfad
-/// gerufen): zeigt Pin-Fenster nur bei effektiv sichtbaren Pins und
-/// setzt den Input-Modus (§9.1.6, präzisiert M4-E t_34efb781): das
-/// Pin-Fenster ist REIN ANZEIGE (Konstante `ignore=true`), die
-/// Interaktion läuft über unsichtbare Patch-Flächen im Spotlight-Webview.
-pub fn sync_all<R: Runtime>(app: &AppHandle<R>) {
-    let (enabled, pinned_count, game_running) = {
-        let st = app.state::<crate::app_settings::SettingsState>();
-        let s = st.inner.lock().expect("settings lock");
-        let pinned = s
-            .pins()
+        s.pins()
             .map(|p| p.list.iter().filter(|e| e.pinned).count())
-            .unwrap_or(0);
-        let enabled = app
-            .try_state::<PinsEnabled>()
-            .map(|e| e.0.load(Ordering::SeqCst))
-            .unwrap_or(false);
-        (
-            enabled,
-            pinned,
-            crate::overlay::snapshot(app)
-                .map(|o| o.game_running)
-                .unwrap_or(false),
-        )
+            .unwrap_or(0)
     };
-    let visible = pins_effective_visible(enabled, pinned_count, game_running);
-    log::info!(
-        "pins: sync_all visible={visible} (enabled={enabled} pinned={pinned_count} game_running={game_running}) windows={}",
-        pin_windows(app).len()
-    );
-    // Geometrie-Quelle (t_01f1a9ed): unified Monitor-Enumeration, aufgelöst
-    // über den Screen-Index im Label — NICHT win.current_monitor() (None vor
-    // dem ersten Map → Geometrie wurde komplett übersprungen → show() mit
-    // Tauri-Default 800×600, Boxen außerhalb des Viewports geclippt).
-    let monitors = monitor_list(app);
-    for win in pin_windows(app) {
-        if visible {
-            let rect = pin_window_rect(&monitors, &win);
-            if let Some((x, y, w, h)) = rect {
-                // VOR dem Map: Fenster deckt den ganzen Screen ab —
-                // Placement macht das Frontend in CSS (persistierte x/y).
-                let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
-                let _ = win.set_size(tauri::PhysicalSize::new(w, h));
-            }
-            // Input-Modus NUR im Moment des show() — erst mappen, dann
-            // Shape stellen (tao paniziert auf nicht gemappten Fenstern,
-            // t_ef8222da). pin_input_mode liefert hier immer Some.
-            let _ = win.show();
-            // NACH dem Map nochmal (idempotent, billiger Satz): fängt
-            // Wayland-Async-Mapping ab, das die Pre-Show-Geometrie
-            // verwerfen kann (t_01f1a9ed Punkt 2).
-            if let Some((x, y, w, h)) = rect {
-                let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
-                let _ = win.set_size(tauri::PhysicalSize::new(w, h));
-            }
-            if let Some(ignore) = pin_input_mode(true) {
-                let _ = win.set_ignore_cursor_events(ignore);
-            }
-        } else {
-            // Hide OHNE Follow-up-Window-Mutation: kein set_ignore auf
-            // versteckten Fenstern (tao-Panik-Pfad).
-            let _ = win.hide();
-        }
-    }
-    sync_tray_check(app, enabled);
+    (enabled, pinned)
 }
-
-// NOTE t_34efb781: das frühere „Mapped-Tracking“ von Pin-Fenstern ist ent-
-// fallen — sein einziger Verbraucher war der Input-Modus-Flip in
-// `sync_overlay_visibility`, und PINS SIND JETZT REIN ANZEIGE (Konstante).
-// Window-Mutation passieren weiterhin NUR im Moment des show() (Panic-Gate
-// bleibt via Bauform erfüllt), es gibt aber keinen Zustand mehr zu spiegeln.
 
 /// Tray-Checkbox nachziehen (fail-soft — Tray darf fehlen).
-fn sync_tray_check<R: Runtime>(app: &AppHandle<R>, checked: bool) {
+fn sync_tray_check<R: tauri::Runtime>(app: &AppHandle<R>, checked: bool) {
     if let Some(item) = app.try_state::<PinsTrayItem<R>>()
         && let Some(check) = item.0.lock().expect("tray item lock").as_ref()
     {
@@ -564,31 +364,15 @@ fn sync_tray_check<R: Runtime>(app: &AppHandle<R>, checked: bool) {
     }
 }
 
-/// game_running-Wechsel (aus overlay::set_game_running): Pins ziehen
-/// strikt mit (§9.1.5 — kein eigener Sichtbarkeitskanal).
-pub fn sync_game_running<R: Runtime>(app: &AppHandle<R>, _running: bool) {
-    if app.try_state::<PinsEnabled>().is_some() {
-        sync_all(app);
-    }
-}
-
-/// Overlay-Sichtbarkeitswechsel (aus overlay::apply_visibility): KEINE
-/// Window-Mutation mehr (§9.1.6, präzisiert M4-E t_34efb781) — das
-/// Pin-Fenster ist REIN ANZEIGE (Konstante `ignore=true`), der Input-Modus
-/// wechselt nicht mit dem Overlay-Zustand. Die Interaktion läuft über
-/// unsichtbare PATCH-Flächen im Spotlight-Webview; der Overlay-Zustand
-/// wird vom Backend-Konstantenpfad hier nicht mehr gespiegelt. Die
-/// Naht bleibt (overlay.rs ruft sie weiter) — Fail-soft, ohne State.
-pub fn sync_overlay_visibility<R: Runtime>(app: &AppHandle<R>, _overlay_visible: bool) {
-    // Konstante: nichts zu tun. Der Input-Modus des Pin-Fensters ist
-    // ausschließlich im Moment des show() gesetzt (sync_all, §9.1.6) —
-    // Overlay-Visibility toggelt KEINE Window-Mutation mehr (Fail-soft:
-    // keine State-Anfrage, kein Window-Touch).
-    let _ = app;
+/// Event ans Spotlight-Frontend: Pin-Set geändert (die PinBoxes-Komponente
+/// holt selbst nach via pins_state).
+fn notify_changed<R: tauri::Runtime>(app: &AppHandle<R>) {
+    use tauri::Emitter;
+    let _ = app.emit(PINS_CHANGED_EVENT, true);
 }
 
 // ---------------------------------------------------------------------------
-// Tauri-Commands (Overlay-Frontend + Pin-Fenster-Frontend)
+// Tauri-Commands (Spotlight-Frontend)
 // ---------------------------------------------------------------------------
 
 /// DTO für das Frontend (Mirror von settings::PinEntry).
@@ -626,8 +410,8 @@ pub struct PinsState {
     pub pins: Vec<PinDto>,
     /// M4-E (t_34efb781): Monitor des SPOTLIGHT-Fensters (derselbe
     /// Aufnahme-Pfad wie `pin_add` — unified Enumeration, t_56262ccf).
-    /// Die Patch-Flächen im Spotlight rendern nur Pins DIESER Screens
-    /// — die Spot-Viewport-Koordinaten decken exakt diesen Monitor ab.
+    /// Die Pin-Boxen im Spotlight rendern nur Pins DIESER Screens —
+    /// die Spot-Viewport-Koordinaten decken exakt diesen Monitor ab.
     pub spotlight_screen: String,
 }
 
@@ -656,18 +440,11 @@ fn to_dto(e: &settings::PinEntry) -> PinDto {
     }
 }
 
-/// Screen-Name eines (Pin-)Fensters über sein Label bestimmen.
-fn screen_name_for<R: Runtime>(app: &AppHandle<R>, label: &str) -> Option<String> {
-    let idx = screen_of_label(label)?;
-    let names = monitor_names(app);
-    names.get(idx).map(|m| m.0.clone())
-}
-
 /// Monitor des Spotlight-Fensters (derselbe Aufnahme-Pfad wie `pin_add`):
 /// Rect aus `current_monitor_rect` → Auflösung über die unified Enumeration
 /// (t_56262ccf). Kein Spotlight/kein Monitor → leerer String (Call-Filter
 /// im Frontend: `pin.screen === spotlight_screen`).
-pub fn spotlight_screen_of<R: Runtime>(app: &AppHandle<R>) -> String {
+pub fn spotlight_screen_of<R: tauri::Runtime>(app: &AppHandle<R>) -> String {
     let monitors = monitor_list(app);
     let spotlight = app.get_webview_window(crate::overlay::SPOTLIGHT_LABEL);
     let current = spotlight.as_ref().and_then(current_monitor_rect);
@@ -678,7 +455,7 @@ pub fn spotlight_screen_of<R: Runtime>(app: &AppHandle<R>) -> String {
 }
 
 #[tauri::command(rename_all = "snake_case")]
-pub fn pins_state<R: Runtime>(app: AppHandle<R>) -> PinsState {
+pub fn pins_state<R: tauri::Runtime>(app: AppHandle<R>) -> PinsState {
     let st = app.state::<crate::app_settings::SettingsState>();
     let s = st.inner.lock().expect("settings lock");
     let snap = crate::overlay::snapshot(&app);
@@ -697,31 +474,12 @@ pub fn pins_state<R: Runtime>(app: AppHandle<R>) -> PinsState {
     }
 }
 
-/// Pins für ein Pin-Fenster nach Label (nur der eigene Screen).
-#[tauri::command(rename_all = "snake_case")]
-pub fn pins_for_screen<R: Runtime>(app: AppHandle<R>, label: String) -> Vec<PinDto> {
-    let Some(screen) = screen_name_for(&app, &label) else {
-        return Vec::new();
-    };
-    let st = app.state::<crate::app_settings::SettingsState>();
-    let s = st.inner.lock().expect("settings lock");
-    s.pins()
-        .map(|p| {
-            p.list
-                .iter()
-                .filter(|e| e.pinned && e.screen == screen)
-                .map(to_dto)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Anheften aus dem Overlay-Frontend: mechanical Keys + Snapshot.
 /// Der Screen ist der Monitor des Overlay-Fensters (das Overlay liegt
 /// immer da, wo der Nutzer pinnt). Duplikate (view_id/screen/box_index,
 /// aktiv) werden verhindert.
 #[tauri::command(rename_all = "snake_case")]
-pub fn pin_add<R: Runtime>(
+pub fn pin_add<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
     box_index: u32,
@@ -789,15 +547,14 @@ pub fn pin_add<R: Runtime>(
     });
     crate::app_settings::persist_settings(&s);
     drop(s);
-    ensure_pin_windows(&app).ok();
     notify_changed(&app);
-    sync_all(&app);
+    crate::overlay::refresh_visibility(&app);
     true
 }
 
 /// „Lösen“: pinned=false (Eintrag bleibt, Restore überspringt ihn).
 #[tauri::command(rename_all = "snake_case")]
-pub fn pin_unpin<R: Runtime>(
+pub fn pin_unpin<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
     screen: String,
@@ -821,14 +578,14 @@ pub fn pin_unpin<R: Runtime>(
     };
     if changed {
         notify_changed(&app);
-        sync_all(&app);
+        crate::overlay::refresh_visibility(&app);
     }
     changed
 }
 
 /// „Schließen“: Pin-Eintrag entfernt (Plugin/View läuft weiter).
 #[tauri::command(rename_all = "snake_case")]
-pub fn pin_remove<R: Runtime>(
+pub fn pin_remove<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
     screen: String,
@@ -848,14 +605,14 @@ pub fn pin_remove<R: Runtime>(
     };
     if removed {
         notify_changed(&app);
-        sync_all(&app);
+        crate::overlay::refresh_visibility(&app);
     }
     removed
 }
 
 /// Deckkraft setzen (20–100, clamp).
 #[tauri::command(rename_all = "snake_case")]
-pub fn pin_set_opacity<R: Runtime>(
+pub fn pin_set_opacity<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
     screen: String,
@@ -880,10 +637,10 @@ pub fn pin_set_opacity<R: Runtime>(
 }
 
 /// Drag-Ende: Position zurückmelden → Edge-Snapping + Persistenz
-/// (x/y screen-relativ). Drag ist nur im Overlay-sichtbaren Zustand
-/// möglich — das Frontend ruft das nur dann auf.
+/// (x/y screen-relativ). Drag ist nur im Palette-offen-Zustand möglich —
+/// das Frontend ruft das nur dann auf.
 #[tauri::command(rename_all = "snake_case")]
-pub fn pin_move<R: Runtime>(
+pub fn pin_move<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
     screen: String,
@@ -924,7 +681,7 @@ pub struct PinDrag {
 /// Snapshot-Refresh (Overlay-Datenreload): Overlays melden frische
 /// Anzeige-Daten für bereits gepinnte Boxen — generisch, view-lokal.
 #[tauri::command(rename_all = "snake_case")]
-pub fn pin_update<R: Runtime>(
+pub fn pin_update<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
     box_index: u32,
@@ -963,7 +720,7 @@ pub fn pin_update<R: Runtime>(
 
 /// Tray-Schalter „Pin-Boxen anzeigen“: enabled setzen + Sync.
 #[tauri::command(rename_all = "snake_case")]
-pub fn pins_set_enabled<R: Runtime>(app: AppHandle<R>, on: bool) {
+pub fn pins_set_enabled<R: tauri::Runtime>(app: AppHandle<R>, on: bool) {
     if let Some(st) = app.try_state::<PinsEnabled>() {
         st.0.store(on, Ordering::SeqCst);
     }
@@ -974,13 +731,13 @@ pub fn pins_set_enabled<R: Runtime>(app: AppHandle<R>, on: bool) {
         entry.enabled = on;
         crate::app_settings::persist_settings(&s);
     }
-    ensure_pin_windows(&app).ok();
+    sync_tray_check(&app, on);
     notify_changed(&app);
-    sync_all(&app);
+    crate::overlay::refresh_visibility(&app);
 }
 
 /// Tray-Pfad (on_menu_event): Checkbox-Toggle.
-pub fn tray_toggle<R: Runtime>(app: &AppHandle<R>) {
+pub fn tray_toggle<R: tauri::Runtime>(app: &AppHandle<R>) {
     let on = !app
         .try_state::<PinsEnabled>()
         .map(|e| e.0.load(Ordering::SeqCst))
@@ -988,22 +745,9 @@ pub fn tray_toggle<R: Runtime>(app: &AppHandle<R>) {
     pins_set_enabled(app.clone(), on);
 }
 
-/// Event an alle Pin-Fenster: Pin-Set geändert (Pin-Fenster-Frontend
-/// holt selbst nach via pins_for_screen).
-fn notify_changed<R: Runtime>(app: &AppHandle<R>) {
-    use tauri::Emitter;
-    let windows = app.webview_windows();
-    for (label, _) in windows
-        .iter()
-        .filter(|(l, _)| l.starts_with(PINS_LABEL_PREFIX))
-    {
-        let _ = app.emit_to(label.as_str(), PINS_CHANGED_EVENT, true);
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Tests (reine Logik — game_running-Sichtbarkeitsregel, Clamp, Snapping,
-// Placement, Label-Mapping)
+// Placement, Spotlight-Modus)
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -1065,6 +809,34 @@ mod tests {
         assert!(!pins_effective_visible(true, 0, true));
     }
 
+    /// M5 (§6-Revision): Spotlight-Modus-Berechnung — die drei Zustände
+    /// Palette/PinsOnly/Hidden mit allen Grenzfällen.
+    #[test]
+    fn spotlight_mode_follows_palette_then_pins() {
+        // Palette sichtbar gewinnt IMMER (auch mit Pins).
+        assert_eq!(spotlight_mode(true, true, 3, true), SpotlightMode::Palette);
+        assert_eq!(
+            spotlight_mode(true, false, 0, false),
+            SpotlightMode::Palette
+        );
+        // Pins-only: Palette zu, aber Pins aktiv + Spiel läuft.
+        assert_eq!(
+            spotlight_mode(false, true, 3, true),
+            SpotlightMode::PinsOnly
+        );
+        // Pins-only braucht game_running (§9.1.5 — kein eigener Kanal).
+        assert_eq!(spotlight_mode(false, true, 3, false), SpotlightMode::Hidden);
+        // Tray aus → nie pins-only.
+        assert_eq!(spotlight_mode(false, false, 3, true), SpotlightMode::Hidden);
+        // Keine aktiven Pins → nie pins-only.
+        assert_eq!(spotlight_mode(false, true, 0, true), SpotlightMode::Hidden);
+        // Beide aus → Hidden (alter Hide-Vertrag).
+        assert_eq!(
+            spotlight_mode(false, false, 0, false),
+            SpotlightMode::Hidden
+        );
+    }
+
     /// Deckkraft-Range 20–100 % (Pins-Vertrag).
     #[test]
     fn opacity_clamps_to_contract_range() {
@@ -1123,42 +895,6 @@ mod tests {
         // Sehr schmaler Screen: x mindestens am linken Rand.
         let (x4, _) = default_placement(300, 600, &[]);
         assert_eq!(x4, EDGE_MARGIN);
-    }
-
-    /// Label-Mapping: pins-<idx> ↔ Screen-Index, fremde Labels → None.
-    #[test]
-    fn label_roundtrip_and_reject() {
-        assert_eq!(label_for_screen(0), "pins-0");
-        assert_eq!(label_for_screen(3), "pins-3");
-        assert_eq!(screen_of_label("pins-2"), Some(2));
-        assert_eq!(screen_of_label("spotlight"), None);
-        assert_eq!(screen_of_label("app-window"), None);
-        assert_eq!(screen_of_label("pins-x"), None);
-        assert_eq!(screen_of_label("pins-"), None);
-    }
-
-    /// Screen-Index-Auflösung über Namen (Primärmonitor-Liste).
-    #[test]
-    fn screen_index_matches_names() {
-        let m = [MonitorName("DP-3".into()), MonitorName("HDMI-A-2".into())];
-        assert_eq!(screen_index_of(&m, "DP-3"), Some(0));
-        assert_eq!(screen_index_of(&m, "HDMI-A-2"), Some(1));
-        assert_eq!(screen_index_of(&m, "eDP-1"), None);
-    }
-
-    /// t_56262ccf (Fail-soft-Fallback): nicht auflösbare Screens werden
-    /// NICHT still übersprungen — Fallback auf Primärmonitor (Index 0).
-    /// Die alte Logik sprang still ab (Info-Log, im Journal unsichtbar
-    /// bei Filter ≥WARN) → Pins nie sichtbar.
-    #[test]
-    fn unresolvable_screen_falls_back_to_primary() {
-        let m = [MonitorName("DP-3".into()), MonitorName("HDMI-A-2".into())];
-        // Persistierter Model-String aus dem Lokaltest-Befund:
-        assert_eq!(screen_index_resolved_or_primary(&m, "CU34G2XP"), Some(0));
-        // Auflösbarer Name bleibt exakt:
-        assert_eq!(screen_index_resolved_or_primary(&m, "HDMI-A-2"), Some(1));
-        // Leere Monitorliste (keine Enumeration): None, kein Fake-Index.
-        assert_eq!(screen_index_resolved_or_primary(&[], "DP-3"), None);
     }
 
     /// t_56262ccf (Identitäts-Helfer): Capture über Geometrie — ein
@@ -1252,91 +988,5 @@ mod tests {
         assert_eq!(entries2[0].screen, "CU34G2XP");
         // Zweiter Lauf nach Reparatur: idempotent (0 Repairs).
         assert_eq!(repair_unresolvable_screens(&mut entries, &monitors), 0);
-    }
-
-    /// t_01f1a9ed (Punkt 1): Geometrie aus dem resolved Rect — der
-    /// Screen-Index im Label wählt den Monitor aus der unified Enumeration;
-    /// Index außerhalb der Liste → None (Caller: Fallback + warn).
-    #[test]
-    fn rect_for_screen_resolves_by_label_index() {
-        let monitors = [
-            MonitorRect {
-                name: "DP-3".into(),
-                x: 0,
-                y: 0,
-                w: 3440,
-                h: 1440,
-            },
-            MonitorRect {
-                name: "HDMI-A-2".into(),
-                x: 1825,
-                y: -1920,
-                w: 1080,
-                h: 1920,
-            },
-        ];
-        assert_eq!(rect_for_screen(&monitors, 0), Some((0, 0, 3440, 1440)));
-        assert_eq!(
-            rect_for_screen(&monitors, 1),
-            Some((1825, -1920, 1080, 1920))
-        );
-        // Kein dritter Monitor → None (kein Fake-Rect).
-        assert_eq!(rect_for_screen(&monitors, 2), None);
-        assert_eq!(rect_for_screen(&[], 0), None);
-    }
-
-    /// t_01f1a9ed (Punkt 1, Fallback): Label-Index nicht auflösbar →
-    /// Primärmonitor-Rect (Index 0); leere Monitorliste → None.
-    #[test]
-    fn pin_window_rect_falls_back_to_primary() {
-        // Simulierte Auflösungslogik wie pin_window_rect (pure Teil):
-        let monitors = [MonitorRect {
-            name: "DP-3".into(),
-            x: 0,
-            y: 0,
-            w: 3440,
-            h: 1440,
-        }];
-        let resolve = |idx: Option<usize>| -> Option<(i32, i32, u32, u32)> {
-            idx.and_then(|i| rect_for_screen(&monitors, i))
-                .or_else(|| rect_for_screen(&monitors, 0))
-        };
-        // 'pins-5' auf Ein-Monitor-Setup → Index 5 existiert nicht → Primary.
-        assert_eq!(resolve(screen_of_label("pins-5")), Some((0, 0, 3440, 1440)));
-        // Gültiger Index bleibt exakt:
-        assert_eq!(resolve(screen_of_label("pins-0")), Some((0, 0, 3440, 1440)));
-        // Fremdes Label (None) → trotzdem Primary-Fallback.
-        assert_eq!(
-            resolve(screen_of_label("app-window")),
-            Some((0, 0, 3440, 1440))
-        );
-        // Leere Monitorliste: auch der Fallback liefert None.
-        let empty: [MonitorRect; 0] = [];
-        assert_eq!(
-            screen_of_label("pins-0")
-                .and_then(|i| rect_for_screen(&empty, i))
-                .or_else(|| rect_for_screen(&empty, 0)),
-            None
-        );
-    }
-
-    /// Regression t_ef8222da (M4-Crash-Loop, tao-Panik in
-    /// CursorIgnoreEvents auf nicht gemapptem Pin-Fenster): die pure
-    /// Logik darf für versteckte Pin-Fenster NIEMALS einen Input-Shape-
-    /// Request ergeben — Szenarien aus der FIX-KARTE.
-    /// M4-E (t_34efb781): das Pin-Fenster ist REIN ANZEIGE — sichtbare
-    /// Fenster bekommen IMMER `ignore=true`, der Overlay-Zustand spielt
-    /// KEINE Rolle mehr (§9.1.6 präzisiert; Interaktion über Spotlight-
-    /// Patches).
-    #[test]
-    fn input_mode_never_touches_hidden_pin_windows() {
-        // Boot ohne SC: Pins restauriert, game_running=false → Pin-Fenster
-        // hidden → KEIN Call (vorher: unconditional set_ignore → Panik).
-        assert_eq!(pin_input_mode(false), None);
-        // Overlay-Toggle bei hiddenem Pin-Fenster → kein Call.
-        assert_eq!(pin_input_mode(false), None);
-        // Sichtbares Pin-Fenster → IMMER input-transparent (Konstante,
-        // unabhängig vom Overlay-Zustand — der Parameter ist entfallen).
-        assert_eq!(pin_input_mode(true), Some(true));
     }
 }

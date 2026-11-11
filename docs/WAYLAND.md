@@ -223,11 +223,11 @@ windowrulev2 = nodecorate, class:^(architects-overlay)$
 # windowrulev2 = noinput, class:^(architects-overlay)$
 ```
 
-Pin-Fenster (M4, t_01f1a9ed Punkt 4) teilen dieselbe WM_CLASS
-`architects-overlay` (Tauri setzt die Klasse app-weit, das Title-Attribut
-„Pins“ ist nur der Titel) — obige class-basierten Regeln (float/nodecorate)
-greifen daher automatisch AUCH für `pins-<idx>`; es ist KEINE zusätzliche
-title-basierte Rule nötig (und keine, die an `title:.*Pins` hängt).
+Pins (M5, t_d10a0d84): Pin-Boxen sind DOM im Spotlight-Webview — es gibt
+KEINE eigenen `pins-<idx>`-Fenster mehr (M4-Ansatz verworfen, siehe
+FENSTERMODUS-PLAN.md §6-Revision). Obige class-basierten Regeln treffen
+nur `spotlight` und `app-window`; nichts weiter nötig. (Historisch, M4:
+Pin-Fenster teilten dieselbe WM_CLASS — der Abschnitt ist obsolet.)
 
 hyprland.lua (Omarchy, wie in `~/.config/hypr/hyprland.lua`):
 

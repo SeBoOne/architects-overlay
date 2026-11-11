@@ -1,16 +1,19 @@
-// M4-E (t_34efb781): Rendering-Struktur-Test für den Mini-Controller-Popover
-// in PinPatches.svelte (Review R1-Defect: Popover war Kind von .patch →
-// doppelter Offset, bei Default-Pins komplett off-screen). Der Test parst die
+// M5 (t_d10a0d84): Rendering-Struktur-Test für PinBoxes.svelte (Nachfolger
+// von PinPatches.svelte, M4-E t_34efb781 — die Pin-Boxen leben jetzt als DOM
+// IM Spotlight; die pins-<idx>-Fenster sind entfernt). Der Test parst die
 // KOMPONENTE mit dem svelte-Compiler (AST = gerenderte DOM-Struktur) und
 // belegt:
-//  1. .pin-popover ist KEIN Nachfahre eines .patch-Elements (Containing-Block
-//     wäre sonst das absolute .patch, nicht der Viewport),
-//  2. der nächste positionierende Vorfahre ist .patch-layer (position:absolute;
+//  1. .pin-popover ist KEIN Nachfahre eines .pin-Elements (Containing-Block
+//     wäre sonst die absolute Box, nicht der Viewport — Review R1-Defect),
+//  2. der nächste positionierende Vorfahre ist .pin-layer (position:absolute;
 //     inset:0 = Viewport-Anker, auf den popoverPos() rechnet),
 //  3. das Popover-Style-Binding nutzt popoverPosFor (viewport-absolute
 //     Koordinaten) und
 //  4. .pin-popover hat pointer-events:auto (die Layer ist pointer-events:none —
-//     ohne das Flag wäre das Popover unklickbar).
+//     ohne das Flag wäre das Popover unklickbar),
+//  5. M5-Anker-Vertrag: die Boxen selbst bekommen pointer-events NUR über
+//     .pin.interactive (Palette offen) — der Pins-only-Zustand (class
+//     display-only an der Layer) bleibt reine Anzeige.
 // Laufbar mit `node --test src/lib/pin-patches-render.test.ts`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,7 +49,7 @@ function walkNodes(root: Node, visit: (n: Node, path: Node[]) => void, path: Nod
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = readFileSync(join(here, 'PinPatches.svelte'), 'utf8');
+const src = readFileSync(join(here, 'PinBoxes.svelte'), 'utf8');
 
 type Node = { type: string; attributes?: unknown[]; children?: Node[]; name?: string; start: number; end: number };
 
@@ -55,7 +58,7 @@ function classesOf(node: Node): string[] {
 		// @ts-expect-error AST shape
 		(a) => a.type === 'Attribute' && a.name === 'class'
 	);
-	// class:patch / class:pin-popover Direktiven und class="..."-Attribut abbilden
+	// class:pin / class:pin-popover Direktiven und class="..."-Attribut abbilden
 	const dirs = (node.attributes ?? [])
 		// @ts-expect-error AST shape
 		.filter((a) => a.type === 'ClassDirective')
@@ -67,10 +70,10 @@ function classesOf(node: Node): string[] {
 	return [...dirs, ...plain.filter(Boolean)];
 }
 
-function findPopovers(ast: Node): Node[] {
+function findByClass(ast: Node, cls: string): Node[] {
 	const found: Node[] = [];
 	walkNodes(ast, (node) => {
-		if ((node.type === 'Element' || node.type === 'RegularElement') && node.name === 'div' && classesOf(node).includes('pin-popover')) {
+		if ((node.type === 'Element' || node.type === 'RegularElement') && classesOf(node).includes(cls)) {
 			found.push(node);
 		}
 	});
@@ -86,26 +89,26 @@ function elementAncestors(node: Node, ast: Node): Node[] {
 	return chain.filter((n) => n.type === 'Element' || n.type === 'RegularElement');
 }
 
-test('Popover: gerenderte DOM-Struktur — Geschwister von .patch, direkt unter .patch-layer', () => {
+test('Popover: gerenderte DOM-Struktur — Geschwister der .pin-Boxen, direkt unter .pin-layer', () => {
 	const ast = parse(src, { modern: true }) as Node;
-	const pops = findPopovers(ast);
+	const pops = findByClass(ast, 'pin-popover');
 	assert.equal(pops.length, 1, 'genau ein .pin-popover im Template');
 
 	const ancestors = elementAncestors(pops[0], ast);
 	const ancestorClasses = ancestors.map((a) => classesOf(a).join(' '));
 	assert.ok(
-		ancestorClasses.some((c) => c.includes('patch-layer')),
-		`nächster positionierender Vorfahre ist .patch-layer (Kette: ${ancestorClasses.join(' > ')})`
+		ancestorClasses.some((c) => c.includes('pin-layer')),
+		`nächster positionierender Vorfahre ist .pin-layer (Kette: ${ancestorClasses.join(' > ')})`
 	);
 	assert.ok(
-		!ancestorClasses.some((c) => c.includes('patch') && !c.includes('patch-layer')),
-		'.pin-popover darf NICHT innerhalb eines .patch gerendert sein (doppelter Offset, Review R1)'
+		!ancestorClasses.some((c) => c.includes('pin') && !c.includes('pin-layer')),
+		'.pin-popover darf NICHT innerhalb einer .pin-Box gerendert sein (doppelter Offset, Review R1)'
 	);
 });
 
 test('Popover: Style-Binding nutzt viewport-absolute popoverPosFor-Koordinaten', () => {
 	const ast = parse(src, { modern: true }) as Node;
-	const pop = findPopovers(ast)[0];
+	const pop = findByClass(ast, 'pin-popover')[0];
 	// @ts-expect-error AST shape
 	const style = (pop.attributes ?? []).find((a) => a.type === 'Attribute' && a.name === 'style');
 	assert.ok(style, 'Popover hat ein style-Attribut');
@@ -125,4 +128,29 @@ test('Popover: pointer-events:auto — klickbar trotz pointer-events:none auf de
 	const rule = css.match(/\.pin-popover\s*\{[^}]*\}/);
 	assert.ok(rule, '.pin-popover CSS-Regel vorhanden');
 	assert.match(rule[0], /pointer-events:\s*auto/, '.pin-popover braucht pointer-events:auto');
+});
+
+// M5 (§6-Revision): der Interaktions-Gate ist an die Box-Klasse gebunden —
+// im Pins-only-Zustand (Layer-Klasse display-only, Palette-DOM versteckt)
+// gibt es KEINE klickbaren Flächen.
+test('M5: Box-Interaktion nur über .pin.interactive — Pins-only bleibt reine Anzeige', () => {
+	const ast = parse(src, { modern: true }) as Node;
+	const layer = findByClass(ast, 'pin-layer')[0];
+	assert.ok(layer, '.pin-layer existiert');
+	// @ts-expect-error AST shape
+	const layerDirs = (layer.attributes ?? []).filter((a) => a.type === 'ClassDirective').map((a) => a.name);
+	assert.ok(layerDirs.includes('display-only'), 'Layer trägt class:display-only (Pins-only-Gate)');
+	const pin = findByClass(ast, 'pin')[0];
+	assert.ok(pin, '.pin-Box existiert');
+	// @ts-expect-error AST shape
+	const pinDirs = (pin.attributes ?? []).filter((a) => a.type === 'ClassDirective').map((a) => a.name);
+	assert.ok(pinDirs.includes('interactive'), 'Box trägt class:interactive (Interaktions-Gate)');
+	const cssStart = src.lastIndexOf('<style');
+	const css = src.slice(cssStart);
+	const layerRule = css.match(/\.pin-layer\s*\{[^}]*\}/);
+	assert.ok(layerRule, '.pin-layer CSS-Regel vorhanden');
+	assert.match(layerRule[0], /pointer-events:\s*none/, 'Layer ist pointer-events:none');
+	const interactiveRule = css.match(/\.pin\.interactive\s*\{[^}]*\}/);
+	assert.ok(interactiveRule, '.pin.interactive CSS-Regel vorhanden');
+	assert.match(interactiveRule[0], /pointer-events:\s*auto/, 'nur .pin.interactive fängt Pointer');
 });

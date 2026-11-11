@@ -62,9 +62,10 @@ mod updater;
 #[cfg(desktop)]
 mod window;
 
-/// M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“ — dediziertes Pin-Fenster
-/// pro Screen, Deckkraft, Persistenz, tray pins_toggle. Overlay-Kernverträge
-/// unberührt (nur Hook-Aufrufe in set_game_running/apply_visibility).
+/// M4 (t_7bf507e6) + M5 (t_d10a0d84): Dauerhafte Shellboxen „Pins“ — DOM-
+/// Boxen im Spotlight (§6-Revision, KEINE Pin-Fenster mehr), Deckkraft,
+/// Persistenz, tray pins_toggle. Overlay-Kernverträge unberührt (der
+/// Pins-only-Zustand lebt in apply_visibility).
 #[cfg(desktop)]
 mod pins;
 
@@ -185,7 +186,6 @@ pub fn run() {
             window::window_quit,
             // M4 (t_7bf507e6): Dauerhafte Shellboxen „Pins“.
             pins::pins_state,
-            pins::pins_for_screen,
             pins::pins_set_enabled,
             pins::pin_add,
             pins::pin_unpin,

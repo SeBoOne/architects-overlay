@@ -3,7 +3,7 @@
 // (Node type-stripping, Muster pins-clamp.test.ts). Synthetische Monitor-/
 // Box-Rects; der DPR-Fall ist konstruktiv abgedeckt: die Patch-Positionen
 // rechnen in der Viewport-Basis des Spotlight-Webviews (CSS-px), dieselbe
-// Basis wie PinWindow.svelte — DPR wirkt auf Pin-Koordinaten und Viewport
+// Basis wie die Pin-Boxen (PinBoxes.svelte, M5) — DPR wirkt auf Pin-Koordinaten und Viewport
 // identisch, daher ist die Geometrie DPR-invariant (Test mit DPR-1- und
 // DPR-1.5-Viewportmaßen auf denselben logischen Koordinaten).
 import { test } from 'node:test';
