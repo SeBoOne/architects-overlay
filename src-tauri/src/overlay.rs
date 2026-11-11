@@ -479,7 +479,16 @@ pub fn set_click_through<R: Runtime>(app: &AppHandle<R>, ignore: bool) -> bool {
             // hidden window has no input shape anyway. When hidden, the flag
             // rides in `OverlayState` and is applied by `apply_visibility`
             // on the next show — the hotkey stays active in either state.
-            if win.is_visible().unwrap_or(false) {
+            // M5 (t_d10a0d84): der Input-Modus wird nur angewendet, wenn die
+            // PALETTE tatsächlich gezeigt ist. Im Pins-only-Zustand (Palette
+            // verborgen, Pin-Boxen als reine Anzeige) bleibt das Fenster
+            // durchlässig — ein Click-Through-Toggle darf dort die Boxen nicht
+            // „interaktiv“ machen, während kein sichtbares UI existiert.
+            let palette_visible = worker
+                .try_state::<OverlayState>()
+                .map(|st| effective_visible(st.inner()))
+                .unwrap_or(false);
+            if win.is_visible().unwrap_or(false) && palette_visible {
                 let _ = win.set_ignore_cursor_events(ignore);
                 // Switching INTO focus mode must also move keyboard focus to
                 // the overlay — under Hyprland/Wayland the game would other-
@@ -566,10 +575,10 @@ pub fn set_game_running<R: Runtime>(app: &AppHandle<R>, running: bool) {
             if !running && std::env::var_os("ARCH_OVERLAY_SMOKE").is_some() {
                 return;
             }
-            // M4 (t_7bf507e6): Pins ziehen strikt mit (§9.1.5 — kein eigener
-            // Sichtbarkeitskanal ohne laufendes SC). Fail-soft: ohne pins-State
-            // (init fehlgeschlagen) tut der Hook nichts.
-            crate::pins::sync_game_running(app, running);
+            // M5 (t_d10a0d84): Pins sind DOM-Boxen im Spotlight (§6-Revision
+            // — keine Pin-Fenster mehr). Der Game-Wechsel kann den Spotlight-
+            // Modus drehen (Pins-only ⇄ Hidden) — apply_visibility unten
+            // berechnet den Modus selbst; die Pins-Naht ist damit entfallen.
             apply_visibility(app, effective_visible(st.inner()));
             emit_state(app);
         }
@@ -606,14 +615,21 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                     .try_state::<OverlayState>()
                     .map(|st| effective_visible(st.inner()))
                     .unwrap_or(visible);
-            // M4 (t_7bf507e6): Pin-Fenster-Input-Modus wechselt mit dem
-            // Overlay-Zustand (§9.1.6 — interagierbar NUR bei sichtbarem
-            // Overlay; sonst click-through/ignore). Fail-soft.
-            // M4-E (t_34efb781): KEIN Moduswechsel mehr — Pins sind REIN
-            // ANZEIGE (Konstante ignore=true), die Interaktion läuft über die
-            // Patch-Flächen im
-            // Spotlight-Webview. Die Naht bleibt (Fail-soft, kein State).
-            crate::pins::sync_overlay_visibility(&worker, visible);
+            // M5 (t_d10a0d84, §6-Revision): Spotlight-Modus-Berechnung —
+            // bei verborgener Palette, aber aktiven Pins (pins.enabled &&
+            // gepinnte>0 && game_running) bleibt das Fenster GEMAPPT
+            // (Pins-only). Die früheren pins-<idx>-Fenster sind entfernt.
+            let pins_only = if visible {
+                false
+            } else {
+                let (pins_enabled, pinned) = crate::pins::pins_activity(&worker);
+                let game_running = worker
+                    .try_state::<OverlayState>()
+                    .map(|st| st.game_running.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+                crate::pins::spotlight_mode(false, pins_enabled, pinned, game_running)
+                    == crate::pins::SpotlightMode::PinsOnly
+            };
             if visible {
                 // P3 (t_d340f851): opening ALWAYS behaves as focus mode — the
                 // compositor focus dispatch below takes keyboard focus regard-
@@ -702,6 +718,25 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // State changed (click_through forced off): publish once more,
                 // so the status button never lags behind the actual behaviour.
                 emit_state(&worker);
+            } else if pins_only {
+                // M5 (t_d10a0d84, §6-Revision): Pins-only — das Spotlight
+                // bleibt GEMAPPT, das Frontend versteckt das Palette-DOM und
+                // zeigt die Pin-Boxen. Complete-through über den bewährten
+                // Mechanismus (identisch zu ShortcutKind::ClickThrough);
+                // KEIN per-Region-Input-Shape. Kein Fokus-Dispatch, kein
+                // click_through-State-Touch — der Show-Pfad erzwingt beim
+                // Öffnen der Palette ohnehin Fokus-Modus (P3).
+                if !win.is_visible().unwrap_or(false) {
+                    place_on_pointer_monitor(&win);
+                    // t_bd8cbdfd (Punkt 4): topmost re-assert bei jedem Map.
+                    #[cfg(target_os = "windows")]
+                    let _ = win.set_always_on_top(true);
+                    let _ = win.show();
+                    place_on_pointer_monitor(&win);
+                    reassert_place_after_map(&win);
+                }
+                let _ = win.set_ignore_cursor_events(true);
+                emit_state(&worker);
             } else {
                 let _ = win.hide();
                 // Hand keyboard focus back to the game.
@@ -709,6 +744,16 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
             }
         }
     });
+}
+
+/// Re-applies the effective visibility without changing user intent — used by
+/// the pins paths (M5): pin_add/unpin/remove/enabled können den Spotlight-
+/// Modus drehen (z. B. letzter Pin gelöst bei verborgener Palette → Hidden).
+pub(crate) fn refresh_visibility<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(st) = app.try_state::<OverlayState>() {
+        apply_visibility(app, effective_visible(st.inner()));
+        emit_state(app);
+    }
 }
 
 /// hyprctl mit hartem Zeitbudget (t_1adbc017): waehrend eines laufenden

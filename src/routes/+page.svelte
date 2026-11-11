@@ -55,9 +55,8 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
 	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
-	import PinWindow from '../lib/PinWindow.svelte';
-	import PinPatches from '../lib/PinPatches.svelte';
-	import { isPinsWindow, type PinRow, type PinsState } from '../lib/pins';
+	import PinBoxes from '../lib/PinBoxes.svelte';
+	import { PINS_CHANGED_EVENT, type PinRow, type PinsState } from '../lib/pins';
 	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
 	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
 	import TitleBar from '../lib/TitleBar.svelte';
@@ -289,11 +288,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// rendert das Titelband (Variante B) über der Shell — die Shell selbst
 	// bleibt der gleiche Code (keine Overlay-spezifischen Fixierungs-Annahmen).
 	let isWindowMode = $state(false);
-	// M4 (t_7bf507e6): Label `pins-<n>` = Pin-Fenster — rendert NUR gepinnte
-	// Boxen (PinWindow), keine Shell. Boot-Frontend-Zweig in boot() unten.
-	let isPins = $state(false);
-	let pinLabel = $state('');
+	// M5 (t_d10a0d84): Pin-Metadaten für die Spotlight-Modus-Ableitung
+	// (pins-only ⇄ shell ⇄ hidden) — enabled + Anzahl aktiver Pins.
+	let pinsMeta = $state({ enabled: false, pinned: 0 });
 	let overlay = $state<OverlayState | null>(null);
+	// M5 (§6-Revision): Pins-only = Palette verborgen, ABER Pins aktiv und
+	// das Spiel läuft — das Spotlight-Fenster bleibt dann gemappt (Backend),
+	// das Shell-DOM wird versteckt und nur die Pin-Boxen bleiben sichtbar.
+	const pinsOnly = $derived(
+		overlay !== null &&
+			!overlay.visible &&
+			overlay.game_running &&
+			pinsMeta.enabled &&
+			pinsMeta.pinned > 0
+	);
 	let phase = $state<Phase>('loading');
 	let input = $state('');
 	// Vom Präfix-Parser abgeleitete Kategorien (aus `:c :i :l`-Termen).
@@ -3629,6 +3637,18 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		return (s ?? status)?.datasets.some((d) => d.count > 0) ?? false;
 	}
 
+	/// M5 (t_d10a0d84): Pin-Metadaten nachziehen (enabled + aktive Pins) —
+	/// Basis für die Pins-only-Ableitung des Spotlight-DOM. Wird beim Boot
+	/// und bei jedem PINS_CHANGED_EVENT geladen.
+	async function loadPinsMeta() {
+		try {
+			const st = await invoke<PinsState>('pins_state');
+			pinsMeta = { enabled: st.enabled, pinned: st.pins.filter((p) => p.pinned).length };
+		} catch {
+			pinsMeta = { enabled: false, pinned: 0 };
+		}
+	}
+
 	// ---- Initialisierung -----------------------------------------------------
 	async function boot() {
 		// Nur in der Tauri-Webview booten: ohne Tauri (SSR, plain-vite-dev)
@@ -3639,13 +3659,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			const label = getCurrentWindow().label;
 			if (typeof document !== 'undefined') document.documentElement.dataset.window = label;
-			// M4 (t_7bf507e6): Pin-Fenster-Zweig — NUR PinWindow rendern, keine
-			// Shell/Palette. Settings/i18n laufen trotzdem (Palette-Tokens +
-			// Sprache für die Box-Labels), der Rest der Boot-Logik ist egal.
-			if (isPinsWindow(label)) {
-				isPins = true;
-				pinLabel = label;
-			}
+			// M5 (t_d10a0d84): kein Pin-Fenster-Boot-Zweig mehr — Pins sind
+			// DOM-Boxen im Spotlight (§6-Revision). Die Pin-Metadaten für die
+			// Pins-only-Ableitung laden unten (spotlight-Zweig).
 			// M1 (t_90cb34ee): Fenstermodus-Zweig — erkennt am Label (und an der
 			// Hash-Route #/window, falls die URL sie trägt). Kein Spotlight-Boot:
 			// Overlay-State/Tray-Listener sind Overlay-lokal (bewusste Trennung
@@ -3667,6 +3683,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				await listen<OverlayState>(OVERLAY_STATE_EVENT, (e) => {
 					overlay = e.payload;
 				});
+				// M5 (t_d10a0d84): Pin-Metadaten für die Pins-only-Ableitung —
+				// Live-Nachziehen bei jeder Pin-Änderung (Add/Lösen/Tray).
+				void loadPinsMeta();
+				await listen(PINS_CHANGED_EVENT, () => void loadPinsMeta());
 				// Tray tr('common.open_config'): Fenster zeigen macht das Backend — hier
 				// nur der Config-View (gleicher Pfad wie der Zahnrad-Button).
 				await listen(overlayTrayOpenConfig, () => openConfig());
@@ -5289,13 +5309,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 <svelte:window onkeydown={onKey} />
 
-<main class="pal-root" class:app-compact={appCompact} bind:clientWidth={palW}>
-	<!-- M4 (t_7bf507e6): Pin-Fenster-Zweig — NUR die gepinnten Boxen, keine
-	     Shell. Das Fenster selbst wird vom Backend gesteuert (Sichtbarkeit
-	     strikt an game_running gekoppelt, Input-Modus an den Overlay-Zustand). -->
-	{#if isPins}
-		<PinWindow label={pinLabel} />
-	{:else}
+<main
+	class="pal-root"
+	class:app-compact={appCompact}
+	class:pins-only={isSpotlight && pinsOnly}
+	bind:clientWidth={palW}
+>
 	<!-- UG (t_a1f0d83f): shell-info — solange das Info-Popup offen ist,
 	     bekommt die content-driven Shell ein min-height-Floor, damit das
 	     (jetzt größere, Abschnitts-) Popup ohne internen Scroll vollständig
@@ -5303,13 +5322,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	{#if isWindowMode}
 		<TitleBar shortcutToggle={cfg?.shortcut_toggle ?? ''} />
 	{/if}
-	<!-- M4-E (t_34efb781): Pin-Patches im Spotlight — unsichtbare Interaktions-
-	     Flächen für die gepinnten Boxen (das Pin-Fenster ist dauerhaft input-
-	     transparent, das Spotlight hebt sich über die Pin-Fenster und fängt
-	     früher alle Klicks). Geschwister VOR dem .shell-Band: Shell-/UI-Elemente
-	     gewinnen jeden Überlapp (visuell + Hit-Testing). -->
+	<!-- M5 (t_d10a0d84, §6-Revision): Pin-Boxen im Spotlight — DOM über der
+	     Palette-Ebene (Geschwister VOR dem .shell-Band: Shell-/UI-Elemente
+	     gewinnen jeden Überlapp). Interaktiv bei offener Palette (Drag →
+	     pin_move, Klick → Controller-Popover), reine Anzeige im Pins-only-
+	     Zustand (Fenster complete-through im Backend). -->
 	{#if isSpotlight}
-		<PinPatches overlay={overlay} />
+		<PinBoxes {overlay} {pinsOnly} />
 	{/if}
 	<div
 		class="shell"
@@ -8036,5 +8055,4 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{/if}
 		</div><!-- /shell-main -->
 	</div>
-	{/if}
 </main>

@@ -141,23 +141,46 @@ Overlay-Fenster dynamisch dekorieren/machen statt zweites Fenster.
 
 ---
 
-## 6. Entscheidungspunkt 5 — Dauerhafte Shellboxen („Pins")
+## 6. Entscheidungspunkt 5 — Dauerhafte Shellboxen („Pins") — **REVISION M5 (2026-11-11, bindend)**
 
-**Ist:** Shellboxen leben im `spotlight`-Webview. Overlay versteckt = Fenster ungemappt → **nichts** sichtbar. Pins brauchen also einen eigenen Sichtbarkeitskanal.
+> **HISTORISCH (M4/M4-E, t_7bf507e6/t_34efb781):** die ursprüngliche Option A (dediziertes
+> Pin-Webview-Fenster pro Screen, `pins-<idx>`, rein anzeige-only, Interaktion über
+> Patch-Flächen im Spotlight) ist **verworfen**. Lokaltest-Beweis (Sebo, 2026-11-10,
+> Wayland/GTK3): das separate Anzeige-Fenster ist standfest UNMÖGLICH — input regions
+> sind unzuverlässig (Hover/Text-Mark am angeblich klickdurchlässigen Fenster sichtbar)
+> und das always-on-top-Stacking Fighting mit dem Spotlight ist nicht beherrschbar.
 
-**Optionen:**
+**M5-Endstand — EIN-FENSTER-ARCHITEKTUR (Option C, jetzt korrekt):** EIN Webview pro
+Screen (das Spotlight). Pins sind **DOM-Boxen im Spotlight**, keine eigenen
+WebviewWindows. Die `pins-<idx>`-Fenster sind entfernt.
 
-| Option | Beschreibung | Bewertung |
-|---|---|---|
-| **A: Pins-Overlay-Layer (EMPFEHLUNG)** | Ein dediziertes, per-Screen Pin-Webview-Fenster (decorations=false, transparent, always_on_top, skip_taskbar), das nur die gepinnten Boxen rendert; sichtbar, sobald SC läuft ODER User-Pins aktiv — unabhängig vom Overlay-Toggle | ein Fenster (nicht N), komplexe Placement-Logik bleibt überschaubar; Click-Through separat steuerbar |
-| B: Pro Pin ein Mini-Fenster | jedes Pin = eigenes 100×80-px-Fenster | N Fenster = N Mal Placement/Compositor-Regeln; Linux-Regeldruck; verwerfen |
-| C: Pins im Overlay-Fenster dauerhaft rendern | Overlay nie ganz hide, nur Palette ausblenden | verletzt den sauberen Hide-Vertrag (`apply_visibility`/State-Machine), Mix mit Click-Through gefährlich; verwerfen |
+| Zustand des Spotlight | Bedingung | Fenster/Input | DOM |
+|---|---|---|---|
+| **Palette** | `effective_visible` (config_open ∨ user_visible ∧ game_running) | gemappt, interaktiv (Fokus-Modus wie gehabt) | Shell-Palette sichtbar + Pin-Boxen sichtbar/interaktiv |
+| **Pins-only** | Palette verborgen, ABER `pins.enabled ∧ gepinnte>0 ∧ game_running` | gemappt BLEIBT, `set_ignore_cursor_events(true)` (derselbe bewährte complete-through-Mechanismus wie `ShortcutKind::ClickThrough` — kein per-Region-Gefrickel) | Shell-Palette DOM versteckt, Pin-Boxen DOM sichtbar (reine Anzeige) |
+| **Hidden** | weder Palette noch Pins aktiv | `hide()` wie gehabt | — |
 
-**Mechanik (universell, keine SCLM-Hardcode — Schema-U-Disziplin):**
-- Pin-Eintrag = `{ view_id, screen, box_index, opacity, pinned: bool }` in `app_settings` — rein **mechanisch** („diese Ansicht ist gepinnt"), keine Plugin-Semantik. Plugins/Connectors sagen nur, welche Ansichten pin-fähig sind (Deklaration im Manifest oder an der View-Komponente — im Umsetzungsschritt entscheiden; die Pin-Verwaltung selbst ist generisch).
-- **Deckkraft:** CSS `opacity` auf dem **Inhalt** der Box (Panel-Container), nicht auf der Hit-Box — Regel: `opacity < 1` dimmt Darstellung; Interaktivität bleibt solange der Box-Rahmen nicht selbst click-through ist.
-- **Interaktion/Klick-Modus (präzisiert M4-E, t_34efb781):** das Pins-Fenster ist **immer input-transparent** (`set_ignore_cursor_events(true)` als Konstante, kein Moduswechsel mit dem Overlay-Zustand) — gepinnte Boxen sind reine **Anzeige**. Die INTERAKTION (Drag, Deckkraft, Lösen, Schließen) läuft über unsichtbare **Patch-Flächen im SPOTLIGHT-Webview** (`PinPatches.svelte`, nur bei sichtbarem Overlay + `game_running` gerendert): der Spotlight hebt sich beim `show()` Stacking-technisch über gleichrangige always-on-top-Fenster (zuletzt gezeigt gewinnt) und verschluckt sonst alle Klicks auf den Boxen — das Spotlight ist die einzige interaktive Ebene, das Pin-Fenster nie input-aktiv (kein per-Region-Input-Shape auf WebviewWindow-Ebene — tao/Wayland kann das nicht).
-- **Persistenz:** Pins-Set + Deckkraft in `app_settings`, Restore beim Start (sofern SC-Regeln es erlauben — Pins sichtbar erst bei `game_running`, konsistent zur Overlay-Metapher; Off-Schalter in Settings).
+- **Lebenslauf (`overlay.rs apply_visibility`):** dritte Interpretation
+  `palette_hidden_but_pins_active` — der Pins-only-Zustand verhält sich wie der
+  Klick-Modus, nur ohne Palette-DOM. Beim Öffnen der Palette wechselt das Spotlight in
+  den normalen Fokus-Modus (interaktiv; der Show-Pfad erzwingt das bereits).
+  ALLE bestehenden Overlay-Kernverträge bleiben (toggle, click-through-Toggle,
+  Game-Detection, P3-Fokus-Dispatch).
+- **Pin-Boxen:** `PinWindow.svelte`-Rendering-Look migriert in eine Spotlight-Komponente
+  (`PinBoxes.svelte`, über der Palette-Ebene). Position x/y screen-relativ =
+  Spotlight-Viewport-Koordinaten 1:1 (gleiche Basis wie zuvor). Interaktiv sobald das
+  Spotlight interaktiv ist: Drag → `pin_move`, Klick → Controller-Popover (M4-E-Mechanik,
+  Anker-Regeln beibehalten). Palette zu → reine Anzeige (Fenster komplett durchlässig).
+- **Hotkeys:** unverändert — das Spotlight nimmt Tasten NUR wenn fokussiert (Palette
+  offen). Pins-only = durchlässig, kein Key-Fang (belegt: Fenster hat
+  `set_ignore_cursor_events(true)` und keinen Fokus).
+- **Monitor-Identität** (`monitor_list`/`hyprland_monitor_list`/`repair_unresolvable_screens`,
+  t_56262ccf): bleibt — dient jetzt der Pin-Box-Placement-Validierung (Capture-Pfad
+  `pin_add`, Spotlight-Screen-Zuordnung) und der M1-Fenster-Geometrie.
+- **Persistenz/Deckkraft/Sichtbarkeit:** unverändert — Pin-Eintrag `{view_id, screen,
+  box_index, opacity, pinned, x, y}` + Snapshot in `app_settings`; §9.1.5 strikt
+  `game_running`; Deckkraft CSS `opacity` auf dem Inhalt; Tray-Schalter wirkt auf den
+  Pins-only-Zustand.
 
 ---
 
@@ -218,7 +241,7 @@ Overlay-Fenster dynamisch dekorieren/machen statt zweites Fenster.
 3. **Standardmonitor**: Primärmonitor als Default; **zuletzt genutzter Monitor wird gemerkt** und wiederverwendet (Validität prüfen, sonst Primärmonitor).
 4. **Pins-Scope: alle** Shellboxen/Views pin-fähig; Feinschliff nach Nutzer-Feedback.
 5. **Pins-Sichtbarkeit: strikt an `game_running` gekoppelt.** Der **Fenstermodus ist das einzige Fenster, das ohne Spiel offen bleiben darf** — Pins haben keinen Sichtbarkeitskanal ohne laufendes SC.
-6. **Pins-Interaktion (M4-E, t_34efb781): das Pin-Fenster ist REIN ANZEIGE** (dauerhaft input-transparent — kein Hover/Klick im Pin-Fenster, auch nicht bei sichtbarem Overlay). Die Interaktion (Verschieben/Deckkraft/Schließen) läuft über unsichtbare Patch-Flächen im Spotlight-Webview, die nur im Overlay-sichtbaren Zustand gerendert werden — der Sticking-Conflict (Spotlight hebt sich beim `show()` über die Pin-Fenster) wird durch die Bauform gelöst, nicht durch Stacking-Flicken.
+6. **Pins-Interaktion (M4-E, t_34efb781 — HISTORISCH, ersetzt durch M5 §6-Revision):** ~~das Pin-Fenster ist REIN ANZEIGE~~. M5: Pins sind DOM-Boxen im Spotlight; interaktiv bei offener Palette (Drag → `pin_move`, Klick → Controller-Popover), reine Anzeige im Pins-only-Zustand (Fenster komplett durchlässig, `set_ignore_cursor_events(true)`).
 7. **Tray-Sprachwechsel: live nachziehen, wo technisch möglich** (Tauri-Tray-Labels zur Laufzeit austauschen); wo nicht möglich: beim Sprachwechsel **anbieten**, die App neu zu starten — nicht erzwingen.
 
 ## 10. Fazit

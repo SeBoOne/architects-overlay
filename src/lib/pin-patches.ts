@@ -1,8 +1,8 @@
-// M4-E (t_34efb781): Patch-Geometrie für die Spotlight-Interaktionsflächen —
+// M5 (t_d10a0d84): Box-/Popover-Geometrie für die Pin-Boxen im Spotlight —
 // bewusst als reine Funktionen ausgelagert (testbar mit `node --test`,
 // Muster pins-clamp.test.ts). Der Spotlight-Viewport deckt seinen Monitor
 // 1:1 ab; die Pin-Koordinaten x/y sind dieselbe Viewport-Basis, die auch
-// PinWindow.svelte für die Boxen nutzt (window.innerWidth/Height — CSS-px
+// die Pin-Boxen nutzen (window.innerWidth/Height — CSS-px
 // des Vollbild-Viewports; DPR wirkt auf beide Seiten identisch, daher kein
 // separater Skalierungsschritt).
 import { PIN_BOX_W, pinBoxEstHeight, clampBoxToViewport, type PinEntry } from './pins.ts';

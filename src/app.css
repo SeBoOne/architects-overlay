@@ -213,6 +213,14 @@ html[data-window="spotlight"] .pal-root {
   padding: var(--pad-top) 0 2vh;
 }
 
+/* M5 (t_d10a0d84, §6-Revision): Pins-only-Zustand — das Spotlight-Fenster
+   bleibt gemappt (Backend complete-through), das Shell-Palette-DOM wird
+   versteckt und NUR die Pin-Boxen (PinBoxes.svelte) bleiben als reine
+   Anzeige sichtbar. */
+main.pal-root.pins-only .shell {
+  display: none;
+}
+
 /* Vollbild-Overlay (Arkanis-Style): das Fenster umspannt den ganzen Monitor,
    die Palette schwebt im oberen Drittel darüber — Hintergrund transparent,
    nur die Shell selbst ist opak. */

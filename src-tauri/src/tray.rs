@@ -159,7 +159,7 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
         *item.0.lock().expect("tray item lock") = Some(window_toggle);
     }
     // M4: Handle für die pins_toggle-Checkbox an pins.rs übergeben —
-    // pin_add/pins_set_enabled/sync_all ziehen den Zustand live nach.
+    // pin_add/pins_set_enabled/refresh_visibility ziehen den Zustand live nach.
     if let Some(item) = app.try_state::<crate::pins::PinsTrayItem<R>>() {
         *item.0.lock().expect("tray item lock") = Some(pins_toggle);
     }
@@ -174,8 +174,8 @@ pub fn init<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
             // M1: Checkbox-Zustand zieht window::toggle_visible selbst nach
             // (show/hide rufen sync_tray_check).
             "window_toggle" => crate::window::toggle_visible(app),
-            // M4: Checkbox-Zustand zieht pins::pins_set_enabled selbst nach
-            // (sync_all ruft sync_tray_check).
+            // M4/M5: Checkbox-Zustand zieht pins::pins_set_enabled selbst nach
+            // (pins_set_enabled ruft sync_tray_check).
             "pins_toggle" => crate::pins::tray_toggle(app),
             "config" => crate::overlay::open_config_from_tray(app),
             // Clean exit (code 0): the systemd unit is transient with
