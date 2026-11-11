@@ -211,7 +211,10 @@ onMount(() => {
 {#if showBoxes}
 	<div class="pin-layer" class:display-only={pinsOnly} class:dragging={dragPin !== null}>
 		{#each boxPins as pin (boxKey(pin))}
-			{@const pos = boxPosFor(pin)}
+			<!-- Drag-Live-Feedback: der gezogene Pin rendert aus dragPin (clientX-Delta),
+			     sonst würde die Box erst beim Release/Reload springen (Sebo-Befund). -->
+			{@const live = dragPin && boxKey(dragPin) === boxKey(pin) ? dragPin : pin}
+			{@const pos = boxPosFor(live)}
 			<article
 				class="pin"
 				class:interactive
