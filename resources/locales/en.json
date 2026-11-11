@@ -1126,6 +1126,8 @@
     "pins.unpin_title": "Unpin (back to overlay)",
     "pins.chat_title": "Deal chat",
     "pins.close_title": "Close pin (remove)",
+    "pins.size_title": "Adjust size",
+    "pins.resize_title": "Resize box (drag corner)",
     "pins.empty": ""
   }
 }

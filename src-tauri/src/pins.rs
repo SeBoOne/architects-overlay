@@ -52,6 +52,11 @@ pub const PIN_BOX_W: u32 = 356;
 pub const OPACITY_MIN: u32 = 20;
 pub const OPACITY_MAX: u32 = 100;
 
+/// M6-F2 (t_3ff5e552): Größen-Range (Pins-Vertrag): 50–200 %, Default 100.
+pub const SCALE_MIN: u32 = 50;
+pub const SCALE_MAX: u32 = 200;
+pub const SCALE_DEFAULT: u32 = 100;
+
 /// Edge-Snapping-Mindestabstand zum Screen-Rand (px).
 pub const EDGE_MARGIN: i32 = 8;
 
@@ -74,6 +79,23 @@ pub const PINS_CHANGED_EVENT: &str = "ao:pins-changed";
 /// Deckkraft clampen auf 20–100 % (Pins-Vertrag; Presets 20/55/100).
 pub fn clamp_opacity(pct: u32) -> u32 {
     pct.clamp(OPACITY_MIN, OPACITY_MAX)
+}
+
+/// M6-F2: Größenfaktor clampen auf 50–200 %.
+pub fn clamp_scale(pct: u32) -> u32 {
+    pct.clamp(SCALE_MIN, SCALE_MAX)
+}
+
+/// M6-F2: Persistierte Box-Breite in px (Layoutbreite × Faktor).
+pub fn scaled_box_w(scale: u32) -> i32 {
+    (PIN_BOX_W as i32 * clamp_scale(scale) as i32) / 100
+}
+
+/// M6-F2: Persistierte Box-Höhe in px — dieselbe Platzierungs-Schätzung wie
+/// pin_add (44 + 34/Zeile, MIRROR pins.ts pinBoxEstHeight), skaliert.
+pub fn scaled_box_h(scale: u32, rows: usize) -> i32 {
+    let base = 44 + 34 * rows.max(1) as i32;
+    (base * clamp_scale(scale) as i32) / 100
 }
 
 /// Effective Sichtbarkeit der Pins (reine Logik, game_running-Vertrag
@@ -389,6 +411,7 @@ pub struct PinDto {
     pub pinned: bool,
     pub x: i32,
     pub y: i32,
+    pub scale: u32,
     pub title: String,
     pub kpi: Option<String>,
     pub rows: Vec<PinRowDto>,
@@ -431,6 +454,7 @@ fn to_dto(e: &settings::PinEntry) -> PinDto {
         pinned: e.pinned,
         x: e.x,
         y: e.y,
+        scale: e.scale,
         title: e.title.clone(),
         kpi: e.kpi.clone(),
         rows: e
@@ -544,6 +568,7 @@ pub fn pin_add<R: tauri::Runtime>(
         pinned: true,
         x,
         y,
+        scale: SCALE_DEFAULT,
         title,
         kpi,
         rows: rows
@@ -653,6 +678,84 @@ pub fn pin_set_opacity<R: tauri::Runtime>(
         crate::app_settings::persist_settings(&s);
         // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
         let _ = app.emit(PINS_CHANGED_EVENT, true);
+    }
+    hit
+}
+
+/// M6-F2 (t_3ff5e552): Größe setzen (50–200 %, clamp + Persistenz). Die
+/// Position wird hier NICHT verändert — das Frontend ruft nach einem
+/// Popover-± selbst `pin_resize` (neu snappen), während die Buttons nur
+/// den Faktor setzen und die Box an ihrer Ecke wachsen lassen (Grow-from-
+/// top-left = stabile Anker-Regel, kein Sprung).
+#[tauri::command(rename_all = "snake_case")]
+pub fn pin_set_scale<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    view_id: String,
+    screen: String,
+    box_index: u32,
+    scale: u32,
+) -> bool {
+    let clamped = clamp_scale(scale);
+    let st = app.state::<crate::app_settings::SettingsState>();
+    let mut s = st.inner.lock().expect("settings lock");
+    let list = s.pins_mut_entry();
+    let mut hit = false;
+    for e in list.iter_mut() {
+        if e.view_id == view_id && e.screen == screen && e.box_index == box_index && e.pinned {
+            e.scale = clamped;
+            hit = true;
+        }
+    }
+    if hit {
+        crate::app_settings::persist_settings(&s);
+        let _ = app.emit(PINS_CHANGED_EVENT, true);
+    }
+    hit
+}
+
+/// M6-F2 (t_3ff5e552): Resize-Ende über den Corner-Handle — Größenfaktor
+/// setzen UND Position mit der NEUEN Box-Geometrie neu snappen + persistieren
+/// (Patch-Geometrie rechnet mit dem Faktor, damit Anzeige == Persistenz).
+/// Analog `pin_move`: f64-Runde an der Grenze, dann die i32-Snap-Mathe.
+#[tauri::command(rename_all = "snake_case")]
+pub fn pin_resize<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    view_id: String,
+    screen: String,
+    box_index: u32,
+    scale: f64,
+    drag: PinDrag,
+) -> bool {
+    let clamped = clamp_scale(scale.round().max(0.0) as u32);
+    let w = scaled_box_w(clamped);
+    let (ix, iy, isw, ish) = (
+        drag.x.round() as i32,
+        drag.y.round() as i32,
+        drag.screen_w.round() as i32,
+        drag.screen_h.round() as i32,
+    );
+    // Snap mit der SKALIERTEN Breite und der skalierten Höhe des Eintrags —
+    // dazu rows.len() aus dem Eintrag lesen, nicht die Schätzung des Frontends.
+    let st = app.state::<crate::app_settings::SettingsState>();
+    let mut s = st.inner.lock().expect("settings lock");
+    let list = s.pins_mut_entry();
+    let mut hit = false;
+    for e in list.iter_mut() {
+        if e.view_id == view_id && e.screen == screen && e.box_index == box_index && e.pinned {
+            let h = scaled_box_h(clamped, e.rows.len());
+            let (sx, sy) = snap_to_edge(ix, iy, w, h, isw, ish);
+            log::info!("pin_resize: scale={clamped} w={w} h={h} -> snap(x={sx} y={sy})");
+            e.scale = clamped;
+            e.x = sx;
+            e.y = sy;
+            hit = true;
+        }
+    }
+    if hit {
+        crate::app_settings::persist_settings(&s);
+        let _ = app.emit(PINS_CHANGED_EVENT, true);
+        drop(s);
+        notify_changed(&app);
     }
     hit
 }
@@ -863,6 +966,7 @@ mod tests {
             pinned: true,
             x: 10,
             y: 20,
+            scale: 100,
             title: "t".into(),
             kpi: None,
             rows: Vec::new(),
@@ -962,6 +1066,36 @@ mod tests {
         assert_eq!(clamp_opacity(100), 100);
         assert_eq!(clamp_opacity(101), OPACITY_MAX);
         assert_eq!(clamp_opacity(5000), OPACITY_MAX);
+    }
+
+    /// M6-F2: Größen-Range 50–200 % (Pins-Vertrag) + skalierte Box-Maße.
+    #[test]
+    fn scale_clamps_and_sizes() {
+        assert_eq!(clamp_scale(0), SCALE_MIN);
+        assert_eq!(clamp_scale(49), SCALE_MIN);
+        assert_eq!(clamp_scale(50), 50);
+        assert_eq!(clamp_scale(100), SCALE_DEFAULT);
+        assert_eq!(clamp_scale(200), SCALE_MAX);
+        assert_eq!(clamp_scale(999), SCALE_MAX);
+        assert_eq!(scaled_box_w(100), PIN_BOX_W as i32);
+        assert_eq!(scaled_box_w(50), (PIN_BOX_W as i32) / 2);
+        assert_eq!(scaled_box_w(200), PIN_BOX_W as i32 * 2);
+        // Höhe: MIRROR pinBoxEstHeight (44 + 34/Zeile) × Faktor.
+        assert_eq!(scaled_box_h(100, 1), 78);
+        assert_eq!(scaled_box_h(100, 3), 44 + 34 * 3);
+        assert_eq!(scaled_box_h(50, 2), (44 + 34 * 2) / 2);
+        // Snap mit skalierten Maßen: 200%-Box rechts → 1920-2*356-8.
+        assert_eq!(
+            snap_to_edge(
+                1900,
+                100,
+                scaled_box_w(200),
+                scaled_box_h(200, 1),
+                1920,
+                1080
+            ),
+            (1920 - 2 * PIN_BOX_W as i32 - EDGE_MARGIN, 100)
+        );
     }
 
     /// Edge-Snapping L/R/T/B: Box bleibt vollständig auf dem Screen.
@@ -1066,6 +1200,7 @@ mod tests {
             pinned,
             x: 0,
             y: 0,
+            scale: 100,
             title: "t".into(),
             kpi: None,
             rows: Vec::new(),

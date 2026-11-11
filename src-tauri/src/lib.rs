@@ -192,6 +192,8 @@ pub fn run() {
             pins::pin_remove,
             pins::pin_set_opacity,
             pins::pin_move,
+            pins::pin_set_scale,
+            pins::pin_resize,
             pins::pins_debug_log,
             pins::pin_update,
         ]);

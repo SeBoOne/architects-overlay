@@ -22,6 +22,8 @@ export type PinEntry = {
 	pinned: boolean;
 	x: number;
 	y: number;
+	/** M6-F2 (t_3ff5e552): Größenfaktor in % (50–200, Default 100). */
+	scale?: number;
 	title: string;
 	kpi: string | null;
 	rows: PinRow[];
@@ -59,6 +61,24 @@ export const PIN_BOX_W = 356;
 
 export function pinBoxEstHeight(rows: number): number {
 	return 44 + 34 * Math.max(rows, 1);
+}
+
+// M6-F2 (t_3ff5e552): Größen-Range — MIRROR pins.rs SCALE_MIN/MAX/STEP (50–200 %).
+export const SCALE_MIN = 50;
+export const SCALE_MAX = 200;
+export const SCALE_STEP = 10;
+
+export function clampScale(pct: number): number {
+	return Math.min(SCALE_MAX, Math.max(SCALE_MIN, Math.round(pct)));
+}
+
+/** M6-F2: effektive Box-Maße (CSS-px) — Layoutmaß × Faktor. MIRROR pins.rs
+ *  scaled_box_w/h (dort 44 + 34/Zeile, skaliert). Das Frontend rendert die
+ *  Box mit CSS `zoom: scale/100`, dadurch ist das gerenderte Rect genau
+ *  w×h — dieselben Maße gehen an pin_move/pin_resize (Anzeige == Persistenz). */
+export function pinBoxSize(rows: number, scale: number | undefined): { w: number; h: number } {
+	const s = clampScale(scale ?? 100);
+	return { w: (PIN_BOX_W * s) / 100, h: (pinBoxEstHeight(rows) * s) / 100 };
 }
 
 /// Edge-Margin — MIRROR von pins.rs EDGE_MARGIN (8): die Anzeige clampt

@@ -87,6 +87,35 @@ test('kleiner Viewport: Popover/Box min. 0, nie negativ', () => {
 	assert.ok(p.x >= 0 && p.y >= 0);
 });
 
+// M6-F2 (t_3ff5e552): die Patch-Geometrie rechnet mit dem Größenfaktor —
+// skalierte Boxen clampen an der skalierten Größe (Anzeige == Persistenz,
+// pin_resize snappt im Backend mit scaled_box_w/h).
+test('M6-F2: skalierte Box clampt an skalierter Größe (scale 200)', () => {
+	// scale undefined → Legacy-Vertrag 100 % (alte Configs ohne scale).
+	assert.deepEqual(patchPos(pin({ x: 3400, y: -50 }), 3440, 1440), {
+		x: 3440 - PIN_BOX_W - 8,
+		y: 8
+	});
+	// 200 %: Breite 712 → rechter Rand 3440-712-8; Höhe ×2.
+	const big = pin({ x: 3400, y: -50, scale: 200 });
+	const pos = patchPos(big, 3440, 1440);
+	assert.equal(pos.x, 3440 - PIN_BOX_W * 2 - 8);
+	assert.equal(pos.y, 8);
+	// 50 %: halbe Maße.
+	const small = pin({ x: 3400, y: -50, scale: 50 });
+	assert.equal(patchPos(small, 3440, 1440).x, 3440 - PIN_BOX_W / 2 - 8);
+	// Popover orientiert sich an der skalierten Box-Mitte/-Kante.
+	const pop = popoverPos(big, 3440, 1440);
+	assert.equal(pop.y, 8 + pinBoxEstHeight(1) * 2);
+});
+
+test('M6-F2: unbekannte scale-Werte werden geclampt (Frontend-Mirror)', () => {
+	// clampScale 50–200 — ein geclampter Wert ändert die Geometrie deterministisch.
+	assert.equal(patchPos(pin({ x: 100, y: 100, scale: 999 }), 3440, 1440).x, 100);
+	assert.equal(patchPos(pin({ x: 100, y: 100, scale: 200 }), 3440, 1440).x, 100);
+	assert.equal(patchPos(pin({ x: 100, y: 100, scale: 1 }), 3440, 1440).x, 100);
+});
+
 test('DPR-Invarianz: gleiche logische Geometrie bei DPR 1 und 1.5', () => {
 	// DPR 1: physical == logical (Viewport 3440×1440). DPR 1.5: der Webview
 	// rechnet CSS-px — dieselben logischen Koordinaten, Viewportmaße sind die
