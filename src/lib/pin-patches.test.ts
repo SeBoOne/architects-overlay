@@ -8,7 +8,7 @@
 // DPR-1.5-Viewportmaßen auf denselben logischen Koordinaten).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { patchPos, popoverPos, POPOVER_W, POPOVER_H } from './pin-patches.ts';
+import { dragBasePos, patchPos, popoverPos, POPOVER_W, POPOVER_H } from './pin-patches.ts';
 import { PIN_BOX_W, pinBoxEstHeight, type PinEntry } from './pins.ts';
 
 function pin(over: Partial<PinEntry> = {}): PinEntry {
@@ -39,6 +39,29 @@ test('verwahrte Koordinaten → randberührt an der Persistenz-Marge geclampt (t
 	});
 	const h = pinBoxEstHeight(3);
 	assert.equal(patchPos(pin({ rows: new Array(3).fill(pin().rows[0]), y: 1600 }), 3440, 1440).y, 1440 - h - 8);
+});
+
+test('M6-R1: Drag-Anker = gerenderte (geclampte) Position — erster Move folgt sofort ohne Versatz', () => {
+	// Verwahrte Koordinate außerhalb des Clamps (z. B. Monitorwechsel):
+	// Anzeige klebte am Edge, der Drag-Basis muss DIESE Position sein —
+	// sonst frisst der Clamp das dx des ersten Drags (Nachzieh-Verzögerung)
+	// und der Griffpunkt versetzt sich beim Freigeben des Clamps.
+	const p = pin({ x: -500, y: -80 });
+	const vw = 3440;
+	const vh = 1440;
+	const base = dragBasePos(p, vw, vh);
+	const rendered = patchPos(p, vw, vh);
+	assert.deepEqual(base, rendered); // Anker == Anzeige-Position
+	// Erster Move: base + dx ist SOFORT sichtbar bewegt (kein Clamp-Fraß),
+	// während die alte Basis pin.x + dx = -490 weiterhin geclampt bliebe.
+	const dx = 60;
+	const liveOld = patchPos({ ...p, x: p.x + dx, y: p.y + dx }, vw, vh);
+	assert.equal(liveOld.x, rendered.x); // alt: Box folgt gar nicht
+	const liveNew = patchPos({ ...p, x: base.x + dx, y: base.y + dx }, vw, vh);
+	assert.equal(liveNew.x, rendered.x + dx); // neu: 1:1-Follow ab pointerdown
+	// Nach dem Drop persistiert das Backend die geclampte Position — die
+	// zweite Drag-Basis ist dann identisch zur ersten (keine Sprünge).
+	assert.deepEqual(dragBasePos({ ...p, x: base.x + dx, y: base.y + dx }, vw, vh), liveNew);
 });
 
 test('Popover: unter der Box, an der Box-Mitte orientiert', () => {
