@@ -47,6 +47,10 @@ export type PinsState = {
 	/// M4-E (t_34efb781): Label des Spotlight-Screens (pins.rs
 	/// spotlight_screen_of) — Patch-Flächen nur für Pins dieses Screens.
 	spotlight_screen?: string;
+	/// M6-F3: globaler Standard-Deckkraft-Wert (neue Pins erben ihn).
+	default_opacity?: number;
+	/// M6-F3: die 3 (editierbaren) vordefinierten Werte für das Popover.
+	presets?: number[];
 };
 
 /// Backend-Event: Pin-Set geändert (pins.rs PINS_CHANGED_EVENT). M5: das

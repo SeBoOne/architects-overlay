@@ -369,6 +369,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		updater_interval_hours: number;
 		// T1 (t_530e5f59): UI-Sprach-Code (normalisiert im Backend).
 		language: string;
+		// M6-F3: globaler Standard-Deckkraft-Wert (20..=100) + die 3 Presets.
+		pins_default_opacity: number;
+		pins_presets: number[];
 	};
 	let inConfig = $state(false);
 	let cfg = $state<SettingsSnapshot | null>(null);
@@ -1442,6 +1445,26 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			cfg = await invoke<SettingsSnapshot>('settings_set_updater_interval', { hours: h });
 			applySettings(cfg);
 			void loadUpdaterStatus();
+		} catch { /* ohne Backend nichts tun */ }
+	}
+
+	// M6-F3: Pins-Deckkraft-Einstellungen — globaler Standard-Wert (Slider/
+	// Zahl 0-100) und die 3 editierbaren Presets. Backend clamp/normiert
+	// (20..=100); der Slider schreibt onChange (nicht pro Pixel live).
+	async function setPinsDefaultOpacity(opacity: number) {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_pins_default_opacity', {
+				opacity: Math.max(0, Math.min(100, Math.round(opacity)))
+			});
+		} catch { /* ohne Backend nichts tun */ }
+	}
+
+	async function setPinsPreset(idx: number, value: number) {
+		if (!cfg) return;
+		const next = [...cfg.pins_presets];
+		next[idx] = Math.max(0, Math.min(100, Math.round(value)));
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_pins_presets', { presets: next });
 		} catch { /* ohne Backend nichts tun */ }
 	}
 
@@ -3399,7 +3422,6 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			const ok = await invoke<boolean>('pin_add', {
 				view_id,
 				box_index,
-				opacity: 100,
 				title: snap.title,
 				kpi: snap.kpi,
 				rows: snap.rows,
@@ -6503,6 +6525,50 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 							<div class="cfg-note">{upStatus.note}</div>
 						{/if}
 					{/if}
+					</section>
+					<!-- M6-F3: Pins-Deckkraft — globaler Standard-Wert (Slider +
+					     Zahl 0-100) und die 3 editierbaren Presets. Gehört global
+					     in die Settings, NICHT in den Inline-Controller. -->
+					<section class="cfg-sect">
+						<div class="h">{$t('settings.pins')}</div>
+						<div class="cfg-note">{$t('settings.pins_default_note')}</div>
+						<div class="cfg-key-row">
+							<input
+								type="range"
+								min="20"
+								max="100"
+								step="1"
+								style="flex:1; accent-color: var(--accent)"
+								value={cfg?.pins_default_opacity ?? 100}
+								aria-label={$t('settings.pins_default')}
+								onchange={(e) => void setPinsDefaultOpacity(Number((e.currentTarget as HTMLInputElement).value))}
+							/>
+							<input
+								class="qnum"
+								style="width:72px"
+								type="number"
+								min="0"
+								max="100"
+								value={cfg?.pins_default_opacity ?? 100}
+								aria-label={$t('settings.pins_default')}
+								onchange={(e) => void setPinsDefaultOpacity(Number((e.currentTarget as HTMLInputElement).value))}
+							/>
+						</div>
+						<div class="cfg-note">{$t('settings.pins_presets_note')}</div>
+						<div class="cfg-key-row">
+							{#each cfg?.pins_presets ?? [20, 55, 100] as p, i (i)}
+								<input
+									class="qnum"
+									style="width:72px"
+									type="number"
+									min="0"
+									max="100"
+									value={p}
+									aria-label={`${$t('settings.pins_presets')} ${i + 1}`}
+									onchange={(e) => void setPinsPreset(i, Number((e.currentTarget as HTMLInputElement).value))}
+								/>
+							{/each}
+						</div>
 					</section>
 					</div>
 				</div>

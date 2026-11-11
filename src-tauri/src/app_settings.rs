@@ -164,6 +164,10 @@ pub struct SettingsSnapshot {
     pub updater_interval_hours: u32,
     /// T1 (t_530e5f59): UI-Sprach-Code (normalisiert via settings::norm_language).
     pub language: String,
+    /// M6-F3: globaler Standard-Deckkraft-Wert (20..=100, neue Pins erben).
+    pub pins_default_opacity: u32,
+    /// M6-F3: die 3 editierbaren vordefinierten Deckkraft-Werte.
+    pub pins_presets: Vec<u32>,
 }
 
 impl SettingsSnapshot {
@@ -190,6 +194,8 @@ impl SettingsSnapshot {
             updater_enabled: s.updater_enabled(),
             updater_interval_hours: s.updater_interval_hours(),
             language: s.language().to_owned(),
+            pins_default_opacity: s.pins_default_opacity(),
+            pins_presets: s.pins_presets(),
         }
     }
 }
@@ -389,6 +395,44 @@ pub fn settings_set_language(
         crate::overlay::global_shortcuts_active(&app),
         &sync.take(),
     ))
+}
+
+/// M6-F3: globalen Standard-Deckkraft-Wert der Pins setzen (0-100 → geclampt
+/// auf den Pins-Vertrag 20..=100). Persists immediately; neue Pins erben ihn.
+#[tauri::command]
+pub fn settings_set_pins_default_opacity(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    opacity: u32,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_pins_default_opacity(opacity);
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
+}
+
+/// M6-F3: die 3 vordefinierten Deckkraft-Werte setzen (jeder 0-100 → geclampt
+/// 20..=100; normiert auf genau 3 sortierte Werte). Persists immediately.
+#[tauri::command]
+pub fn settings_set_pins_presets(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    presets: Vec<u32>,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_pins_presets(&presets);
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
 }
 
 /// Set the colour palette (amber | mfcd | bloom). Persists immediately.

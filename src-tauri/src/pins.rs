@@ -24,7 +24,8 @@
 //!   pinned}` (+ Box-Position x/y + Anzeige-Snapshot) in app_settings
 //!   (`[pins]`-Sektion), Restore beim Start — effektiv sichtbar erst bei
 //!   game_running. Deckkraft pro Box, CSS opacity auf dem INHALT (Range
-//!   20–100 %, Presets 20/55/100 — clamp in `clamp_opacity`).
+//!   20–100 %, Presets seit M6-F3 editierbar in Settings — clamp in
+//!   `clamp_opacity`).
 //! - **Placement:** Box-Standardbreite 356px, Edge-Snapping L/R/T/B in
 //!   `snap_to_edge` (Drag läuft im Frontend, das Backend snappt + persistiert).
 //! - **Monitor-Identität (t_56262ccf, bleibt):** die unified Enumeration
@@ -443,6 +444,11 @@ pub struct PinsState {
     /// Die Pin-Boxen im Spotlight rendern nur Pins DIESER Screens —
     /// die Spot-Viewport-Koordinaten decken exakt diesen Monitor ab.
     pub spotlight_screen: String,
+    /// M6-F3: globaler Standard-Deckkraft-Wert (neue Pins erben ihn) —
+    /// das Frontend sendet ihn bei pin_add mit.
+    pub default_opacity: u32,
+    /// M6-F3: die 3 (editierbaren) vordefinierten Werte für das Popover.
+    pub presets: Vec<u32>,
 }
 
 fn to_dto(e: &settings::PinEntry) -> PinDto {
@@ -503,6 +509,8 @@ pub fn pins_state<R: tauri::Runtime>(app: AppHandle<R>) -> PinsState {
             .map(|p| p.list.iter().map(to_dto).collect())
             .unwrap_or_default(),
         spotlight_screen: spotlight_screen_of(&app),
+        default_opacity: s.pins_default_opacity(),
+        presets: s.pins_presets(),
     }
 }
 
@@ -516,7 +524,6 @@ pub fn pin_add<R: tauri::Runtime>(
     app: AppHandle<R>,
     view_id: String,
     box_index: u32,
-    opacity: u32,
     title: String,
     kpi: Option<String>,
     rows: Vec<PinRowDto>,
@@ -543,6 +550,9 @@ pub fn pin_add<R: tauri::Runtime>(
     }
     let st = app.state::<crate::app_settings::SettingsState>();
     let mut s = st.inner.lock().expect("settings lock");
+    // M6-F3: neue Pins erben den globalen Standard-Deckkraft-Wert aus den
+    // Settings (kein hartes 100 mehr) — vor dem &mut-Borrow der Liste lesen.
+    let opacity = s.pins_default_opacity();
     let section = s.pins_mut_entry();
     if section
         .iter()
@@ -1010,6 +1020,8 @@ mod tests {
             overlay_visible: false,
             pins: Vec::new(),
             spotlight_screen: "DP-3".into(),
+            default_opacity: 100,
+            presets: vec![20, 55, 100],
         };
         let js = serde_json::to_value(&st).unwrap();
         assert!(js.get("game_running").is_some());
