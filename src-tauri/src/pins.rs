@@ -1073,6 +1073,8 @@ mod tests {
             title: "t".into(),
             kpi: None,
             rows: Vec::new(),
+            scale: 100,
+            content: None,
             key: Some("42:7:9".into()),
         };
         let js = serde_json::to_value(to_dto(&e)).unwrap();

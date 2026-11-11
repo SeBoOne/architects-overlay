@@ -2435,6 +2435,5 @@ mod tests {
         let loaded = Settings::load_from(&path).unwrap();
         assert_eq!(loaded.pins_default_opacity(), 35);
         assert_eq!(loaded.pins_presets(), vec![30, 60, 100]);
-
     }
 }
