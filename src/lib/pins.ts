@@ -51,24 +51,33 @@ export function pinBoxEstHeight(rows: number): number {
 	return 44 + 34 * Math.max(rows, 1);
 }
 
-/// Box-Position an den Viewport clamplen (t_01f1a9ed Punkt 3): eine Box darf
-/// nie vollständig außerhalb liegen — alte/verwahrte Koordinaten (z. B. vom
-/// Monitor eines anderen Screens) führen sonst ins Nichts. Die Box bleibt
-/// mindestens EDGE-gesichtbar: x wird in [0, vw - min(w, vw)] geclampt
-/// (dito y), damit immer ein streifbarer Rand steht. Drag-Snapping bleibt
-/// unangetastet (läuft separat über pin_move/snap_to_edge im Backend).
-export function clampBoxToViewport(
+/// Edge-Margin — MIRROR von pins.rs EDGE_MARGIN (8): die Anzeige clampt
+/// exakt mit denselben Regeln wie die Persistenz (snap_to_edge beim
+/// pin_move), damit Drop-Ort == nach dem Load gerenderte Position
+/// (t_88fb1585 M5-R2: kein PatchPos/Persistenz-Divergenz mehr).
+export const EDGE_MARGIN = 8;
+
+/// Box-Clamp — MIRROR von pins.rs snap_to_edge: identische Margin-Grenzen,
+/// identische Reihenfolge (erst L/R, dann T/B), identisches Verhalten für
+/// Boxen breiter/höher als der Screen. Die Anzeige rendert dadurch exakt
+/// die Position, die das Backend beim pin_move persistieren würde — der
+/// Drop-Ort bleibt nach dem Load sichtbar erhalten.
+export function snapBoxToScreen(
 	x: number,
 	y: number,
 	w: number,
 	h: number,
-	vw: number,
-	vh: number
+	screen_w: number,
+	screen_h: number
 ): { x: number; y: number } {
-	const max_x = Math.max(0, vw - Math.min(w, vw));
-	const max_y = Math.max(0, vh - Math.min(h, vh));
-	return {
-		x: Math.min(Math.max(x, 0), max_x),
-		y: Math.min(Math.max(y, 0), max_y)
-	};
+	const cw = Math.min(Math.max(w, 0), Math.max(screen_w, 0));
+	const ch = Math.min(Math.max(h, 0), Math.max(screen_h, 0));
+	const max_x = screen_w - cw - EDGE_MARGIN;
+	const max_y = screen_h - ch - EDGE_MARGIN;
+	const x2 =
+		x < EDGE_MARGIN ? EDGE_MARGIN : x > Math.max(max_x, EDGE_MARGIN) ? Math.max(max_x, EDGE_MARGIN) : x;
+	const y2 =
+		y < EDGE_MARGIN ? EDGE_MARGIN : y > Math.max(max_y, EDGE_MARGIN) ? Math.max(max_y, EDGE_MARGIN) : y;
+	return { x: x2, y: y2 };
 }
+

@@ -5,16 +5,19 @@
 // die Pin-Boxen nutzen (window.innerWidth/Height — CSS-px
 // des Vollbild-Viewports; DPR wirkt auf beide Seiten identisch, daher kein
 // separater Skalierungsschritt).
-import { PIN_BOX_W, pinBoxEstHeight, clampBoxToViewport, type PinEntry } from './pins.ts';
+import { PIN_BOX_W, pinBoxEstHeight, snapBoxToScreen, type PinEntry } from './pins.ts';
 
 /// Popover-Maße (CSS-px) — Mini-Controller neben der Box.
 export const POPOVER_W = 260;
 export const POPOVER_H = 160;
 
-/// Patch-Position: Box an den Spotlight-Viewport clamplen (nie vollständig
-/// außerhalb — gleiche Garantie wie das Pin-Fenster selbst).
+/// Patch-Position: Box an den Spotlight-Viewport clamplen — MIRROR der
+/// Persistenz-Mathe (pins.rs snap_to_edge, t_88fb1585): identische
+/// EDGE_MARGIN-Grenzen wie das Backend beim pin_move, damit Anzeige ==
+/// Persistenz (der Drop-Ort bleibt nach dem Load exakt erhalten). Keine
+/// Snap-Zonen der eigenen Art mehr — nur noch der eine, geteilte Clamp.
 export function patchPos(pin: PinEntry, vw: number, vh: number): { x: number; y: number } {
-	return clampBoxToViewport(pin.x, pin.y, PIN_BOX_W, pinBoxEstHeight(pin.rows.length), vw, vh);
+	return snapBoxToScreen(pin.x, pin.y, PIN_BOX_W, pinBoxEstHeight(pin.rows.length), vw, vh);
 }
 
 /// Popover-Position: unter der Box, horizontal an der Box-Mitte orientiert,
