@@ -732,9 +732,9 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 // bleibt GEMAPPT, das Frontend versteckt das Palette-DOM und
                 // zeigt die Pin-Boxen. Complete-through über den bewährten
                 // Mechanismus (identisch zu ShortcutKind::ClickThrough);
-                // KEIN per-Region-Input-Shape. Kein Fokus-Dispatch, kein
-                // click_through-State-Touch — der Show-Pfad erzwingt beim
-                // Öffnen der Palette ohnehin Fokus-Modus (P3).
+                // KEIN per-Region-Input-Shape. Kein click_through-State-Touch —
+                // der Show-Pfad erzwingt beim Öffnen der Palette ohnehin
+                // Fokus-Modus (P3).
                 if !win.is_visible().unwrap_or(false) {
                     place_on_pointer_monitor(&win);
                     // t_bd8cbdfd (Punkt 4): topmost re-assert bei jedem Map.
@@ -745,6 +745,26 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                     reassert_place_after_map(&win);
                 }
                 let _ = win.set_ignore_cursor_events(true);
+                // M6-R2 (t_6742a463, Sebo-Befund): Der Übergang
+                // Palette→Pins-only verlässt das Fenster GEMAPPT — der
+                // Tastaturfokus blieb auf dem Spotlight (die Palette hielt
+                // ihn als Fokus-Modus-Fenster) und die beim Show bewaffnete
+                // `stay_focused`-Bridge blieb ARMED. Ergebnis: jedes Tasten-
+                // Ereignis landete im unsichtbaren Spotlight-Webview statt
+                // in SC (identisch zum set_click_through-Pfad, der dort
+                // genau deshalb den Fokus an das Spiel zurückgibt). Beides
+                // hier Lösen — die Pins sind im Pins-only-Zustand rein
+                // Anzeige (PinBoxes: interactive=false), die Bridge wird
+                // beim nächsten Show-Pfad neu bewaffnet.
+                compositor_focus_dedupe("starcitizen.exe", FOCUS_TARGET_GAME);
+                #[cfg(target_os = "linux")]
+                std::thread::spawn(move || {
+                    // Kurz verzögert + außerhalb des Main-Threads: der
+                    // Disarm macht hyprctl-Roundtrips (Budget 800 ms je
+                    // Aufruf), die dürfen den Main-Thread nicht blockieren.
+                    std::thread::sleep(Duration::from_millis(150));
+                    disarm_all_own_windows(None);
+                });
                 emit_state(&worker);
             } else {
                 let _ = win.hide();
