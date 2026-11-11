@@ -70,6 +70,9 @@ async function load() {
 		const st = await invoke<{ pins: PinEntry[]; spotlight_screen: string }>('pins_state');
 		pins = st.pins;
 		spotlightScreen = st.spotlight_screen;
+		dbg(
+			`load pins=${pins.length} boxPins=${pins.filter((p) => p.pinned && p.screen === spotlightScreen).length} screen=${spotlightScreen} vw=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
+		);
 	} catch {
 		/* Pins-Backend fehlt — best effort. */
 	}
@@ -95,6 +98,15 @@ function popoverPosFor(pin: PinEntry) {
 
 const DRAG_THRESHOLD = 4; // px — darunter gilt der Grab als Klick (Popover)
 
+// M5-R3 (t_12e6bd06) Diagnose: der komplette Drag-Pfad loggt über die
+// Backend-Brücke `pins_debug_log` (Debug-Builds loggen, Release verwirft
+// stumm) — ein Satz Zahlen pro Drag: Start, je Move dx/dy/Live-Position,
+// beim Drop die gesendeten pin_move-Args. Kandidaten-Check: DPR/Viewport-
+// Offset (hyprctl-Befund Spotlight at [0,-15]) gegen clientX/Y.
+function dbg(line: string) {
+	void invoke('pins_debug_log', { line }).catch(() => {});
+}
+
 // Drag NUR bei interaktivem Spotlight (Palette offen); ohne Drag-Bewegung
 // (Klick auf den Kopf) öffnet das Controller-Popover.
 function onGrab(e: PointerEvent, pin: PinEntry) {
@@ -111,6 +123,9 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 	// (Sebo-Befund 2026-11-10). Plus Schwelle: < DRAG_THRESHOLD ist ein Klick.
 	const startX = e.clientX;
 	const startY = e.clientY;
+	dbg(
+		`grab start=(${startX},${startY}) pin=(${pin.x},${pin.y}) vw=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
+	);
 	let dx = 0;
 	let dy = 0;
 	const move = (ev: PointerEvent) => {
@@ -118,6 +133,7 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 		dx = ev.clientX - startX;
 		dy = ev.clientY - startY;
 		dragPin = { ...pin, x: pin.x + dx, y: pin.y + dy };
+		dbg(`move client=(${ev.clientX},${ev.clientY}) d=(${dx},${dy}) live=(${dragPin.x},${dragPin.y})`);
 	};
 	const up = (ev: PointerEvent) => {
 		const p = dragPin;
@@ -127,19 +143,25 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 		if (!p) return;
 		const moved = Math.abs(dx) + Math.abs(dy);
 		if (moved > DRAG_THRESHOLD) {
+			const dragArgs = {
+				// M5-R3 (t_12e6bd06): runde an der Grenze Frontend/Backend —
+				// Subpixel-clientX/Y (reale Maus) durften den pin_move-Invoke
+				// als i32-Contract still verwerfen lassen → Drop-Ort verlor
+				// sich. Backend akzeptiert zusätzlich f64 (Runden im Rust).
+				x: Math.round(p.x),
+				y: Math.round(p.y),
+				w: PIN_BOX_W,
+				h: pinBoxEstHeight(p.rows.length),
+				screen_w: window.innerWidth,
+				screen_h: window.innerHeight
+			};
+			dbg(`up moved=${moved} pin_move=${JSON.stringify(dragArgs)}`);
 			void invoke('pin_move', {
 				view_id: p.view_id,
 				screen: p.screen,
 				box_index: p.box_index,
-				drag: {
-					x: p.x,
-					y: p.y,
-					w: PIN_BOX_W,
-					h: pinBoxEstHeight(p.rows.length),
-					screen_w: window.innerWidth,
-					screen_h: window.innerHeight
-				}
-			});
+				drag: dragArgs
+			}).catch((err) => dbg(`pin_move FAILED ${String(err)}`));
 			void load();
 		} else {
 			openKey = boxKey(p);
