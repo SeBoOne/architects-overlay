@@ -56,7 +56,7 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	import Rail from '../lib/Rail.svelte';
 	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
 	import PinBoxes from '../lib/PinBoxes.svelte';
-	import { PINS_CHANGED_EVENT, type PinRow, type PinsState } from '../lib/pins';
+	import { PINS_CHANGED_EVENT, type PinEntry, type PinRow, type PinsState } from '../lib/pins';
 	// M1 (t_90cb34ee): Titelband Variante B des Fenstermodus-Fensters
 	// (`app-window`) — nur in diesem Fenster gerendert (isWindowMode).
 	import TitleBar from '../lib/TitleBar.svelte';
@@ -2068,8 +2068,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// M4: gepinnte Shop-Boxen ziehen live nach; Selektion klemmen.
 		if (shopSel >= myOffers.length) shopSel = Math.max(myOffers.length - 1, 0);
 		if (tradeSel >= dealsSorted.length) tradeSel = Math.max(dealsSorted.length - 1, 0);
-		await syncPins('shop', (i) => (myOffers[i] ? shopPinSnapshot(myOffers[i]) : null));
-		await syncPins('trades', (i) => (dealsSorted[i] ? tradePinSnapshot(dealsSorted[i]) : null));
+		await syncPins('shop', (p) => (myOffers[p.box_index] ? shopPinSnapshot(myOffers[p.box_index]) : null));
+		await syncPins('trades', (p) => (dealsSorted[p.box_index] ? tradePinSnapshot(dealsSorted[p.box_index]) : null));
 	}
 	// Beim Betreten des Mein-Shop-Tabs laden (stale-first im Backend).
 	$effect(() => {
@@ -2147,7 +2147,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			if (r.note) tradesNote = r.note;
 			// M4: gepinnte Trades-Boxen ziehen live nach; Selektion klemmen.
 			if (tradeSel >= dealsSorted.length) tradeSel = Math.max(dealsSorted.length - 1, 0);
-			await syncPins('trades', (i) => (dealsSorted[i] ? tradePinSnapshot(dealsSorted[i]) : null));
+			await syncPins('trades', (p) => (dealsSorted[p.box_index] ? tradePinSnapshot(dealsSorted[p.box_index]) : null));
 		} catch (e) {
 			tradesErr = errText(e);
 		}
@@ -3274,12 +3274,34 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Detail. Snapshot = generische DISPLAY-Daten (title/kpi/rows) — die
 	// Pin-Verwaltung im Backend bleibt rein mechanisch (Schema-U).
 
+	/// M6-F4 (t_7a548e85): stabile Inhalts-Identität einer Route —
+	/// Commodity + beide Beine. Generisch als opaker Pin-Key.
+	function routeKey(r: TradeRoute): string {
+		return `${r.commodity_id}:${r.buy_terminal_id}:${r.sell_terminal_id}`;
+	}
+
+	/// M6-F4: numerische Bein-Daten der zuletzt geschriebenen Routen-Pins
+	/// (key → Kauf-/Verkaufsort + Preise). Basis für die Neuberechnung des
+	/// Pin-Snapshots bei Kauf-/Verkaufsort-Wechsel im Detail — ohne SCLM-
+	/// Semantik, rein routen-view-seitig.
+	type RoutePinLeg = { terminal_id: number; terminal: string; chain: string; price: number };
+	let pinLegs = new Map<string, { commodity_id: number; buy: RoutePinLeg; sell: RoutePinLeg }>();
+	function registerRouteLegs(key: string, r: TradeRoute) {
+		pinLegs.set(key, {
+			commodity_id: r.commodity_id,
+			buy: { terminal_id: r.buy_terminal_id, terminal: r.buy_terminal, chain: r.buy_chain, price: r.buy_price },
+			sell: { terminal_id: r.sell_terminal_id, terminal: r.sell_terminal, chain: r.sell_chain, price: r.sell_price }
+		});
+	}
+
 	/// Anzeige-Snapshot einer Route für die Pin-Box (mockup-pin.html-Layout:
 	/// zwei Steps Kauf/Verkauf + Marge als KPI).
 	function routePinSnapshot(r: TradeRoute) {
+		registerRouteLegs(routeKey(r), r);
 		return {
 			title: `${tr('market.tab_routes')} · ${r.commodity}`,
 			kpi: `+${(r.margin * 100).toFixed(0)} %`,
+			key: routeKey(r),
 			rows: [
 				{
 					idx: '01',
@@ -3299,7 +3321,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		};
 	}
 
-	type PinSnap = { title: string; kpi: string | null; rows: PinRow[] };
+	type PinSnap = { title: string; kpi: string | null; rows: PinRow[]; key?: string | null };
 
 	/// Anzeige-Snapshot eines Offers für die Pin-Box (generische DISPLAY-Daten).
 	function offerPinSnapshot(o: Offer): PinSnap {
@@ -3388,7 +3410,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				opacity: 100,
 				title: snap.title,
 				kpi: snap.kpi,
-				rows: snap.rows
+				rows: snap.rows,
+				key: snap.key ?? null
 			});
 			f5Msg = tr(ok ? 'pins.added' : 'pins.already_pinned');
 		} catch (e) {
@@ -3399,21 +3422,24 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 
 	/// Snapshot-Refresh nach jedem Reload der jeweiligen View — gepinnte
-	/// Boxen ziehen live nach (gleicher box_index in der aktualisierten
-	/// Liste; `resolve` liefert null, wenn der Index nicht mehr existiert).
-	async function syncPins(view_id: string, resolve: (box_index: number) => PinSnap | null) {
+	/// Boxen ziehen live nach. M6-F4 (t_7a548e85): der Resolver bekommt den
+	/// Pin selbst — Views mit stabiler Identität (Key) matchen daran, statt
+	/// blind über den Positions-Index (der nach Filter-Reload auf einen
+	/// ANDEREN Eintrag zeigen kann → Commodity-Sprung im Pin).
+	async function syncPins(view_id: string, resolve: (p: PinEntry) => PinSnap | null) {
 		try {
 			const st = await invoke<PinsState>('pins_state');
 			for (const p of st.pins) {
 				if (!p.pinned || p.view_id !== view_id) continue;
-				const snap = resolve(p.box_index);
+				const snap = resolve(p);
 				if (!snap) continue;
 				await invoke('pin_update', {
 					view_id,
 					box_index: p.box_index,
 					title: snap.title,
 					kpi: snap.kpi,
-					rows: snap.rows
+					rows: snap.rows,
+					key: snap.key ?? null
 				});
 			}
 		} catch {
@@ -3421,7 +3447,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	/// M6-F4: Routen-Pin-Refresh — key-first. Nur der Pin mit EXAKT dieser
+	/// Commodity+Legs-Kombination wird aktualisiert; nicht gefundene Pins
+	/// bleiben unverändert (Commodity-Regel: NIE auf anderes Commodity
+	/// springen). Legacy-Pins ohne Key haben keine verifizierbare Identität
+	/// → bleiben ebenfalls unverändert.
+	function routePinResolve(p: PinEntry): PinSnap | null {
+		if (!p.key) return null;
+		const r = routes_.find((x) => routeKey(x) === p.key);
+		return r ? routePinSnapshot(r) : null;
+	}
+
 	async function pinRoute(box_index: number) {
+		// M6-F4 (t_7a548e85): aus dem offenen Detail wird der ANGEZEIGTE
+		// (ggf. Leg-overrideene) Stand angeheftet — nicht der Listen-Eintrag
+		// am Detail-Index, der nach dem Filter-Reload woanders zeigen kann.
+		if (rDetail) {
+			await pinAdd('routes', Math.max(rDetailIdx, 0), routePinSnapshot(rDetail));
+			return;
+		}
 		const r = routes_[box_index];
 		if (r) await pinAdd('routes', box_index, routePinSnapshot(r));
 	}
@@ -3474,8 +3518,22 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			rSweptAt = resp.swept_at;
 			rRefreshing = resp.refreshing;
 			rSel = 0;
-			// M4: gepinnte Routen-Boxen ziehen live nach (Snapshot-Refresh).
-			await syncPins('routes', (i) => (routes_[i] ? routePinSnapshot(routes_[i]) : null));
+			// M6-F4 (t_7a548e85): offenes Route-Detail nach dem Filter-Reload
+			// auf den passenden Eintrag hängen (gleiche Commodity+Legs-Kombi
+			// via Key) — die Detail-Werte bleiben belegt, statt auf einem
+			// veralteten Objekt stehen zu bleiben. Nicht gefunden → Detail
+			// bleibt (kein Commodity-Sprung).
+			if (rDetail) {
+				const cur = rDetail;
+				const idx = routes_.findIndex((x) => routeKey(x) === routeKey(cur));
+				if (idx >= 0) {
+					rSel = idx;
+					rDetail = routes_[idx];
+				}
+			}
+			// M4: gepinnte Routen-Boxen ziehen live nach (key-first, siehe
+			// routePinResolve — kein Index-Fallback, kein Commodity-Sprung).
+			await syncPins('routes', routePinResolve);
 		} catch (e) {
 			routes_ = [];
 			rRefreshing = false;
@@ -3621,11 +3679,124 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		if (!locs) return [] as RouteLocationRow[];
 		return [...locs.sells].sort((a, b) => b.price - a.price);
 	});
-	/** Klick auf einen Kauf-/Verkaufsort setzt Start/Ziel im Filter (trivial,
-	 *  bestehende Logik: Typeahead-Felder binden direkt an rFrom/rTo). */
-	function setRouteLocField(kind: 'from' | 'to', terminal: string) {
-		if (kind === 'from') rFrom = terminal;
-		else rTo = terminal;
+	/** Klick auf einen Kauf-/Verkaufsort: (1) Start/Ziel im Filter setzen
+	 *  (bestehendes Verhalten), (2) M6-F4 die Detail-Berechnung auf die neue
+	 *  Auswahl umstellen — GLEICHES Commodity, nur das gewählte Bein wechselt
+	 *  (Preis/Terminal des neuen Standorts, Gewinn/Marge neu gerechnet) —,
+	 *  (3) gepinnte Routen-Boxen desselben Commodity nachziehen. NIE ein
+	 *  anderer Commodity-Wechsel. */
+	function setRouteLocField(kind: 'from' | 'to', loc: RouteLocationRow) {
+		if (kind === 'from') rFrom = loc.terminal;
+		else rTo = loc.terminal;
+		if (!rDetail) return;
+		if (rLocations && rLocations.commodity_id !== rDetail.commodity_id) return;
+		const eff = legOverride(rDetail, kind, loc);
+		rDetail = eff;
+		void updateRoutePinsAfterLegChange(kind, loc, eff);
+	}
+
+	/// M6-F4: Route-Kopie mit EINEM ausgetauschten Bein — Commodity, das
+	/// andere Bein und Menge bleiben; Preis/Marge/Erträge folgen dem neuen
+	/// Standort (identische Formel wie das Backend: margin = (sell-buy)/buy).
+	function legOverride(r: TradeRoute, kind: 'from' | 'to', loc: RouteLocationRow): TradeRoute {
+		const buy = kind === 'from' ? loc.price : r.buy_price;
+		const sell = kind === 'to' ? loc.price : r.sell_price;
+		const margin = buy > 0 ? (sell - buy) / buy : r.margin;
+		const qty = rBudgetActive ? Math.max(Number(r.quantity) || 0, 0) : rScu || 1;
+		return {
+			...r,
+			...(kind === 'from'
+				? {
+						buy_terminal_id: loc.terminal_id,
+						buy_terminal: loc.terminal,
+						buy_chain: loc.chain,
+						buy_price: loc.price,
+						buy_terminal_autoload: loc.autoload,
+						buy_terminal_cargo_deck: loc.cargo_deck,
+						buy_terminal_ground: loc.ground
+					}
+				: {
+						sell_terminal_id: loc.terminal_id,
+						sell_terminal: loc.terminal,
+						sell_chain: loc.chain,
+						sell_price: loc.price,
+						sell_terminal_autoload: loc.autoload,
+						sell_terminal_cargo_deck: loc.cargo_deck,
+						sell_terminal_ground: loc.ground
+					}),
+			profit_per_scu: sell - buy,
+			margin,
+			profit_total: (sell - buy) * qty,
+			cost_total: buy * qty
+		};
+	}
+
+	/// M6-F4: gepinnte Routen-Boxen nach einem Kauf-/Verkaufsort-Wechsel im
+	/// Detail — Commodity-Regel: nur Pins desselben Commodity (Key-Präfix)
+	/// werden berührt; das gewählte Bein wird gegen den neuen Standort
+	/// getauscht, das andere bleibt, KPI/Zeilen werden neu gerechnet. NIE
+	/// ein Pin auf ein anderes Commodity umschreiben.
+	async function updateRoutePinsAfterLegChange(
+		kind: 'from' | 'to',
+		loc: RouteLocationRow,
+		eff: TradeRoute
+	) {
+		const commodity = String(eff.commodity_id);
+		try {
+			const st = await invoke<PinsState>('pins_state');
+			// Erst einsammeln, dann schreiben: zwei Pins können denselben
+			// Legacy-Key teilen — das Löschen im Loop würde dem zweiten die
+			// numerische Basis wegnehmen.
+			const targets = st.pins.filter(
+				(p) =>
+					p.pinned &&
+					p.view_id === 'routes' &&
+					!!p.key &&
+					p.key.split(':')[0] === commodity &&
+					pinLegs.has(p.key)
+			);
+			for (const p of targets) {
+				const oldKey = p.key as string;
+				const legs = pinLegs.get(oldKey)!;
+				const buy =
+					kind === 'from'
+						? { terminal_id: loc.terminal_id, terminal: loc.terminal, chain: loc.chain, price: loc.price }
+						: legs.buy;
+				const sell =
+					kind === 'to'
+						? { terminal_id: loc.terminal_id, terminal: loc.terminal, chain: loc.chain, price: loc.price }
+						: legs.sell;
+				const marginPct = buy.price > 0 ? ((sell.price - buy.price) / buy.price) * 100 : 0;
+				const key = `${legs.commodity_id}:${buy.terminal_id}:${sell.terminal_id}`;
+				pinLegs.delete(oldKey);
+				pinLegs.set(key, { commodity_id: legs.commodity_id, buy, sell });
+				await invoke('pin_update', {
+					view_id: 'routes',
+					box_index: p.box_index,
+					title: p.title, // Commodity unverändert → Kopf bleibt
+					kpi: `+${marginPct.toFixed(0)} %`,
+					rows: [
+						{
+							idx: '01',
+							name: buy.terminal,
+							sub: `${buy.chain} · ${tr('common.buy')}`,
+							value: fmtPrice(buy.price),
+							side: 'buy'
+						},
+						{
+							idx: '02',
+							name: sell.terminal,
+							sub: `${sell.chain} · ${tr('common.sell')}`,
+							value: fmtPrice(sell.price),
+							side: 'sell'
+						}
+					],
+					key
+				});
+			}
+		} catch {
+			/* Pins-Backend fehlt — best effort. */
+		}
 	}
 
 	// Flaches Navigationsmodell: alle Zeilen in Reihenfolge + Offsets je Gruppe.
@@ -4516,7 +4687,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			// M4: gepinnte Offer-Boxen ziehen live nach (Snapshot-Refresh);
 			// Selektion auf die neue Liste klemmen.
 			if (mSel >= visOffers.length) mSel = Math.max(visOffers.length - 1, 0);
-			await syncPins('offers', (i) => (visOffers[i] ? offerPinSnapshot(visOffers[i]) : null));
+			await syncPins('offers', (p) => (visOffers[p.box_index] ? offerPinSnapshot(visOffers[p.box_index]) : null));
 		} catch (e) {
 			offers = [];
 			mNote = errText(e);
@@ -6761,7 +6932,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<button type="button" class="rd-pair-row" data-side="buy" data-term-id={loc.terminal_id}
 																	class:is-selected={loc.terminal_id === rDetail?.buy_terminal_id}
 																	title={loc.terminal_id === rDetail?.buy_terminal_id ? $t('routes.current_buy_terminal_title') : $t('routes.set_buy_terminal_filter')}
-																	onclick={() => setRouteLocField('from', loc.terminal)}>
+																	onclick={() => setRouteLocField('from', loc)}>
 																	<span class="rd-pair-main">
 																		<span class="rd-pair-term">{loc.terminal}</span>
 																		<span class="rd-pair-chain">{loc.chain}</span>
@@ -6788,7 +6959,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																<button type="button" class="rd-pair-row" data-side="sell" data-term-id={loc.terminal_id}
 																	class:is-selected={loc.terminal_id === rDetail?.sell_terminal_id}
 																	title={loc.terminal_id === rDetail?.sell_terminal_id ? $t('routes.current_sell_terminal_title') : $t('routes.set_sell_terminal_filter')}
-																	onclick={() => setRouteLocField('to', loc.terminal)}>
+																	onclick={() => setRouteLocField('to', loc)}>
 																	<span class="rd-pair-main">
 																		<span class="rd-pair-term">{loc.terminal}</span>
 																		<span class="rd-pair-chain">{loc.chain}</span>

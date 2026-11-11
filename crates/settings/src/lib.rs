@@ -515,6 +515,13 @@ pub struct PinEntry {
     /// Inhalts-Zeilen (generisch darstellbar).
     #[serde(default)]
     pub rows: Vec<PinRow>,
+    /// M6-F4 (t_7a548e85): optionale stabile Inhalts-Identität — opaker
+    /// String der View-Komponente. Der Snapshot-Refresh matcht bevorzugt
+    /// über den Key statt über den Positions-Index: Listen, die durch
+    /// Filter umsortieren/abschneiden, ziehen den Pin sonst auf den
+    /// FALSchen Eintrag (Commodity-Sprung). Generisch, keine View-Semantik.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
 }
 
 /// M4: `[pins]`-Sektion — globaler An/Aus-Schalter + Pin-Set.
@@ -2220,6 +2227,7 @@ mod tests {
                         side: Some("sell".into()),
                     },
                 ],
+                key: Some("c:1:2".into()),
             }],
         }));
         s.save().unwrap();
@@ -2242,5 +2250,13 @@ mod tests {
         assert_eq!(pin.rows.len(), 2);
         assert_eq!(pin.rows[1].side.as_deref(), Some("sell"));
         assert_eq!(pin.kpi.as_deref(), Some("+27 %"));
+        // M6-F4 (t_7a548e85): stabile Identität persistiert + roundtrip;
+        // fehlendes Feld (Bestand) → None.
+        assert_eq!(pin.key.as_deref(), Some("c:1:2"));
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("c:1:2"), "{raw}");
+        let legacy: PinEntry =
+            toml::from_str("view_id = \"routes\"\nscreen = \"DP-3\"\nbox_index = 0\nopacity = 100\npinned = true\nx = 0\ny = 0\ntitle = \"t\"\n").unwrap();
+        assert!(legacy.key.is_none());
     }
 }

@@ -25,6 +25,9 @@ export type PinEntry = {
 	title: string;
 	kpi: string | null;
 	rows: PinRow[];
+	/** M6-F4 (t_7a548e85): optionale stabile Inhalts-Identität (opaker
+	 *  String der View) — Snapshot-Refresh matcht key-first. */
+	key?: string | null;
 };
 
 export type PinsState = {
