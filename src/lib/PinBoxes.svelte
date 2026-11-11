@@ -23,7 +23,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { t } from './i18n';
 import { listen } from '@tauri-apps/api/event';
 import { PINS_CHANGED_EVENT, PIN_BOX_W, pinBoxEstHeight, type PinEntry } from './pins';
-import { patchPos, popoverPos } from './pin-patches';
+import { dragBasePos, patchPos, popoverPos } from './pin-patches';
 
 type OverlayState = {
 	visible: boolean;
@@ -121,10 +121,18 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 	// Pointer-Lock-Feature und liefert ohne Pointer-Lock (Wayland/WebKitGTK)
 	// konstant 0 — der Drag starb still und jeder Grab öffnete das Popover
 	// (Sebo-Befund 2026-11-10). Plus Schwelle: < DRAG_THRESHOLD ist ein Klick.
+	//
+	// M6-R1 (t_325456dc): Anker = GERENDERTE (geclampte) Position
+	// (dragBasePos), nicht die rohe Persistenz-Koordinate — sonst klebt der
+	// erste Drag am Edge, wenn die gespeicherte Position außerhalb des
+	// Viewport-Clamps liegt (Nachzieh-Verzögerung/Versatz; Details
+	// pin-patches.ts dragBasePos). Ab dem zweiten Move war das wegen des
+	// pin_move-Snap-Persistenz schon sauber — jetzt ist jeder Move es.
 	const startX = e.clientX;
 	const startY = e.clientY;
+	const base = dragBasePos(pin, window.innerWidth, window.innerHeight);
 	dbg(
-		`grab start=(${startX},${startY}) pin=(${pin.x},${pin.y}) vw=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
+		`grab start=(${startX},${startY}) pin=(${pin.x},${pin.y}) base=(${base.x},${base.y}) vw=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`
 	);
 	let dx = 0;
 	let dy = 0;
@@ -132,12 +140,11 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 		if (!dragPin) return;
 		dx = ev.clientX - startX;
 		dy = ev.clientY - startY;
-		dragPin = { ...pin, x: pin.x + dx, y: pin.y + dy };
+		dragPin = { ...pin, x: base.x + dx, y: base.y + dy };
 		dbg(`move client=(${ev.clientX},${ev.clientY}) d=(${dx},${dy}) live=(${dragPin.x},${dragPin.y})`);
 	};
 	const up = (ev: PointerEvent) => {
 		const p = dragPin;
-		dragPin = null;
 		window.removeEventListener('pointermove', move);
 		window.removeEventListener('pointerup', up);
 		if (!p) return;
@@ -162,8 +169,18 @@ function onGrab(e: PointerEvent, pin: PinEntry) {
 				box_index: p.box_index,
 				drag: dragArgs
 			}).catch((err) => dbg(`pin_move FAILED ${String(err)}`));
-			void load();
+			// M6-R1 (t_325456dc): Flash-Back-Fix — dragPin NICHT sofort
+			// löschen. Vorher renderte die Box zwischen Release und dem
+			// Bestätigungs-Reload wieder die STALE pins-Position (alter
+			// Stand) und sprang danach auf das Backend-Ergebnis. dragPin
+			// bleibt Render-Quelle, bis load() die bestätigte (gesnapte)
+			// Position geliefert hat; erst dann wird geleert.
+			void (async () => {
+				await load();
+				if (dragPin && boxKey(dragPin) === boxKey(p)) dragPin = null;
+			})();
 		} else {
+			dragPin = null;
 			openKey = boxKey(p);
 		}
 	};

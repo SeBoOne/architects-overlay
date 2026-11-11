@@ -20,6 +20,18 @@ export function patchPos(pin: PinEntry, vw: number, vh: number): { x: number; y:
 	return snapBoxToScreen(pin.x, pin.y, PIN_BOX_W, pinBoxEstHeight(pin.rows.length), vw, vh);
 }
 
+/// M6-R1 (t_325456dc): Drag-Anker — die gerenderte (geclampte) Box-Position,
+/// NICHT die rohe Persistenz-Koordinate. Liegt die gespeicherte Position
+/// außerhalb des Viewport-Clamps (Monitorwechsel/-geometrie), klebte der
+/// erste Drag am Edge (Clamp frisst dx/dy → „Nachzieh-Verzögerung“) und
+/// der Griffpunkt versetzte sich, sobald der Clamp freigab; nach dem
+/// ersten Drop persistierte pin_move die geclampte Position und jeder
+/// weitere Move war sauber. Basis = Anzeige-Position macht den ersten Move
+/// deterministisch identisch zu allen weiteren.
+export function dragBasePos(pin: PinEntry, vw: number, vh: number): { x: number; y: number } {
+	return patchPos(pin, vw, vh);
+}
+
 /// Popover-Position: unter der Box, horizontal an der Box-Mitte orientiert,
 /// an den Viewport-Rand geclampt (Modal-Regeln — kein position:fixed).
 export function popoverPos(pin: PinEntry, vw: number, vh: number): { x: number; y: number } {
