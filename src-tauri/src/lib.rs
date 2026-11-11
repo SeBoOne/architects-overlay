@@ -192,6 +192,7 @@ pub fn run() {
             pins::pin_remove,
             pins::pin_set_opacity,
             pins::pin_move,
+            pins::pins_debug_log,
             pins::pin_update,
         ]);
     }

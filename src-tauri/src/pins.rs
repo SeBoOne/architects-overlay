@@ -647,6 +647,22 @@ pub fn pin_set_opacity<R: tauri::Runtime>(
     hit
 }
 
+/// M5-R3 (t_12e6bd06): Debug-Brücke aus dem Drag-Pfad des Frontends
+/// (PinBoxes onGrab/onpointermove/onpointerup → eine Zeile je Event).
+/// Debug-Builds loggen (info), Release-Builds verwerfen stumm — die Brücke
+/// bleibt dauerhaft (kein Verhalten, vernachlässigbare Kosten), damit die
+/// Drag-Diagnose ohne Rebuild verfügbar ist.
+#[tauri::command(rename_all = "snake_case")]
+pub fn pins_debug_log(line: String) -> bool {
+    #[cfg(debug_assertions)]
+    log::info!("[pin-drag] {line}");
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = line;
+    }
+    true
+}
+
 /// Drag-Ende: Position zurückmelden → Edge-Snapping + Persistenz
 /// (x/y screen-relativ). Drag ist nur im Palette-offen-Zustand möglich —
 /// das Frontend ruft das nur dann auf.
@@ -658,7 +674,44 @@ pub fn pin_move<R: tauri::Runtime>(
     box_index: u32,
     drag: PinDrag,
 ) -> bool {
-    let (sx, sy) = snap_to_edge(drag.x, drag.y, drag.w, drag.h, drag.screen_w, drag.screen_h);
+    // M5-R3 (t_12e6bd06): fraktionale Maus-Koordinaten → einmal runden, dann
+    // die bewährte i32-Snap-Mathe (kein doppelter Codepfad). Beleg: ein
+    // Live-Drag mit Subpixel-Args (x=2998.16796875) scheiterte an der
+    // i32-Deserialisierung und der Drop-Ort ging still verloren.
+    let (ix, iy, iw, ih, isw, ish) = (
+        drag.x.round() as i32,
+        drag.y.round() as i32,
+        drag.w.round() as i32,
+        drag.h.round() as i32,
+        drag.screen_w.round() as i32,
+        drag.screen_h.round() as i32,
+    );
+    let (sx, sy) = snap_to_edge(ix, iy, iw, ih, isw, ish);
+    // Diagnose (M5-R3): empfangene Drag-Geometrie + Snap-Ergebnis +
+    // Spotlight-Fenster-Metrics — info-level, eine Zeile pro Drag-Ende,
+    // bewusst behalten (dokumentiert).
+    let spot = app.get_webview_window(crate::overlay::SPOTLIGHT_LABEL);
+    if let Some(w) = &spot {
+        let op = w.outer_position().ok();
+        let os = w.outer_size().ok();
+        let ins = w.inner_size().ok();
+        let sf = w.scale_factor().unwrap_or(0.0);
+        let mon = w.current_monitor().ok().flatten();
+        log::info!(
+            "pin_move: drag(x={ix} y={iy} w={iw} h={ih} screen_w={isw} screen_h={ish}) -> snap(x={sx} y={sy}) | win outer_pos={op:?} outer_size={os:?} inner={ins:?} scale={sf} monitor={:?}",
+            mon.map(|m| (
+                m.name().cloned().unwrap_or_default(),
+                m.position().x,
+                m.position().y,
+                m.size().width,
+                m.size().height
+            ))
+        );
+    } else {
+        log::info!(
+            "pin_move: drag(x={ix} y={iy} w={iw} h={ih} screen_w={isw} screen_h={ish}) -> snap(x={sx} y={sy}) | kein Spotlight-Fenster"
+        );
+    }
     let st = app.state::<crate::app_settings::SettingsState>();
     let mut s = st.inner.lock().expect("settings lock");
     let list = s.pins_mut_entry();
@@ -687,12 +740,16 @@ pub fn pin_move<R: tauri::Runtime>(
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct PinDrag {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-    pub screen_w: i32,
-    pub screen_h: i32,
+    /// f64 statt i32 (M5-R3, t_12e6bd06): reale Maus-Deltas sind fraktional
+    /// (WebKitGTK liefert Subpixel-clientX/Y, Hyprland-Mausglättung) — ein
+    /// i32-Feld hat den pin_move-Invoke still verwerfen lassen (serde-Fehler)
+    /// und der Drop-Ort ging verloren. Runden passiert in `pin_move`.
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub screen_w: f64,
+    pub screen_h: f64,
 }
 
 /// Snapshot-Refresh (Overlay-Datenreload): Overlays melden frische
@@ -803,8 +860,21 @@ mod tests {
             "screen_w": 1920, "screen_h": 1080
         }))
         .expect("snake_case-Keys (screen_w/screen_h) müssen deserialisieren");
-        assert_eq!(drag.screen_w, 1920);
-        assert_eq!(drag.screen_h, 1080);
+        assert_eq!(drag.screen_w, 1920.0);
+        assert_eq!(drag.screen_h, 1080.0);
+
+        // M5-R3 (t_12e6bd06) Regression: fraktionale Maus-Koordinaten
+        // (WebKitGTK Subpixel-clientX/Y) dürfen den pin_move-Invoke NICHT
+        // mehr still verwerfen — PinDrag deserialisiert f64. Beleg live:
+        // ein User-Drag sandte x=2998.16796875 → alter i32-Contract lehnte
+        // ab → Drop-Ort verworfen.
+        let frac: PinDrag = serde_json::from_value(serde_json::json!({
+            "x": 2998.16796875, "y": 384.28515625, "w": 356, "h": 78,
+            "screen_w": 3440, "screen_h": 1440
+        }))
+        .expect("fraktionale Drag-Args müssen deserialisieren (M5-R3)");
+        assert_eq!(frac.x.round() as i32, 2998);
+        assert_eq!(frac.y.round() as i32, 384);
 
         let st = PinsState {
             enabled: false,
