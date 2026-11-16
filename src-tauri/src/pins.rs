@@ -897,6 +897,9 @@ pub struct PinDrag {
 
 /// Snapshot-Refresh (Overlay-Datenreload): Overlays melden frische
 /// Anzeige-Daten für bereits gepinnte Boxen — generisch, view-lokal.
+/// M6-F5 (t_4cdc8e67): 8 Argumente sind der Tauri-Command-Contract
+/// (M6-F1 content + M6-F4 key) — allow statt API-Bruch.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(rename_all = "snake_case")]
 pub fn pin_update<R: tauri::Runtime>(
     app: AppHandle<R>,
