@@ -1584,6 +1584,11 @@ fn handle_focus_event<R: Runtime>(
             *last_foreign = Some((class.to_owned(), title.to_owned()));
         }
         // Pin-Lifecycle: Pins-only gemappt + fremder Fokus → Pins unmapppen.
+        // SC selbst ist KEIN Unmap-Trigger (Followup 2026-11-16): sonst
+        // re-mappt der SC-Refocus-Zweig unten die Pins und das nächste
+        // SC-Event unmappt sie sofort wieder — Re-Map/Unmap-Blink-Loop
+        // (User-Log 22:18–22:26: unmap/re-map-Paare in Sekundenabstand).
+        // Nur ein fremdes NICHT-Spiel-Fenster darf die Pins unmapppen.
         let (user_visible, game_running) = app
             .try_state::<OverlayState>()
             .map(|st| {
@@ -1597,7 +1602,12 @@ fn handle_focus_event<R: Runtime>(
             let (pins_enabled, pinned) = crate::pins::pins_activity(app);
             pins_enabled && pinned > 0
         };
-        if !user_visible && pins_active && game_running && !PINS_DORMANT.load(Ordering::SeqCst) {
+        if !user_visible
+            && pins_active
+            && game_running
+            && class != GAME_WINDOW_CLASS
+            && !PINS_DORMANT.load(Ordering::SeqCst)
+        {
             let win = app.get_webview_window(SPOTLIGHT_LABEL);
             let mapped = win
                 .as_ref()
