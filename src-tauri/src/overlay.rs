@@ -1476,15 +1476,19 @@ fn parse_activewindow(line: &str) -> Option<(String, String)> {
     Some((class, title))
 }
 
-/// M6-F5: Selektor für die Fokus-Rückgabe — reines `title:` (window-selection-
-/// 2026-11-11: AND-Kriterien `pid:X,title:Y` matchen auf Hyprland 0.56.2
-/// NICHT; der reine title-Selektor ist der verifizierte Diskriminator). Ein
-/// leerer Titel (kein aktives Fenster) ergibt keinen Selector.
-fn focus_return_selector(title: &str) -> Option<String> {
-    if title.is_empty() {
-        None
+/// M6-F5: Selektor für die Fokus-Rückgabe. Primär `class:` (Live-Verifikation
+/// 2026-11-16: `class:starcitizen.exe` matcht; der exakte SC-Titel
+/// `title:Star Citizen ` liefert "window not found" — Titel-Selektoren sind
+/// Regex UND der SC-Titel trägt einen trailing Space, exakte Titel-Matches
+/// scheitern still). Titel-Fallback nur ohne Klasse, mit `.*`-Suffix gegen
+/// das trailing-space-/Trim-Problem. Beides leer → kein Selector.
+fn focus_return_selector(class: &str, title: &str) -> Option<String> {
+    if !class.is_empty() {
+        Some(format!("class:{class}"))
+    } else if !title.is_empty() {
+        Some(format!("title:{title}.*"))
     } else {
-        Some(format!("title:{title}"))
+        None
     }
 }
 
@@ -1541,15 +1545,17 @@ fn handle_focus_event<R: Runtime>(
         // Geisterfokus auf dem verborgenen Spotlight: Brücke disarmen (sie
         // hielt den Fokus an einem unsichtbaren Fenster fest) und EINMAL
         // zurückgeben.
-        log::info!("focus-event: hidden spotlight focused -> disarm bridge + return focus");
+        // Warn statt Info: Release-Build loggt nur Warn+ (lib.rs LevelFilter) —
+        // Info-Zeilen verpuffen im User-Journal lautlos (Blindrunden-Lektion).
+        log::warn!("focus-event: hidden spotlight focused -> disarm bridge + return focus");
         disarm_all_own_windows(None);
         if !focus_return_allowed(LAST_FOCUS_RETURN_MS.load(Ordering::SeqCst), now_millis()) {
             return;
         }
-        let Some((_fc, ft)) = last_foreign else {
+        let Some((fc, ft)) = last_foreign else {
             return;
         };
-        let Some(sel) = focus_return_selector(ft) else {
+        let Some(sel) = focus_return_selector(fc, ft) else {
             return;
         };
         LAST_FOCUS_RETURN_MS.store(now_millis(), Ordering::SeqCst);
@@ -1582,7 +1588,7 @@ fn handle_focus_event<R: Runtime>(
                 .map(|w| w.is_visible().unwrap_or(false))
                 .unwrap_or(false);
             if mapped {
-                log::info!("focus-event: foreign focus while pins-only -> unmap pins");
+                log::warn!("focus-event: foreign focus while pins-only -> unmap pins");
                 PINS_DORMANT.store(true, Ordering::SeqCst);
                 if let Some(w) = win {
                     let _ = w.hide();
@@ -1597,7 +1603,7 @@ fn handle_focus_event<R: Runtime>(
         // Pins-only-Modus neu aus und mappt; der Show-Pfad bewaffnet die
         // Brücke neu).
         if class == GAME_WINDOW_CLASS && PINS_DORMANT.swap(false, Ordering::SeqCst) {
-            log::info!("focus-event: SC refocused -> re-map pins");
+            log::warn!("focus-event: SC refocused -> re-map pins");
             refresh_visibility(app);
         }
     }
@@ -2158,16 +2164,21 @@ mod tests {
         assert_eq!(parse_activewindow("workspace>>3"), None);
     }
 
-    /// Fokus-Rückgabe ausschließlich über reine title-Selektoren (AND-Kriterien
-    /// matchen auf Hyprland 0.56.2 nicht — window-selection-2026-11-11); ohne
-    /// Rückgabeziel (leerer Titel) kein Dispatch.
+    /// Fokus-Rückgabe primär über class-Selektoren (Live-Verifikation
+    /// 2026-11-16: exakte title-Selektoren scheitern am SC-Titel mit trailing
+    /// Space — "window not found"; class: matcht). Titel-Fallback nur ohne
+    /// Klasse, regex-tolerant (`.*`-Suffix); beides leer → kein Dispatch.
     #[test]
-    fn focus_return_selector_is_title_only() {
+    fn focus_return_selector_prefers_class() {
         assert_eq!(
-            focus_return_selector("Star Citizen"),
-            Some("title:Star Citizen".to_owned())
+            focus_return_selector("starcitizen.exe", "Star Citizen "),
+            Some("class:starcitizen.exe".to_owned())
         );
-        assert_eq!(focus_return_selector(""), None);
+        assert_eq!(
+            focus_return_selector("", "Solaar"),
+            Some("title:Solaar.*".to_owned())
+        );
+        assert_eq!(focus_return_selector("", ""), None);
     }
 
     /// Kühlgrenze gegen Event-Echos: unmittelbar nach einem Rückhol-Dispatch
