@@ -1430,6 +1430,13 @@ fn disarm_all_own_windows(dialog_addr: Option<&str>) {
     log::warn!("own-window disarm: hyprctl clients unavailable, title+dialog disarm applied");
 }
 
+/// M6-F5-Followup: 'static-Thunk für `std::thread::spawn` im Geisterfokus-
+/// Pfad — das Disarm darf den socket2-Reader nicht blockieren.
+#[cfg(target_os = "linux")]
+fn disarm_all_own_windows_threaded() {
+    disarm_all_own_windows(None);
+}
+
 /// Restore after the dialog closed. Skips the focus grab when the overlay hid
 /// itself meanwhile (game quit) — refocusing a hidden window would be a
 /// no-op at best.
@@ -1535,20 +1542,29 @@ fn handle_focus_event<R: Runtime>(
         if title != SPOTLIGHT_TITLE {
             return;
         }
-        let visible = app
-            .get_webview_window(SPOTLIGHT_LABEL)
-            .map(|w| w.is_visible().unwrap_or(false))
+        // NICHT is_visible() — die GTK-Meldung lügt auf Wayland (gotcha:
+        // verborgener Spotlight wird als "sichtbar" gemeldet, der Geisterfokus
+        // wird dann nie korrigiert — genau das Rest-Symptom der User-Logs vom
+        // 2026-11-16: genau EIN Guard-Treffer trotz dauerhafter Fokus-Falle).
+        // Maßstab ist unser eigener State-Machine-Record: user_visible=false
+        // heißt, die Palette SOLL unsichtbar sein (inkl. pins-only-Gemapping).
+        let user_visible = app
+            .try_state::<OverlayState>()
+            .map(|st| st.user_visible.load(Ordering::SeqCst))
             .unwrap_or(false);
-        if visible {
+        if user_visible {
             return;
         }
         // Geisterfokus auf dem verborgenen Spotlight: Brücke disarmen (sie
         // hielt den Fokus an einem unsichtbaren Fenster fest) und EINMAL
-        // zurückgeben.
+        // zurückgeben. Das Disarm ENTKOPPELT (thread) — disarm_all_own_windows
+        // blockiert bei hyprctl-Timeouts bis ~3s (3 Retries × 800ms+250ms) und
+        // hat so den socket2-Reader aufgehalten: nachfolgende Events
+        // (SC-Refocus → Pins-Re-Map) kamen zu spät ("hin und wieder"-Symptom).
         // Warn statt Info: Release-Build loggt nur Warn+ (lib.rs LevelFilter) —
         // Info-Zeilen verpuffen im User-Journal lautlos (Blindrunden-Lektion).
         log::warn!("focus-event: hidden spotlight focused -> disarm bridge + return focus");
-        disarm_all_own_windows(None);
+        std::thread::spawn(disarm_all_own_windows_threaded);
         if !focus_return_allowed(LAST_FOCUS_RETURN_MS.load(Ordering::SeqCst), now_millis()) {
             return;
         }
