@@ -21,7 +21,7 @@ use crate::i18n_err::{err_key, err_keyp};
 use crate::shortcut_diag;
 use serde_json::json;
 use std::sync::RwLock;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tauri::webview::WebviewWindow;
@@ -500,7 +500,10 @@ pub fn set_click_through<R: Runtime>(app: &AppHandle<R>, ignore: bool) -> bool {
                 // temporär). apply_visibility läuft mehrfach pro Öffnen;
                 // ohne Dedupe purzelt der Cursor 3-4× pro Toggle.
                 if !ignore {
-                    compositor_focus_dedupe(&spotlight_compositor_selector(), FOCUS_TARGET_SPOTLIGHT);
+                    compositor_focus_dedupe(
+                        &spotlight_compositor_selector(),
+                        FOCUS_TARGET_SPOTLIGHT,
+                    );
                 } else {
                     compositor_focus_dedupe("class:starcitizen.exe", FOCUS_TARGET_GAME);
                 }
@@ -648,6 +651,9 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 if let Some(st) = worker.try_state::<OverlayState>() {
                     st.click_through.store(false, Ordering::Release);
                 }
+                // M6-F5: ein Nutzer-Show hebt Dormanz auf (Pins leben im
+                // selben Fenster — sie sind mit dem Palette-Show remapped).
+                PINS_DORMANT.store(false, Ordering::SeqCst);
                 // Pre-map geometry hint: while the window is unmapped,
                 // `set_size`/`set_position` land as GTK default-size/position
                 // for the upcoming map, and the Hyprland geometry dispatch is
@@ -769,6 +775,17 @@ fn apply_visibility<R: Runtime>(app: &AppHandle<R>, visible: bool) {
                 let _ = win.hide();
                 // Hand keyboard focus back to the game.
                 compositor_focus_dedupe("class:starcitizen.exe", FOCUS_TARGET_GAME);
+                // M6-F5 (t_4cdc8e67): JEDER Hide-Pfad disarmt die
+                // stay_focused-Brücke — der Show-Pfad bewaffnet sie neu.
+                // Vorher blieb sie hier ARMED: der verborgene Spotlight hielt
+                // den Fokus fest (Geisterfokus nach Workspace-Wechsel — die
+                // gemeldete Fokus-Falle). Verzögert + außerhalb des Main-
+                // Threads wie im Pins-only-Pfad (hyprctl-Budget-Roundtrips).
+                #[cfg(target_os = "linux")]
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(150));
+                    disarm_all_own_windows(None);
+                });
             }
         }
     });
@@ -1432,6 +1449,169 @@ fn restore_focus_ownership<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+/// M6-F5 (t_4cdc8e67): WM-Klasse des Spiels — Anker der Pin-Lifecycle-
+/// Kopplung (Pins remappen, wenn SC wieder fokussiert).
+pub const GAME_WINDOW_CLASS: &str = "starcitizen.exe";
+
+/// M6-F5: Pins dormant — der Spotlight wurde wegen fremdem Fokus (Workspace-
+/// Wechsel / andere App) im Pins-only-Modus unmapped und wartet auf die
+/// Rückkehr des SC-Fokus, um sich neu zu mappen.
+pub static PINS_DORMANT: AtomicBool = AtomicBool::new(false);
+
+/// M6-F5: Zeitstempel (System-Millis) des letzten Fokus-Rückgabe-Dispatches —
+/// Kühlgrenze gegen Event-Echos (kein Dauerfeuer, maximal EIN Rückhol-Dispatch
+/// pro Zeitfenster).
+pub static LAST_FOCUS_RETURN_MS: AtomicU64 = AtomicU64::new(0);
+pub const FOCUS_RETURN_COOLDOWN_MS: u64 = 1500;
+
+/// Parse an `activewindow>>` event line: `activewindow>>CLASS,TITLE…` (the
+/// title may contain commas — splitn keeps them). An empty payload
+/// (`activewindow>>,`) means "no active window" — class/title come back
+/// empty, the caller decides what that means.
+fn parse_activewindow(line: &str) -> Option<(String, String)> {
+    let payload = line.strip_prefix("activewindow>>")?;
+    let mut it = payload.splitn(2, ',');
+    let class = it.next().unwrap_or("").trim().to_owned();
+    let title = it.next().unwrap_or("").trim().to_owned();
+    Some((class, title))
+}
+
+/// M6-F5: Selektor für die Fokus-Rückgabe — reines `title:` (window-selection-
+/// 2026-11-11: AND-Kriterien `pid:X,title:Y` matchen auf Hyprland 0.56.2
+/// NICHT; der reine title-Selektor ist der verifizierte Diskriminator). Ein
+/// leerer Titel (kein aktives Fenster) ergibt keinen Selector.
+fn focus_return_selector(title: &str) -> Option<String> {
+    if title.is_empty() {
+        None
+    } else {
+        Some(format!("title:{title}"))
+    }
+}
+
+/// M6-F5: Kühlgrenze — ein Rückhol-Dispatch ist erst wieder erlaubt, wenn
+/// `FOCUS_RETURN_COOLDOWN_MS` seit dem letzten vergangen ist (Guard gegen
+/// Event-Echos; rein, damit unit-testbar).
+fn focus_return_allowed(last_ms: u64, now_ms: u64) -> bool {
+    now_ms.saturating_sub(last_ms) >= FOCUS_RETURN_COOLDOWN_MS
+}
+
+fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// M6-F5 (t_4cdc8e67): reaktive socket2-Fokus-Behandlung — KEIN Polling,
+/// KEINE Workspace-Dispatches (v2-Ban). Zwei symmetrische Einzelreaktionen:
+///
+/// 1. Fremdes Fenster übernimmt den Fokus, während der Spotlight nur für
+///    Pins gemappt ist (Pins-only, Palette verborgen) → Pins unmappen
+///    (`hide()`) + `stay_focused` disarmen. Beim Zurückkehren zu SC
+///    (`activewindow>>starcitizen.exe,…`) → Pins neu mappen.
+/// 2. Unser verborgener Spotlight bekommt Fokus gemeldet (Geisterfokus nach
+///    Hide/Workspace-Wechsel) → EIN Fokus-Rückgabe-Dispatch an das zuvor
+///    fokussierte fremde Fenster (title-Selektor), entgiftet durch die
+///    Kühlgrenze und das Bridge-Disarm.
+///
+/// Das Fenstermodus-Fenster (APP_WINDOW_TITLE) ist ein echtes interaktives
+/// Fenster — es wird NICHT korrigiert und löst auch kein Pins-Unmapping aus.
+#[cfg(target_os = "linux")]
+fn handle_focus_event<R: Runtime>(
+    app: &AppHandle<R>,
+    class: &str,
+    title: &str,
+    last_foreign: &mut Option<(String, String)>,
+) {
+    use tauri::Manager;
+
+    if class == SPOTLIGHT_WM_CLASS {
+        // Unser Fenster hat den Fokus. Nur der Spotlight (Palette/Pins) wird
+        // bewacht — app-window und in-process Dialoge sind legitime Ziele.
+        if title != SPOTLIGHT_TITLE {
+            return;
+        }
+        let visible = app
+            .get_webview_window(SPOTLIGHT_LABEL)
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        if visible {
+            return;
+        }
+        // Geisterfokus auf dem verborgenen Spotlight: Brücke disarmen (sie
+        // hielt den Fokus an einem unsichtbaren Fenster fest) und EINMAL
+        // zurückgeben.
+        log::info!("focus-event: hidden spotlight focused -> disarm bridge + return focus");
+        disarm_all_own_windows(None);
+        if !focus_return_allowed(LAST_FOCUS_RETURN_MS.load(Ordering::SeqCst), now_millis()) {
+            return;
+        }
+        let Some((_fc, ft)) = last_foreign else {
+            return;
+        };
+        let Some(sel) = focus_return_selector(ft) else {
+            return;
+        };
+        LAST_FOCUS_RETURN_MS.store(now_millis(), Ordering::SeqCst);
+        compositor_focus(&sel);
+    } else {
+        // Fremdes Fenster: Merker für die Fokus-Rückgabe aktualisieren (ein
+        // leerer Titel — "kein aktives Fenster" — überschreibt den Merker
+        // nicht, sonst wäre später kein Rückgabeziel mehr bekannt).
+        if !title.is_empty() {
+            *last_foreign = Some((class.to_owned(), title.to_owned()));
+        }
+        // Pin-Lifecycle: Pins-only gemappt + fremder Fokus → Pins unmapppen.
+        let (user_visible, game_running) = app
+            .try_state::<OverlayState>()
+            .map(|st| {
+                (
+                    st.user_visible.load(Ordering::SeqCst),
+                    st.game_running.load(Ordering::SeqCst),
+                )
+            })
+            .unwrap_or((false, false));
+        let pins_active = {
+            let (pins_enabled, pinned) = crate::pins::pins_activity(app);
+            pins_enabled && pinned > 0
+        };
+        if !user_visible && pins_active && game_running && !PINS_DORMANT.load(Ordering::SeqCst) {
+            let win = app.get_webview_window(SPOTLIGHT_LABEL);
+            let mapped = win
+                .as_ref()
+                .map(|w| w.is_visible().unwrap_or(false))
+                .unwrap_or(false);
+            if mapped {
+                log::info!("focus-event: foreign focus while pins-only -> unmap pins");
+                PINS_DORMANT.store(true, Ordering::SeqCst);
+                if let Some(w) = win {
+                    let _ = w.hide();
+                }
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(150));
+                    disarm_all_own_windows(None);
+                });
+            }
+        }
+        // Rückkehr zu SC → Pins neu mappen (refresh_visibility rechnet den
+        // Pins-only-Modus neu aus und mappt; der Show-Pfad bewaffnet die
+        // Brücke neu).
+        if class == GAME_WINDOW_CLASS && PINS_DORMANT.swap(false, Ordering::SeqCst) {
+            log::info!("focus-event: SC refocused -> re-map pins");
+            refresh_visibility(app);
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn handle_focus_event<R: Runtime>(
+    _app: &AppHandle<R>,
+    _class: &str,
+    _title: &str,
+    _last_foreign: &mut Option<(String, String)>,
+) {
+}
+
 /// socket2 event path for this Hyprland instance (`$XDG_RUNTIME_DIR` first,
 /// the historical `/tmp/hypr` fallback second).
 #[cfg(target_os = "linux")]
@@ -1500,11 +1680,18 @@ fn spawn_hyprland_events<R: Runtime>(handle: &AppHandle<R>) {
                 }
                 Ok(stream) => {
                     let mut dialog_addr: Option<String> = None;
+                    // M6-F5 (t_4cdc8e67): Merker des zuletzt fremd-fokussierten
+                    // Fensters — Rückgabeziel für den Geisterfokus-Guard.
+                    // Pro Verbindung neu: nach einem Hyprland-Restart sind
+                    // alte Fenster ohnehin weg.
+                    let mut last_foreign: Option<(String, String)> = None;
                     // v2 (t_6d26985e): workspace events (`workspace>>`,
                     // `focusedmon…`) are deliberately IGNORED — the overlay
                     // must never react to (let alone correct) the user's
-                    // workspace navigation. Only own-dialog events are
-                    // consumed, for the stay_focused suspend/restore cycle.
+                    // workspace navigation. Own-dialog events feed the
+                    // stay_focused suspend/restore cycle; `activewindow>>`
+                    // feeds the M6-F5 pin lifecycle + focus-return guard
+                    // (reactive ONLY — no polling, no workspace dispatches).
                     let reader = std::io::BufReader::new(stream);
                     for line in reader.lines() {
                         let Ok(line) = line else { break };
@@ -1525,6 +1712,8 @@ fn spawn_hyprland_events<R: Runtime>(handle: &AppHandle<R>) {
                             log::info!("own dialog closed -> restore focus ownership");
                             dialog_addr = None;
                             restore_focus_ownership(&app);
+                        } else if let Some((class, title)) = parse_activewindow(line) {
+                            handle_focus_event(&app, &class, &title, &mut last_foreign);
                         }
                     }
                     // Stream dropped (compositor restart): loop reconnects.
@@ -1892,7 +2081,10 @@ mod tests {
         assert!(!is_in_process_dialog("firefox", "Whatever"));
         // window-selection-fix: das Fenstermodus-Fenster (app-window) teilt
         // pid + WM-Klasse, ist aber KEIN Dialog — kein Dialog-Suspend.
-        assert!(!is_in_process_dialog(SPOTLIGHT_WM_CLASS, crate::window::APP_WINDOW_TITLE));
+        assert!(!is_in_process_dialog(
+            SPOTLIGHT_WM_CLASS,
+            crate::window::APP_WINDOW_TITLE
+        ));
     }
 
     /// FP (t_1042447d): the dialog suspend must disarm EVERY own-class window,
@@ -1942,6 +2134,60 @@ mod tests {
             "hl.dispatch(hl.dsp.window.set_prop({ window = \"address:0xabc\", \
              prop = \"stay_focused\", value = \"0\" }))"
         );
+    }
+
+    // ---- M6-F5 (t_4cdc8e67): Fokus-Falle nach Workspace-Wechsel ----
+
+    /// `activewindow>>` parsing: class + title (Titel mit Kommas intakt),
+    /// leerer Payload = kein aktives Fenster (leere Strings, kein None).
+    #[test]
+    fn parse_activewindow_splits_class_and_title() {
+        let (class, title) =
+            parse_activewindow("activewindow>>starcitizen.exe,Star Citizen").expect("parse");
+        assert_eq!(class, "starcitizen.exe");
+        assert_eq!(title, "Star Citizen");
+        // Kommas im Titel bleiben erhalten.
+        let (_, title) =
+            parse_activewindow("activewindow>>architects-overlay,Open File, awesome").expect("p");
+        assert_eq!(title, "Open File, awesome");
+        // Kein aktives Fenster: leere Werte statt None.
+        assert_eq!(
+            parse_activewindow("activewindow>>,"),
+            Some(("".to_owned(), "".to_owned()))
+        );
+        assert_eq!(parse_activewindow("workspace>>3"), None);
+    }
+
+    /// Fokus-Rückgabe ausschließlich über reine title-Selektoren (AND-Kriterien
+    /// matchen auf Hyprland 0.56.2 nicht — window-selection-2026-11-11); ohne
+    /// Rückgabeziel (leerer Titel) kein Dispatch.
+    #[test]
+    fn focus_return_selector_is_title_only() {
+        assert_eq!(
+            focus_return_selector("Star Citizen"),
+            Some("title:Star Citizen".to_owned())
+        );
+        assert_eq!(focus_return_selector(""), None);
+    }
+
+    /// Kühlgrenze gegen Event-Echos: unmittelbar nach einem Rückhol-Dispatch
+    /// ist kein weiterer erlaubt, nach Ablauf des Fensters wieder.
+    #[test]
+    fn focus_return_cooldown_gates_echoes() {
+        assert!(!focus_return_allowed(
+            1000,
+            1000 + FOCUS_RETURN_COOLDOWN_MS - 1
+        ));
+        assert!(focus_return_allowed(1000, 1000 + FOCUS_RETURN_COOLDOWN_MS));
+        // Saturating: eine rücklaufende Uhr darf nicht fälschlich erlauben.
+        assert!(!focus_return_allowed(5000, 1000));
+    }
+
+    /// Pin-Lifecycle-Anker: die Spiel-Klasse ist exakt die, die auch die
+    /// Fokus-Rückgabe-Dispatches der Hide-/Pins-only-Pfade benutzen.
+    #[test]
+    fn game_window_class_matches_focus_dispatch_selector() {
+        assert_eq!(GAME_WINDOW_CLASS, "starcitizen.exe");
     }
 
     /// v2 regression pin (t_6d26985e): NO pin dispatch may ever exist again.
