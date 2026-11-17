@@ -1,0 +1,22 @@
+[package]
+name = "strata-client"
+version = "0.1.0"
+description = "Strata public-API client (strata.celd.space) — Bearer celd_-Key, DTOs, TTL-Cache, Attribution (M7-K1)"
+edition = "2024"
+rust-version = "1.90"
+
+[dependencies]
+provider = { path = "../provider" }
+cache = { path = "../cache" }
+i18n-err = { path = "../i18n-err" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# rustls instead of native-tls: no OpenSSL dependency on Windows bundles.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt", "time"] }
+log = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

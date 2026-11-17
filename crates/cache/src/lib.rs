@@ -46,6 +46,12 @@ pub const TTL_ITEM_PRICES: Duration = Duration::from_secs(7 * 86_400); // 7 days
 /// pulls it at most twice a day (research report: locations ~2k rows, static
 /// between patches; commodities likewise).
 pub const TTL_WIKI_REFERENCE: Duration = Duration::from_secs(43_200); // 12h
+/// M7-K1 (t_e38faa51): Strata-Referenzdaten (ores / locations) ändern sich nur
+/// pro Game-Patch — sehr lange TTL (Plan: „z. B. 24 h").
+pub const TTL_STRATA_REFERENCE: Duration = Duration::from_secs(86_400); // 24h
+/// M7-K1 (t_e38faa51): Strata-Detaildaten (ore-locations / location-ores) —
+/// mittlere TTL (Plan: „z. B. 6 h").
+pub const TTL_STRATA_DETAIL: Duration = Duration::from_secs(21_600); // 6h
 /// Marketplace listings are realtime; Phase 2 caches the last snapshot for a
 /// short TTL (5 min) so the offers view opens instantly from cache while the
 /// background sync keeps it warm — rate-limit-schonend (one listing fetch per
@@ -366,6 +372,14 @@ CREATE TABLE IF NOT EXISTS inventory (
 -- Zeitstempel. Payloads sind klein (einige 100 KB) und leben bewusst NICHT
 -- in den Entity-Tabellen (dort sind nur die Such-Felder).
 CREATE TABLE IF NOT EXISTS route_meta (
+  key        TEXT PRIMARY KEY,
+  fetched_at INTEGER NOT NULL,
+  payload    TEXT    NOT NULL
+);
+-- Strata (M7-K1, t_e38faa51): JSON-Responses hinter einem Frischemarkierer —
+-- analog route_meta, eigener Namespace, damit Strata-Daten unabhängig von den
+-- Routen-Metadaten invalidiert werden (TTLs siehe TTL_STRATA_REFERENCE/DETAIL).
+CREATE TABLE IF NOT EXISTS strata_meta (
   key        TEXT PRIMARY KEY,
   fetched_at INTEGER NOT NULL,
   payload    TEXT    NOT NULL
@@ -1803,6 +1817,36 @@ impl Cache {
         self.with(|conn| {
             conn.execute(
                 "INSERT INTO route_meta (key, fetched_at, payload) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET fetched_at = excluded.fetched_at,
+                                                payload = excluded.payload",
+                rusqlite::params![key, fetched_at as i64, payload],
+            )?;
+            Ok(())
+        })
+    }
+
+    // ---------- Strata (M7-K1, t_e38faa51) ----------
+
+    /// Strata-JSON-Response lesen (`key` z. B. `ores` /
+    /// `ore-locations:beryl_raw:rank`) — `(fetched_at, payload)` oder None.
+    pub fn strata_meta_get(&self, key: &str) -> Result<Option<(u64, String)>> {
+        self.with(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT fetched_at, payload FROM strata_meta WHERE key = ?1")?;
+            let mut rows = stmt.query([key])?;
+            let row = rows.next()?;
+            match row {
+                Some(r) => Ok(Some((r.get::<_, i64>(0)? as u64, r.get::<_, String>(1)?))),
+                None => Ok(None),
+            }
+        })
+    }
+
+    /// Strata-JSON-Response schreiben (Upsert).
+    pub fn strata_meta_set(&self, key: &str, fetched_at: u64, payload: &str) -> Result<()> {
+        self.with(|conn| {
+            conn.execute(
+                "INSERT INTO strata_meta (key, fetched_at, payload) VALUES (?1, ?2, ?3)
                  ON CONFLICT(key) DO UPDATE SET fetched_at = excluded.fetched_at,
                                                 payload = excluded.payload",
                 rusqlite::params![key, fetched_at as i64, payload],

@@ -438,6 +438,9 @@ struct RawConfig {
     /// C2 (t_91124322): Connector-Zustand (Aktivierung/Auth/Hotkey-Slots).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     connectors: Option<ConnectorsSection>,
+    /// M7-K1 (t_e38faa51): Strata (enabled / key_ref / Tier-Schwelle).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    strata: Option<StrataSection>,
     /// M1 (t_90cb34ee): Fenstermodus-Geometrie (Position/Größe/Monitor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     window: Option<WindowSection>,
@@ -645,6 +648,26 @@ struct UpdaterSection {
     repo: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     base_url: Option<String>,
+}
+
+/// M7-K1 (t_e38faa51): Strata-Abschnitt. Der `celd_`-Key selbst liegt NIE
+/// hier (ToS: kein geteilter Key, Revocation-Risiko) — die Config hält nur
+/// `key_ref`, den Bezeichner des Eintrags in der Keystore-Datei
+/// (`strata-key.json`, 0o600, connector_keystore-Muster; Verwaltung über
+/// `strata-client::keystore`).
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct StrataSection {
+    /// Mining-Modus aktiviert? Fehlend = false (opt-in, analog Updater).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    enabled: Option<bool>,
+    /// Keystore-Eintrag-Bezeichner (`celd_`-Key wird aus der Keystore-Datei
+    /// geladen). Fehlend → `strata_client::keystore::DEFAULT_KEY_REF`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_ref: Option<String>,
+    /// Default-Konzentrations-Tier-Schwelle (1–6, „mindestens Notable" = 4)
+    /// für Welle-2-Mining-Listen — entschlossener Default des Plans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    default_tier_threshold: Option<u32>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -891,7 +914,16 @@ pub struct Settings {
     window_geometry: Option<WindowGeometry>,
     /// M4 (t_7bf507e6): Pins-Sektion (Tray-Schalter + Pin-Set).
     pins: Option<PinsSection>,
+    /// M7-K1 (t_e38faa51): Strata-Modus aktiviert (opt-in, fehlend = false).
+    strata_enabled: bool,
+    /// Keystore-Eintrag-Bezeichner für den `celd_`-Key (kein Secret selbst).
+    strata_key_ref: Option<String>,
+    /// Default-Konzentrations-Tier-Schwelle (1–6) der Mining-Modi.
+    strata_default_tier_threshold: u32,
 }
+
+/// M7-K1 (t_e38faa51): Default-Tier-Schwelle „mindestens Notable“.
+pub const STRATA_TIER_THRESHOLD_DEFAULT: u32 = 4;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -919,6 +951,9 @@ impl Default for Settings {
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
             window_geometry: None,
             pins: None,
+            strata_enabled: false,
+            strata_key_ref: None,
+            strata_default_tier_threshold: STRATA_TIER_THRESHOLD_DEFAULT,
         }
     }
 }
@@ -1070,6 +1105,20 @@ impl Settings {
                 .and_then(|w| w.geometry.clone())
                 .filter(|g| g.w > 0 && g.h > 0),
             pins: raw.pins.clone(),
+            // M7-K1 (t_e38faa51): Strata — fehlend = aus (opt-in), Tier-
+            // Schwelle fehlend/außerhalb 1..=6 → Default 4.
+            strata_enabled: raw.strata.as_ref().and_then(|s| s.enabled).unwrap_or(false),
+            strata_key_ref: raw
+                .strata
+                .as_ref()
+                .and_then(|s| s.key_ref.clone())
+                .filter(|r| !r.trim().is_empty()),
+            strata_default_tier_threshold: raw
+                .strata
+                .as_ref()
+                .and_then(|s| s.default_tier_threshold)
+                .filter(|t| (1..=6).contains(t))
+                .unwrap_or(STRATA_TIER_THRESHOLD_DEFAULT),
         };
         // TF t_0d510f31: migrierte Legacy-Werte zurück in die Datei
         // schreiben, damit der alte Gitea-Eintrag dauerhaft verschwindet.
@@ -1115,6 +1164,9 @@ impl Settings {
             updater_base_url: UPDATER_BASE_URL_DEFAULT.to_owned(),
             window_geometry: None,
             pins: None,
+            strata_enabled: false,
+            strata_key_ref: None,
+            strata_default_tier_threshold: STRATA_TIER_THRESHOLD_DEFAULT,
         }
     }
 
@@ -1157,6 +1209,44 @@ impl Settings {
     /// Set the UEX username (persist via [`Settings::save`]).
     pub fn set_uex_username(&mut self, name: Option<String>) {
         self.uex_username = name;
+    }
+
+    // ---- M7-K1 (t_e38faa51): Strata ------------------------------------------
+
+    /// Ist der Strata-Modus aktiviert? Fehlend = false (opt-in).
+    pub fn strata_enabled(&self) -> bool {
+        self.strata_enabled
+    }
+
+    pub fn set_strata_enabled(&mut self, on: bool) {
+        self.strata_enabled = on;
+    }
+
+    /// Keystore-Eintrag-Bezeichner für den `celd_`-Key — KEIN Secret selbst
+    /// (Key lebt in `strata-key.json`, 0o600). Snapshot/Logs zeigen nur
+    /// `_set`-Booles.
+    pub fn strata_key_ref(&self) -> Option<&str> {
+        self.strata_key_ref.as_deref()
+    }
+
+    pub fn set_strata_key_ref(&mut self, key_ref: Option<String>) {
+        self.strata_key_ref = key_ref
+            .map(|r| r.trim().to_owned())
+            .filter(|r| !r.is_empty());
+    }
+
+    /// Default-Konzentrations-Tier-Schwelle (1–6). Ungültige Werte beim Set
+    /// auf den Default geclampt — die Persistenz hält immer 1..=6.
+    pub fn strata_default_tier_threshold(&self) -> u32 {
+        self.strata_default_tier_threshold
+    }
+
+    pub fn set_strata_default_tier_threshold(&mut self, threshold: u32) {
+        self.strata_default_tier_threshold = if (1..=6).contains(&threshold) {
+            threshold
+        } else {
+            STRATA_TIER_THRESHOLD_DEFAULT
+        };
     }
 
     // ---- C2 (t_91124322): Connector-Zustand ---------------------------------
@@ -1500,6 +1590,11 @@ impl Settings {
                 geometry: self.window_geometry.clone(),
             }),
             pins: self.pins.clone(),
+            strata: Some(StrataSection {
+                enabled: Some(self.strata_enabled),
+                key_ref: self.strata_key_ref.clone(),
+                default_tier_threshold: Some(self.strata_default_tier_threshold),
+            }),
         };
         let content = toml::to_string_pretty(&raw)
             .map_err(|e| SettingsError::Parse(format!("serialize: {e}")))?;
@@ -1576,6 +1671,54 @@ pub fn set_uex_username(name: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M7-K1 (t_e38faa51): Strata-Abschnitt — TOML-Roundtrip, Defaults und
+    /// Clamping der Tier-Schwelle.
+    #[test]
+    fn strata_section_roundtrip_and_defaults() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+
+        // Defaults: aus, kein key_ref, Schwelle 4.
+        let mut s = Settings::with_path(path.clone());
+        assert!(!s.strata_enabled());
+        assert!(s.strata_key_ref().is_none());
+        assert_eq!(
+            s.strata_default_tier_threshold(),
+            STRATA_TIER_THRESHOLD_DEFAULT
+        );
+
+        s.set_strata_enabled(true);
+        s.set_strata_key_ref(Some("  laptop  ".into()));
+        s.set_strata_default_tier_threshold(2);
+        s.save().expect("save");
+
+        let loaded = Settings::load_from(&path).expect("load");
+        assert!(loaded.strata_enabled());
+        assert_eq!(loaded.strata_key_ref(), Some("laptop"));
+        assert_eq!(loaded.strata_default_tier_threshold(), 2);
+
+        // Ungültige Schwelle (9) → Persistenz hält trotzdem 1..=6 (Default).
+        let mut s2 = loaded.clone();
+        s2.set_strata_default_tier_threshold(9);
+        assert_eq!(
+            s2.strata_default_tier_threshold(),
+            STRATA_TIER_THRESHOLD_DEFAULT
+        );
+        // Leerer key_ref wird verworfen (None).
+        let mut s3 = loaded.clone();
+        s3.set_strata_key_ref(Some("   ".into()));
+        assert!(s3.strata_key_ref().is_none());
+        // Alte Config ohne [strata] lädt unverändert auf Defaults.
+        std::fs::write(&path, "[uex]\napi_key = \"x\"\n").unwrap();
+        let legacy = Settings::load_from(&path).expect("load legacy");
+        assert!(!legacy.strata_enabled());
+        assert!(legacy.strata_key_ref().is_none());
+        assert_eq!(
+            legacy.strata_default_tier_threshold(),
+            STRATA_TIER_THRESHOLD_DEFAULT
+        );
+    }
 
     /// SCLM v2 Karte A (Spec 5.1): Settings-Feld-Werte pro Connector —
     /// TOML-Roundtrip (Persist+Load), `_set`-Ansicht und Remove-Räumen.
