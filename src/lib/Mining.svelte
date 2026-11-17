@@ -14,10 +14,16 @@
 	//                      Umgebung (space/surface/cave/exploration). Gruppen
 	//                      sind NICHT untereinander vergleichbar (eigene
 	//                      Skala je Gruppe — als Gruppentitel sichtbar).
-	//                      Two-Ring-Dial je Ort: außen RANK (rankPct), innen
-	//                      CONCENTRATION (segmentiert, Amber→Mint), Zentrum
-	//                      Erz-Kürzel + Scan-Signatur. Exakte Werte im
-	//                      Hover-Tooltip; 6-Stufen-Legende bleibt sichtbar.
+	//                      M7-F3: Kein Dial mehr — Karte = Kürzel-Block
+	//                      (1.25:1) + Rang-Balken (kontinuierlich) +
+	//                      Konzentrations-Balken (6 feste Stufen, Gitterlinien
+	//                      bei 1/4/8/15/25 %), responsives Grid (1–6 Spalten).
+	//                      Rang als PLATZIERUNG („Nr. 1“/„#1“), nicht Prozent.
+	//
+	// M7-F3 (Punkt 8): Die internen Text-Filterfelder sind ENTFERNT — das
+	// HAUPT-Suchfeld der Palette filtert als In-Context-Filter die aktuelle
+	// Liste (Tab-abhängig, Muster Inventory `filter`-Prop). Kategorie/Typ/
+	// Seltenheits-Chips bleiben als Kompakt-Filter-Zeile.
 	//
 	// Formular-Konvention (Sebo): Typeaheads starten LEER mit Gesamtliste,
 	// sind MAUS-klickbar und filtern auf Tasteneingabe.
@@ -27,6 +33,10 @@
 	// wenn Strata-Daten angezeigt werden (ToS-Pflicht).
 	import { t, tr, trError } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
+	import { oreAbbrev } from './ore-abbrev';
+	import { sigToggleEntry, type ScanSignatureEntry } from './scan-signature';
+	import { PINS_CHANGED_EVENT, type PinEntry, type PinsState } from './pins';
 
 	type Ore = {
 		id: string;
@@ -89,7 +99,7 @@
 		tier_default: number;
 	};
 
-	let { onexit }: { onexit: () => void } = $props();
+	let { onexit, filter = $bindable('') }: { onexit: () => void; filter?: string } = $props();
 
 	// ---- State ---------------------------------------------------------------
 	let status = $state<StrataStatus | null>(null);
@@ -101,13 +111,12 @@
 	let error = $state('');
 
 	let view = $state<'ores' | 'locations'>('ores');
-	// Erz-Suche
-	let oreQuery = $state('');
+	// M7-F3 (Punkt 8): oreQuery/locQuery ENTFERNT — `filter` (Haupt-Suchfeld)
+	// filtert tab-abhängig die aktuelle Liste.
 	let catFilter = $state<'all' | 'ship' | 'fps'>('all');
 	// M7-F1: Tier-Filter 1–6 war mit String-Rarity SINNLOS — Rarity-Filter.
 	let rarityFilter = $state<'all' | Rarity>('all');
-	// Ort-Suche
-	let locQuery = $state('');
+	// Ort-Suche (nur Chips-Filter — Textfilter via Haupt-Suchfeld, M7-F3)
 	let sysFilter = $state('all');
 	let typeFilter = $state('all');
 	// Detail
@@ -198,12 +207,13 @@
 		void loadStatus();
 	});
 
-	// ---- Filter/Typeahead (LEER = Gesamtliste, case-insensitiv Name/Slug) ----
+	// ---- Filter (LEER = Gesamtliste, case-insensitiv Name/Slug; M7-F3: das
+	// Haupt-Suchfeld der Palette liefert den Text, Chips bleiben lokal) ----
 	const oreMatches = (o: Ore, q: string) =>
 		o.name.toLowerCase().includes(q) || o.slug.toLowerCase().includes(q);
 	const filteredOres = $derived(
 		ores.filter((o) => {
-			const q = oreQuery.trim().toLowerCase();
+			const q = filter.trim().toLowerCase();
 			if (q && !oreMatches(o, q)) return false;
 			if (catFilter !== 'all' && o.category !== catFilter) return false;
 			if (rarityFilter !== 'all' && o.tier !== rarityFilter) return false;
@@ -213,10 +223,13 @@
 	// M7-F1: system ist live null-fähig — dynamisch aus Daten (inkl. „—“-Slot
 	// für null), kein hartkodiertes Spec-Vokabular.
 	const systems = $derived([...new Set(locations.map((l) => l.system ?? '—'))].sort());
+	// M7-F3 (Punkt 7): locTypes bleibt dynamisch aus den Daten — ein Typ ohne
+	// mindestens 1 Ort erscheint gar nicht erst (z. B. station, wenn keine
+	// Station Minable-Elemente listet). Anzeigenamen via i18n (type_*).
 	const locTypes = $derived([...new Set(locations.map((l) => l.type))].sort());
 	const filteredLocations = $derived(
 		locations.filter((l) => {
-			const q = locQuery.trim().toLowerCase();
+			const q = filter.trim().toLowerCase();
 			if (q && !(l.name.toLowerCase().includes(q) || l.slug.toLowerCase().includes(q)))
 				return false;
 			if (sysFilter !== 'all' && (l.system ?? '—') !== sysFilter) return false;
@@ -224,6 +237,16 @@
 			return true;
 		})
 	);
+	// M7-F3 (Punkt 7): Anzeigename eines Ort-Typs (Wire-Wert bleibt z. B.
+	// `dungeon` für Caves — NUR das Label wird übersetzt).
+	const typeName = (ty: string) => tr(`mining.type_${ty}`);
+	// M7-F3 (Punkt 7): Seltenheits-Label (EN capitalized, DE Begriffe) —
+	// null/leer zeigt „—“ (kein „None“).
+	const rarityName = (r: string | null) => (r ? tr(`mining.rarity_${r}`) : '—');
+	// M7-F3 (Punkt 7): Tier-Badges/Legende über i18n-Keys (tier_1..6 =
+	// Band-Label „Pure 25%+“-Stil) statt rohem API-tierName — konsistent in
+	// Legende UND Badges, in beiden Locales.
+	const tierName = (tier: number) => tr(`mining.tier_${tier}`);
 
 	// ---- Detail --------------------------------------------------------------
 	async function openDetail(ore: Ore) {
@@ -289,37 +312,120 @@
 		);
 	});
 
-	// ---- Pin „Signatur pinnen" (Pin-Content scan-signature, Rendering K3) ----
-	async function pinSignature(ore: Ore, index: number) {
-		// M7-F1: ore.tier ist Rarity-String (Live-Contract); das Pin-Content-
-		// Payload `scan-signature` bleibt beim number-Vertrag (Tier 1–6) —
-		// Rarity geht als Row-Text mit, content.tier bleibt null.
-		const tierName = ore.tier ?? '—';
+	// ---- Sammel-Signatur-Pin (M7-F3, Punkt 2) --------------------------------
+	// EIN Pin-Content „scan-signatures“ (Plural) sammelt ALLE Signaturen —
+	// der Pin-Button am Erz TOGGLET (addet/entfernt, dedupe nach oreId).
+	// Payload generisch: {type:'scan-signatures', entries:[{oreId,label,value}]}
+	// (KEIN Strata-Vokabular, Universality-Regel). `visibleSlots` ist im
+	// Payload-Vertrag nachrüstbar (Pin-Resize-Welle, bis ×10) — siehe
+	// scan-signature.ts. Rendering: PinScanSignatures (K3-Registry).
+	//
+	// Pin-Identität: fester Key `scan-signatures` + box_index-Basis 9903 —
+	// pin_add kann bei belegter (view/screen/box)-Identität ablehnen, dann
+	// wird der nächste Index probiert (der Screen wird backend-seitig
+	// gewählt, das Frontend kann ihn nicht vorwählen).
+	const COLLECT_KEY = 'scan-signatures';
+	const COLLECT_BOX_BASE = 9903;
+
+	// Gepinnte Pinned-Marker für die Erz-Liste: bei PINS_CHANGED_EVENT
+	// nachziehen (gleicher Mechanismus wie PinBoxes/+page pinsMeta).
+	let pins = $state<PinEntry[]>([]);
+	const pinnedOreIds = $derived(
+		new Set(
+			pins
+				.filter((p) => p.view_id === 'mining' && p.key === COLLECT_KEY)
+				.flatMap((p) => {
+					const entries = (p.content as { entries?: ScanSignatureEntry[] } | null)?.entries;
+					return (entries ?? []).map((e) => e.oreId);
+				})
+		)
+	);
+	async function loadPins() {
 		try {
-			const ok = await invoke<boolean>('pin_add', {
-				view_id: 'mining',
-				box_index: index,
-				title: ore.name,
-				kpi: ore.scanSignature === null ? null : String(ore.scanSignature),
-				// Wire-Contract (M7-F2): PinRowDto.idx ist String (pins.ts: PinRow.idx) —
-				// Integer hier bricht pin_add mit "invalid type: integer".
-				rows: [
-					{ idx: '0', name: tr('mining.scan_signature'), value: ore.scanSignature === null ? '—' : String(ore.scanSignature) },
-					{ idx: '1', name: tr('mining.rarity'), value: tierName },
-					{ idx: '2', name: tr('mining.category'), value: ore.category ?? '—' }
-				],
-				// Content-Deskriptor — K3 (t_cfea5bea) registriert den Renderer.
-				content: {
-					type: 'scan-signature',
-					oreId: ore.id,
-					oreName: ore.name,
-					scanSignature: ore.scanSignature,
-					tier: null, // M7-F1: Ore-Rarity ist kein 1–6-Tier — Pin-Badge nur bei echtem Tier
-					category: ore.category
-				},
-				key: `scan-signature:${ore.id}`
+			const st = await invoke<PinsState>('pins_state');
+			pins = st.pins;
+		} catch {
+			pins = [];
+		}
+	}
+	$effect(() => {
+		void loadPins();
+		void listen(PINS_CHANGED_EVENT, () => void loadPins());
+	});
+
+	function collectRows(entries: ScanSignatureEntry[]) {
+		// rows-Snapshot (Höhen-Schätzung pins.rs: 44 + 34/Zeile) — pro Erz
+		// eine Zeile; die reichhaltige ×1–×5-Anzeige macht der Content-Renderer.
+		return entries.map((e, i) => ({
+			idx: String(i),
+			name: oreAbbrev(e.label),
+			sub: e.label,
+			value: e.value === null ? '—' : String(e.value),
+			side: null
+		}));
+	}
+
+	async function toggleSignaturePin(ore: Ore) {
+		try {
+			const st = await invoke<PinsState>('pins_state');
+			const collect = st.pins.find(
+				(p) => p.view_id === 'mining' && p.pinned && p.key === COLLECT_KEY
+			);
+			const current = (
+				(collect?.content ?? null) as { entries?: ScanSignatureEntry[] } | null
+			)?.entries;
+			const entries = sigToggleEntry(current ?? [], {
+				oreId: ore.id,
+				label: ore.name,
+				value: ore.scanSignature
 			});
-			flash(tr(ok ? 'pins.added' : 'pins.already_pinned'));
+			if (entries.length === 0) {
+				// leer → Sammel-Pin wird entfernt (Spec Punkt 2)
+				if (collect) {
+					await invoke('pin_remove', {
+						view_id: 'mining',
+						screen: collect.screen,
+						box_index: collect.box_index
+					});
+					flash(tr('pins.removed'));
+				}
+				await loadPins();
+				return;
+			}
+			const content = { type: 'scan-signatures', entries };
+			const title = tr('pins.scan_collect_title');
+			const rows = collectRows(entries);
+			if (collect) {
+				// Snapshot-Refresh (M6-F5): Identität bleibt, Inhalt frisch.
+				await invoke('pin_update', {
+					view_id: 'mining',
+					box_index: collect.box_index,
+					title,
+					kpi: null,
+					rows,
+					content,
+					key: COLLECT_KEY
+				});
+			} else {
+				let ok = false;
+				for (let idx = COLLECT_BOX_BASE; idx < COLLECT_BOX_BASE + 5 && !ok; idx++) {
+					ok = await invoke<boolean>('pin_add', {
+						view_id: 'mining',
+						box_index: idx,
+						title,
+						kpi: null,
+						rows,
+						content,
+						key: COLLECT_KEY
+					});
+				}
+				if (!ok) {
+					flash(tr('pins.add_failed'));
+					return;
+				}
+			}
+			await loadPins(); // Pinned-Marker sofort nachziehen (Real-App: zusätzlich via PINS_CHANGED_EVENT)
+			flash(tr('pins.added'));
 		} catch (e) {
 			flash(trError(e));
 		}
@@ -341,22 +447,33 @@
 		onexit();
 	}
 
-	function abbrev(name: string): string {
-		return name
-			.replace(/[^A-Za-z0-9 ]/g, ' ')
-			.split(/\s+/)
-			.filter(Boolean)
-			.map((w) => w[0])
-			.join('')
-			.slice(0, 3)
-			.toUpperCase() || '??';
-	}
+	// M7-F3 (Punkt 6): Kürzel-Funktion ist nach ore-abbrev.ts gezogen
+	// (unit-getestet gegen die echte Erzliste) — Klammerzusätze wie „(Ore)“/
+	// „(Raw)“ fließen nicht ein (Agricium → „Ag“, nicht „AO“).
 	function pct(v: number): number {
 		return Math.max(0, Math.min(100, Math.round(v)));
 	}
 	function concPct(v: number): string {
 		return (Math.round(v * 1000) / 10).toFixed(1);
 	}
+	// M7-F3 (Punkt 5): Rang als PLATZIERUNG („Nr. 1“ DE / „#1“ EN) — die
+	// Prozentzahl bleibt nur als Balken-Füllung (rankPct-Datenfeld bleibt).
+	const rankPlace = (rank: number) => tr('mining.rank_place', { n: String(rank) });
+	// M7-F3 (Punkt 1): Responsive Karten-Grid — Spalten = floor(Breite /
+	// MIN_CARD_W), clamp(1..6). Die Palette-Shell ist max(70vw, 640px) (K2);
+	// gemessener Overhead links (Sidebar 320px + Paddings/Gaps) ≈ 400px →
+	// Detail ≈ 0.7·Viewport − 400. MIN_CARD_W=420 liefert 4 Spalten bei
+	// ~3440px Palette (Detail ≈ 2006px), 2 Spalten bei ~1800px, 1 Spalte im
+	// kompakten Fenster; sehr breite Screens stufen bis 6 auf.
+	const MIN_CARD_W = 420;
+	const MAX_CARD_COLS = 6;
+	let detailW = $state(0);
+	const cardCols = $derived(
+		Math.max(1, Math.min(MAX_CARD_COLS, Math.floor(detailW / MIN_CARD_W) || 1))
+	);
+	// M7-F3 (Punkt 1): Konzentrations-Stufen — 6 feste Segmente, Gitterlinien
+	// bei 1/4/8/15/25 % (immer 6 Segmente, unabhängig vom Wert).
+	const CONC_STEPS = [1, 4, 8, 15, 25];
 	const tierLegend = $derived([
 		{ tier: 1, band: '< 1 %' },
 		{ tier: 2, band: '1–4 %' },
@@ -417,14 +534,8 @@
 				</div>
 
 				{#if view === 'ores'}
-					<input
-						class="mq"
-						type="text"
-						placeholder={$t('mining.ph_search_ore')}
-						bind:value={oreQuery}
-						onkeydown={(e) => e.stopPropagation()}
-					/>
-					<div class="mfrow">
+				<!-- M7-F3 (Punkt 8): kein eigenes Textfeld mehr — das Haupt-Suchfeld -->
+				<div class="mfrow">
 						<div class="mf">
 							<span class="mfl">{$t('mining.filter_category')}</span>
 							<div class="mfchips">
@@ -454,7 +565,8 @@
 										class="mchip mtier"
 										class:is-on={rarityFilter === rv}
 										style={`--tc:${RARITY_COLORS[rv]}`}
-										onclick={() => (rarityFilter = rarityFilter === rv ? 'all' : rv)}>{rv}</button
+										onclick={() => (rarityFilter = rarityFilter === rv ? 'all' : rv)}
+										>{rarityName(rv)}</button
 									>
 								{/each}
 							</div>
@@ -464,7 +576,7 @@
 						<div class="mnote">{$t('mining.loading')}</div>
 					{:else}
 						<div class="mlist" role="listbox" aria-label={$t('mining.tab_ores')}>
-							{#each filteredOres as o, i (o.id)}
+							{#each filteredOres as o (o.id)}
 								<div class="mrow" role="option" aria-selected="false" tabindex="0">
 									<button
 										type="button"
@@ -475,18 +587,20 @@
 										<span class="mrow-name">{o.name}</span>
 										<span class="mrow-sub">{o.slug}</span>
 										{#if o.tier}
-											<span class="mtier-badge" style={`--tc:${rarityColor(o.tier) ?? '#8b949e'}`}
-												>{o.tier}</span
-											>
-										{/if}
-									</button>
-									<button
-										type="button"
-										class="mpin"
-										title={$t('mining.pin_sig_title')}
-										aria-label={$t('mining.pin_sig_title')}
-										onclick={() => void pinSignature(o, i)}
-									>
+												<span class="mtier-badge" style={`--tc:${rarityColor(o.tier) ?? '#8b949e'}`}
+													>{rarityName(o.tier)}</span
+												>
+											{/if}
+										</button>
+										<button
+											type="button"
+											class="mpin"
+											class:is-pinned={pinnedOreIds.has(o.id)}
+											title={$t('mining.pin_sig_title')}
+											aria-label={$t('mining.pin_sig_title')}
+											aria-pressed={pinnedOreIds.has(o.id)}
+											onclick={() => void toggleSignaturePin(o)}
+										>
 										<svg
 											viewBox="0 0 24 24"
 											fill="none"
@@ -506,14 +620,8 @@
 						</div>
 					{/if}
 				{:else}
-					<input
-						class="mq"
-						type="text"
-						placeholder={$t('mining.ph_search_location')}
-						bind:value={locQuery}
-						onkeydown={(e) => e.stopPropagation()}
-					/>
-					<div class="mfrow">
+				<!-- M7-F3 (Punkt 8): kein eigenes Textfeld mehr — das Haupt-Suchfeld -->
+				<div class="mfrow">
 						<div class="mf">
 							<span class="mfl">{$t('mining.filter_system')}</span>
 							<div class="mfchips">
@@ -543,13 +651,14 @@
 									onclick={() => (typeFilter = 'all')}>{$t('mining.type_all')}</button
 								>
 								{#each locTypes as ty (ty)}
-									<button
-										type="button"
-										class="mchip"
-										class:is-on={typeFilter === ty}
-										onclick={() => (typeFilter = typeFilter === ty ? 'all' : ty)}>{ty}</button
-									>
-								{/each}
+										<button
+											type="button"
+											class="mchip"
+											class:is-on={typeFilter === ty}
+											onclick={() => (typeFilter = typeFilter === ty ? 'all' : ty)}
+											>{typeName(ty)}</button
+										>
+									{/each}
 							</div>
 						</div>
 					</div>
@@ -575,7 +684,7 @@
 									title={l.name}
 								>
 									<span class="mrow-name">{l.name}</span>
-									<span class="mrow-sub">{l.system} · {l.type}</span>
+									<span class="mrow-sub">{l.system} · {typeName(l.type)}</span>
 								</button>
 							</div>
 						{:else}
@@ -605,7 +714,7 @@
 						>
 						<span class="md-title">{locDetail.location.name}</span>
 					</div>
-					<div class="md-sub">{locDetail.location.system} · {locDetail.location.type}</div>
+					<div class="md-sub">{locDetail.location.system} · {typeName(locDetail.location.type)}</div>
 					{#if locDetail.ores.length === 0}
 						<div class="mnote">{$t('mining.no_ores')}</div>
 					{:else}
@@ -616,7 +725,7 @@
 									<span class="lorow-conc" style={`color:${tierColor(or.tier)}`}>{concPct(or.concentration)} %</span
 									>
 									<span class="mtier-badge" style={`--tc:${tierColor(or.tier)}`}
-										>{or.tierName}</span
+										>{tierName(or.tier)}</span
 									>
 									<span class="lorow-sig"
 										>{$t('mining.scan_signature')}: {or.scanSignature ?? '—'}</span
@@ -650,75 +759,54 @@
 							>
 						</div>
 					</div>
+					<!-- M7-F3 Karten-Redesign (Punkt 1): KEIN Dial mehr — links
+					     Kürzel-Block (1.25:1, Kürzel groß + Scan-Signatur), rechts
+					     Rang-Balken (kontinuierlich, Anzeige als Platz „Nr. X“) +
+					     Konzentrations-Balken (6 feste Stufen, Gitterlinien bei
+					     1/4/8/15/25 %). Responsives Grid (1–6 Spalten). -->
+					<div class="mdetail-scroll" bind:clientWidth={detailW}>
 					{#each detailGroups as g (g.key)}
 						<div class="mgroup">
 							<div class="mg-head">
 								<span class="mg-title">{$t(g.label)}</span>
 								<span class="mg-note">{$t('mining.group_note')}</span>
 							</div>
-							<!-- M7-F2 Karten-Ansicht (User-Option 2): großer Two-Ring-Dial
-							     (≥64px) + rank/concentration als Zahl+Balken-Zeile direkt
-							     sichtbar — lesbar ohne Hover. -->
-							<div class="dcards">
+							<div class="dcards" style={`--cols:${cardCols}`}>
 								{#each g.rows as row (row.locationId)}
 									<div class="dcard">
 										<div class="dcard-top">
 											<span class="dcard-name" title={row.location}>{row.location}</span>
 											<span class="mtier-badge" style={`--tc:${tierColor(row.tier)}`}
-												>{row.tierName}</span
+												>{tierName(row.tier)}</span
 											>
 										</div>
-										<span class="dcard-sub">{row.system} · {row.n} {$t('mining.spawns')}</span>
-										<svg class="dial" viewBox="0 0 48 48" aria-hidden="true">
-											<circle class="dial-bg" cx="24" cy="24" r="20" pathLength="100" />
-											<circle
-												class="dial-rank"
-												cx="24"
-												cy="24"
-												r="20"
-												pathLength="100"
-												style={`--p:${pct(row.rankPct)}`}
-											/>
-											<circle
-												class="dial-bg"
-												cx="24"
-												cy="24"
-												r="13"
-												pathLength="100"
-												style={`--tc:${tierColor(row.tier)}`}
-											/>
-											<circle
-												class="dial-conc"
-												cx="24"
-												cy="24"
-												r="13"
-												pathLength="100"
-												style={`--p:${pct(row.concentration * 100)};--tc:${tierColor(row.tier)}`}
-											/>
-											<text class="dial-abbr" x="24" y="23" text-anchor="middle"
-												>{abbrev(detail.ore.name)}</text
-											>
-											<text class="dial-sig" x="24" y="33" text-anchor="middle"
-												>{detailOre?.scanSignature ?? '—'}</text
-											>
-										</svg>
-										<!-- Lesbarkeits-Fallback: exakte Werte als Zahl+Balken (kein Hover nötig) -->
-										<div class="dnums">
-											<div class="dnum">
-												<span class="dnum-l">{$t('mining.rank')}</span>
-												<span class="dnum-v">{row.rankPct} %</span>
-												<span class="dbar"
-													><i style={`width:${pct(row.rankPct)}%;background:var(--accent)`}></i
-												></span>
+										<!-- Punkt 4: „N spawn sites“ entfernt — die Orte SIND die Spawn-Orte -->
+										<span class="dcard-sub">{row.system}</span>
+										<div class="dcard-body">
+											<div class="abbr-block" aria-hidden="true">
+												<span class="abbr">{oreAbbrev(detail.ore.name)}</span>
+												<span class="abbr-sig">{detailOre?.scanSignature ?? '—'}</span>
 											</div>
-											<div class="dnum">
-												<span class="dnum-l">{$t('mining.concentration')}</span>
-												<span class="dnum-v">{concPct(row.concentration)} %</span>
-												<span class="dbar"
-													><i
-														style={`width:${pct(row.concentration * 100)}%;background:${tierColor(row.tier)}`}
-													></i
-												></span>
+											<div class="dnums">
+												<div class="dnum">
+													<span class="dnum-l">{$t('mining.rank')}</span>
+													<span class="dnum-v">{rankPlace(row.rank)}</span>
+													<span class="dbar"
+														><i style={`width:${pct(row.rankPct)}%;background:var(--accent)`}></i
+													></span>
+												</div>
+												<div class="dnum">
+													<span class="dnum-l">{$t('mining.concentration')}</span>
+													<span class="dnum-v">{concPct(row.concentration)} %</span>
+													<span class="dbar dbar-seg">
+														<i
+															style={`width:${pct(row.concentration * 100)}%;background:${tierColor(row.tier)}`}
+														></i>
+														{#each CONC_STEPS as step (step)}
+															<b class="seg-line" style={`left:${step}%`}></b>
+														{/each}
+													</span>
+												</div>
 											</div>
 										</div>
 									</div>
@@ -728,6 +816,7 @@
 					{:else}
 						<div class="mnote">{$t('mining.no_locations')}</div>
 					{/each}
+					</div>
 					<!-- Legende: 6 absolute Bands (= Tier 1–6), bleibt sichtbar -->
 					<div class="mlegend">
 						<div class="ml-title">{$t('mining.legend_title')}</div>
@@ -813,15 +902,6 @@
 		background: color-mix(in srgb, var(--accent) 22%, transparent);
 		color: var(--fg, #e8ecf3);
 		border-color: var(--accent);
-	}
-	.mq {
-		width: 100%;
-		padding: 7px 10px;
-		background: var(--panel2, #14161b);
-		border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-		color: var(--fg, #e8ecf3);
-		font: inherit;
-		font-size: 13px;
 	}
 	.mfrow {
 		display: flex;
@@ -933,6 +1013,12 @@
 		color: var(--accent);
 		background: color-mix(in srgb, var(--accent) 18%, transparent);
 	}
+	.mpin.is-pinned {
+		color: var(--accent);
+	}
+	.mpin.is-pinned svg {
+		fill: currentColor;
+	}
 	.mpin svg {
 		width: 15px;
 		height: 15px;
@@ -991,11 +1077,14 @@
 		font-size: 10px;
 		color: var(--fgdim, #9aa3b2);
 	}
-	/* M7-F2 Karten-Ansicht: 2 Spalten bei breiter Palette, kompakte Höhe */
+	/* M7-F3 (Punkt 1): responsives Karten-Grid — Spaltenzahl kommt aus
+	   detailW (bind:clientWidth auf .mdetail-scroll), clamp(1..6). */
+	.mdetail-scroll {
+		min-width: 0;
+	}
 	.dcards {
 		display: grid;
-		/* Spec M7-F2: 2 Spalten (auch breite Palette) — Karten bleiben kompakt */
-		grid-template-columns: repeat(2, minmax(0, 1fr));
+		grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
 		gap: 8px;
 	}
 	.dcard {
@@ -1028,6 +1117,38 @@
 		font-size: 11px;
 		color: var(--fgdim, #9aa3b2);
 	}
+	/* M7-F3: Körper = links Kürzel-Block (1.25:1 Höhe×Breite — breiter als
+	   hoch), rechts die 2 Balken. */
+	.dcard-body {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+	.abbr-block {
+		/* 1.25:1 (Höhe×Breite) — Omar-Tendenz statt 1:1-Quadrat */
+		aspect-ratio: 1 / 1.25;
+		flex: 0 0 auto;
+		width: 72px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 2px;
+		border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+		background: color-mix(in srgb, var(--panel2, #14161b) 70%, transparent);
+		border-radius: 3px;
+	}
+	.abbr {
+		font-size: 26px;
+		font-weight: 700;
+		line-height: 1;
+		color: var(--fg, #e8ecf3);
+		letter-spacing: 0.02em;
+	}
+	.abbr-sig {
+		font-size: 11px;
+		color: var(--fgdim, #9aa3b2);
+	}
 	/* Zahl+Balken-Zeile: exakte Werte OHNE Hover lesbar (Lesbarkeits-Fallback) */
 	.dnums {
 		display: flex;
@@ -1037,6 +1158,7 @@
 	}
 	.dnum {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px;
 		font-size: 11px;
@@ -1049,17 +1171,33 @@
 		color: var(--fg, #e8ecf3);
 		font-weight: 600;
 		flex: 0 0 auto;
-		min-width: 48px;
+		min-width: 52px;
 	}
 	.dbar {
-		flex: 1;
-		height: 4px;
+		/* Volle Zeilenbreite (eigene Zeile unter Label+Wert) — flex:1 schrumpfte
+		   auf 0px, wenn Label+Wert die Zeile füllten (Review-Befund Runde 3). */
+		flex-basis: 100%;
+		height: 5px;
 		background: color-mix(in srgb, var(--fgdim, #9aa3b2) 25%, transparent);
 		overflow: hidden;
 	}
 	.dbar i {
 		display: block;
 		height: 100%;
+	}
+	/* M7-F3: Konzentrations-Balken in 6 FESTE Stufen unterteilt —
+	   Gitterlinien bei 1/4/8/15/25 % (immer sichtbar, unabhängig vom Wert). */
+	.dbar-seg {
+		position: relative;
+	}
+	.seg-line {
+		position: absolute;
+		top: -2px;
+		bottom: -2px;
+		width: 1px;
+		/* Dezent, aber ERKENNBAR: helle Linie, auch über der Füllung sichtbar. */
+		background: color-mix(in srgb, var(--fg, #e8ecf3) 60%, transparent);
+		z-index: 1;
 	}
 	/* Ort-Detail (M7-F2): Erze am Ort */
 	.lorow {
@@ -1092,44 +1230,6 @@
 		font-size: 11px;
 		color: var(--fgdim, #9aa3b2);
 		white-space: nowrap;
-	}
-	/* Two-Ring-Dial */
-	.dial {
-		/* M7-F2: großer Dial in der Karten-Ansicht (min. ~64px) */
-		width: 72px;
-		height: 72px;
-		flex: 0 0 auto;
-		margin: 4px auto 0;
-	}
-	.dial circle {
-		fill: none;
-		transform: rotate(-90deg);
-		transform-origin: 50% 50%;
-	}
-	.dial-bg {
-		stroke: color-mix(in srgb, var(--fgdim, #9aa3b2) 25%, transparent);
-	}
-	.dial-rank {
-		stroke: var(--accent);
-		stroke-width: 3.4;
-		stroke-linecap: round;
-		/* pathLength=100 → Füllgrad = --p (0..100), ohne Umfangs-Mathe */
-		stroke-dasharray: var(--p, 0) 100;
-	}
-	.dial-conc {
-		stroke: var(--tc, var(--accent));
-		stroke-width: 2.2;
-		/* segmentiert: Kurzhuben mit Lücken (Strata-Muster) */
-		stroke-dasharray: calc(var(--p, 0) / 6) 1.2;
-	}
-	.dial-abbr {
-		fill: var(--fg, #e8ecf3);
-		font-size: 11px;
-		font-weight: 700;
-	}
-	.dial-sig {
-		fill: var(--fgdim, #9aa3b2);
-		font-size: 8px;
 	}
 	/* Legende */
 	.mlegend {

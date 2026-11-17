@@ -5856,10 +5856,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			     Suchfeld dient als In-Context-Filter (Standort/Material). -->
 			<Inventory onexit={() => setMode('search')} filter={input} />
 {:else if railMode === 'mining'}
-			<!-- M7-K2 (t_bb3303d0): Mining-Modus (Strata) — eigene SPA-
-			     Komponente mit internen Typeaheads (LEER = Gesamtliste,
-			     maus-klickbar); das HAUPT-Suchfeld bleibt ungenutzt. -->
-			<Mining onexit={() => setMode('search')} />
+			<!-- M7-K2 (t_bb3303d0): Mining-Modus (Strata) — M7-F3 (t_cf1224c5):
+			     das HAUPT-Suchfeld ist jetzt der In-Context-Filter (Tab-abhängig:
+			     ORES→Erze, LOCATIONS→Orte; Muster Inventory `filter`-Prop). -->
+			<Mining onexit={() => setMode('search')} filter={input} />
 				{#if invEmbed}
 					<!-- C2 embed: Manifest-Connector fügt sich als Unter-Sektion
 					     in die Inventar-Sektion ein (generische Views). -->

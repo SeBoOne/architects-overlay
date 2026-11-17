@@ -47,11 +47,14 @@ pub const TTL_ITEM_PRICES: Duration = Duration::from_secs(7 * 86_400); // 7 days
 /// between patches; commodities likewise).
 pub const TTL_WIKI_REFERENCE: Duration = Duration::from_secs(43_200); // 12h
 /// M7-K1 (t_e38faa51): Strata-Referenzdaten (ores / locations) ändern sich nur
-/// pro Game-Patch — sehr lange TTL (Plan: „z. B. 24 h").
-pub const TTL_STRATA_REFERENCE: Duration = Duration::from_secs(86_400); // 24h
+/// pro Game-Patch (Wochen-Rhythmus, keine Intraday-Relevanz) — 7 Tage, analog
+/// UEX-Wiki-Referenz (M7-F3, t_cf1224c5). Kein „Daten aktualisieren“-Button in
+/// dieser Runde: ein manuelles Invalidieren folgt später mit der Settings-
+/// Welle (Begründung siehe Spec Punkt 9).
+pub const TTL_STRATA_REFERENCE: Duration = Duration::from_secs(604_800); // 7 Tage
 /// M7-K1 (t_e38faa51): Strata-Detaildaten (ore-locations / location-ores) —
-/// mittlere TTL (Plan: „z. B. 6 h").
-pub const TTL_STRATA_DETAIL: Duration = Duration::from_secs(21_600); // 6h
+/// ebenso patch-gebunden → 24 h (M7-F3, t_cf1224c5).
+pub const TTL_STRATA_DETAIL: Duration = Duration::from_secs(86_400); // 24 h
 /// Marketplace listings are realtime; Phase 2 caches the last snapshot for a
 /// short TTL (5 min) so the offers view opens instantly from cache while the
 /// background sync keeps it warm — rate-limit-schonend (one listing fetch per
