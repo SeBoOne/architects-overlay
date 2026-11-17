@@ -71,6 +71,8 @@ mod window;
 #[cfg(desktop)]
 mod pins;
 
+mod strata;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default();
@@ -137,6 +139,12 @@ pub fn run() {
             routes::get_route_locations,
             routes::vehicles_scu,
             routes::location_suggest,
+            strata::strata_status,
+            strata::strata_set_key,
+            strata::strata_ores,
+            strata::strata_locations,
+            strata::strata_ore_locations,
+            app_settings::settings_set_strata_enabled,
             app_settings::settings_get,
             app_settings::settings_set_pins_default_opacity,
             app_settings::settings_set_pins_presets,
@@ -392,6 +400,18 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
     // settings crate (unknown key).
     let composite = Arc::new(providers::CompositeProvider::new(uex, cache.clone()));
     let provider: Arc<dyn provider::DataProvider> = composite.clone();
+
+    // M7-K2 (t_bb3303d0): Strata-Commands teilen denselben Cache-Handle
+    // (ein Cache-Handle, eine DB) + Keystore-Pfad im App-Datenverzeichnis.
+    let keystore = crate::strata::keystore_path(app.handle())
+        .ok_or_else(|| std::io::Error::other("strata: app_local_data_dir not resolvable"))?;
+    tauri::Manager::manage(
+        app,
+        crate::strata::StrataState {
+            cache: cache.clone(),
+            keystore_path: keystore,
+        },
+    );
 
     let tracker = Arc::new(trade::SyncTracker::default());
     tauri::Manager::manage(

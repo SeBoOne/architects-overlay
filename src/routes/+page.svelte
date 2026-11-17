@@ -54,6 +54,7 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	// Relatives $lib-Import: dieses Repo nutzt kein svelte.config.js, der
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
+	import Mining from '../lib/Mining.svelte';
 	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
 	import PinBoxes from '../lib/PinBoxes.svelte';
 	import { PINS_CHANGED_EVENT, type PinEntry, type PinRow, type PinsState, type PinContent } from '../lib/pins';
@@ -78,7 +79,6 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	// PB (t_1c9bc240, B1): Mode-Hotkeys — Defaults, Validação e Lookup em UM módulo.
 	import {
 		DEFAULT_MODE_HOTKEYS,
-		MODE_HOTKEY_RESERVED,
 		hotkeyFor,
 		modeKeyMap,
 		normalizeFkey,
@@ -343,6 +343,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		palette: string;
 		detail_variant: string;
 		uex_api_key_set: boolean;
+		strata_enabled: boolean;
 		// M2a-Fix (t_2f197d1c): bool-only (roher Key geht nie ans Frontend)
 		// + UEX-Benutzername für den marketplace_listings?username=-Pull.
 		uex_secret_key_set: boolean;
@@ -483,7 +484,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	type ShortcutField = 'toggle' | 'click';
 	// PB (t_1c9bc240, B1): konfigurierbare Mode-Slots — Suche (F1), Marktplatz
 	// (F2) und Einstellungen (F12) bleiben fest belegt.
-	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory' | 'market';
+	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory' | 'market' | 'mining';
 	let scCapture = $state<ShortcutField | null>(null);
 	let scPreview = $state('');
 	let scNote = $state('');
@@ -602,13 +603,16 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	}
 	// PB (t_1c9bc240, B1): Capture-Verwaltung der Mode-Hotkeys. Identisches
 	// Muster wie bei den globalen Kürzeln (C2a): nur EIN Capture scharf,
-	// Validierung Backend-seitig (nur F1–F12, F5 reserviert Resync,
+	// Validierung Backend-seitig (nur F1–F12 (M7-K2: Mining-Default F5),
 	// Doppelbelegung abgelehnt), Snapshot kommt inkl. sync_note zurück.
 	const modeHotkeyFields: { id: ModeHotkeyField; label: string }[] = [
 		{ id: 'hangar', label: 'nav.hangar' },
 		{ id: 'routes', label: 'nav.routes_full' },
 		{ id: 'inventory', label: 'nav.inventory' },
-		{ id: 'market', label: 'hotkey.slot_market' }
+		{ id: 'market', label: 'hotkey.slot_market' },
+		// M7-K2 (t_bb3303d0): Mining-Modus — F5-Default, teilt die Taste
+		// kontextabhängig mit dem Resync (Market/Detail).
+		{ id: 'mining', label: 'nav.mining' }
 	];
 	let hkCapture: ModeHotkeyField | null = $state(null);
 	let hkNote = $state('');
@@ -681,10 +685,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// P1 t_a39f6811: Handelsrouten — eigener Mode für die Rail/Keyhandler;
 	// intern bleibt es der Market-Phase mit mTab='routes'.
 	// C2: 'own' = Manifest-Connector mit placement.kind=own (eigener Bereich).
-	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'own';
+	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'own' | 'mining';
 	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
 	let mTab = $state<'offers' | 'routes' | 'shop' | 'trades'>('offers');
-	let railMode = $state<'inventory' | 'hangar' | 'own' | null>(null);
+	let railMode = $state<'inventory' | 'hangar' | 'own' | 'mining' | null>(null);
 	let mode = $derived<Mode>(
 		(railMode === 'own' ? 'own' : railMode) ??
 			(inConfig
@@ -1718,6 +1722,58 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			secretKeyNote = tr('settings.secretkey_removed');
 		} catch (e) {
 			secretKeyNote = errText(e);
+		}
+	}
+
+	// ---- M7-K2 (t_bb3303d0): Strata (Mining) — Key im Keystore, Toggle ------
+	let strataKeyInput = $state('');
+	let strataNote = $state('');
+	let strataStat = $state<{ enabled: boolean; key_set: boolean; tier_default: number } | null>(
+		null
+	);
+	async function refreshStrataStatus() {
+		try {
+			strataStat = await invoke<{ enabled: boolean; key_set: boolean; tier_default: number }>(
+				'strata_status'
+			);
+		} catch (e) {
+			strataNote = errText(e);
+		}
+	}
+	async function saveStrataKey() {
+		const key = strataKeyInput.trim();
+		if (!key) return;
+		try {
+			strataStat = await invoke('strata_set_key', { key });
+			strataKeyInput = '';
+			strataNote = tr('settings.strata_key_saved');
+		} catch (e) {
+			strataNote = errText(e);
+		}
+	}
+	async function removeStrataKey() {
+		try {
+			strataStat = await invoke('strata_set_key', { key: null });
+			strataKeyInput = '';
+			strataNote = tr('settings.strata_key_removed');
+		} catch (e) {
+			strataNote = errText(e);
+		}
+	}
+	// Status nachziehen, sobald die Settings-UI offen ist (key_set ist
+	// keystore-abgeleitet — nicht Teil des Settings-Snapshots).
+	$effect(() => {
+		if (inConfig) void refreshStrataStatus();
+	});
+	async function toggleStrataEnabled() {
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_strata_enabled', {
+				on: !(cfg?.strata_enabled ?? false)
+			});
+			applySettings(cfg);
+			void refreshStrataStatus();
+		} catch (e) {
+			strataNote = errText(e);
 		}
 	}
 
@@ -4684,6 +4740,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			railMode = m;
 			if (m === 'hangar') loadHangar();
 			if (debounce) clearTimeout(debounce);
+		} else if (m === 'mining') {
+			// M7-K2 (t_bb3303d0): Mining-Modus (Strata) — eigene SPA-Komponente
+			// (Rail-Modus wie Inventar/Hangar). Overlay-States räumen.
+			if (inConfig) closeConfig();
+			else if (phase === 'market') exitMarket();
+			else if (inDetail) closeDetail();
+			railMode = 'mining';
+			if (debounce) clearTimeout(debounce);
 		} else if (m === 'own') {
 			// C2: eigener Bereich eines aktivierten own-Connectors.
 			openOwn();
@@ -5195,6 +5259,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						return;
 					}
 				}
+			} else if (railMode === 'mining') {
+				// M7-K2: Esc-Kaskade gehört Mining.svelte (Detail schließen →
+				// Modus verlassen) — hier NICHT anfassen (Inventory-Muster).
+				return;
 			} else if (railMode === 'own') {
 				// D-B (t_159ebc5c) Punkt 6: Die own-Mode-Esc-Kaskade gehört
 				// ConnectorViews (Flow → Landliste; Landliste → Modus verlassen
@@ -5243,8 +5311,17 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				}
 				void onF5();
 				e.preventDefault();
+				return; // Resync-Kontext: F5 bleibt Sync — kein Modus-Wechsel
 			}
-			// sonst: F5 fällt durch — kein Modus, kein Sync, kein Reload.
+			// M7-K2 (t_bb3303d0): außerhalb der Resync-Kontexte ist F5 der
+			// Mining-Modus (Default-Belegung) — der Modus-Wechsel greift nur
+			// dann, wenn F5 als Mode-Taste gemappt ist. Ist Mining auf eine
+			// andere Taste gelegt, läuft es über den normalen F-Key-Block oben.
+			const f5Mode = modeKeyMap(cfg).get('F5');
+			if (f5Mode && f5Mode !== 'market' && f5Mode !== 'routes') {
+				setMode(f5Mode);
+				e.preventDefault();
+			}
 			return;
 		}
 		// Marktplatz-Modus: Angebot-Navigation + Detail.
@@ -5710,7 +5787,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						void startOwnFlow(String(input ?? ''));
 					}
 				}}
-				placeholder={railMode === 'own' && ownOpenFlow && !ownFlowActive
+				placeholder={railMode === 'mining'
+					? $t('mining.ph_main')
+					: railMode === 'own' && ownOpenFlow && !ownFlowActive
 				? $t('connector.flow.code_ph')
 				: railMode === 'inventory'
 				? $t('search.ph_inventory')
@@ -5751,6 +5830,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<!-- Inventar-Modus (t_1bab1fea): eigene SPA-Komponente; das HAUPT-
 			     Suchfeld dient als In-Context-Filter (Standort/Material). -->
 			<Inventory onexit={() => setMode('search')} filter={input} />
+{:else if railMode === 'mining'}
+			<!-- M7-K2 (t_bb3303d0): Mining-Modus (Strata) — eigene SPA-
+			     Komponente mit internen Typeaheads (LEER = Gesamtliste,
+			     maus-klickbar); das HAUPT-Suchfeld bleibt ungenutzt. -->
+			<Mining onexit={() => setMode('search')} />
 				{#if invEmbed}
 					<!-- C2 embed: Manifest-Connector fügt sich als Unter-Sektion
 					     in die Inventar-Sektion ein (generische Views). -->
@@ -6465,7 +6549,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</section>
 					<!-- PB (t_1c9bc240, B1): Mode-Hotkeys — konfigurierbare F-Tasten der
 					     In-App-Modi. Persistiert im Settings-Crate (TOML), Validierung:
-					     nur F1–F12, F5 reserviert für den Resync, keine Doppelbelegung.
+					     nur F1–F12, keine Doppelbelegung (M7-K2: F5 = Mining-Default, der Resync behält F5 in Market/Detail).
 					     Capture-Muster identisch zu den globalen Kürzeln (C2a). -->
 <section class="cfg-sect">
 						<div class="h">{$t('settings.mode_hotkeys')}</div>
@@ -6501,6 +6585,49 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<!-- UD (t_a36daafb): thematische Gruppe „Daten & Dienste“ — reine UI-Umordnung -->
 					<div class="cfg-group">
 						<div class="h cfg-g-head">{$t('settings.data_services')}</div>
+<section class="cfg-sect">
+						<!-- M7-K2 (t_bb3303d0): Strata-Mining (celd_-Key im Keystore,
+						     opt-in Toggle). ToS: KEIN geteilter Key — Self-Service
+						     via strata.celd.space/api-keys. -->
+						<div class="h">{$t('settings.strata_mining')}</div>
+						<div class="cfg-key-status">
+							<button
+								type="button"
+								class="chip"
+								class:is-on={cfg?.strata_enabled}
+								onclick={() => void toggleStrataEnabled()}
+							>{cfg?.strata_enabled ? '✓' : '○'} {$t('settings.strata_enable')}</button>
+							<b class:ok={strataStat?.key_set} class:off={strataStat && !strataStat.key_set}>
+								{strataStat?.key_set ? $t('settings.state_set') : $t('settings.state_unset')}
+							</b>
+						</div>
+						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
+							{$t('settings.strata_note')}
+						</div>
+						<div class="cfg-key-row">
+							<input
+								type="password"
+								autocomplete="off"
+								placeholder={$t('settings.ph_paste_strata')}
+								bind:value={strataKeyInput}
+								onkeydown={(e) => e.stopPropagation()}
+							/>
+							<button type="button" class="btn" onclick={saveStrataKey} disabled={!strataKeyInput.trim()}>{$t('settings.set')}</button>
+							{#if strataStat?.key_set}
+								<button type="button" class="btn-ghost btn-danger" onclick={removeStrataKey}>{$t('settings.remove')}</button>
+							{/if}
+						</div>
+						<button
+							type="button"
+							class="chip"
+							style="margin-top: 8px"
+							title={$t('settings.strata_manage_title')}
+							onclick={() => void openInfoLink('strata_api_keys')}
+						>{$t('settings.strata_manage')}</button>
+						{#if strataNote}
+							<div class="cfg-note">{strataNote}</div>
+						{/if}
+					</section>
 <section class="cfg-sect">
 						<div class="h">{$t('settings.uex_api_key')}</div>
 						<div class="cfg-key-status">{$t('settings.status')}<b class:ok={cfg?.uex_api_key_set} class:off={!cfg?.uex_api_key_set}>

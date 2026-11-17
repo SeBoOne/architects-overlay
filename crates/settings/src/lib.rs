@@ -708,11 +708,13 @@ struct ShortcutsSection {
 
 /// PB (t_1c9bc240, B1): Belegung der In-App-Mode-Hotkeys. Nur F-Keys
 /// (F1–F12), nur bei sichtbarem/fokussiertem Overlay aktiv — keine globalen
-/// System-Binds. `F5` ist reserviert für den kontextsensitiven Resync (B2)
-/// und ist als Mode-Taste unzulässig.
+/// System-Binds. Seit M7-K2 (t_bb3303d0) ist F5 KEINE reservierte Taste mehr:
+/// der Mining-Modus belegt sie per Default; der kontextsensitive Resync (B2)
+/// behält F5 in Market/Detail (Modus-Wechsel greift nur außerhalb dieser
+/// Kontexte — der Mode-Slot `mining` ist wie die anderen konfigurierbar).
 ///
 /// Default = neue Belegung: F1 Suche · F2 Marktplatz · F3 Handelsrouten ·
-/// F4 Inventar · F11 Hangar · F12 Einstellungen.
+/// F4 Inventar · F11 Hangar · F12 Einstellungen · F5 Mining.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModeHotkeys {
     pub search: String,
@@ -721,11 +723,13 @@ pub struct ModeHotkeys {
     pub inventory: String,
     pub hangar: String,
     pub settings: String,
+    /// M7-K2 (t_bb3303d0): Mining-Modus. Default F5 — die Taste bleibt
+    /// daneben kontextsensitiver Resync in Market/Detail (der Modus-Wechsel
+    /// greift nur, wo kein Resync-Kontext aktiv ist). Alte Configs ohne das
+    /// Feld migrieren per `serde(default)` auf F5.
+    #[serde(default = "ModeHotkeys::default_mining")]
+    pub mining: String,
 }
-
-/// Reservierte Taste: F5 führt den kontextsensitiven Resync aus (B2) und
-/// kann deshalb keinem Modus zugewiesen werden.
-pub const MODE_HOTKEY_RESERVED: &str = "F5";
 
 impl Default for ModeHotkeys {
     fn default() -> Self {
@@ -736,9 +740,21 @@ impl Default for ModeHotkeys {
             inventory: "F4".to_owned(),
             hangar: "F11".to_owned(),
             settings: "F12".to_owned(),
+            mining: "F5".to_owned(),
         }
     }
 }
+
+impl ModeHotkeys {
+    fn default_mining() -> String {
+        "F5".to_owned()
+    }
+}
+
+/// Reservierte Taste für CONNECTOR-Hotkey-Slots: F5 gehört per Default dem
+/// Mining-Modus (M7-K2) und darf von Connectors nicht belegt werden —
+/// `ModeHotkeys::validate` selbst prüft sie NICHT mehr (Mining nutzt F5).
+pub const MODE_HOTKEY_RESERVED: &str = "F5";
 
 /// Kanonische Form eines F-Keys: "F" + Zahl 1..12 (Trim + Uppercase).
 pub fn validate_fkey(raw: &str) -> std::result::Result<String, String> {
@@ -783,6 +799,7 @@ impl ModeHotkeys {
             inventory: norm(&self.inventory),
             hangar: norm(&self.hangar),
             settings: norm(&self.settings),
+            mining: norm(&self.mining),
         }
     }
 
@@ -796,15 +813,17 @@ impl ModeHotkeys {
             ("hotkey.slot_inventory", self.inventory.as_str()),
             ("hotkey.slot_hangar", self.hangar.as_str()),
             ("hotkey.slot_settings", self.settings.as_str()),
+            ("hotkey.slot_min", self.mining.as_str()),
         ];
         let mut seen: Vec<String> = Vec::new();
         // T2 (t_c5904bcb): Fehler als error_key + params — `slot` ist ein
         // i18n-Key (hotkey.slot_*), das Frontend übersetzt Params-Mitte.
         for (slot_key, raw) in slots {
             let key = validate_fkey(raw).map_err(|e| with_slot(&e, slot_key))?;
-            if key == MODE_HOTKEY_RESERVED {
-                return Err(err_keyp("hotkeys.err_f5", json!({ "slot": slot_key })));
-            }
+            // M7-K2: F5 ist keine global reservierte Taste mehr — der Mining-
+            // Modus belegt sie per Default; der kontextsensitive Resync (B2)
+            // teilt sie sich kontextabhängig (Market/Detail). Doppelbelegung
+            // bleibt der einzige Konflikt-Schutz.
             if seen.iter().any(|k| k == &key) {
                 return Err(err_keyp(
                     "hotkeys.err_dup",
@@ -2328,6 +2347,7 @@ mod tests {
         assert_eq!(hk.inventory, "F4");
         assert_eq!(hk.hangar, "F11");
         assert_eq!(hk.settings, "F12");
+        assert_eq!(hk.mining, "F5");
         hk.validate().expect("defaults must validate");
     }
 
@@ -2335,6 +2355,8 @@ mod tests {
     fn mode_hotkeys_missing_field_migrates_to_new_defaults() {
         // Migrationspfad B1: Config ohne [shortcuts] (bzw. ohne mode_hotkeys)
         // → NEUE Belegung (F3 Routen, F4 Inventar, F11 Hangar), nicht die alte.
+        // M7-K2: gilt auch für das neue `mining`-Feld (F5) — Configs ohne das
+        // Feld migrieren per serde(default).
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp_path(&tmp, "config.toml");
         let settings = Settings::load_from(&path).unwrap();
@@ -2358,6 +2380,25 @@ mod tests {
         let loaded = Settings::load_from(&path).unwrap();
         assert_eq!(loaded.mode_hotkeys().hangar, "F10");
         assert_eq!(loaded.mode_hotkeys().routes, "F3");
+    }
+
+    #[test]
+    fn mode_hotkeys_legacy_config_without_mining_gets_f5() {
+        // M7-K2 (t_bb3303d0): Bestands-Config ohne `mining`-Feld lädt weiter
+        // und migriert Mining auf den Default F5 (serde(default)).
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "[shortcuts.mode_hotkeys]\nsearch = \"F1\"\nmarket = \"F2\"\nroutes = \"F3\"\ninventory = \"F4\"\nhangar = \"F11\"\nsettings = \"F12\"\n",
+        )
+        .unwrap();
+        let loaded = Settings::load_from(&path).unwrap();
+        let hk = loaded.mode_hotkeys();
+        assert_eq!(hk.mining, "F5");
+        assert_eq!(hk.search, "F1");
+        hk.validate().expect("migrated map validates");
     }
 
     #[test]
@@ -2387,17 +2428,26 @@ mod tests {
     }
 
     #[test]
-    fn mode_hotkeys_validation_rejects_f5_and_duplicates() {
+    fn mode_hotkeys_validation_f5_mining_and_duplicates() {
+        // M7-K2: F5 ist als Mode-Taste zulässig (Mining-Default) — ein
+        // ZWEITER Slot auf F5 ist eine Doppelbelegung und wird abgelehnt.
         let hk = ModeHotkeys {
-            routes: "F5".to_owned(),
+            routes: "F5".to_owned(), // Doppelbelegung mit mining (Default F5)
             ..Default::default()
         };
-        // T2: key-JSON — error_key + Slot-Param, keine Klartext-Assertion.
-        let e_f5 = hk.validate().unwrap_err();
+        let e_dup = hk.validate().unwrap_err();
+        // Slot-Benennung: der ZWEITE Treffer meldet sich (mining kommt nach
+        // routes in der Slot-Liste) — der Dup-Key + F5 sind die Substanz.
         assert!(
-            e_f5.contains("hotkeys.err_f5") && e_f5.contains("hotkey.slot_routes"),
-            "F5 rejection: {e_f5}"
+            e_dup.contains("hotkeys.err_dup") && e_dup.contains("F5"),
+            "dup rejection: {e_dup}"
         );
+
+        let hk = ModeHotkeys {
+            mining: "F5".to_owned(),
+            ..Default::default()
+        };
+        hk.validate().expect("F5 fuer mining ist zulaessig");
 
         let hk = ModeHotkeys {
             hangar: "F3".to_owned(), // Doppelbelegung mit routes

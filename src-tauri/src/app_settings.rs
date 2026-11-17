@@ -168,6 +168,10 @@ pub struct SettingsSnapshot {
     pub pins_default_opacity: u32,
     /// M6-F3: die 3 editierbaren vordefinierten Deckkraft-Werte.
     pub pins_presets: Vec<u32>,
+    /// M7-K2 (t_bb3303d0): Strata-Mining-Modus aktiviert (opt-in). Der
+    /// `celd_`-Key selbst lebt im Keystore (`strata-key.json`) — sein
+    /// Vorhandensein meldet `strata_status` (bool-only, kein Secret).
+    pub strata_enabled: bool,
 }
 
 impl SettingsSnapshot {
@@ -196,6 +200,7 @@ impl SettingsSnapshot {
             language: s.language().to_owned(),
             pins_default_opacity: s.pins_default_opacity(),
             pins_presets: s.pins_presets(),
+            strata_enabled: s.strata_enabled(),
         }
     }
 }
@@ -605,10 +610,31 @@ pub fn settings_set_updater_interval(
     )
 }
 
+/// M7-K2 (t_bb3303d0): Mining-Modus aktivieren/deaktivieren (Settings-
+/// Persistenz). Der `celd_`-Key selbst lebt im Keystore — der Snapshot
+/// trägt nur das bool `strata_enabled`.
+#[tauri::command]
+pub fn settings_set_strata_enabled(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    on: bool,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_strata_enabled(on);
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
+}
+
 /// PB (t_1c9bc240, B1): EINEN Mode-Hotkey setzen (nur die konfigurierbaren
-/// Slots — F1 Suche, F2 Marktplatz und F12 Einstellungen bleiben fest).
-/// Validierung: gültiger F-Key (F1–F12), `F5` reserviert für den Resync,
-/// keine Doppelbelegung (Settings-Crate). Persistiert sofort.
+/// Slots — F1 Suche und F12 Einstellungen bleiben fest).
+/// Validierung: gültiger F-Key (F1–F12), keine Doppelbelegung (Settings-
+/// Crate). Seit M7-K2 (t_bb3303d0) ist F5 keine reservierte Taste mehr —
+/// der Mining-Slot belegt sie per Default; Doppelbelegung bleibt abgelehnt.
 #[tauri::command]
 pub fn settings_set_mode_hotkey(
     state: tauri::State<SettingsState>,
@@ -619,29 +645,13 @@ pub fn settings_set_mode_hotkey(
 ) -> Result<SettingsSnapshot, String> {
     let key = settings::validate_fkey(&key)?;
     let field_norm = field.trim().to_lowercase();
-    if key == settings::MODE_HOTKEY_RESERVED {
-        // T2: Slot-Key ins error_key einbacken (flat, keine Nested-Keys).
-        let slot_param = [
-            "search",
-            "market",
-            "routes",
-            "inventory",
-            "hangar",
-            "settings",
-        ]
-        .contains(&field_norm.as_str())
-        .then(|| format!("hotkey.slot_{field_norm}"));
-        return Err(match slot_param {
-            Some(slot) => err_keyp("hotkeys.err_f5", json!({ "slot": slot })),
-            None => err_key("hotkeys.err_f5_noslot"),
-        });
-    }
     let mut s = state.inner.lock().expect("settings lock");
     let mut hotkeys = s.mode_hotkeys().clone();
     match field_norm.as_str() {
         "hangar" => hotkeys.hangar = key.clone(),
         "routes" => hotkeys.routes = key.clone(),
         "inventory" => hotkeys.inventory = key.clone(),
+        "mining" => hotkeys.mining = key.clone(),
         // Sebo: Marktplatz-Mode-Hotkey ist wie die anderen aenderbar (war
         // bisher fixiert auf F2).
         "market" => hotkeys.market = key.clone(),
@@ -868,6 +878,9 @@ mod tests {
         for required in [
             "palette",
             "detail_variant",
+            // M7-K2 (t_bb3303d0): Strata-Sichtbarkeit im Snapshot — camelCase
+            // wäre im UI unsichtbar (gleiche Falle wie uex_api_key_set).
+            "strata_enabled",
             "uex_api_key_set",
             // M2a-Fix (t_2f197d1c): bool-only Secret-Key + Username — dieselbe
             // Snake-Case-Vertrag; camelCase wäre im UI unsichtbar.
