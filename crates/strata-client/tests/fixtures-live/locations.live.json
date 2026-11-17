@@ -1,0 +1,1959 @@
+{
+ "locations": [
+  {
+   "id": "aaronhalo",
+   "name": "Aaron Halo",
+   "slug": "aaron-halo",
+   "system": "Stanton",
+   "type": "asteroid_field"
+  },
+  {
+   "id": "stanton1b",
+   "name": "Aberdeen",
+   "slug": "aberdeen",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "dungeon_cave_aberdeen_medium",
+   "name": "Aberdeen Caves (Medium)",
+   "slug": "aberdeen-caves-medium",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_cave_aberdeen_poor",
+   "name": "Aberdeen Caves (Poor)",
+   "slug": "aberdeen-caves-poor",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_cave_aberdeen_rich",
+   "name": "Aberdeen Caves (Rich)",
+   "slug": "aberdeen-caves-rich",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_acidic",
+   "name": "Acidic Caves",
+   "slug": "acidic-caves",
+   "system": null,
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_occupied_acidic",
+   "name": "Acidic Caves (Occupied)",
+   "slug": "acidic-caves-occupied",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_acidic_pyro",
+   "name": "Acidic Caves (Pyro)",
+   "slug": "acidic-caves-pyro",
+   "system": "Pyro",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_acidic_stanton",
+   "name": "Acidic Caves (Stanton)",
+   "slug": "acidic-caves-stanton",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "pyro5c",
+   "name": "Adir",
+   "slug": "adir",
+   "system": "Pyro",
+   "type": "moon"
+  },
+  {
+   "id": "dungeon_apx_minefacility_exterior",
+   "name": "Apex Minefacility Exterior",
+   "slug": "apex-minefacility-exterior",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "stanton3_l1",
+   "name": "ARC-L1 Wide Forest Station",
+   "slug": "arc-l1-wide-forest-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton3_l2",
+   "name": "ARC-L2 Lively Pathway Station",
+   "slug": "arc-l2-lively-pathway-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton3_l3",
+   "name": "ARC-L3 Modern Express Station",
+   "slug": "arc-l3-modern-express-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton3_l4",
+   "name": "ARC-L4 Faint Glen Station",
+   "slug": "arc-l4-faint-glen-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton3_l5",
+   "name": "ARC-L5 Yellow Core Station",
+   "slug": "arc-l5-yellow-core-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton1a",
+   "name": "Arial",
+   "slug": "arial",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "dungeon_v3slotpreset_harvestable_battagliaintro",
+   "name": "Battagliaintro",
+   "slug": "battagliaintro",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "pyro3",
+   "name": "Bloom",
+   "slug": "bloom",
+   "system": "Pyro",
+   "type": "planet"
+  },
+  {
+   "id": "stanton4a",
+   "name": "Calliope",
+   "slug": "calliope",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "stanton2a",
+   "name": "Cellin",
+   "slug": "cellin",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "stanton4b",
+   "name": "Clio",
+   "slug": "clio",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionb_bgr-560",
+   "name": "Cluster BGR-560",
+   "slug": "cluster-bgr-560",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionb_caj-445",
+   "name": "Cluster CAJ-445",
+   "slug": "cluster-caj-445",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regiond_dlo-486",
+   "name": "Cluster DLO-486",
+   "slug": "cluster-dlo-486",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regiond_emm-567",
+   "name": "Cluster EMM-567",
+   "slug": "cluster-emm-567",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionc_fsn-704",
+   "name": "Cluster FSN-704",
+   "slug": "cluster-fsn-704",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionc_grp-839",
+   "name": "Cluster GRP-839",
+   "slug": "cluster-grp-839",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regiond_hjs-232",
+   "name": "Cluster HJS-232",
+   "slug": "cluster-hjs-232",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionb_jwy-925",
+   "name": "Cluster JWY-925",
+   "slug": "cluster-jwy-925",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionc_kke-717",
+   "name": "Cluster KKE-717",
+   "slug": "cluster-kke-717",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regiond_lhb-976",
+   "name": "Cluster LHB-976",
+   "slug": "cluster-lhb-976",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regiond_mnk-833",
+   "name": "Cluster MNK-833",
+   "slug": "cluster-mnk-833",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regiona_nbd-102",
+   "name": "Cluster NBD-102",
+   "slug": "cluster-nbd-102",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_pqe-291",
+   "name": "Cluster PQE-291",
+   "slug": "cluster-pqe-291",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionc_rsc-340",
+   "name": "Cluster RSC-340",
+   "slug": "cluster-rsc-340",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_sgl-693",
+   "name": "Cluster SGL-693",
+   "slug": "cluster-sgl-693",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_sza-178",
+   "name": "Cluster SZA-178",
+   "slug": "cluster-sza-178",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_tys-098",
+   "name": "Cluster TYS-098",
+   "slug": "cluster-tys-098",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_vup-613",
+   "name": "Cluster VUP-613",
+   "slug": "cluster-vup-613",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionc_wdh-387",
+   "name": "Cluster WDH-387",
+   "slug": "cluster-wdh-387",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_pyro_regionc_yka-011",
+   "name": "Cluster YKA-011",
+   "slug": "cluster-yka-011",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "stanton2_l1",
+   "name": "CRU-L1 Ambitious Dream Station",
+   "slug": "cru-l1-ambitious-dream-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton2_l2",
+   "name": "CRU-L2",
+   "slug": "cru-l2",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton2_l3",
+   "name": "CRU-L3",
+   "slug": "cru-l3",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton2_l4",
+   "name": "CRU-L4 Shallow Fields Station",
+   "slug": "cru-l4-shallow-fields-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton2_l5",
+   "name": "CRU-L5 Beautiful Glen Station",
+   "slug": "cru-l5-beautiful-glen-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton2b",
+   "name": "Daymar",
+   "slug": "daymar",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "dungeon_cave_daymar_medium",
+   "name": "Daymar Caves (Medium)",
+   "slug": "daymar-caves-medium",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_cave_daymar_poor",
+   "name": "Daymar Caves (Poor)",
+   "slug": "daymar-caves-poor",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_cave_daymar_rich",
+   "name": "Daymar Caves (Rich)",
+   "slug": "daymar-caves-rich",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "stanton4c",
+   "name": "Euterpe",
+   "slug": "euterpe",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "pyro5d",
+   "name": "Fairo",
+   "slug": "fairo",
+   "system": "Pyro",
+   "type": "moon"
+  },
+  {
+   "id": "pyro5e",
+   "name": "Fuego",
+   "slug": "fuego",
+   "system": "Pyro",
+   "type": "moon"
+  },
+  {
+   "id": "nyx_glaciemring",
+   "name": "Glaciem Ring",
+   "slug": "glaciem-ring",
+   "system": "Nyx",
+   "type": "asteroid_field"
+  },
+  {
+   "id": "stanton1_l1",
+   "name": "HUR-L1 Green Glade Station",
+   "slug": "hur-l1-green-glade-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton1_l2",
+   "name": "HUR-L2 Faithful Dream Station",
+   "slug": "hur-l2-faithful-dream-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton1_l3",
+   "name": "HUR-L3 Thundering Express Station",
+   "slug": "hur-l3-thundering-express-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton1_l4",
+   "name": "HUR-L4 Melodic Fields Station",
+   "slug": "hur-l4-melodic-fields-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton1_l5",
+   "name": "HUR-L5 High Course Station",
+   "slug": "hur-l5-high-course-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton1",
+   "name": "Hurston",
+   "slug": "hurston",
+   "system": "Stanton",
+   "type": "planet"
+  },
+  {
+   "id": "dungeon_cave_hurston_medium",
+   "name": "Hurston Caves (Medium)",
+   "slug": "hurston-caves-medium",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_cave_hurston_poor",
+   "name": "Hurston Caves (Poor)",
+   "slug": "hurston-caves-poor",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_cave_hurston_rich",
+   "name": "Hurston Caves (Rich)",
+   "slug": "hurston-caves-rich",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "pyro5a",
+   "name": "Ignis",
+   "slug": "ignis",
+   "system": "Pyro",
+   "type": "moon"
+  },
+  {
+   "id": "stanton1d",
+   "name": "Ita",
+   "slug": "ita",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "nyx_keegerbelt",
+   "name": "Keeger Belt",
+   "slug": "keeger-belt",
+   "system": "Nyx",
+   "type": "asteroid_field"
+  },
+  {
+   "id": "stanton3a",
+   "name": "Lyria",
+   "slug": "lyria",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "stanton1c",
+   "name": "Magda\u00a0",
+   "slug": "magda",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "stanton4_l1",
+   "name": "MIC-L1 Shallow Frontier Station",
+   "slug": "mic-l1-shallow-frontier-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton4_l2",
+   "name": "MIC-L2 Long Forest Station",
+   "slug": "mic-l2-long-forest-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton4_l3",
+   "name": "MIC-L3 Endless Odyssey Station",
+   "slug": "mic-l3-endless-odyssey-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton4_l4",
+   "name": "MIC-L4 Red Crossroads Station",
+   "slug": "mic-l4-red-crossroads-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton4_l5",
+   "name": "MIC-L5 Modern Icarus Station",
+   "slug": "mic-l5-modern-icarus-station",
+   "system": "Stanton",
+   "type": "lagrange_point"
+  },
+  {
+   "id": "stanton4",
+   "name": "microTech",
+   "slug": "microtech",
+   "system": "Stanton",
+   "type": "planet"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_05",
+   "name": "Mining Base #01K-I43",
+   "slug": "mining-base-01k-i43",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_small_04",
+   "name": "Mining Base #0YX-O7Z",
+   "slug": "mining-base-0yx-o7z",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_small_05",
+   "name": "Mining Base #0Z9-SVV",
+   "slug": "mining-base-0z9-svv",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_01",
+   "name": "Mining Base #1XA-3GI",
+   "slug": "mining-base-1xa-3gi",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_07",
+   "name": "Mining Base #365-YNZ",
+   "slug": "mining-base-365-ynz",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_small_02",
+   "name": "Mining Base #4PI-3YY",
+   "slug": "mining-base-4pi-3yy",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_12",
+   "name": "Mining Base #4R0-NVX",
+   "slug": "mining-base-4r0-nvx",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_10",
+   "name": "Mining Base #51F-OGH",
+   "slug": "mining-base-51f-ogh",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_13",
+   "name": "Mining Base #5U5-TLC",
+   "slug": "mining-base-5u5-tlc",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_04",
+   "name": "Mining Base #6IN-P02",
+   "slug": "mining-base-6in-p02",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_small_02",
+   "name": "Mining Base #6RU-55R",
+   "slug": "mining-base-6ru-55r",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_10",
+   "name": "Mining Base #734-A26",
+   "slug": "mining-base-734-a26",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_10",
+   "name": "Mining Base #734-A26",
+   "slug": "mining-base-734-a26",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_08",
+   "name": "Mining Base #74H-2DO",
+   "slug": "mining-base-74h-2do",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_02",
+   "name": "Mining Base #7IQ-29Q",
+   "slug": "mining-base-7iq-29q",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_small_01",
+   "name": "Mining Base #7LI-0OA",
+   "slug": "mining-base-7li-0oa",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_small_05",
+   "name": "Mining Base #7YH-JX7",
+   "slug": "mining-base-7yh-jx7",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_small_02",
+   "name": "Mining Base #851-81H",
+   "slug": "mining-base-851-81h",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_06",
+   "name": "Mining Base #8CG-OSA",
+   "slug": "mining-base-8cg-osa",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_13",
+   "name": "Mining Base #8PV-WNE",
+   "slug": "mining-base-8pv-wne",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_small_01",
+   "name": "Mining Base #90O-0HA",
+   "slug": "mining-base-90o-0ha",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_07",
+   "name": "Mining Base #A73-HTJ",
+   "slug": "mining-base-a73-htj",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_03",
+   "name": "Mining Base #AL5-XPD",
+   "slug": "mining-base-al5-xpd",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_06",
+   "name": "Mining Base #BBR-4JQ",
+   "slug": "mining-base-bbr-4jq",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_09",
+   "name": "Mining Base #BRE-582",
+   "slug": "mining-base-bre-582",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_small_03",
+   "name": "Mining Base #BSK-IJ5",
+   "slug": "mining-base-bsk-ij5",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_small_01",
+   "name": "Mining Base #C6P-3KJ",
+   "slug": "mining-base-c6p-3kj",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_04",
+   "name": "Mining Base #CVF-T6H",
+   "slug": "mining-base-cvf-t6h",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_01",
+   "name": "Mining Base #CZW-RRY",
+   "slug": "mining-base-czw-rry",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_09",
+   "name": "Mining Base #DU4-XBU",
+   "slug": "mining-base-du4-xbu",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_04",
+   "name": "Mining Base #E38-S5G",
+   "slug": "mining-base-e38-s5g",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_02",
+   "name": "Mining Base #GO4-CH0",
+   "slug": "mining-base-go4-ch0",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_01",
+   "name": "Mining Base #IGB-FXW",
+   "slug": "mining-base-igb-fxw",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_09",
+   "name": "Mining Base #IO3-H1F",
+   "slug": "mining-base-io3-h1f",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_06",
+   "name": "Mining Base #JUG-0KZ",
+   "slug": "mining-base-jug-0kz",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_03",
+   "name": "Mining Base #LBP-UN5",
+   "slug": "mining-base-lbp-un5",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_small_01",
+   "name": "Mining Base #N6J-XKH",
+   "slug": "mining-base-n6j-xkh",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_08",
+   "name": "Mining Base #ODD-E9B",
+   "slug": "mining-base-odd-e9b",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_05",
+   "name": "Mining Base #OYV-JKE",
+   "slug": "mining-base-oyv-jke",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_small_06",
+   "name": "Mining Base #PHB-DYC",
+   "slug": "mining-base-phb-dyc",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_02",
+   "name": "Mining Base #Q4U-I20",
+   "slug": "mining-base-q4u-i20",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_12",
+   "name": "Mining Base #Q9Q-090",
+   "slug": "mining-base-q9q-090",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_06",
+   "name": "Mining Base #QXS-NBS",
+   "slug": "mining-base-qxs-nbs",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_small_03",
+   "name": "Mining Base #R08-Y3K",
+   "slug": "mining-base-r08-y3k",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_08",
+   "name": "Mining Base #R75-5PZ",
+   "slug": "mining-base-r75-5pz",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_small_04",
+   "name": "Mining Base #R7J-WJ7",
+   "slug": "mining-base-r7j-wj7",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_small_06",
+   "name": "Mining Base #RCD-OB3",
+   "slug": "mining-base-rcd-ob3",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_small_02",
+   "name": "Mining Base #RSV-8HL",
+   "slug": "mining-base-rsv-8hl",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_14",
+   "name": "Mining Base #SAG-2UN",
+   "slug": "mining-base-sag-2un",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_small_03",
+   "name": "Mining Base #TP1-N76",
+   "slug": "mining-base-tp1-n76",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_05",
+   "name": "Mining Base #U5X-NGQ",
+   "slug": "mining-base-u5x-ngq",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_07",
+   "name": "Mining Base #UDK-IJX",
+   "slug": "mining-base-udk-ijx",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_07",
+   "name": "Mining Base #URB-H3V",
+   "slug": "mining-base-urb-h3v",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_01",
+   "name": "Mining Base #UU6-1EI",
+   "slug": "mining-base-uu6-1ei",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_05",
+   "name": "Mining Base #W79-2H7",
+   "slug": "mining-base-w79-2h7",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_09",
+   "name": "Mining Base #WUO-ZRU",
+   "slug": "mining-base-wuo-zru",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_08",
+   "name": "Mining Base #X92-IVA",
+   "slug": "mining-base-x92-iva",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_11",
+   "name": "Mining Base #XJZ-JR2",
+   "slug": "mining-base-xjz-jr2",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton4_medium_11",
+   "name": "Mining Base #XJZ-JR2",
+   "slug": "mining-base-xjz-jr2",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton1_medium_02",
+   "name": "Mining Base #YTO-GLQ",
+   "slug": "mining-base-yto-glq",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton2_medium_03",
+   "name": "Mining Base #Z48-013",
+   "slug": "mining-base-z48-013",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_03",
+   "name": "Mining Base #ZHY-77G",
+   "slug": "mining-base-zhy-77g",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_stanton3_medium_04",
+   "name": "Mining Base #ZHY-77G",
+   "slug": "mining-base-zhy-77g",
+   "system": "Stanton",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "pyro2",
+   "name": "Monox",
+   "slug": "monox",
+   "system": "Pyro",
+   "type": "planet"
+  },
+  {
+   "id": "asteroidclusterbase_nyx_social_keeger_001",
+   "name": "People's Service Station Alpha",
+   "slug": "people-s-service-station-alpha",
+   "system": "Nyx",
+   "type": "station"
+  },
+  {
+   "id": "asteroidclusterbase_nyx_social_keeger_002",
+   "name": "People's Service Station Delta",
+   "slug": "people-s-service-station-delta",
+   "system": "Nyx",
+   "type": "station"
+  },
+  {
+   "id": "asteroidclusterbase_nyx_social_keeger_004",
+   "name": "People's Service Station Lambda",
+   "slug": "people-s-service-station-lambda",
+   "system": "Nyx",
+   "type": "station"
+  },
+  {
+   "id": "asteroidclusterbase_nyx_social_keeger_003",
+   "name": "People's Service Station Theta",
+   "slug": "people-s-service-station-theta",
+   "system": "Nyx",
+   "type": "station"
+  },
+  {
+   "id": "dungeon_cave_prison",
+   "name": "Prison Caves",
+   "slug": "prison-caves",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "pyro1",
+   "name": "Pyro I",
+   "slug": "pyro-i",
+   "system": "Pyro",
+   "type": "planet"
+  },
+  {
+   "id": "pyro4",
+   "name": "Pyro IV",
+   "slug": "pyro-iv",
+   "system": "Pyro",
+   "type": "planet"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regiona_001",
+   "name": "RAB-ALPHA",
+   "slug": "rab-alpha",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_3bases_pyro_encounter_regionaandb_001",
+   "name": "RAB-BRAVO",
+   "slug": "rab-bravo",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionb_002",
+   "name": "RAB-CHARLIE",
+   "slug": "rab-charlie",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_2bases_pyro_encounter_regiond_001",
+   "name": "RAB-COOK",
+   "slug": "rab-cook",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionc_001",
+   "name": "RAB-DELTA",
+   "slug": "rab-delta",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionc_004",
+   "name": "RAB-ECHO",
+   "slug": "rab-echo",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_2bases_pyro_encounter_regionaandc_002",
+   "name": "RAB-FOXTROT",
+   "slug": "rab-foxtrot",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_2bases_pyro_encounter_regionb_001",
+   "name": "RAB-GULF",
+   "slug": "rab-gulf",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_2bases_pyro_encounter_regionc_001",
+   "name": "RAB-HELIO",
+   "slug": "rab-helio",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_3bases_pyro_encounter_regiona_001",
+   "name": "RAB-IGNITION",
+   "slug": "rab-ignition",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regiond_001",
+   "name": "RAB-ION",
+   "slug": "rab-ion",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_3bases_pyro_encounter_regionc_003",
+   "name": "RAB-JAK",
+   "slug": "rab-jak",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regiona_003",
+   "name": "RAB-KILO",
+   "slug": "rab-kilo",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionc_002",
+   "name": "RAB-LAMDA",
+   "slug": "rab-lamda",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regiond_002",
+   "name": "RAB-LYNX",
+   "slug": "rab-lynx",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_3bases_pyro_encounter_regionbandd_001",
+   "name": "RAB-MAT",
+   "slug": "rab-mat",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regiona_004",
+   "name": "RAB-NOVEMBER",
+   "slug": "rab-november",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionc_003",
+   "name": "RAB-OVER",
+   "slug": "rab-over",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionc_005",
+   "name": "RAB-POINT",
+   "slug": "rab-point",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_3bases_pyro_encounter_regionc_002",
+   "name": "RAB-QUAGMIRE",
+   "slug": "rab-quagmire",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_2bases_pyro_encounter_regionaandc_001",
+   "name": "RAB-ROTH",
+   "slug": "rab-roth",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionc_006",
+   "name": "RAB-SIERRA",
+   "slug": "rab-sierra",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regiona_002",
+   "name": "RAB-TUNG",
+   "slug": "rab-tung",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_3bases_pyro_encounter_regionbandd_002",
+   "name": "RAB-ULTRA",
+   "slug": "rab-ultra",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_2bases_pyro_encounter_regionc_002",
+   "name": "RAB-VICTORY",
+   "slug": "rab-victory",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionb_001",
+   "name": "RAB-WHISKEY",
+   "slug": "rab-whiskey",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_3bases_pyro_encounter_regionc_001",
+   "name": "RAB-XENO",
+   "slug": "rab-xeno",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_1base_pyro_encounter_regionb_003",
+   "name": "RAB-YORK",
+   "slug": "rab-york",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_2bases_pyro_encounter_regionc_003",
+   "name": "RAB-ZETA",
+   "slug": "rab-zeta",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_13",
+   "name": "RMB-ALME",
+   "slug": "rmb-alme",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_18",
+   "name": "RMB-ARID",
+   "slug": "rmb-arid",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_small_02",
+   "name": "RMB-AXIL",
+   "slug": "rmb-axil",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_07",
+   "name": "RMB-BALE",
+   "slug": "rmb-bale",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_02",
+   "name": "RMB-BALM",
+   "slug": "rmb-balm",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_07",
+   "name": "RMB-BASK",
+   "slug": "rmb-bask",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_small_01",
+   "name": "RMB-BORS",
+   "slug": "rmb-bors",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_08",
+   "name": "RMB-BUCK",
+   "slug": "rmb-buck",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_06",
+   "name": "RMB-CEDI",
+   "slug": "rmb-cedi",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_10",
+   "name": "RMB-CHAM",
+   "slug": "rmb-cham",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_08",
+   "name": "RMB-CRUE",
+   "slug": "rmb-crue",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_small_03",
+   "name": "RMB-DARI",
+   "slug": "rmb-dari",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_16",
+   "name": "RMB-DIRK",
+   "slug": "rmb-dirk",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_08",
+   "name": "RMB-DORY",
+   "slug": "rmb-dory",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_11",
+   "name": "RMB-DREG",
+   "slug": "rmb-dreg",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_17",
+   "name": "RMB-ELMS",
+   "slug": "rmb-elms",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_small_03",
+   "name": "RMB-EVEN",
+   "slug": "rmb-even",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_11",
+   "name": "RMB-FLAG",
+   "slug": "rmb-flag",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_12",
+   "name": "RMB-GADE",
+   "slug": "rmb-gade",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_10",
+   "name": "RMB-GRAY",
+   "slug": "rmb-gray",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_13",
+   "name": "RMB-GREX",
+   "slug": "rmb-grex",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_small_03",
+   "name": "RMB-HADE",
+   "slug": "rmb-hade",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_small_01",
+   "name": "RMB-HARK",
+   "slug": "rmb-hark",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_06",
+   "name": "RMB-HELM",
+   "slug": "rmb-helm",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_14",
+   "name": "RMB-HORN",
+   "slug": "rmb-horn",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_19",
+   "name": "RMB-HOWE",
+   "slug": "rmb-howe",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_10",
+   "name": "RMB-IKAN",
+   "slug": "rmb-ikan",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_14",
+   "name": "RMB-JADE",
+   "slug": "rmb-jade",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_02",
+   "name": "RMB-JONG",
+   "slug": "rmb-jong",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_02",
+   "name": "RMB-JUTE",
+   "slug": "rmb-jute",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_04",
+   "name": "RMB-KAIN",
+   "slug": "rmb-kain",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_12",
+   "name": "RMB-KELT",
+   "slug": "rmb-kelt",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_15",
+   "name": "RMB-KIFF",
+   "slug": "rmb-kiff",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_03",
+   "name": "RMB-KNAP",
+   "slug": "rmb-knap",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_07",
+   "name": "RMB-KYUS",
+   "slug": "rmb-kyus",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_16",
+   "name": "RMB-LANX",
+   "slug": "rmb-lanx",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_16",
+   "name": "RMB-LAZO",
+   "slug": "rmb-lazo",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_01",
+   "name": "RMB-LEST",
+   "slug": "rmb-lest",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_18",
+   "name": "RMB-LIRE",
+   "slug": "rmb-lire",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_07",
+   "name": "RMB-LOWN",
+   "slug": "rmb-lown",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_09",
+   "name": "RMB-LUNE",
+   "slug": "rmb-lune",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_small_02",
+   "name": "RMB-LYES",
+   "slug": "rmb-lyes",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_11",
+   "name": "RMB-MAGE",
+   "slug": "rmb-mage",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_09",
+   "name": "RMB-MARA",
+   "slug": "rmb-mara",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_02",
+   "name": "RMB-MEFF",
+   "slug": "rmb-meff",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_13",
+   "name": "RMB-MOSK",
+   "slug": "rmb-mosk",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_16",
+   "name": "RMB-MUGG",
+   "slug": "rmb-mugg",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_05",
+   "name": "RMB-MURK",
+   "slug": "rmb-murk",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_05",
+   "name": "RMB-MYAL",
+   "slug": "rmb-myal",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_15",
+   "name": "RMB-NAIN",
+   "slug": "rmb-nain",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_01",
+   "name": "RMB-NARY",
+   "slug": "rmb-nary",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_15",
+   "name": "RMB-NENE",
+   "slug": "rmb-nene",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_small_02",
+   "name": "RMB-NIGH",
+   "slug": "rmb-nigh",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_15",
+   "name": "RMB-NONG",
+   "slug": "rmb-nong",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_14",
+   "name": "RMB-OAKS",
+   "slug": "rmb-oaks",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_06",
+   "name": "RMB-OLLA",
+   "slug": "rmb-olla",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_03",
+   "name": "RMB-ONER",
+   "slug": "rmb-oner",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_04",
+   "name": "RMB-OXID",
+   "slug": "rmb-oxid",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_05",
+   "name": "RMB-PALL",
+   "slug": "rmb-pall",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_17",
+   "name": "RMB-PEKE",
+   "slug": "rmb-peke",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_04",
+   "name": "RMB-PIZE",
+   "slug": "rmb-pize",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_17",
+   "name": "RMB-PLEX",
+   "slug": "rmb-plex",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_01",
+   "name": "RMB-PURI",
+   "slug": "rmb-puri",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_05",
+   "name": "RMB-QINS",
+   "slug": "rmb-qins",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_11",
+   "name": "RMB-RAIK",
+   "slug": "rmb-raik",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_06",
+   "name": "RMB-RAWN",
+   "slug": "rmb-rawn",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_08",
+   "name": "RMB-RIGG",
+   "slug": "rmb-rigg",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_12",
+   "name": "RMB-RINE",
+   "slug": "rmb-rine",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_09",
+   "name": "RMB-RODE",
+   "slug": "rmb-rode",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_small_03",
+   "name": "RMB-SAIC",
+   "slug": "rmb-saic",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_small_02",
+   "name": "RMB-SEER",
+   "slug": "rmb-seer",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_14",
+   "name": "RMB-SHEW",
+   "slug": "rmb-shew",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_17",
+   "name": "RMB-SIJO",
+   "slug": "rmb-sijo",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_03",
+   "name": "RMB-SOWL",
+   "slug": "rmb-sowl",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_04",
+   "name": "RMB-SPAW",
+   "slug": "rmb-spaw",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_small_01",
+   "name": "RMB-SURD",
+   "slug": "rmb-surd",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_small_01",
+   "name": "RMB-TACK",
+   "slug": "rmb-tack",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_small_04",
+   "name": "RMB-TIAN",
+   "slug": "rmb-tian",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_18",
+   "name": "RMB-TIGS",
+   "slug": "rmb-tigs",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_03",
+   "name": "RMB-TYRO",
+   "slug": "rmb-tyro",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiond_medium_01",
+   "name": "RMB-UMUS",
+   "slug": "rmb-umus",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionc_medium_10",
+   "name": "RMB-VERD",
+   "slug": "rmb-verd",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_09",
+   "name": "RMB-VOES",
+   "slug": "rmb-voes",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_medium_13",
+   "name": "RMB-WARB",
+   "slug": "rmb-warb",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regionb_small_04",
+   "name": "RMB-YEAD",
+   "slug": "rmb-yead",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "asteroidcluster_miningbase_pyro_regiona_medium_12",
+   "name": "RMB-ZARF",
+   "slug": "rmb-zarf",
+   "system": "Pyro",
+   "type": "asteroid_cluster"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_rock",
+   "name": "Rock Caves",
+   "slug": "rock-caves",
+   "system": null,
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_occupied_rock",
+   "name": "Rock Caves (Occupied)",
+   "slug": "rock-caves-occupied",
+   "system": null,
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_rock_pyro",
+   "name": "Rock Caves (Pyro)",
+   "slug": "rock-caves-pyro",
+   "system": "Pyro",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_rock_stanton",
+   "name": "Rock Caves (Stanton)",
+   "slug": "rock-caves-stanton",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_v3slotpreset_rockcracker",
+   "name": "Rockcracker",
+   "slug": "rockcracker",
+   "system": "Nyx",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_v3slotpreset_harvestable_rockcracker_asteroid",
+   "name": "Rockcracker Asteroid",
+   "slug": "rockcracker-asteroid",
+   "system": "Nyx",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_v3slotpreset_rockcracker_sandbox",
+   "name": "Rockcracker Sandbox",
+   "slug": "rockcracker-sandbox",
+   "system": "Nyx",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_cave_sand_medium_multiconfig",
+   "name": "Sand Caves",
+   "slug": "sand-caves",
+   "system": null,
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_sand_pyro",
+   "name": "Sand Caves (Pyro)",
+   "slug": "sand-caves-pyro",
+   "system": "Pyro",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_sand_stanton_orbageddon",
+   "name": "Sand Caves (Stanton, Orbageddon)",
+   "slug": "sand-caves-stanton-orbageddon",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "dungeon_loot_caves_unoccupied_sand_stanton",
+   "name": "Sand Caves (Stanton)",
+   "slug": "sand-caves-stanton",
+   "system": "Stanton",
+   "type": "dungeon"
+  },
+  {
+   "id": "pyro6",
+   "name": "Terminus",
+   "slug": "terminus",
+   "system": "Pyro",
+   "type": "planet"
+  },
+  {
+   "id": "pyro6_belt",
+   "name": "Terminus Ring",
+   "slug": "terminus-ring",
+   "system": "Pyro",
+   "type": "asteroid_field"
+  },
+  {
+   "id": "pyro5b",
+   "name": "Vatra",
+   "slug": "vatra",
+   "system": "Pyro",
+   "type": "moon"
+  },
+  {
+   "id": "pyro5f",
+   "name": "Vuur",
+   "slug": "vuur",
+   "system": "Pyro",
+   "type": "moon"
+  },
+  {
+   "id": "stanton3b",
+   "name": "Wala",
+   "slug": "wala",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "stanton2c",
+   "name": "Yela",
+   "slug": "yela",
+   "system": "Stanton",
+   "type": "moon"
+  },
+  {
+   "id": "stanton2c_belt",
+   "name": "Yela Asteroid Belt",
+   "slug": "yela-asteroid-belt",
+   "system": "Stanton",
+   "type": "asteroid_field"
+  }
+ ],
+ "count": 279,
+ "attribution": "Data from celd.space / Strata Mining Tools"
+}

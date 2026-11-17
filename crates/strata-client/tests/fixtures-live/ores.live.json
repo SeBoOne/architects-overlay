@@ -1,0 +1,386 @@
+{
+ "ores": [
+  {
+   "id": "agricium_ore",
+   "name": "Agricium (Ore)",
+   "slug": "agricium",
+   "tier": "uncommon",
+   "category": "ship",
+   "scanSignature": 3885,
+   "instability": 350,
+   "resistance": 0.5
+  },
+  {
+   "id": "aluminium_ore",
+   "name": "Aluminum (Ore)",
+   "slug": "aluminum",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4285,
+   "instability": 0,
+   "resistance": -0.4
+  },
+  {
+   "id": "minableelement_fps_aphorite",
+   "name": "Aphorite (Raw)",
+   "slug": "aphorite",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 0,
+   "resistance": 0
+  },
+  {
+   "id": "aslarite_raw",
+   "name": "Aslarite (Raw)",
+   "slug": "aslarite",
+   "tier": "uncommon",
+   "category": "ship",
+   "scanSignature": 3840,
+   "instability": 700,
+   "resistance": 0.5
+  },
+  {
+   "id": "minableelement_groundvehicle_beradom",
+   "name": "Beradom (Raw)",
+   "slug": "beradom",
+   "tier": null,
+   "category": "ground_vehicle",
+   "scanSignature": 4000,
+   "instability": 0,
+   "resistance": 0
+  },
+  {
+   "id": "beryl_raw",
+   "name": "Beryl (Raw)",
+   "slug": "beryl",
+   "tier": "rare",
+   "category": "ship",
+   "scanSignature": 3540,
+   "instability": 350,
+   "resistance": 0.65
+  },
+  {
+   "id": "bexalite_raw",
+   "name": "Bexalite (Raw)",
+   "slug": "bexalite",
+   "tier": "rare",
+   "category": "ship",
+   "scanSignature": 3600,
+   "instability": 600,
+   "resistance": 0.6
+  },
+  {
+   "id": "borase_ore",
+   "name": "Borase (Ore)",
+   "slug": "borase",
+   "tier": "rare",
+   "category": "ship",
+   "scanSignature": 3570,
+   "instability": 40,
+   "resistance": 0.3
+  },
+  {
+   "id": "minableelement_fps_carinite",
+   "name": "Carinite (Raw)",
+   "slug": "carinite",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 300,
+   "resistance": 0.5
+  },
+  {
+   "id": "minableelement_groundvehicle_carinite",
+   "name": "Carinite (Raw)",
+   "slug": "carinite",
+   "tier": null,
+   "category": "ground_vehicle",
+   "scanSignature": 4000,
+   "instability": 300,
+   "resistance": 0.5
+  },
+  {
+   "id": "copper_ore",
+   "name": "Copper (Ore)",
+   "slug": "copper",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4240,
+   "instability": 50,
+   "resistance": -0.7
+  },
+  {
+   "id": "corundum_raw",
+   "name": "Corundum (Raw)",
+   "slug": "corundum",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4225,
+   "instability": 50,
+   "resistance": 0.1
+  },
+  {
+   "id": "minableelement_fps_dolivine",
+   "name": "Dolivine (Raw)",
+   "slug": "dolivine",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 0,
+   "resistance": 0.1
+  },
+  {
+   "id": "minableelement_groundvehicle_feynmaline",
+   "name": "Feynmaline (Raw)",
+   "slug": "feynmaline",
+   "tier": null,
+   "category": "ground_vehicle",
+   "scanSignature": 4000,
+   "instability": 200,
+   "resistance": 0
+  },
+  {
+   "id": "minableelement_groundvehicle_glacosite",
+   "name": "Glacosite (Raw)",
+   "slug": "glacosite",
+   "tier": null,
+   "category": "ground_vehicle",
+   "scanSignature": 4000,
+   "instability": 0,
+   "resistance": 0.1
+  },
+  {
+   "id": "gold_ore",
+   "name": "Gold (Ore)",
+   "slug": "gold",
+   "tier": "rare",
+   "category": "ship",
+   "scanSignature": 3585,
+   "instability": 550,
+   "resistance": 0.5
+  },
+  {
+   "id": "minableelement_fps_hadanite",
+   "name": "Hadanite (Raw)",
+   "slug": "hadanite",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 200,
+   "resistance": 0
+  },
+  {
+   "id": "hephaestanite_raw",
+   "name": "Hephaestanite (R)",
+   "slug": "hephaestanite",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4180,
+   "instability": 400,
+   "resistance": -0.3
+  },
+  {
+   "id": "ice_raw",
+   "name": "Ice (Raw)",
+   "slug": "ice",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4300,
+   "instability": 0,
+   "resistance": -0.5
+  },
+  {
+   "id": "iron_ore",
+   "name": "Iron (Ore)",
+   "slug": "iron",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4270,
+   "instability": 50,
+   "resistance": -0.4
+  },
+  {
+   "id": "minableelement_fps_jaclium",
+   "name": "Jaclium (Ore)",
+   "slug": "jaclium",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 100,
+   "resistance": 0.5
+  },
+  {
+   "id": "minableelement_fps_janalite",
+   "name": "Janalite (Raw)",
+   "slug": "janalite",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 300,
+   "resistance": 0.3
+  },
+  {
+   "id": "laranite_raw",
+   "name": "Laranite (Raw)",
+   "slug": "laranite",
+   "tier": "uncommon",
+   "category": "ship",
+   "scanSignature": 3825,
+   "instability": 400,
+   "resistance": 0.5
+  },
+  {
+   "id": "lindinium_ore",
+   "name": "Lindinium (Ore)",
+   "slug": "lindinium",
+   "tier": "epic",
+   "category": "ship",
+   "scanSignature": 3400,
+   "instability": 1000,
+   "resistance": 0.95
+  },
+  {
+   "id": "ouratite_raw",
+   "name": "Ouratite",
+   "slug": "ouratite",
+   "tier": "epic",
+   "category": "ship",
+   "scanSignature": 3370,
+   "instability": 600,
+   "resistance": 0.6
+  },
+  {
+   "id": "quantainium_raw",
+   "name": "Quantainium (Raw)",
+   "slug": "quantainium",
+   "tier": "legendary",
+   "category": "ship",
+   "scanSignature": 3170,
+   "instability": 1000,
+   "resistance": 0.95
+  },
+  {
+   "id": "quartz_raw",
+   "name": "Quartz (Raw)",
+   "slug": "quartz",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4210,
+   "instability": 50,
+   "resistance": -0.7
+  },
+  {
+   "id": "riccite_ore",
+   "name": "Riccite (Ore)",
+   "slug": "riccite",
+   "tier": "epic",
+   "category": "ship",
+   "scanSignature": 3385,
+   "instability": 850,
+   "resistance": 0.95
+  },
+  {
+   "id": "minableelement_fps_sadaryx",
+   "name": "Sadaryx (Raw)",
+   "slug": "sadaryx",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 200,
+   "resistance": 0
+  },
+  {
+   "id": "minableelement_fps_saldynium",
+   "name": "Saldynium (Ore)",
+   "slug": "saldynium",
+   "tier": null,
+   "category": "fps",
+   "scanSignature": 3000,
+   "instability": 100,
+   "resistance": 0
+  },
+  {
+   "id": "savrilium_ore",
+   "name": "Savrilium (Ore)",
+   "slug": "savrilium",
+   "tier": "legendary",
+   "category": "ship",
+   "scanSignature": 3200,
+   "instability": 1000,
+   "resistance": 0.95
+  },
+  {
+   "id": "silicon_raw",
+   "name": "Silicon",
+   "slug": "silicon",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4255,
+   "instability": 50,
+   "resistance": -0.2
+  },
+  {
+   "id": "sileron_ore",
+   "name": "Stileron (Ore)",
+   "slug": "stileron",
+   "tier": "legendary",
+   "category": "ship",
+   "scanSignature": 3185,
+   "instability": 870,
+   "resistance": 0.6
+  },
+  {
+   "id": "taranite_raw",
+   "name": "Taranite (Raw)",
+   "slug": "taranite",
+   "tier": "rare",
+   "category": "ship",
+   "scanSignature": 3555,
+   "instability": 700,
+   "resistance": 0.5
+  },
+  {
+   "id": "tin_ore",
+   "name": "Tin (Ore)",
+   "slug": "tin",
+   "tier": "common",
+   "category": "ship",
+   "scanSignature": 4195,
+   "instability": 0,
+   "resistance": -0.2
+  },
+  {
+   "id": "titanium_ore",
+   "name": "Titanium (Ore)",
+   "slug": "titanium",
+   "tier": "uncommon",
+   "category": "ship",
+   "scanSignature": 3855,
+   "instability": 0,
+   "resistance": 0.1
+  },
+  {
+   "id": "torite_ore",
+   "name": "Torite (Ore)",
+   "slug": "torite",
+   "tier": "uncommon",
+   "category": "ship",
+   "scanSignature": 3900,
+   "instability": 550,
+   "resistance": 0.25
+  },
+  {
+   "id": "tungsten_ore",
+   "name": "Tungsten (Ore)",
+   "slug": "tungsten",
+   "tier": "uncommon",
+   "category": "ship",
+   "scanSignature": 3870,
+   "instability": 0,
+   "resistance": -0.4
+  }
+ ],
+ "count": 38,
+ "attribution": "Data from celd.space / Strata Mining Tools"
+}

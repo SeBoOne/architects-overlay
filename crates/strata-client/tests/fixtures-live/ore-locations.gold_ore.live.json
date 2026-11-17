@@ -1,0 +1,102 @@
+{
+ "ore": {
+  "id": "gold_ore",
+  "name": "Gold (Ore)"
+ },
+ "sort": "rank",
+ "tierLegend": {
+  "0": "None",
+  "1": "Negligible",
+  "2": "Trace",
+  "3": "Minor",
+  "4": "Notable",
+  "5": "Major",
+  "6": "Pure"
+ },
+ "results": {
+  "space": [
+   {
+    "locationId": "stanton3_l5",
+    "location": "ARC-L5 Yellow Core Station",
+    "system": "Stanton",
+    "rankPct": 100,
+    "rank": 1,
+    "n": 3,
+    "concentration": 0.18,
+    "tier": 5,
+    "tierName": "Major"
+   },
+   {
+    "locationId": "stanton4_l3",
+    "location": "MIC-L3 Endless Odyssey Station",
+    "system": "Stanton",
+    "rankPct": 67,
+    "rank": 2,
+    "n": 3,
+    "concentration": 0.18,
+    "tier": 5,
+    "tierName": "Major"
+   },
+   {
+    "locationId": "stanton2_l4",
+    "location": "CRU-L4 Shallow Fields Station",
+    "system": "Stanton",
+    "rankPct": 33,
+    "rank": 3,
+    "n": 3,
+    "concentration": 0.18,
+    "tier": 5,
+    "tierName": "Major"
+   }
+  ],
+  "surface": [
+   {
+    "locationId": "pyro6",
+    "location": "Terminus",
+    "system": "Pyro",
+    "rankPct": 100,
+    "rank": 1,
+    "n": 4,
+    "concentration": 0.03,
+    "tier": 2,
+    "tierName": "Trace"
+   },
+   {
+    "locationId": "pyro5a",
+    "location": "Ignis",
+    "system": "Pyro",
+    "rankPct": 75,
+    "rank": 2,
+    "n": 4,
+    "concentration": 0.03,
+    "tier": 2,
+    "tierName": "Trace"
+   },
+   {
+    "locationId": "pyro5b",
+    "location": "Vatra",
+    "system": "Pyro",
+    "rankPct": 75,
+    "rank": 2,
+    "n": 4,
+    "concentration": 0.03,
+    "tier": 2,
+    "tierName": "Trace"
+   },
+   {
+    "locationId": "pyro5d",
+    "location": "Fairo",
+    "system": "Pyro",
+    "rankPct": 25,
+    "rank": 4,
+    "n": 4,
+    "concentration": 0.015,
+    "tier": 2,
+    "tierName": "Trace"
+   }
+  ],
+  "cave": [],
+  "exploration": []
+ },
+ "attribution": "Data from celd.space / Strata Mining Tools"
+}

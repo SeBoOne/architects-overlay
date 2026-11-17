@@ -1,0 +1,84 @@
+{
+ "location": {
+  "id": "aaronhalo",
+  "name": "Aaron Halo",
+  "system": "Stanton",
+  "type": "asteroid_field"
+ },
+ "ores": [
+  {
+   "oreId": "beryl_raw",
+   "name": "Beryl (Raw)",
+   "concentration": 0.18,
+   "tier": 5,
+   "tierName": "Major",
+   "scanSignature": 3540
+  },
+  {
+   "oreId": "aslarite_raw",
+   "name": "Aslarite (Raw)",
+   "concentration": 0.142,
+   "tier": 4,
+   "tierName": "Notable",
+   "scanSignature": 3840
+  },
+  {
+   "oreId": "titanium_ore",
+   "name": "Titanium (Ore)",
+   "concentration": 0.142,
+   "tier": 4,
+   "tierName": "Notable",
+   "scanSignature": 3855
+  },
+  {
+   "oreId": "ice_raw",
+   "name": "Ice (Raw)",
+   "concentration": 0.104,
+   "tier": 4,
+   "tierName": "Notable",
+   "scanSignature": 4300
+  },
+  {
+   "oreId": "aluminium_ore",
+   "name": "Aluminum (Ore)",
+   "concentration": 0.103,
+   "tier": 4,
+   "tierName": "Notable",
+   "scanSignature": 4285
+  },
+  {
+   "oreId": "silicon_raw",
+   "name": "Silicon",
+   "concentration": 0.103,
+   "tier": 4,
+   "tierName": "Notable",
+   "scanSignature": 4255
+  },
+  {
+   "oreId": "iron_ore",
+   "name": "Iron (Ore)",
+   "concentration": 0.103,
+   "tier": 4,
+   "tierName": "Notable",
+   "scanSignature": 4270
+  },
+  {
+   "oreId": "copper_ore",
+   "name": "Copper (Ore)",
+   "concentration": 0.103,
+   "tier": 4,
+   "tierName": "Notable",
+   "scanSignature": 4240
+  },
+  {
+   "oreId": "quantainium_raw",
+   "name": "Quantainium (Raw)",
+   "concentration": 0.02,
+   "tier": 2,
+   "tierName": "Trace",
+   "scanSignature": 3170
+  }
+ ],
+ "count": 9,
+ "attribution": "Data from celd.space / Strata Mining Tools"
+}
