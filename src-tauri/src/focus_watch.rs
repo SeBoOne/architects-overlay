@@ -25,6 +25,10 @@ const POLL_MS: u64 = 400;
 use std::sync::atomic::Ordering;
 use tauri::Manager;
 
+// Beide Funktionen leben nur im cfg(windows)-Pfad (watch_thread) — auf Linux
+// dead code. allow statt cfg-Duplikat: die Unit-Tests (plattformübergreifend)
+// testen die reine Logik auf jedem Ziel.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 /// Pure Entscheidung: sollen die Pins JETZT ungemappt werden?
 /// Spiegel des Linux-Zweigs in overlay.rs (fremder Fokus, pins-only aktiv):
 /// - Palette muss verborgen sein (user_visible=false) — bei offener Palette
@@ -43,6 +47,7 @@ fn should_unmap_pins(
 
 /// Reaktion auf einen Vordergrund-Wechsel (App-Logik, plattformübergreifend
 /// gehalten und unit-getestet; `is_sc` = Vordergrund gehört zu Star Citizen).
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 fn handle_fg_change<R: tauri::Runtime>(app: &tauri::AppHandle<R>, is_sc: bool) {
     if is_sc {
         // Rückkehr zu SC → Pins neu mappen (nur wenn dormant, sonst wäre
