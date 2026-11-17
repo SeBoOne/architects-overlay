@@ -79,9 +79,28 @@
   (Greedy-Set-Cover, Tier-Schwelle respektiert).
 - Craft-Bedarf-Import (Crafting Mode follow-up).
 
-## Offen / später
+## Mockup-Referenz (User 2026-11-17 nachgeliefert)
 
-- Bild-Referenz des Strata-UI kam nicht an → beim Mockup nachliefern lassen.
+`docs/references/strata-abundance-dials.png` — Strata „Ore Finder"-Doku:
+**Two-Ring-Dial** pro Erz-Ort:
+
+- **Außenring (Mint) = RANK:** Füllgrad des Bogens = Rang unter den Orten
+  dieses Erzes (fast voll = Top-Rank).
+- **Innenring (Amber→Mint, segmentiert) = CONCENTRATION:** Anteil der Erze am
+  Ort, 6 Stufen mit exakten Prozentbanden: Barely Any <1 % / A Trace 1–4 % /
+  Some 4–8 % / A Decent Amount 8–15 % / Lots 15–25 % / Almost Pure ≥25 %
+  (= Tier-Skala 1–6 der API, absolute Bands — überall vergleichbar).
+- Zentrum: Badge mit Erz-Kürzel + Scan-Signatur-Wert.
+- Ergebnisse in Sektionen (Haupt-Ziele → explorable Regions → FPS-Caves),
+  jede Sektion eigene Skala — entspricht den API-Gruppen
+  space/surface/cave/exploration.
+- Farblage Strata (dunkelgrün-schwarz, Mint #4EE6A4 = Rank, Amber #F59E0B =
+  Konzentration): **Semantik übernehmen, Farben an unser Overlay-Theme
+  angleichen** (CSS-Variablen, kein Strata-Grün als Primärfarbe).
+- Statische Dial-Labels entfallen (Hover-Tooltips mit exaktem rank/
+  concentration %), Legendenpanel bleibt sichtbar.
+
+## Offen / später
 - Qualitäts-Quelle klären (s. Defaults #2).
 - Strata verspricht evtl. mehr Endpoints „früher oder später" — Spec im Auge
   behalten (Scan-Chart-Rohdaten, Spawn-Qualität).
