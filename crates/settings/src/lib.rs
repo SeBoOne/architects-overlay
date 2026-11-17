@@ -604,7 +604,13 @@ pub struct PinsSection {
 impl Default for PinsSection {
     fn default() -> Self {
         PinsSection {
-            enabled: false,
+            // Win-Befund (2026-11-17, User-Entscheid): Pins sind ab der
+            // ersten Session AN — der Schalter regelt nur noch bewusstes
+            // Abstellen. Frisch angeheftete Pins verschwinden sonst beim
+            // Overlay-Schließen (Pins-only braucht enabled, die Palette
+            // rendert ohne). Bestehende Configs mit explizit
+            // `enabled = false` bleiben unangetastet (serde).
+            enabled: true,
             default_opacity: default_pins_opacity(),
             presets: default_pins_presets(),
             list: Vec::new(),
@@ -2293,6 +2299,15 @@ mod tests {
     }
 
     // ---- M4 (t_7bf507e6): Pins-Sektion ---------------------------------------
+
+    /// Win-Befund (2026-11-17): Pins-Default ist AN — eine frische Instanz
+    /// (keine Pins-Sektion in der Config) bekommt beim ersten Zugriff via
+    /// pins_mut_or_default eine Sektion mit enabled=true (sonst verschwinden
+    /// frisch angeheftete Pins beim Overlay-Schließen, Pins-only-Vertrag).
+    #[test]
+    fn pins_default_enabled() {
+        assert!(PinsSection::default().enabled);
+    }
 
     /// Vertrags-Shape {view_id, screen, box_index, opacity, pinned} rundet
     /// durch die TOML-Datei; fehlender Abschnitt bleibt None (kein Pin-

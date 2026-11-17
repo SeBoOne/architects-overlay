@@ -16,6 +16,8 @@ mod connector;
 /// unit-getesteter Kern; genutzt von `connector`).
 #[cfg(desktop)]
 mod connector_keystore;
+#[cfg(desktop)]
+mod focus_watch;
 mod hangar;
 /// H5-Fallback (t_ed01e8f7): Low-Level-Keyboard-Hook für Global-Shortcuts,
 /// wenn SC fokussiert ist (Anti-Cheat-Hook verschluckt WM_HOTKEY). Nur die
@@ -286,6 +288,11 @@ pub fn run() {
                 if let Err(err) = pins::init(app) {
                     log::warn!("pins unavailable ({err}) — Pins deaktiviert");
                 }
+
+                // Win (2026-11-17, t_aad53dd3-Follow-up): Fokus-Wächter —
+                // Pins-only wird bei Fremd-Fokus unmapped, Rückkehr zu SC
+                // mappt neu (Parität zum Linux-Socket-Pfad). Passiv, fail-soft.
+                focus_watch::install(app.handle());
 
                 // Local control socket: lets the desktop session (e.g. Hyprland
                 // keybinds on Wayland, where global shortcuts are unreliable) drive
