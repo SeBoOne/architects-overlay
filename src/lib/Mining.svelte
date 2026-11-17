@@ -77,7 +77,7 @@
 		scanSignature: number | null;
 	};
 	type LocationOresResponse = {
-		location: { id: string; name: string; system: string; kind: string };
+		location: { id: string; name: string; system: string; type: string };
 		ores: OreRow[];
 		count: number;
 		attribution: string;
@@ -605,7 +605,7 @@
 						>
 						<span class="md-title">{locDetail.location.name}</span>
 					</div>
-					<div class="md-sub">{locDetail.location.system} · {locDetail.location.kind}</div>
+					<div class="md-sub">{locDetail.location.system} · {locDetail.location.type}</div>
 					{#if locDetail.ores.length === 0}
 						<div class="mnote">{$t('mining.no_ores')}</div>
 					{:else}

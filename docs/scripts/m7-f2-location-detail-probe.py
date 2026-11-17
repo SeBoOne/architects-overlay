@@ -41,8 +41,8 @@ WRAP = r"""
   };
   const LOCS = {
     locations: [
-      { id: 'aarON', name: 'Aaron Halo', slug: 'aaron-halo', system: 'Stanton', kind: 'exploration_region' },
-      { id: 'cellin', name: 'Cellin', slug: 'cellin', system: 'Stanton', kind: 'moon' }
+      { id: 'aarON', name: 'Aaron Halo', slug: 'aaron-halo', system: 'Stanton', type: 'exploration_region' },
+      { id: 'cellin', name: 'Cellin', slug: 'cellin', system: 'Stanton', type: 'moon' }
     ],
     count: 2,
     attribution: 'Data from celd.space / Strata Mining Tools'
@@ -63,7 +63,7 @@ WRAP = r"""
     attribution: 'Data from celd.space / Strata Mining Tools'
   });
   const LOCATION_ORES = {
-    location: { id: 'aarON', name: 'Aaron Halo', system: 'Stanton', kind: 'exploration_region' },
+    location: { id: 'aarON', name: 'Aaron Halo', system: 'Stanton', type: 'exploration_region' },
     ores: [
       { oreId: 'quantainium_raw', name: 'Quantainium', concentration: 0.4231, tier: 6, tierName: 'Almost Pure', scanSignature: 90 },
       { oreId: 'gold_raw', name: 'Gold', concentration: 0.0812, tier: 4, tierName: 'A Decent Amount', scanSignature: 30 },
@@ -224,6 +224,9 @@ async def main():
         check("location-click-invokes-cmd", any(c["cmd"] == "strata_location_ores" for c in calls), json.dumps(calls))
         head = (await js("document.querySelector('.mining .md-title') ? document.querySelector('.mining .md-title').textContent.trim() : 'NONE'"))
         check("loc-detail-title", head == "Aaron Halo", head)  # Fixture: location-ores/aarON (id-Aufruf)
+        sub = (await js("document.querySelector('.mining .md-sub') ? document.querySelector('.mining .md-sub').textContent.trim() : 'NONE'"))
+        # t_55c06bc0: Wire-Key ist `type` (serde rename) — Subtitle muss system · type zeigen
+        check("loc-detail-subtitle-type", sub == "Stanton · exploration_region", sub)
         lines = int(await js("document.querySelectorAll('.mining .lorow-line').length"))
         check("loc-detail-ore-rows-3", lines == 3, "lines=" + str(lines))
         row_txt = (await js("[...document.querySelectorAll('.mining .lorow-line')].map(function(e){return e.textContent.trim();}).join('|')") or "")
