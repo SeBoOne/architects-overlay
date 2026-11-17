@@ -3,8 +3,13 @@
 	// registrierter Content-Typ (Proof of Concept, Universality-Regel:
 	// keine SCLM-/DealChat-Semantik in der Pin-Box selbst).
 	import PinChat from './PinChat.svelte';
+	import PinScanSignature from './PinScanSignature.svelte';
 	import { registerPinContent } from './pin-content';
 	registerPinContent('deal-chat', PinChat);
+	// M7-K3 (t_cfea5bea): generischer Content-Typ „scan-signature" (Payload
+	// {label, value, tier?, max?} — scan-signature.ts). Seitenstark wie
+	// deal-chat: die Pin-Verwaltung kennt nur den generischen Deskriptor.
+	registerPinContent('scan-signature', PinScanSignature);
 </script>
 
 <script lang="ts">

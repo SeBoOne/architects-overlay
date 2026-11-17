@@ -1141,6 +1141,8 @@
     "pins.close_title": "Close pin (remove)",
     "pins.size_title": "Adjust size",
     "pins.resize_title": "Resize box (drag corner)",
+    "pins.scan_title": "Scan signature",
+    "pins.scan_bar_title": "Signature relative to chart maximum",
     "pins.empty": ""
   }
 }
