@@ -51,3 +51,55 @@ export function sigTierBadge(tier: number | null | undefined): string | null {
 	if (tier === null || tier === undefined || !Number.isFinite(tier)) return null;
 	return `T${Math.round(tier)}`;
 }
+
+// ---- M7-F3 (t_cf1224c5, Punkt 2): Sammel-Signatur-Pin ----------------------
+// EIN Pin-Content „scan-signatures“ (Plural, Liste) sammelt ALLE angepinnten
+// Signaturen (dedupe nach oreId, Pin-Button am Erz togglet). Payload bewusst
+// generisch (Universality-Regel — KEIN Strata-Vokabular):
+//   { type: 'scan-signatures',
+//     entries: [{ oreId, label, value }],
+//     visibleSlots?: number }
+// `visibleSlots` ist NACHRÜSTBAR (Pin-Resize-Welle, bis zu ×10) — der Renderer
+// liest es mit Default 5; alte Snapshots ohne das Feld bleiben verträglich.
+export type ScanSignatureEntry = {
+	oreId: string;
+	label: string;
+	value: number | null;
+};
+export type ScanSignaturesPayload = {
+	entries?: ScanSignatureEntry[];
+	/** Nachrüstbar (Pin-Resize-Welle): angezeigte Multiplikator-Slots, Default 5. */
+	visibleSlots?: number;
+};
+
+const DEFAULT_SLOTS = 5;
+
+/// Multiplikator-Zeilen ×1..×N (Basis·n) — Strata-Signatur-Chart-Konvention
+/// (2 Vorkommen = 2× Basis-Signatur). fehlender Wert → „—“ je Slot.
+export function sigMultiples(
+	value: number | null | undefined,
+	slots: number | null | undefined = DEFAULT_SLOTS
+): { n: number; display: string }[] {
+	const n = Math.max(1, Math.min(10, Math.round(slots ?? DEFAULT_SLOTS) || DEFAULT_SLOTS));
+	const base = value === null || value === undefined || !Number.isFinite(value) ? null : value;
+	const rows: { n: number; display: string }[] = [];
+	for (let i = 1; i <= n; i++) {
+		rows.push({
+			n: i,
+			display: base === null ? '—' : String(Math.round(base * i))
+		});
+	}
+	return rows;
+}
+
+/// Sammel-Liste: bestehende Einträge + ein neuer (dedupe nach oreId — der
+/// Pin-Button am Erz togglet, siehe Mining.svelte toggleSignaturePin).
+export function sigToggleEntry(
+	entries: ScanSignatureEntry[] | undefined,
+	entry: ScanSignatureEntry
+): ScanSignatureEntry[] {
+	const list = entries ?? [];
+	return list.some((e) => e.oreId === entry.oreId)
+		? list.filter((e) => e.oreId !== entry.oreId)
+		: [...list, entry];
+}
