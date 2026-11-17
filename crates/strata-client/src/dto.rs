@@ -1,11 +1,28 @@
-//! DTOs strikt nach der Strata-Public-API-Spec (OpenAPI v1.0.0, Stand
-//! 2026-11-17 — docs/MINING-MODE-PLAN.md). Kein Envelope: die Strata-API
-//! antwortet direkt mit dem Objekt (anders als UEX).
+//! DTOs der Strata Public API — CONTRACT-REALITÄT: die Live-Fixtures
+//! (`tests/fixtures-live/`, echte celd.space-Responses 2026-11-17) sind der
+//! Contract, NICHT das OpenAPI-Spec-Dokument (strata.celd.space/strata-api.md
+//! — STALE, Beispiel-Werte weichen live ab, siehe Feld-Doku).
+//! Kein Envelope: die Strata-API antwortet direkt mit dem Objekt (anders als
+//! UEX).
 //!
 //! Null-Disziplin (Spec, verbindlich): `tier`, `scanSignature`,
 //! `instability`, `resistance` und `category` sind `null`-fähig → `Option`.
 //! **NIEMALS truthiness** — `0.0` (instability) / `0` (scanSignature) sind
 //! gültige Werte, kein „fehlend".
+//!
+//! Live-Abweichungen vom (stalen) Spec — M7-F1, am echten Key verifiziert:
+//! - `ores[].tier` ist String-Rarity (`common`/`uncommon`/`rare`/`epic`/
+//!   `legendary`, null-fähig) — der Spec zeigt eine i64-Zahl, die live NIE
+//!   vorkommt. (Die Tier-Zahl 1–6 existiert nur in `ore-locations`/
+//!   `location-ores` — dort ist der Spec korrekt.)
+//! - `ores[].instability`/`resistance` sind unbeschränkte f64 (live: 350!
+//!   bzw. negativ) — die Spec-Range 0.0–1.0 ist falsch. KEINE Clamp-Logik:
+//!   die Werte werden unverändert durchgereicht.
+//! - `locations[].system` kann `null` sein (Dungeons ohne System-Zuordnung)
+//!   und `type` umfasst mehr Werte als die Spec-Beispiele (asteroid_field,
+//!   asteroid_cluster, station, lagrange_point, moon, planet, dungeon, …) —
+//!   system → `Option<String>`, type bleibt freier String; die UI leitet
+//!   ihre Filter dynamisch aus den Daten ab.
 
 use std::collections::BTreeMap;
 
@@ -22,16 +39,23 @@ pub struct Ore {
     /// `ship` / `fps` / `ground_vehicle` — null-fähig laut Spec.
     #[serde(default)]
     pub category: Option<String>,
-    /// Erz-Gruppierung aus den Game-Daten — null-fähig laut Spec.
+    /// String-Rarity aus den Game-Daten — live: `common`/`uncommon`/`rare`/
+    /// `epic`/`legendary`, null-fähig. **ACHTUNG: das OpenAPI-Spec zeigt hier
+    /// eine i64-Zahl — das ist STALE** (M7-F1: live kommt NIE eine Zahl,
+    /// s. Fixtures-live). Die Tier-Zahl 1–6 existiert nur in `ore-locations`
+    /// / `location-ores` (`LocationRow.tier`/`OreRow.tier`).
     #[serde(default)]
-    pub tier: Option<i64>,
+    pub tier: Option<String>,
     /// Scan-Signatur (höher = früher entdeckt). 0 ist gültige Daten.
     #[serde(default)]
     pub scan_signature: Option<i64>,
-    /// 0.0–1.0. **0.0 ist gültige Daten** — null-check, nie truthiness.
+    /// UNBESCHRÄNKTES f64 (live: 350! — die Spec-Range 0.0–1.0 ist STALE,
+    /// M7-F1). 0.0 ist gültige Daten — null-check, nie truthiness. KEIN
+    /// Clamp: die Werte werden unverändert durchgereicht.
     #[serde(default)]
     pub instability: Option<f64>,
-    /// 0.0–1.0, höher = härteres Gestein. 0.0 ist gültige Daten.
+    /// UNBESCHRÄNKTES f64 (live auch negativ — Spec-Range STALE, M7-F1).
+    /// 0.0 ist gültige Daten, kein Clamp.
     #[serde(default)]
     pub resistance: Option<f64>,
 }
@@ -50,9 +74,16 @@ pub struct Location {
     pub id: String,
     pub name: String,
     pub slug: String,
-    pub system: String,
-    /// Game-Daten-Typ (`belt`, `moon`, `dungeon`, `exploration_region`, …).
-    /// JSON-Feld heißt `type` (Rust-Keyword → `kind`).
+    /// System-String — live KANN der Wert `null` sein (Dungeon-Spawns ohne
+    /// System-Zuordnung; M7-F1, Fixtures-live). `Option` + UI-Filter dynamisch
+    /// aus den Daten (kein hartkodiertes Spec-Vokabular).
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Game-Daten-Typ (`belt`, `moon`, `dungeon`, `exploration_region`,
+    /// `asteroid_field`, `asteroid_cluster`, `station`, `lagrange_point`,
+    /// `planet`, … — die Spec-Beispielliste ist unvollständig). Freier
+    /// String; UI-Filter dynamisch aus den Daten. JSON-Feld heißt `type`
+    /// (Rust-Keyword → `kind`).
     #[serde(rename = "type")]
     pub kind: String,
 }
@@ -72,11 +103,13 @@ pub struct OreRef {
 }
 
 /// `{location: {id, name, system, type}}`-Kopf von `location-ores/{location}`.
+/// system `Option` wie `Location.system` (live null-fähig, M7-F1).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LocationRef {
     pub id: String,
     pub name: String,
-    pub system: String,
+    #[serde(default)]
+    pub system: Option<String>,
     #[serde(rename = "type")]
     pub kind: String,
 }

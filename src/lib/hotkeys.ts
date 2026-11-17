@@ -7,10 +7,9 @@ export type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'se
 
 export type ModeHotkeys = Record<Mode, string>;
 
-// M7-K2 (t_bb3303d0): F5 ist keine reservierte Taste mehr — der Mining-Modus
-// belegt sie per Default; der kontextsensitive Resync (B2) teilt sie sich
-// kontextabhängig (Market/Detail — der Modus-Wechsel greift nur außerhalb
-// dieser Kontexte, siehe F5-Pfad in +page.svelte).
+// M7-K2 (t_bb3303d0) / M7-F1: F5 gehört ALLEIN dem Mining-Modus — der
+// kontextsensitive Resync (B2) läuft auf STRG+F5 (Kontexttrennung im
+// F5-Pfad von +page.svelte).
 
 /// Nova Belegung (B1): Hangar → F11 (raramente usado), Handelsrouten → F3
 /// (pertinho do F2/Marktplatz), Inventar → F4. F2 Marktplatz e F12 Settings
@@ -33,7 +32,7 @@ export function normalizeFkey(raw: string): string | null {
 	return FKEY_RE.test(key) ? key : null;
 }
 
-/** Valididade de um Map inteiro: F-Keys válidos, sem duplicatas (M7-K2: F5 é o Default de Mining). */
+/** Valididade de um Map inteiro: F-Keys válidos, sem duplicatas (M7-F1: F5 é o Default de Mining — KEINE Reservierung in der Validierung). */
 export function validateModeHotkeys(hk: ModeHotkeys): string | null {
 	const seen: string[] = [];
 	for (const mode of Object.keys(hk) as Mode[]) {

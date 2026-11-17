@@ -6,7 +6,7 @@
 	// Attribution. Diese Komponente ist der F5-View:
 	//
 	//   1. Erz-Suche     — Typeahead (Name/Slug, case-insensitiv), Filter
-	//                      category (ship/fps) + tier; Liste alphabetisch;
+	//                      category (ship/fps) + Rarity (M7-F1); Liste alphabetisch;
 	//                      Pin-Button „Signatur pinnen" pro Erz-Zeile
 	//                      (Pin-Content `scan-signature`, Rendering in K3).
 	//   2. Ort-Suche     — Typeahead, Filter system + type.
@@ -33,13 +33,15 @@
 		name: string;
 		slug: string;
 		category: string | null; // 'ship' | 'fps' | 'ground_vehicle' — null-fähig
-		tier: number | null; // null-check, nie truthiness
+		// M7-F1: Live-Contract — tier ist String-Rarity (common..legendary),
+		// NICHT die i64-Zahl aus dem (stalen) Spec. null-check, nie truthiness.
+		tier: string | null;
 		scanSignature: number | null; // 0 ist gültige Daten
-		instability: number | null;
-		resistance: number | null;
+		instability: number | null; // unbeschränkt (live: 350! / negativ) — kein Clamp
+		resistance: number | null; // unbeschränkt — kein Clamp
 	};
 	type OresResponse = { ores: Ore[]; count: number; attribution: string };
-	type Location = { id: string; name: string; slug: string; system: string; type: string };
+	type Location = { id: string; name: string; slug: string; system: string | null; type: string }; // system live null-fähig (Dungeons)
 	type LocationsResponse = { locations: Location[]; count: number; attribution: string };
 	type LocationRow = {
 		locationId: string;
@@ -86,7 +88,8 @@
 	// Erz-Suche
 	let oreQuery = $state('');
 	let catFilter = $state<'all' | 'ship' | 'fps'>('all');
-	let tierFilter = $state(0); // 0 = alle, sonst 1..6
+	// M7-F1: Tier-Filter 1–6 war mit String-Rarity SINNLOS — Rarity-Filter.
+	let rarityFilter = $state<'all' | Rarity>('all');
 	// Ort-Suche
 	let locQuery = $state('');
 	let sysFilter = $state('all');
@@ -102,6 +105,24 @@
 	let noteTimer: ReturnType<typeof setTimeout> | null = null;
 
 	const ATTRIBUTION_FALLBACK = 'Data from celd.space / Strata Mining Tools';
+
+	// ---- M7-F1: Rarity (Live-Contract) ---------------------------------------
+	// ores[].tier ist String-Rarity — die Tier-Zahl 1–6 existiert nur im
+	// Detail (ore-locations/location-ores), dort bleibt tierColor(tier: number)
+	// unverändert. Badge-Rampe: common grau → legendary mint.
+	type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
+	const RARITIES: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
+	const RARITY_COLORS: Record<Rarity, string> = {
+		common: '#8b949e',
+		uncommon: '#a8a23e',
+		rare: '#9dc451',
+		epic: '#6bd694',
+		legendary: '#4be08a'
+	};
+	function rarityColor(rarity: string | null): string | null {
+		if (!rarity) return null;
+		return (RARITY_COLORS as Record<string, string>)[rarity] ?? null;
+	}
 
 	// 6-Stufen-Farbrampe (Orange→Amber→Oliv→Gelbgrün→Hellgrün→Mint) —
 	// absolute Bands (Tier 1–6 der API), überall gleich interpretierbar.
@@ -165,18 +186,20 @@
 			const q = oreQuery.trim().toLowerCase();
 			if (q && !oreMatches(o, q)) return false;
 			if (catFilter !== 'all' && o.category !== catFilter) return false;
-			if (tierFilter > 0 && o.tier !== tierFilter) return false;
+			if (rarityFilter !== 'all' && o.tier !== rarityFilter) return false;
 			return true;
 		})
 	);
-	const systems = $derived([...new Set(locations.map((l) => l.system))].sort());
+	// M7-F1: system ist live null-fähig — dynamisch aus Daten (inkl. „—“-Slot
+	// für null), kein hartkodiertes Spec-Vokabular.
+	const systems = $derived([...new Set(locations.map((l) => l.system ?? '—'))].sort());
 	const locTypes = $derived([...new Set(locations.map((l) => l.type))].sort());
 	const filteredLocations = $derived(
 		locations.filter((l) => {
 			const q = locQuery.trim().toLowerCase();
 			if (q && !(l.name.toLowerCase().includes(q) || l.slug.toLowerCase().includes(q)))
 				return false;
-			if (sysFilter !== 'all' && l.system !== sysFilter) return false;
+			if (sysFilter !== 'all' && (l.system ?? '—') !== sysFilter) return false;
 			if (typeFilter !== 'all' && l.type !== typeFilter) return false;
 			return true;
 		})
@@ -228,7 +251,10 @@
 
 	// ---- Pin „Signatur pinnen" (Pin-Content scan-signature, Rendering K3) ----
 	async function pinSignature(ore: Ore, index: number) {
-		const tierName = ore.tier ? String(ore.tier) : '—';
+		// M7-F1: ore.tier ist Rarity-String (Live-Contract); das Pin-Content-
+		// Payload `scan-signature` bleibt beim number-Vertrag (Tier 1–6) —
+		// Rarity geht als Row-Text mit, content.tier bleibt null.
+		const tierName = ore.tier ?? '—';
 		try {
 			const ok = await invoke<boolean>('pin_add', {
 				view_id: 'mining',
@@ -237,7 +263,7 @@
 				kpi: ore.scanSignature === null ? null : String(ore.scanSignature),
 				rows: [
 					{ idx: 0, name: tr('mining.scan_signature'), value: ore.scanSignature === null ? '—' : String(ore.scanSignature) },
-					{ idx: 1, name: tr('mining.tier'), value: tierName },
+					{ idx: 1, name: tr('mining.rarity'), value: tierName },
 					{ idx: 2, name: tr('mining.category'), value: ore.category ?? '—' }
 				],
 				// Content-Deskriptor — K3 (t_cfea5bea) registriert den Renderer.
@@ -246,7 +272,7 @@
 					oreId: ore.id,
 					oreName: ore.name,
 					scanSignature: ore.scanSignature,
-					tier: ore.tier,
+					tier: null, // M7-F1: Ore-Rarity ist kein 1–6-Tier — Pin-Badge nur bei echtem Tier
 					category: ore.category
 				},
 				key: `scan-signature:${ore.id}`
@@ -369,21 +395,21 @@
 							</div>
 						</div>
 						<div class="mf">
-							<span class="mfl">{$t('mining.filter_tier')}</span>
+							<span class="mfl">{$t('mining.filter_rarity')}</span>
 							<div class="mfchips">
 								<button
 									type="button"
 									class="mchip"
-									class:is-on={tierFilter === 0}
-									onclick={() => (tierFilter = 0)}>{$t('mining.tier_all')}</button
+									class:is-on={rarityFilter === 'all'}
+									onclick={() => (rarityFilter = 'all')}>{$t('mining.tier_all')}</button
 								>
-								{#each [1, 2, 3, 4, 5, 6] as tv (tv)}
+								{#each RARITIES as rv (rv)}
 									<button
 										type="button"
 										class="mchip mtier"
-										class:is-on={tierFilter === tv}
-										style={`--tc:${tierColor(tv)}`}
-										onclick={() => (tierFilter = tierFilter === tv ? 0 : tv)}>{tv}</button
+										class:is-on={rarityFilter === rv}
+										style={`--tc:${RARITY_COLORS[rv]}`}
+										onclick={() => (rarityFilter = rarityFilter === rv ? 'all' : rv)}>{rv}</button
 									>
 								{/each}
 							</div>
@@ -404,7 +430,7 @@
 										<span class="mrow-name">{o.name}</span>
 										<span class="mrow-sub">{o.slug}</span>
 										{#if o.tier}
-											<span class="mtier-badge" style={`--tc:${tierColor(o.tier)}`}
+											<span class="mtier-badge" style={`--tc:${rarityColor(o.tier) ?? '#8b949e'}`}
 												>{o.tier}</span
 											>
 										{/if}
@@ -486,7 +512,7 @@
 						{#each filteredLocations as l (l.id)}
 							<div class="lrow" role="option" aria-selected="false" tabindex="0">
 								<span class="mrow-name">{l.name}</span>
-								<span class="mrow-sub">{l.system} · {l.type}</span>
+								<span class="mrow-sub">{l.system ?? '—'} · {l.type}</span>
 							</div>
 						{:else}
 							<div class="mnote">{$t('mining.empty')}</div>

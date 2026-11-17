@@ -610,8 +610,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{ id: 'routes', label: 'nav.routes_full' },
 		{ id: 'inventory', label: 'nav.inventory' },
 		{ id: 'market', label: 'hotkey.slot_market' },
-		// M7-K2 (t_bb3303d0): Mining-Modus — F5-Default, teilt die Taste
-		// kontextabhängig mit dem Resync (Market/Detail).
+		// M7-K2 (t_bb3303d0) / M7-F1: Mining-Modus — F5-Default. F5 ALLEIN
+		// gehört jetzt komplett dem Mining-Modus; der Resync läuft auf STRG+F5.
 		{ id: 'mining', label: 'nav.mining' }
 	];
 	let hkCapture: ModeHotkeyField | null = $state(null);
@@ -1764,6 +1764,20 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// keystore-abgeleitet — nicht Teil des Settings-Snapshots).
 	$effect(() => {
 		if (inConfig) void refreshStrataStatus();
+	});
+	// M7-F1 (Bug 3): Rail-Sichtbarkeit + F5-Gate brauchen key_set auch AUSSER-
+	// halb der Settings — Status beim Start und nach jedem Strata-Toggle
+	// nachziehen. Nutzbar = enabled UND Key gesetzt.
+	let strataReady = $state(false);
+	$effect(() => {
+		void refreshStrataStatus();
+	});
+	$effect(() => {
+		// Reaktion auf Toggle/Key-Änderungen in der Settings-UI:
+		if (cfg?.strata_enabled !== undefined) void refreshStrataStatus();
+	});
+	$effect(() => {
+		strataReady = !!strataStat?.enabled && !!strataStat?.key_set;
 	});
 	async function toggleStrataEnabled() {
 		try {
@@ -4704,6 +4718,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Reset, Config schließen, Detail schließen) und behält den Tastaturfokus
 	// im Suchfeld — wie bisher nach Market-Exit/Detail-Schließen.
 	function setMode(m: Mode) {
+		// M7-F1 (Bug 3): Mining ist nur nutzbar, wenn Strata enabled + Key
+		// gesetzt sind — sonst den Modus-Wechsel (Rail-Klick wie F5) IGNOREN,
+		// statt eine Disabled-Card zu zeigen.
+		if (m === 'mining' && !strataReady) return;
 		if (m === 'search') {
 			railMode = null;
 			if (inConfig) closeConfig();
@@ -5290,36 +5308,42 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			}
 			return;
 		}
-		// P4/PB (t_1c9bc240, B2): F5 ist app-lokal — nie Browser-Reload — und
-		// wirkt NUR, wo Resync relevant ist (Market-Modus: Angebote, Mein Shop,
-		// Routen). Suche/Detail/Rail-Modi (Inventar/Hangar)/Config: KEIN Call,
-		// KEIN Feedback (der Handler ist hier nur noch erreichbar, weil die
-		// F5-Behandlung NACH den railMode/inConfig-Rückgaben liegt).
+		// P4/PB (t_1c9bc240, B2) / M7-F1: F5 ist app-lokal — nie Browser-Reload.
+		// Trennung der Kontexte (User-Befund Welle 1): F5 ALLEIN triggert NUR
+		// den Mining-Modus-Wechsel — niemals Resync. Der kontextsensitive
+		// Resync (Market/Detail) läuft auf STRG+F5 (Hint-Zeilen + Settings
+		// entsprechend); `k === 'F5'` feuert auch mit gehaltener Strg-Taste,
+		// also wird hier nach e.ctrlKey unterschieden.
 		if (k === 'F5') {
-			// PS (t_c84e545d): F5 auf einer offenen Detail-Seite (Commodity
-			// ODER Item) aktualisiert GENAU DIESEN Datensatz live — einzelner
-			// API-Call (rate-limit-bewusst), Frische-Datum in der Anzeige.
-			if (inDetail && detailHit) {
-				e.preventDefault();
-				void refreshDetailLive();
-				return;
-			}
-			if (phase === 'market' && !offerDetail) {
-				if (mTab === 'shop' && cfg && !cfg.uex_secret_key_set) {
+			if (e.ctrlKey) {
+				// STRG+F5 = Resync — genau wie bisher F5 in den Sync-Kontexten.
+				// PS (t_c84e545d): STRG+F5 auf einer offenen Detail-Seite
+				// (Commodity ODER Item) aktualisiert GENAU DIESEN Datensatz
+				// live — einzelner API-Call (rate-limit-bewusst), Frische-
+				// Datum in der Anzeige.
+				if (inDetail && detailHit) {
 					e.preventDefault();
-					return; // ohne Secret-Key gibt es nichts zu syncen — kein Fake-Feedback
+					void refreshDetailLive();
+					return;
 				}
-				void onF5();
+				if (phase === 'market' && !offerDetail) {
+					if (mTab === 'shop' && cfg && !cfg.uex_secret_key_set) {
+						e.preventDefault();
+						return; // ohne Secret-Key gibt es nichts zu syncen — kein Fake-Feedback
+					}
+					void onF5();
+					e.preventDefault();
+					return; // Resync-Kontext: kein Modus-Wechsel
+				}
 				e.preventDefault();
-				return; // Resync-Kontext: F5 bleibt Sync — kein Modus-Wechsel
+				return; // STRG+F5 außerhalb der Resync-Kontexte: bewusst kein Reload
 			}
-			// M7-K2 (t_bb3303d0): außerhalb der Resync-Kontexte ist F5 der
-			// Mining-Modus (Default-Belegung) — der Modus-Wechsel greift nur
-			// dann, wenn F5 als Mode-Taste gemappt ist. Ist Mining auf eine
-			// andere Taste gelegt, läuft es über den normalen F-Key-Block oben.
+			// F5 ALLEIN: NUR Mining-Modus-Wechsel (Default-Belegung) — greift
+			// nur, wenn F5 als Mode-Taste gemappt ist UND Mining nutzbar ist
+			// (Strata enabled + Key, Bug 3); sonst kein Effekt (kein Resync).
 			const f5Mode = modeKeyMap(cfg).get('F5');
-			if (f5Mode && f5Mode !== 'market' && f5Mode !== 'routes') {
-				setMode(f5Mode);
+			if (f5Mode === 'mining' && strataReady) {
+				setMode('mining');
 				e.preventDefault();
 			}
 			return;
@@ -5751,6 +5775,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				compact={appCompact || (!isWindowMode && palW > 0 && palW < 553)}
 				onselect={setMode}
 				hotkeys={cfg?.mode_hotkeys ?? undefined}
+				miningAvailable={strataReady}
 				ownEntries={ownList.map((c) => ({
 					id: c.id,
 					key: c.hotkey ?? '—',
@@ -6549,8 +6574,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					</section>
 					<!-- PB (t_1c9bc240, B1): Mode-Hotkeys — konfigurierbare F-Tasten der
 					     In-App-Modi. Persistiert im Settings-Crate (TOML), Validierung:
-					     nur F1–F12, keine Doppelbelegung (M7-K2: F5 = Mining-Default, der Resync behält F5 in Market/Detail).
-					     Capture-Muster identisch zu den globalen Kürzeln (C2a). -->
+					     nur F1–F12, keine Doppelbelegung (M7-F1: F5 = Mining ALLEIN, der
+					     Resync läuft auf STRG+F5). Capture-Muster identisch zu den
+					     globalen Kürzeln (C2a). -->
 <section class="cfg-sect">
 						<div class="h">{$t('settings.mode_hotkeys')}</div>
 						{#each modeHotkeyFields as f (f.id)}
@@ -8236,7 +8262,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<span><kbd>↵</kbd>{$t('search.open_in_browser')}</span>
 					{:else if mTab === 'shop'}
 						{#if cfg?.uex_secret_key_set}
-							<span><kbd>F5</kbd>{$t('search.shop_sync')}</span>
+							<span><kbd>{$t('common.ctrl_f5')}</kbd>{$t('search.shop_sync')}</span>
 						{/if}
 						{#if myOffers.length}
 							<span><kbd>↑↓</kbd>{$t('market.tab_shop')}</span>
@@ -8253,14 +8279,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						<span><kbd>↑↓</kbd>{$t('market.tab_routes')}</span>
 						<span><kbd>↵</kbd>{$t('common.detail')}</span>
 						<span><kbd>P</kbd>{$t('pins.pin_hint')}</span>
-						<span><kbd>F5</kbd>{$t('search.route_sweep')}</span>
+						<span><kbd>{$t('common.ctrl_f5')}</kbd>{$t('search.route_sweep')}</span>
 						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{:else}
 						<span><kbd>↑↓</kbd>{$t('market.tab_offers')}</span>
 						<span><kbd>{$t('search.alt_hotkeys')}</kbd>{$t('search.offer')}</span>
 						<span><kbd>↵</kbd>{$t('common.detail')}</span>
 						<span><kbd>P</kbd>{$t('pins.pin_hint')}</span>
-						<span><kbd>F5</kbd>{$t('search.market_sync')}</span>
+						<span><kbd>{$t('common.ctrl_f5')}</kbd>{$t('search.market_sync')}</span>
 						<span><kbd>Esc</kbd>{$t('search.back_to_search_lower')}</span>
 					{/if}
 				{:else if inDetail}
