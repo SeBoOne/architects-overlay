@@ -64,6 +64,22 @@
 		};
 		attribution: string;
 	};
+	// Ort-Detail (M7-F2): `location-ores/{location}` — Erze am Ort, nach
+	// Konzentration absteigend (liefert die API bereits). Reine Info, kein Pin.
+	type OreRow = {
+		oreId: string;
+		name: string;
+		concentration: number;
+		tier: number;
+		tierName: string;
+		scanSignature: number | null;
+	};
+	type LocationOresResponse = {
+		location: { id: string; name: string; system: string; kind: string };
+		ores: OreRow[];
+		count: number;
+		attribution: string;
+	};
 	type StrataStatus = {
 		enabled: boolean;
 		key_set: boolean;
@@ -97,6 +113,10 @@
 	let detailLoading = $state(false);
 	let detailError = $state('');
 	let sortParam = $state<'rank' | 'concentration'>('rank');
+	// Ort-Detail (M7-F2)
+	let locDetail = $state<LocationOresResponse | null>(null);
+	let locDetailLoading = $state(false);
+	let locDetailError = $state('');
 	// Pin-Feedback (Statuszeile unten, Muster f5Msg)
 	let note = $state('');
 	let noteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -210,6 +230,26 @@
 		detailError = '';
 	}
 
+	// Ort-Detail (M7-F2): `strata_location_ores` — Erze am Ort (reine Info).
+	async function openLocationDetail(loc: Location) {
+		locDetailLoading = true;
+		locDetailError = '';
+		locDetail = null;
+		try {
+			locDetail = await invoke<LocationOresResponse>('strata_location_ores', {
+				location: loc.id
+			});
+			attribution = locDetail.attribution || ATTRIBUTION_FALLBACK;
+		} catch (e) {
+			locDetailError = trError(e);
+		}
+		locDetailLoading = false;
+	}
+	function closeLocationDetail() {
+		locDetail = null;
+		locDetailError = '';
+	}
+
 	// Gruppen-Reihenfolge wie Strata: Haupt-Ziele → explorable Regions →
 	// Caves → Surface. Leere Gruppen entfallen.
 	const GROUPS = [
@@ -235,10 +275,12 @@
 				box_index: index,
 				title: ore.name,
 				kpi: ore.scanSignature === null ? null : String(ore.scanSignature),
+				// Wire-Contract (M7-F2): PinRowDto.idx ist String (pins.ts: PinRow.idx) —
+				// Integer hier bricht pin_add mit "invalid type: integer".
 				rows: [
-					{ idx: 0, name: tr('mining.scan_signature'), value: ore.scanSignature === null ? '—' : String(ore.scanSignature) },
-					{ idx: 1, name: tr('mining.tier'), value: tierName },
-					{ idx: 2, name: tr('mining.category'), value: ore.category ?? '—' }
+					{ idx: '0', name: tr('mining.scan_signature'), value: ore.scanSignature === null ? '—' : String(ore.scanSignature) },
+					{ idx: '1', name: tr('mining.tier'), value: tierName },
+					{ idx: '2', name: tr('mining.category'), value: ore.category ?? '—' }
 				],
 				// Content-Deskriptor — K3 (t_cfea5bea) registriert den Renderer.
 				content: {
@@ -262,6 +304,10 @@
 		if (e.key !== 'Escape') return;
 		e.preventDefault();
 		e.stopPropagation();
+		if (locDetail) {
+			closeLocationDetail();
+			return;
+		}
 		if (detail) {
 			closeDetail();
 			return;
@@ -282,9 +328,8 @@
 	function pct(v: number): number {
 		return Math.max(0, Math.min(100, Math.round(v)));
 	}
-	function tooltipFor(row: LocationRow): string {
-		const conc = Math.round(row.concentration * 1000) / 10;
-		return `${tr('mining.rank')}: ${row.rankPct}% · ${tr('mining.concentration')}: ${conc}% · ${row.tierName}`;
+	function concPct(v: number): string {
+		return (Math.round(v * 1000) / 10).toFixed(1);
 	}
 	const tierLegend = $derived([
 		{ tier: 1, band: '< 1 %' },
@@ -484,9 +529,28 @@
 					</div>
 					<div class="mlist" role="listbox" aria-label={$t('mining.tab_locations')}>
 						{#each filteredLocations as l (l.id)}
-							<div class="lrow" role="option" aria-selected="false" tabindex="0">
-								<span class="mrow-name">{l.name}</span>
-								<span class="mrow-sub">{l.system} · {l.type}</span>
+							<!-- M7-F2: Ort-Zeile öffnet das Ort-Detail (Maus UND Enter) -->
+							<div
+								class="lrow"
+								role="option"
+								aria-selected="false"
+								tabindex="0"
+								onkeydown={(e) => {
+									if (e.key === 'Enter') {
+										e.preventDefault();
+										void openLocationDetail(l);
+									}
+								}}
+							>
+								<button
+									type="button"
+									class="mrow-main"
+									onclick={() => void openLocationDetail(l)}
+									title={l.name}
+								>
+									<span class="mrow-name">{l.name}</span>
+									<span class="mrow-sub">{l.system} · {l.type}</span>
+								</button>
 							</div>
 						{:else}
 							<div class="mnote">{$t('mining.empty')}</div>
@@ -495,12 +559,46 @@
 				{/if}
 			</div>
 
-			<!-- Rechte Spalte: Detail „Orte pro Erz" -->
+			<!-- Rechte Spalte: Detail (Erz-Detail als Karten-Grid / Ort-Detail M7-F2) -->
 			<div class="mdetail">
-				{#if detailLoading}
+				{#if detailLoading || locDetailLoading}
 					<div class="mnote">{$t('mining.loading')}</div>
 				{:else if detailError}
 					<div class="merr">{detailError}</div>
+				{:else if locDetailError}
+					<div class="merr">{locDetailError}</div>
+				{:else if locDetail}
+					<!-- Ort-Detail: „Erze am Ort", nach Konzentration desc (API) — reine Info, kein Pin (Spec K3) -->
+					<div class="md-head">
+						<button
+							type="button"
+							class="mback"
+							onclick={closeLocationDetail}
+							title={$t('common.back_esc')}
+							aria-label={$t('common.back')}>←</button
+						>
+						<span class="md-title">{locDetail.location.name}</span>
+					</div>
+					<div class="md-sub">{locDetail.location.system} · {locDetail.location.kind}</div>
+					{#if locDetail.ores.length === 0}
+						<div class="mnote">{$t('mining.no_ores')}</div>
+					{:else}
+						<div class="lorow" role="list">
+							{#each locDetail.ores as or (or.oreId)}
+								<div class="lorow-line" role="listitem">
+									<span class="lorow-name">{or.name}</span>
+									<span class="lorow-conc" style={`color:${tierColor(or.tier)}`}>{concPct(or.concentration)} %</span
+									>
+									<span class="mtier-badge" style={`--tc:${tierColor(or.tier)}`}
+										>{or.tierName}</span
+									>
+									<span class="lorow-sig"
+										>{$t('mining.scan_signature')}: {or.scanSignature ?? '—'}</span
+									>
+								</div>
+							{/each}
+						</div>
+					{/if}
 				{:else if detail}
 					<div class="md-head">
 						<button
@@ -532,52 +630,74 @@
 								<span class="mg-title">{$t(g.label)}</span>
 								<span class="mg-note">{$t('mining.group_note')}</span>
 							</div>
-							{#each g.rows as row (row.locationId)}
-								<div class="drow" data-tip={tooltipFor(row)}>
-									<svg class="dial" viewBox="0 0 48 48" aria-hidden="true">
-										<!-- Außenring = RANK (durchgehender Bogen, Mint/Akzent) -->
-										<circle class="dial-bg" cx="24" cy="24" r="20" pathLength="100" />
-										<circle
-											class="dial-rank"
-											cx="24"
-											cy="24"
-											r="20"
-											pathLength="100"
-											style={`--p:${pct(row.rankPct)}`}
-										/>
-										<!-- Innenring = CONCENTRATION (dünn, segmentiert, Tier-Farbe) -->
-										<circle
-											class="dial-bg"
-											cx="24"
-											cy="24"
-											r="13"
-											pathLength="100"
-											style={`--tc:${tierColor(row.tier)}`}
-										/>
-										<circle
-											class="dial-conc"
-											cx="24"
-											cy="24"
-											r="13"
-											pathLength="100"
-											style={`--p:${pct(row.concentration * 100)};--tc:${tierColor(row.tier)}`}
-										/>
-										<text class="dial-abbr" x="24" y="23" text-anchor="middle"
-											>{abbrev(detail.ore.name)}</text
-										>
-										<text class="dial-sig" x="24" y="33" text-anchor="middle">{detailOre?.scanSignature ?? '—'}</text>
-									</svg>
-									<div class="drow-main">
-										<span class="drow-name">{row.location}</span>
-										<span class="drow-sub">{row.system} · {row.n} {$t('mining.spawns')}</span>
+							<!-- M7-F2 Karten-Ansicht (User-Option 2): großer Two-Ring-Dial
+							     (≥64px) + rank/concentration als Zahl+Balken-Zeile direkt
+							     sichtbar — lesbar ohne Hover. -->
+							<div class="dcards">
+								{#each g.rows as row (row.locationId)}
+									<div class="dcard">
+										<div class="dcard-top">
+											<span class="dcard-name" title={row.location}>{row.location}</span>
+											<span class="mtier-badge" style={`--tc:${tierColor(row.tier)}`}
+												>{row.tierName}</span
+											>
+										</div>
+										<span class="dcard-sub">{row.system} · {row.n} {$t('mining.spawns')}</span>
+										<svg class="dial" viewBox="0 0 48 48" aria-hidden="true">
+											<circle class="dial-bg" cx="24" cy="24" r="20" pathLength="100" />
+											<circle
+												class="dial-rank"
+												cx="24"
+												cy="24"
+												r="20"
+												pathLength="100"
+												style={`--p:${pct(row.rankPct)}`}
+											/>
+											<circle
+												class="dial-bg"
+												cx="24"
+												cy="24"
+												r="13"
+												pathLength="100"
+												style={`--tc:${tierColor(row.tier)}`}
+											/>
+											<circle
+												class="dial-conc"
+												cx="24"
+												cy="24"
+												r="13"
+												pathLength="100"
+												style={`--p:${pct(row.concentration * 100)};--tc:${tierColor(row.tier)}`}
+											/>
+											<text class="dial-abbr" x="24" y="23" text-anchor="middle"
+												>{abbrev(detail.ore.name)}</text
+											>
+											<text class="dial-sig" x="24" y="33" text-anchor="middle"
+												>{detailOre?.scanSignature ?? '—'}</text
+											>
+										</svg>
+										<!-- Lesbarkeits-Fallback: exakte Werte als Zahl+Balken (kein Hover nötig) -->
+										<div class="dnums">
+											<div class="dnum">
+												<span class="dnum-l">{$t('mining.rank')}</span>
+												<span class="dnum-v">{row.rankPct} %</span>
+												<span class="dbar"
+													><i style={`width:${pct(row.rankPct)}%;background:var(--accent)`}></i
+												></span>
+											</div>
+											<div class="dnum">
+												<span class="dnum-l">{$t('mining.concentration')}</span>
+												<span class="dnum-v">{concPct(row.concentration)} %</span>
+												<span class="dbar"
+													><i
+														style={`width:${pct(row.concentration * 100)}%;background:${tierColor(row.tier)}`}
+													></i
+												></span>
+											</div>
+										</div>
 									</div>
-									<span class="mtier-badge" style={`--tc:${tierColor(row.tier)}`}
-										>{row.tierName}</span
-									>
-									<!-- Hover-Tooltip: exakte Werte (statische Dial-Labels entfallen) -->
-									<span class="dtip" role="tooltip">{tooltipFor(row)}</span>
-								</div>
-							{/each}
+								{/each}
+							</div>
 						</div>
 					{:else}
 						<div class="mnote">{$t('mining.no_locations')}</div>
@@ -594,7 +714,9 @@
 						{/each}
 					</div>
 				{:else}
-					<div class="mnote">{$t('mining.detail_hint')}</div>
+					<div class="mnote">
+						{$t(view === 'ores' ? 'mining.detail_hint' : 'mining.loc_detail_hint')}
+					</div>
 				{/if}
 			</div>
 		</div>
@@ -812,6 +934,11 @@
 		color: var(--fg, #e8ecf3);
 		flex: 1;
 	}
+	.md-sub {
+		font-size: 11px;
+		color: var(--fgdim, #9aa3b2);
+		margin: -4px 0 8px 30px;
+	}
 	.msort {
 		display: flex;
 		gap: 4px;
@@ -838,24 +965,32 @@
 		font-size: 10px;
 		color: var(--fgdim, #9aa3b2);
 	}
-	.drow {
-		position: relative;
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 6px 8px;
-		border-radius: 3px;
+	/* M7-F2 Karten-Ansicht: 2 Spalten bei breiter Palette, kompakte Höhe */
+	.dcards {
+		display: grid;
+		/* Spec M7-F2: 2 Spalten (auch breite Palette) — Karten bleiben kompakt */
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
 	}
-	.drow:hover {
-		background: color-mix(in srgb, var(--accent) 10%, transparent);
-	}
-	.drow-main {
-		flex: 1;
-		min-width: 0;
+	.dcard {
 		display: flex;
 		flex-direction: column;
+		gap: 4px;
+		padding: 8px 10px;
+		border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+		background: color-mix(in srgb, var(--panel, #11100d) 60%, transparent);
+		border-radius: 3px;
+		min-width: 0;
 	}
-	.drow-name {
+	.dcard-top {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+	.dcard-name {
+		flex: 1;
+		min-width: 0;
 		font-weight: 600;
 		font-size: 13px;
 		color: var(--fg, #e8ecf3);
@@ -863,15 +998,82 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 	}
-	.drow-sub {
+	.dcard-sub {
 		font-size: 11px;
 		color: var(--fgdim, #9aa3b2);
 	}
+	/* Zahl+Balken-Zeile: exakte Werte OHNE Hover lesbar (Lesbarkeits-Fallback) */
+	.dnums {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		margin-top: 2px;
+	}
+	.dnum {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+	}
+	.dnum-l {
+		color: var(--fgdim, #9aa3b2);
+		flex: 0 0 auto;
+	}
+	.dnum-v {
+		color: var(--fg, #e8ecf3);
+		font-weight: 600;
+		flex: 0 0 auto;
+		min-width: 48px;
+	}
+	.dbar {
+		flex: 1;
+		height: 4px;
+		background: color-mix(in srgb, var(--fgdim, #9aa3b2) 25%, transparent);
+		overflow: hidden;
+	}
+	.dbar i {
+		display: block;
+		height: 100%;
+	}
+	/* Ort-Detail (M7-F2): Erze am Ort */
+	.lorow {
+		display: flex;
+		flex-direction: column;
+	}
+	.lorow-line {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 4px;
+		border-bottom: 1px solid color-mix(in srgb, var(--fgdim, #9aa3b2) 15%, transparent);
+	}
+	.lorow-name {
+		flex: 1;
+		min-width: 0;
+		font-weight: 600;
+		font-size: 13px;
+		color: var(--fg, #e8ecf3);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.lorow-conc {
+		font-size: 12px;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+	.lorow-sig {
+		font-size: 11px;
+		color: var(--fgdim, #9aa3b2);
+		white-space: nowrap;
+	}
 	/* Two-Ring-Dial */
 	.dial {
-		width: 44px;
-		height: 44px;
+		/* M7-F2: großer Dial in der Karten-Ansicht (min. ~64px) */
+		width: 72px;
+		height: 72px;
 		flex: 0 0 auto;
+		margin: 4px auto 0;
 	}
 	.dial circle {
 		fill: none;
@@ -896,30 +1098,12 @@
 	}
 	.dial-abbr {
 		fill: var(--fg, #e8ecf3);
-		font-size: 9px;
+		font-size: 11px;
 		font-weight: 700;
 	}
 	.dial-sig {
 		fill: var(--fgdim, #9aa3b2);
-		font-size: 7px;
-	}
-	/* Hover-Tooltip (exakte Werte) */
-	.dtip {
-		position: absolute;
-		top: 100%;
-		left: 56px;
-		display: none;
-		background: var(--panel, #11100d);
-		border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-		color: var(--fg, #e8ecf3);
-		font-size: 11px;
-		padding: 4px 8px;
-		white-space: nowrap;
-		z-index: 5;
-		pointer-events: none;
-	}
-	.drow:hover .dtip {
-		display: block;
+		font-size: 8px;
 	}
 	/* Legende */
 	.mlegend {

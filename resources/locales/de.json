@@ -1151,6 +1151,8 @@
     "mining.category": "Kategorie",
     "mining.concentration": "Konzentration",
     "mining.detail_hint": "Erz links wählen — die besten Orte erscheinen hier, gruppiert nach Umgebung.",
+    "mining.loc_detail_hint": "Ort links wählen — die dort gefundenen Erze erscheinen hier, sortiert nach Konzentration.",
+    "mining.no_ores": "Für diesen Ort sind keine Erze bekannt.",
     "mining.disabled_body": "Der Mining-Modus ist ausgeschaltet. Aktiviere ihn in den Einstellungen (Gruppe Daten & Dienste), um Erze und Orte von Strata zu durchsuchen.",
     "mining.disabled_title": "Mining-Modus ist aus",
     "mining.empty": "Keine Treffer.",
