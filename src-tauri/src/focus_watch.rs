@@ -22,6 +22,9 @@
 #[cfg(windows)]
 const POLL_MS: u64 = 400;
 
+use std::sync::atomic::Ordering;
+use tauri::Manager;
+
 /// Pure Entscheidung: sollen die Pins JETZT ungemappt werden?
 /// Spiegel des Linux-Zweigs in overlay.rs (fremder Fokus, pins-only aktiv):
 /// - Palette muss verborgen sein (user_visible=false) — bei offener Palette
