@@ -34,28 +34,28 @@
 		slug: string;
 		category: string | null; // 'ship' | 'fps' | 'ground_vehicle' — null-fähig
 		tier: number | null; // null-check, nie truthiness
-		scan_signature: number | null; // 0 ist gültige Daten
+		scanSignature: number | null; // 0 ist gültige Daten
 		instability: number | null;
 		resistance: number | null;
 	};
 	type OresResponse = { ores: Ore[]; count: number; attribution: string };
-	type Location = { id: string; name: string; slug: string; system: string; kind: string };
+	type Location = { id: string; name: string; slug: string; system: string; type: string };
 	type LocationsResponse = { locations: Location[]; count: number; attribution: string };
 	type LocationRow = {
-		location_id: string;
+		locationId: string;
 		location: string;
 		system: string;
-		rank_pct: number;
+		rankPct: number;
 		rank: number;
 		n: number;
 		concentration: number;
 		tier: number;
-		tier_name: string;
+		tierName: string;
 	};
 	type OreLocationsResponse = {
 		ore: { id: string; name: string };
 		sort: string;
-		tier_legend: Record<string, string> | null;
+		tierLegend: Record<string, string> | null;
 		results: {
 			space: LocationRow[];
 			surface: LocationRow[];
@@ -170,14 +170,14 @@
 		})
 	);
 	const systems = $derived([...new Set(locations.map((l) => l.system))].sort());
-	const locTypes = $derived([...new Set(locations.map((l) => l.kind))].sort());
+	const locTypes = $derived([...new Set(locations.map((l) => l.type))].sort());
 	const filteredLocations = $derived(
 		locations.filter((l) => {
 			const q = locQuery.trim().toLowerCase();
 			if (q && !(l.name.toLowerCase().includes(q) || l.slug.toLowerCase().includes(q)))
 				return false;
 			if (sysFilter !== 'all' && l.system !== sysFilter) return false;
-			if (typeFilter !== 'all' && l.kind !== typeFilter) return false;
+			if (typeFilter !== 'all' && l.type !== typeFilter) return false;
 			return true;
 		})
 	);
@@ -234,9 +234,9 @@
 				view_id: 'mining',
 				box_index: index,
 				title: ore.name,
-				kpi: ore.scan_signature === null ? null : String(ore.scan_signature),
+				kpi: ore.scanSignature === null ? null : String(ore.scanSignature),
 				rows: [
-					{ idx: 0, name: tr('mining.scan_signature'), value: ore.scan_signature === null ? '—' : String(ore.scan_signature) },
+					{ idx: 0, name: tr('mining.scan_signature'), value: ore.scanSignature === null ? '—' : String(ore.scanSignature) },
 					{ idx: 1, name: tr('mining.tier'), value: tierName },
 					{ idx: 2, name: tr('mining.category'), value: ore.category ?? '—' }
 				],
@@ -245,7 +245,7 @@
 					type: 'scan-signature',
 					oreId: ore.id,
 					oreName: ore.name,
-					scanSignature: ore.scan_signature,
+					scanSignature: ore.scanSignature,
 					tier: ore.tier,
 					category: ore.category
 				},
@@ -284,7 +284,7 @@
 	}
 	function tooltipFor(row: LocationRow): string {
 		const conc = Math.round(row.concentration * 1000) / 10;
-		return `${tr('mining.rank')}: ${row.rank_pct}% · ${tr('mining.concentration')}: ${conc}% · ${row.tier_name}`;
+		return `${tr('mining.rank')}: ${row.rankPct}% · ${tr('mining.concentration')}: ${conc}% · ${row.tierName}`;
 	}
 	const tierLegend = $derived([
 		{ tier: 1, band: '< 1 %' },
@@ -486,7 +486,7 @@
 						{#each filteredLocations as l (l.id)}
 							<div class="lrow" role="option" aria-selected="false" tabindex="0">
 								<span class="mrow-name">{l.name}</span>
-								<span class="mrow-sub">{l.system} · {l.kind}</span>
+								<span class="mrow-sub">{l.system} · {l.type}</span>
 							</div>
 						{:else}
 							<div class="mnote">{$t('mining.empty')}</div>
@@ -532,7 +532,7 @@
 								<span class="mg-title">{$t(g.label)}</span>
 								<span class="mg-note">{$t('mining.group_note')}</span>
 							</div>
-							{#each g.rows as row (row.location_id)}
+							{#each g.rows as row (row.locationId)}
 								<div class="drow" data-tip={tooltipFor(row)}>
 									<svg class="dial" viewBox="0 0 48 48" aria-hidden="true">
 										<!-- Außenring = RANK (durchgehender Bogen, Mint/Akzent) -->
@@ -543,7 +543,7 @@
 											cy="24"
 											r="20"
 											pathLength="100"
-											style={`--p:${pct(row.rank_pct)}`}
+											style={`--p:${pct(row.rankPct)}`}
 										/>
 										<!-- Innenring = CONCENTRATION (dünn, segmentiert, Tier-Farbe) -->
 										<circle
@@ -565,14 +565,14 @@
 										<text class="dial-abbr" x="24" y="23" text-anchor="middle"
 											>{abbrev(detail.ore.name)}</text
 										>
-										<text class="dial-sig" x="24" y="33" text-anchor="middle">{detailOre?.scan_signature ?? '—'}</text>
+										<text class="dial-sig" x="24" y="33" text-anchor="middle">{detailOre?.scanSignature ?? '—'}</text>
 									</svg>
 									<div class="drow-main">
 										<span class="drow-name">{row.location}</span>
 										<span class="drow-sub">{row.system} · {row.n} {$t('mining.spawns')}</span>
 									</div>
 									<span class="mtier-badge" style={`--tc:${tierColor(row.tier)}`}
-										>{row.tier_name}</span
+										>{row.tierName}</span
 									>
 									<!-- Hover-Tooltip: exakte Werte (statische Dial-Labels entfallen) -->
 									<span class="dtip" role="tooltip">{tooltipFor(row)}</span>
