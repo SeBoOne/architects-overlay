@@ -86,6 +86,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "strata-client",
  "tauri",
  "tauri-build",
  "tauri-plugin-global-shortcut",

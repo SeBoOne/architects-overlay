@@ -32,7 +32,11 @@
 
 ## Entschiedene Defaults (User-Antworten blieben aus — jederzeit änderbar)
 
-1. **Modus-Taste F5** (Lücke im Raster: F1–F4, F11, F12).
+1. **Modus-Taste F5** (Lücke im Raster: F1–F4, F11, F12). Umsetzung
+   (K2): F5 ist kein reservierter Mode-Slot mehr, bleibt aber
+   kontextsensitiver Resync in Market/Detail — außerhalb dieser Kontexte
+   schaltet F5 auf Mining (beide Pfade koexistieren, Probe
+   `f5-in-market-still-resync`).
 2. **Quality-800-Falle:** Die API hat KEINE Spawn-Qualität. Statt
    Qualitätsfilter eine **einstellbare Concentration-Tier-Schwelle pro Liste**
    (Default: Tier 4 „Notable"+). „mindestens Qualität 800" ist mit dieser

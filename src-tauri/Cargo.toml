@@ -26,6 +26,7 @@ tauri-build = { version = "2.7.3", features = [] }
 # stable boundary the providers plug into.
 provider = { path = "../crates/provider" }
 uex_client = { path = "../crates/uex-client" }
+strata-client = { path = "../crates/strata-client" }
 cache = { path = "../crates/cache" }
 scwiki_client = { path = "../crates/scwiki-client" }
 game_detection = { path = "../crates/game-detection" }

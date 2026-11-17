@@ -30,6 +30,8 @@ const URLS: &[(&str, &str)] = &[
         "releases",
         "https://github.com/SeBoOne/architects-overlay/releases",
     ),
+    // M7-K2 (t_bb3303d0): Strata API-Key Self-Service (ToS: eigener Key).
+    ("strata_api_keys", "https://strata.celd.space/api-keys"),
 ];
 
 /// Einen Info-Popup-Link im Systembrowser öffnen. Reine externe Navigation —

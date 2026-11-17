@@ -3,12 +3,14 @@
 // Frontend cai nos Defaults quando o snapshot ainda não tem o campo
 // (SSR/Probe/Config antiga = Migration automática para a nova Belegung).
 
-export type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings';
+export type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'mining';
 
 export type ModeHotkeys = Record<Mode, string>;
 
-/// F5 fica reservado para o Resync contextual (B2) — nunca é tecla de modo.
-export const MODE_HOTKEY_RESERVED = 'F5';
+// M7-K2 (t_bb3303d0): F5 ist keine reservierte Taste mehr — der Mining-Modus
+// belegt sie per Default; der kontextsensitive Resync (B2) teilt sie sich
+// kontextabhängig (Market/Detail — der Modus-Wechsel greift nur außerhalb
+// dieser Kontexte, siehe F5-Pfad in +page.svelte).
 
 /// Nova Belegung (B1): Hangar → F11 (raramente usado), Handelsrouten → F3
 /// (pertinho do F2/Marktplatz), Inventar → F4. F2 Marktplatz e F12 Settings
@@ -19,7 +21,8 @@ export const DEFAULT_MODE_HOTKEYS: ModeHotkeys = {
 	routes: 'F3',
 	inventory: 'F4',
 	hangar: 'F11',
-	settings: 'F12'
+	settings: 'F12',
+	mining: 'F5'
 };
 
 const FKEY_RE = /^F([1-9]|1[0-2])$/;
@@ -30,13 +33,12 @@ export function normalizeFkey(raw: string): string | null {
 	return FKEY_RE.test(key) ? key : null;
 }
 
-/** Valididade de um Map inteiro: F-Keys válidos, F5 reservado, sem duplicatas. */
+/** Valididade de um Map inteiro: F-Keys válidos, sem duplicatas (M7-K2: F5 é o Default de Mining). */
 export function validateModeHotkeys(hk: ModeHotkeys): string | null {
 	const seen: string[] = [];
 	for (const mode of Object.keys(hk) as Mode[]) {
 		const key = normalizeFkey(hk[mode] ?? '');
 		if (!key) return `${mode}: apenas F1–F12`;
-		if (key === MODE_HOTKEY_RESERVED) return `${mode}: F5 é reservado para o Resync`;
 		if (seen.includes(key)) return `${mode}: ${key} já está em uso`;
 		seen.push(key);
 	}
