@@ -6,19 +6,25 @@
 use std::collections::BTreeMap;
 
 use strata_client::{
-    LocationOresResponse, LocationsResponse, OreLocationsResponse, OresResponse, error_key,
-    keystore,
+    LocationOresResponse, LocationRow, LocationsResponse, OreLocationsResponse, OresResponse,
+    error_key, keystore,
 };
 
 // ---- Spec-Beispiel: GET /api/public/ores ----------------------------------
 
 #[test]
 fn ores_spec_example_parses() {
+    // M7-F1: Live-Contract (Fixtures-live) — `tier` ist String-Rarity, NICHT
+    // die i64-Zahl aus dem (stalen) Spec-Beispiel. instability/resistance
+    // sind unbeschränkte f64 (350! / negativ kommen live vor).
     let json = r#"{
       "ores": [
         { "id": "beryl_raw", "name": "Beryl (Raw)", "slug": "beryl",
-          "tier": 3, "category": "ship", "scanSignature": 1350,
-          "instability": 0.05, "resistance": 0.1 }
+          "tier": "uncommon", "category": "ship", "scanSignature": 1350,
+          "instability": 0.05, "resistance": 0.1 },
+        { "id": "agricium_ore", "name": "Agricium (Ore)", "slug": "agricium",
+          "tier": "uncommon", "category": "ship", "scanSignature": 3885,
+          "instability": 350, "resistance": -0.4 }
       ],
       "count": 38,
       "attribution": "Data from celd.space / Strata Mining Tools"
@@ -31,9 +37,24 @@ fn ores_spec_example_parses() {
     );
     let ore = &r.ores[0];
     assert_eq!(ore.id, "beryl_raw");
-    assert_eq!(ore.tier, Some(3));
+    assert_eq!(
+        ore.tier.as_deref(),
+        Some("uncommon"),
+        "tier = Rarity-String"
+    );
     assert_eq!(ore.scan_signature, Some(1350));
     assert_eq!(ore.instability, Some(0.05));
+    // Unbeschränkte Werte (live verifiziert) ohne Clamp durchgereicht:
+    assert_eq!(
+        r.ores[1].instability,
+        Some(350.0),
+        "350 ist live-Realität — kein Clamp"
+    );
+    assert_eq!(
+        r.ores[1].resistance,
+        Some(-0.4),
+        "negativ ist live-Realität — kein Clamp"
+    );
 }
 
 /// Null-Disziplin: null-Felder → Option(None), und 0.0-Werte sind GÜLTIGE
@@ -164,6 +185,117 @@ fn location_ores_spec_example_parses() {
     // Konzentration 0.0 + scanSignature null: BEIDES muss sauber halten.
     assert_eq!(r.ores[1].concentration, 0.0);
     assert!(r.ores[1].scan_signature.is_none());
+}
+
+// ---- M7-F1: LIVE-Fixtures (echte celd.space-Responses, 2026-11-17) --------
+//
+// Die Live-Responses sind der Contract — die OpenAPI-Spec-Beispiele sind
+// STALE (ores.tier ist live String-Rarity, instability/resistance
+// unbeschränkt, system kann "None" sein). Alle 4 Endpunkte müssen gegen
+// die echten Payloads deserialisieren.
+
+#[test]
+fn fixtures_live_ores_parse() {
+    let raw = include_str!("fixtures-live/ores.live.json");
+    let r: OresResponse = serde_json::from_str(raw).expect("ores.live.json muss deserialisieren");
+    assert!(r.count > 0);
+    assert_eq!(r.ores.len() as u64, r.count, "count = Anzahl der Erze");
+    // Rarity-Strings statt Zahlen — der User-Bug („expected i64“) ist damit
+    // historisch:
+    let rarities: Vec<&str> = r.ores.iter().filter_map(|o| o.tier.as_deref()).collect();
+    assert!(
+        !rarities.is_empty(),
+        "live mindestens ein Rarity-String vorhanden"
+    );
+    assert!(
+        rarities
+            .iter()
+            .all(|t| matches!(*t, "common" | "uncommon" | "rare" | "epic" | "legendary")),
+        "Rarity-Vokabular: {rarities:?}"
+    );
+    // Unbeschränkte Instability/Resistance bleiben unclamp't erhalten:
+    assert!(
+        r.ores
+            .iter()
+            .any(|o| o.instability.is_some_and(|v| v > 1.0)),
+        "live existiert instability > 1.0 (Spec-Range war falsch)"
+    );
+    assert!(
+        r.ores.iter().any(|o| o.resistance.is_some_and(|v| v < 0.0)),
+        "live existiert resistance < 0.0"
+    );
+    assert!(!r.attribution.is_empty(), "Attribution Pflicht");
+}
+
+#[test]
+fn fixtures_live_locations_parse() {
+    let raw = include_str!("fixtures-live/locations.live.json");
+    let r: LocationsResponse =
+        serde_json::from_str(raw).expect("locations.live.json muss deserialisieren");
+    assert!(r.count > 0);
+    assert_eq!(r.locations.len() as u64, r.count);
+    // system kann null sein (Dungeons ohne System-Zuordnung); type-Umfang
+    // geht über die Spec-Beispiele hinaus — beides robust gehalten:
+    assert!(
+        r.locations.iter().any(|l| l.system.is_none()),
+        "live existiert system=null (Dungeons)"
+    );
+    let types: Vec<&str> = r.locations.iter().map(|l| l.kind.as_str()).collect();
+    for expected in [
+        "asteroid_field",
+        "asteroid_cluster",
+        "station",
+        "lagrange_point",
+        "moon",
+        "planet",
+        "dungeon",
+    ] {
+        assert!(
+            types.contains(&expected),
+            "live-Typ {expected} muss vorkommen"
+        );
+    }
+    assert!(!r.attribution.is_empty());
+}
+
+#[test]
+fn fixtures_live_ore_locations_parse() {
+    let raw = include_str!("fixtures-live/ore-locations.gold_ore.live.json");
+    let r: OreLocationsResponse =
+        serde_json::from_str(raw).expect("ore-locations.live.json muss deserialisieren");
+    assert_eq!(r.ore.id, "gold_ore");
+    assert_eq!(r.sort, "rank");
+    // Spec-konform: Tier-Zahl 1–6 + tierName bleiben i64/String.
+    let rows: Vec<&LocationRow> = [
+        r.results.space.iter(),
+        r.results.surface.iter(),
+        r.results.cave.iter(),
+        r.results.exploration.iter(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    assert!(
+        rows.iter().all(|row| (1..=6).contains(&row.tier)),
+        "ore-locations-Tier bleibt 1–6 (Spec korrekt)"
+    );
+    assert!(rows.iter().all(|row| !row.tier_name.is_empty()));
+    assert!(!r.attribution.is_empty());
+}
+
+#[test]
+fn fixtures_live_location_ores_parse() {
+    let raw = include_str!("fixtures-live/location-ores.aaronhalo.live.json");
+    let r: LocationOresResponse =
+        serde_json::from_str(raw).expect("location-ores.live.json muss deserialisieren");
+    assert_eq!(r.location.id, "aaronhalo");
+    assert!(r.count > 0);
+    assert_eq!(r.ores.len() as u64, r.count);
+    assert!(
+        r.ores.iter().all(|o| (1..=6).contains(&o.tier)),
+        "location-ores-Tier bleibt 1–6 (Spec korrekt)"
+    );
+    assert!(!r.attribution.is_empty());
 }
 
 // ---- Fehler-i18n-Keys -------------------------------------------------------

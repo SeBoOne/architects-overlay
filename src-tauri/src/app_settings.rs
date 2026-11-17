@@ -633,8 +633,8 @@ pub fn settings_set_strata_enabled(
 /// PB (t_1c9bc240, B1): EINEN Mode-Hotkey setzen (nur die konfigurierbaren
 /// Slots — F1 Suche und F12 Einstellungen bleiben fest).
 /// Validierung: gültiger F-Key (F1–F12), keine Doppelbelegung (Settings-
-/// Crate). Seit M7-K2 (t_bb3303d0) ist F5 keine reservierte Taste mehr —
-/// der Mining-Slot belegt sie per Default; Doppelbelegung bleibt abgelehnt.
+/// Crate). Seit M7-F1 gehört F5 ALLEIN dem Mining-Slot (Default); der
+/// Resync läuft auf STRG+F5 — Doppelbelegung bleibt abgelehnt.
 #[tauri::command]
 pub fn settings_set_mode_hotkey(
     state: tauri::State<SettingsState>,

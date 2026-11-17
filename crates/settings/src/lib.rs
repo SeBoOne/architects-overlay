@@ -190,10 +190,10 @@ pub const DEFAULT_CLICK_SHORTCUT: &str = "Ctrl+Shift+O";
 
 /// Hotkeys, die die Overlay-UI selbst verarbeitet, solange das Overlay
 /// fokussiert ist (onKey in +page.svelte). Die In-App-Handler prüfen KEINE
-/// Mod-Tasten (`k === 'F5'` feuert auch bei Strg+F5), ein globales Kürzel auf
-/// denselben Tasten würde also IMMER beide Aktionen auslösen — daher als
-/// Konflikt abgelehnt und in der Fehlermeldung als Konfliktliste sichtbar.
-/// (F7–F11 sind frei.)
+/// Mod-Tasten (`k === 'F5'` feuert auch bei Strg+F5 — seit M7-F1 GEWOLLT:
+/// Strg+F5 ist der Resync), ein globales Kürzel auf denselben Tasten würde
+/// also IMMER beide Aktionen auslösen — daher als Konflikt abgelehnt und in
+/// der Fehlermeldung als Konfliktliste sichtbar. (F7–F11 sind frei.)
 pub const RESERVED_INTERNAL_KEYS: &[(&str, &str)] = &[
     ("F1", "reserved.mode_search"),
     ("F2", "reserved.market"),
@@ -752,8 +752,10 @@ impl ModeHotkeys {
 }
 
 /// Reservierte Taste für CONNECTOR-Hotkey-Slots: F5 gehört per Default dem
-/// Mining-Modus (M7-K2) und darf von Connectors nicht belegt werden —
-/// `ModeHotkeys::validate` selbst prüft sie NICHT mehr (Mining nutzt F5).
+/// Mining-Modus (M7-K2; seit M7-F1 ALLEIN — der Resync läuft auf STRG+F5)
+/// und darf von Connectors nicht belegt werden — `ModeHotkeys::validate`
+/// selbst blockiert F5 NICHT (Mining-Slot ist frei konfigurierbar, nur
+/// Doppelbelegung wird abgelehnt).
 pub const MODE_HOTKEY_RESERVED: &str = "F5";
 
 /// Kanonische Form eines F-Keys: "F" + Zahl 1..12 (Trim + Uppercase).

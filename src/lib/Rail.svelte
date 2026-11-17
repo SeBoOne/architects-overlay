@@ -29,6 +29,9 @@
 		hotkeys,
 		// C2 (t_91124322): eigene Bereiche aktivierter own-Connectors —
 		// dynamische Einträge zwischen Hangar und Settings (Placement-Konzept).
+		// M7-F1 (Bug 3): Mining-Eintrag NUR bei Strata enabled + Key gesetzt —
+		// im disabled-Zustand GAR NICHT rendern (kein grauer Slot).
+		miningAvailable = true,
 		ownEntries = [],
 		ownActive = null,
 		onselectOwn
@@ -37,13 +40,15 @@
 		compact?: boolean;
 		onselect: (m: Mode) => void;
 		hotkeys?: Partial<Record<Mode, string>>;
+		miningAvailable?: boolean;
 		ownEntries?: { id: string; key: string; label: string }[];
 		ownActive?: string | null;
 		onselectOwn: (id: string) => void;
 	} = $props();
 
 	// Inventar/Hangar: eigene Karten — hier nur Rail-Eintrag + Platzhalter-View.
-	const ENTRIES: Entry[] = [
+	// M7-F1 (Bug 3): Mining-Entry dynamisch gefiltert (miningAvailable).
+	const BASE_ENTRIES: Entry[] = [
 		{ id: 'search', key: 'F1', label: 'nav.search', title: 'nav.search_title', icon: 'search' },
 		{ id: 'market', key: 'F2', label: 'nav.marketplace', title: 'nav.marketplace_title', icon: 'market' },
 		{ id: 'routes', key: 'F3', label: 'nav.routes', title: 'nav.routes_title', icon: 'routes' },
@@ -53,6 +58,7 @@
 		{ id: 'hangar', key: 'F11', label: 'nav.hangar', title: 'nav.hangar_title', icon: 'hangar' },
 		{ id: 'settings', key: 'F12', label: 'nav.settings', title: 'nav.settings_title', icon: 'settings' }
 	];
+	const ENTRIES = $derived(BASE_ENTRIES.filter((en) => en.id !== 'mining' || miningAvailable));
 
 	// PB (t_1c9bc240, B1): angezeigte Taste = persistierter Wert (Settings-
 	// Snapshot) mit Fallback auf die Defaults — identische Quelle wie der
