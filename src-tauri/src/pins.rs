@@ -562,6 +562,10 @@ pub fn pin_add<R: tauri::Runtime>(
     // M6-F3: neue Pins erben den globalen Standard-Deckkraft-Wert aus den
     // Settings (kein hartes 100 mehr) — vor dem &mut-Borrow der Liste lesen.
     let opacity = s.pins_default_opacity();
+    // Win-Befund (2026-11-17): pins.enabled=false + pin_add → Pins verschwinden
+    // beim Overlay-Schließen (Pins-only braucht enabled, die Palette rendert
+    // ohne). Anheften impliziert Anzeige-Wunsch → einmalig auto-enable.
+    let was_enabled = s.pins().map(|p| p.enabled).unwrap_or(false);
     let section = s.pins_mut_entry();
     if section
         .iter()
@@ -617,6 +621,13 @@ pub fn pin_add<R: tauri::Runtime>(
     // Pin-Set geändert → alle Anzeigen (incl. eigene) nachziehen.
     let _ = app.emit(PINS_CHANGED_EVENT, true);
     drop(s);
+    // Auto-enable NACH dem Lock-Drop (pins_set_enabled lockt selbst). Das
+    // synced die Tray-Checkbox und fährt refresh_visibility — der
+    // Pins-only-Modus ist damit beim nächsten Overlay-Schließen aktiv.
+    if !was_enabled {
+        log::warn!("pin_add: pins.enabled war false — auto-enable (Pins-only-Vertrag)");
+        pins_set_enabled(app.clone(), true);
+    }
     notify_changed(&app);
     crate::overlay::refresh_visibility(&app);
     true
