@@ -1,0 +1,12 @@
+feat(pins): M7-K3 (t_cfea5bea) Pin-Content-Typ scan-signature
+
+Generischer Renderer (Payload {label, value, tier?, max?}): Ore-Label,
+Wert (null -> Anzeige als em-dash, Pin bleibt), Orientierungsbalken
+relativ zum Chart-Max (sigBarPct, clamp 0..100), Tier-Badge T1..T6.
+Seitenstark registriert in PinBoxes (Registry M6-F1, kein Strata-
+Vokabular im Pins-Kern), Pin-Vertrag unveraendert (reine Anzeige,
+Pins-only-Renderer-Pfad m7-k3-Probe D belegt).
+
+Unit-Tests scan-signature.test.ts (6), CDP-Probe
+docs/scripts/m7-k3-scan-signature-probe.py 18 PASS/0 FAIL +
+Screenshots. Version 0.5.56.

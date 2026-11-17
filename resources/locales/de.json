@@ -1141,6 +1141,8 @@
     "pins.close_title": "Box schließen (Pin entfernen)",
     "pins.size_title": "Größe regeln",
     "pins.resize_title": "Boxgröße ändern (Ecke ziehen)",
+    "pins.scan_title": "Scan-Signatur",
+    "pins.scan_bar_title": "Signatur relativ zum Chart-Maximum",
     "pins.empty": ""
   }
 }
