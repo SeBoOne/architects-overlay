@@ -373,8 +373,11 @@ async def main():
         check("loc-detail-type-translated", sub2 == "Stanton · Lagrange Point", sub2)
         await shot("05-location-detail-en.png")
 
-    server.terminate(); proc.terminate()
-    print(f"\n{len(PASS)} PASS / {len(FAIL)} FAIL")
+        try:
+            server.terminate(); proc.terminate()
+        except ProcessLookupError:
+            pass  # chromium beendet sich teils selbst — Cleanup ist best effort
+        print(f"\n{len(PASS)} PASS / {len(FAIL)} FAIL")
     if FAIL:
         print("FAILED:", ", ".join(FAIL))
         raise SystemExit(1)

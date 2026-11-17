@@ -1158,6 +1158,7 @@
 	}
 	.dnum {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 6px;
 		font-size: 11px;
@@ -1173,8 +1174,10 @@
 		min-width: 52px;
 	}
 	.dbar {
-		flex: 1;
-		height: 4px;
+		/* Volle Zeilenbreite (eigene Zeile unter Label+Wert) — flex:1 schrumpfte
+		   auf 0px, wenn Label+Wert die Zeile füllten (Review-Befund Runde 3). */
+		flex-basis: 100%;
+		height: 5px;
 		background: color-mix(in srgb, var(--fgdim, #9aa3b2) 25%, transparent);
 		overflow: hidden;
 	}
@@ -1189,10 +1192,12 @@
 	}
 	.seg-line {
 		position: absolute;
-		top: -1px;
-		bottom: -1px;
+		top: -2px;
+		bottom: -2px;
 		width: 1px;
-		background: color-mix(in srgb, var(--panel, #11100d) 80%, transparent);
+		/* Dezent, aber ERKENNBAR: helle Linie, auch über der Füllung sichtbar. */
+		background: color-mix(in srgb, var(--fg, #e8ecf3) 60%, transparent);
+		z-index: 1;
 	}
 	/* Ort-Detail (M7-F2): Erze am Ort */
 	.lorow {
