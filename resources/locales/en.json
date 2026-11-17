@@ -1152,6 +1152,8 @@
     "mining.category": "Category",
     "mining.concentration": "Concentration",
     "mining.detail_hint": "Pick an ore on the left — its best locations appear here, grouped by environment.",
+    "mining.loc_detail_hint": "Pick a location on the left — the ores found there appear here, sorted by concentration.",
+    "mining.no_ores": "No ores known for this location.",
     "mining.disabled_body": "The mining mode is switched off. Enable it in the settings (section Data & services) to search ores and locations from Strata.",
     "mining.disabled_title": "Mining mode is off",
     "mining.empty": "No matches.",

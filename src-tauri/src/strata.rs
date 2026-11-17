@@ -167,6 +167,20 @@ pub async fn strata_ore_locations(
         .map_err(|e| strata_error(&e))
 }
 
+/// `GET /api/public/location-ores/{location}` (cache-first) — Erze am Ort,
+/// nach Konzentration absteigend (Ort-Detail, M7-F2 — reine Info, kein Pin).
+#[tauri::command]
+pub async fn strata_location_ores(
+    state: tauri::State<'_, StrataState>,
+    settings: tauri::State<'_, SettingsState>,
+    location: String,
+) -> Result<strata_client::LocationOresResponse, String> {
+    let c = client(&state, &snapshot_of(&settings))?;
+    c.location_ores(location.trim())
+        .await
+        .map_err(|e| strata_error(&e))
+}
+
 /// Keystore-Pfad-Konvention: `app_local_data_dir/strata-key.json` (neben
 /// `cache.sqlite3`) — ein Verzeichnis für alle App-Daten.
 pub fn keystore_path(app: &tauri::AppHandle) -> Option<PathBuf> {
