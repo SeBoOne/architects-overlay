@@ -1127,7 +1127,13 @@
 	}
 	.dcards {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(470px, 1fr));
+		/* F5-Fix (User 2026-11-18): OBERE BREITEN-CAP statt 1fr — eine
+		   Einzelkarte (Gruppe mit 1 Eintrag) dehnte sich sonst auf die volle
+		   Containerbreite (~47 % Leerraum, Badge einsam in der Ecke). Feste
+		   Kartenbreite + justify-content:start = dichte Reihe, letzte
+		   unvollständige Reihe bleibt kartenbreit statt aufzudehnen. */
+		grid-template-columns: repeat(auto-fill, minmax(360px, 430px));
+		justify-content: start;
 		gap: 8px;
 	}
 	.dcard {
@@ -1231,11 +1237,13 @@
 	/* M7-F4 P5: 6 GLEICHE Segmente mit sichtbaren Trennlinien — gefüllt =
 	   Tier-Stufe (1..6), ungefüllt dezent sichtbar (Grenze + leichte Fläche). */
 	.segbar {
-		flex: 1;
+		/* F5-Fix: EIGENE volle Zeile wie der Rank-Balken (flex-basis:100%) —
+		   flex:1 liess den Balken neben Label+Wert schrumpfen (User: „sollte
+		   die selbe Breite wie der Rankbalken beibehalten"). */
+		flex-basis: 100%;
 		display: flex;
 		gap: 2px;
 		height: 7px;
-		min-width: 60px;
 	}
 	.segbar i {
 		flex: 1;
