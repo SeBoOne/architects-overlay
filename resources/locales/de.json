@@ -1203,6 +1203,7 @@
         "settings.strata_mining": "Strata-Mining (celd_-Key)",
         "settings.strata_note": "Der Key liegt lokal im Keystore (strata-key.json) und geht nur an strata.celd.space. Jede Ansicht zeigt die Pflicht-Attribution.",
         "mining.scan_signature": "Scan-Signatur",
+        "mining.sig_short": "Signatur",
         "mining.rank_place": "Nr. {n}",
         "mining.rarity_common": "Normal",
         "mining.rarity_uncommon": "Ungewöhnlich",

@@ -5,7 +5,7 @@
 	import PinChat from './PinChat.svelte';
 	import PinScanSignature from './PinScanSignature.svelte';
 	import PinScanSignatures from './PinScanSignatures.svelte';
-	import { registerPinContent } from './pin-content';
+	import { registerPinContent, hideHeaderKpi } from './pin-content';
 	registerPinContent('deal-chat', PinChat);
 	// M7-K3 (t_cfea5bea): generischer Content-Typ „scan-signature“ (Payload
 	// {label, value, tier?, max?} — scan-signature.ts). Seitenstark wie
@@ -387,7 +387,10 @@ onMount(() => {
 				>
 					<span class="pin-grip" aria-hidden="true"><i></i><i></i><i></i></span>
 					<span class="pin-title">{pin.title}</span>
-					{#if pin.kpi}<span class="pin-kpi">{pin.kpi}</span>{/if}
+					<!-- M7-F4 P1 (Dedupe, t_c3367dfb): Content-Renderer, die den Wert selbst zeigen
+				     (scan-signature(s)), blenden den Kopf-KPI aus — sonst stand die
+				     Signatur 2× („Neben dem Kürzel 2× die Signatur“). -->
+					{#if pin.kpi && !hideHeaderKpi(pin.content?.type)}<span class="pin-kpi">{pin.kpi}</span>{/if}
 					{#if interactive}
 						<button
 							type="button"
