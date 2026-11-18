@@ -35,6 +35,9 @@
 	import { invoke } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	import { oreAbbrev } from './ore-abbrev';
+	// M7-F4 (t_c3367dfb): Rarity-Rampe an EINEM Ort (rarity.ts) — Mode-Badges
+	// und Pin-Chips/Ort-Kacheln teilen sich dieselbe Skala (Konsistenz P2).
+	import { RARITIES, RARITY_COLORS, rarityColor, type Rarity } from './rarity';
 	import { sigToggleEntry, type ScanSignatureEntry } from './scan-signature';
 	import { PINS_CHANGED_EVENT, type PinEntry, type PinsState } from './pins';
 
@@ -139,19 +142,6 @@
 	// ores[].tier ist String-Rarity — die Tier-Zahl 1–6 existiert nur im
 	// Detail (ore-locations/location-ores), dort bleibt tierColor(tier: number)
 	// unverändert. Badge-Rampe: common grau → legendary mint.
-	type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
-	const RARITIES: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
-	const RARITY_COLORS: Record<Rarity, string> = {
-		common: '#8b949e',
-		uncommon: '#a8a23e',
-		rare: '#9dc451',
-		epic: '#6bd694',
-		legendary: '#4be08a'
-	};
-	function rarityColor(rarity: string | null): string | null {
-		if (!rarity) return null;
-		return (RARITY_COLORS as Record<string, string>)[rarity] ?? null;
-	}
 
 	// 6-Stufen-Farbrampe (Orange→Amber→Oliv→Gelbgrün→Hellgrün→Mint) —
 	// absolute Bands (Tier 1–6 der API), überall gleich interpretierbar.
@@ -163,6 +153,12 @@
 		5: '#6bd694',
 		6: '#4be08a'
 	};
+	// M7-F4 P3: Rarity-String fuer eine OreRow (Ort-Detail) — Lookup in der
+	// Erz-Referenzliste (OreRow traegt nur die Tier-Zahl).
+	function rarityOfOreId(oreId: string): string | null {
+		return ores.find((o) => o.id === oreId)?.tier ?? null;
+	}
+
 	function tierColor(tier: number): string {
 		return TIER_COLORS[Math.min(6, Math.max(1, tier))] ?? TIER_COLORS[1];
 	}
@@ -365,7 +361,8 @@
 		}));
 	}
 
-	async function toggleSignaturePin(ore: Ore) {
+	type SigToggleArg = { id: string; name: string; scanSignature: number | null; tier: string | null };
+	async function toggleSignaturePin(ore: SigToggleArg) {
 		try {
 			const st = await invoke<PinsState>('pins_state');
 			const collect = st.pins.find(
@@ -377,8 +374,31 @@
 			const entries = sigToggleEntry(current ?? [], {
 				oreId: ore.id,
 				label: ore.name,
-				value: ore.scanSignature
+				value: ore.scanSignature,
+				// M7-F4 P2: Rarity-String (ores[].tier) in die Payload — der
+				// Pin-Renderer faerbt den Chip ueber rarity.ts.
+				rarity: ore.tier
 			});
+			const isAdd = entries.some((e) => e.oreId === ore.id);
+			if (isAdd) {
+				// M7-F4 P1 (Dedupe): Legacy-Einzelpins (M7-K3, Typ 'scan-signature')
+				// desselben Erzes entfernen — der Wert stünde sonst doppelt auf
+				// der Pin-Flaeche (alter K3-Pin + Sammel-Pin).
+				for (const p of st.pins) {
+					if (!p.pinned || p.view_id !== 'mining') continue;
+					const legacy = p.content as { type?: string; label?: string } | null;
+					if (
+						(p.key === 'scan-signature' || legacy?.type === 'scan-signature') &&
+						legacy?.label === ore.name
+					) {
+						await invoke('pin_remove', {
+							view_id: 'mining',
+							screen: p.screen,
+							box_index: p.box_index
+						});
+					}
+				}
+			}
 			if (entries.length === 0) {
 				// leer → Sammel-Pin wird entfernt (Spec Punkt 2)
 				if (collect) {
@@ -459,21 +479,6 @@
 	// M7-F3 (Punkt 5): Rang als PLATZIERUNG („Nr. 1“ DE / „#1“ EN) — die
 	// Prozentzahl bleibt nur als Balken-Füllung (rankPct-Datenfeld bleibt).
 	const rankPlace = (rank: number) => tr('mining.rank_place', { n: String(rank) });
-	// M7-F3 (Punkt 1): Responsive Karten-Grid — Spalten = floor(Breite /
-	// MIN_CARD_W), clamp(1..6). Die Palette-Shell ist max(70vw, 640px) (K2);
-	// gemessener Overhead links (Sidebar 320px + Paddings/Gaps) ≈ 400px →
-	// Detail ≈ 0.7·Viewport − 400. MIN_CARD_W=420 liefert 4 Spalten bei
-	// ~3440px Palette (Detail ≈ 2006px), 2 Spalten bei ~1800px, 1 Spalte im
-	// kompakten Fenster; sehr breite Screens stufen bis 6 auf.
-	const MIN_CARD_W = 420;
-	const MAX_CARD_COLS = 6;
-	let detailW = $state(0);
-	const cardCols = $derived(
-		Math.max(1, Math.min(MAX_CARD_COLS, Math.floor(detailW / MIN_CARD_W) || 1))
-	);
-	// M7-F3 (Punkt 1): Konzentrations-Stufen — 6 feste Segmente, Gitterlinien
-	// bei 1/4/8/15/25 % (immer 6 Segmente, unabhängig vom Wert).
-	const CONC_STEPS = [1, 4, 8, 15, 25];
 	const tierLegend = $derived([
 		{ tier: 1, band: '< 1 %' },
 		{ tier: 2, band: '1–4 %' },
@@ -718,21 +723,62 @@
 					{#if locDetail.ores.length === 0}
 						<div class="mnote">{$t('mining.no_ores')}</div>
 					{:else}
-						<div class="lorow" role="list">
-							{#each locDetail.ores as or (or.oreId)}
-								<div class="lorow-line" role="listitem">
-									<span class="lorow-name">{or.name}</span>
-									<span class="lorow-conc" style={`color:${tierColor(or.tier)}`}>{concPct(or.concentration)} %</span
+						<!-- M7-F4 P3 (t_c3367dfb): Karten-Design wie im Erz-Detail
+					     (Kuerzel-Kachel 1.25:1 + Signatur + 6-Segment-Balken) statt
+					     Tabelle — und JEDE Karte ist in den Sammel-Signatur-Pin
+					     toggelbar (Rarity-Farbe ueber --rc). -->
+					<div class="dcards" role="list">
+						{#each locDetail.ores as or (or.oreId)}
+							<!-- Keyboard konsistent (bestehendes Muster): der Pin-Button
+							     ist ein nativer Button (Enter/Space); der Karte selbst keine
+							     Non-Interactive-Keyboard-Handler (a11y-Regel svelte-check). -->
+							<div
+								class="dcard locard"
+								role="listitem"
+								style={`--rc:${rarityColor(rarityOfOreId(or.oreId)) ?? '#8b949e'}`}
+							>
+								<div class="locard-top">
+									<span
+										class="ltile"
+										style={`border-color:${rarityColor(rarityOfOreId(or.oreId)) ?? 'var(--lineb)'}`}>{oreAbbrev(or.name)}</span
 									>
-									<span class="mtier-badge" style={`--tc:${tierColor(or.tier)}`}
-										>{tierName(or.tier)}</span
+									<div class="locard-head">
+										<span class="dcard-name" title={or.name}>{or.name}</span>
+										<span class="mtier-badge" style={`--tc:${tierColor(or.tier)}`}
+											>{tierName(or.tier)}</span
+										>
+									</div>
+									<button
+										type="button"
+										class="mpin"
+										class:is-pinned={pinnedOreIds.has(or.oreId)}
+										title={$t('mining.pin_sig_title')}
+										aria-label={$t('mining.pin_sig_title')}
+										aria-pressed={pinnedOreIds.has(or.oreId)}
+										onclick={() => void toggleSignaturePin({ id: or.oreId, name: or.name, scanSignature: or.scanSignature, tier: rarityOfOreId(or.oreId) })}
 									>
-									<span class="lorow-sig"
-										>{$t('mining.scan_signature')}: {or.scanSignature ?? '—'}</span
-									>
+										<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M12 17v5" />
+											<path d="M9 10.8 7 3h10l-2 7.8a5 5 0 0 1-6 0Z" />
+										</svg>
+									</button>
 								</div>
-							{/each}
-						</div>
+								<div class="locard-sig">
+									<span class="locard-sig-l">{$t('mining.sig_short')}</span>
+									<span class="locard-sig-v">{or.scanSignature ?? '—'}</span>
+								</div>
+								<div class="dnum">
+									<span class="dnum-l">{$t('mining.concentration')}</span>
+									<span class="dnum-v">{concPct(or.concentration)} %</span>
+									<!-- M7-F4 P5: 6 GLEICHE Segmente, gefuellt = Tier-Stufe
+									     (OreRow tier 1-6) — Segment-Fuellmodell, NICHT kontinuierlich. -->
+									<span class="segbar" style={`--tc:${tierColor(or.tier)}`} role="img" aria-label={$t('mining.concentration')}>
+										{#each [1, 2, 3, 4, 5, 6] as s (s)}<i class:fill={s <= or.tier}></i>{/each}
+									</span>
+								</div>
+							</div>
+						{/each}
+					</div>
 					{/if}
 				{:else if detail}
 					<div class="md-head">
@@ -764,14 +810,14 @@
 					     Rang-Balken (kontinuierlich, Anzeige als Platz „Nr. X“) +
 					     Konzentrations-Balken (6 feste Stufen, Gitterlinien bei
 					     1/4/8/15/25 %). Responsives Grid (1–6 Spalten). -->
-					<div class="mdetail-scroll" bind:clientWidth={detailW}>
+					<div class="mdetail-scroll">
 					{#each detailGroups as g (g.key)}
 						<div class="mgroup">
 							<div class="mg-head">
 								<span class="mg-title">{$t(g.label)}</span>
 								<span class="mg-note">{$t('mining.group_note')}</span>
 							</div>
-							<div class="dcards" style={`--cols:${cardCols}`}>
+							<div class="dcards">
 								{#each g.rows as row (row.locationId)}
 									<div class="dcard">
 										<div class="dcard-top">
@@ -781,7 +827,7 @@
 											>
 										</div>
 										<!-- Punkt 4: „N spawn sites“ entfernt — die Orte SIND die Spawn-Orte -->
-										<span class="dcard-sub">{row.system}</span>
+										<span class="dcard-sub">{row.system ?? '—'}</span>
 										<div class="dcard-body">
 											<div class="abbr-block" aria-hidden="true">
 												<span class="abbr">{oreAbbrev(detail.ore.name)}</span>
@@ -798,14 +844,9 @@
 												<div class="dnum">
 													<span class="dnum-l">{$t('mining.concentration')}</span>
 													<span class="dnum-v">{concPct(row.concentration)} %</span>
-													<span class="dbar dbar-seg">
-														<i
-															style={`width:${pct(row.concentration * 100)}%;background:${tierColor(row.tier)}`}
-														></i>
-														{#each CONC_STEPS as step (step)}
-															<b class="seg-line" style={`left:${step}%`}></b>
-														{/each}
-													</span>
+<span class="segbar" style={`--tc:${tierColor(row.tier)}`}>
+																				{#each [1, 2, 3, 4, 5, 6] as s (s)}<i class:fill={s <= row.tier}></i>{/each}
+																			</span>
 												</div>
 											</div>
 										</div>
@@ -1077,14 +1118,16 @@
 		font-size: 10px;
 		color: var(--fgdim, #9aa3b2);
 	}
-	/* M7-F3 (Punkt 1): responsives Karten-Grid — Spaltenzahl kommt aus
-	   detailW (bind:clientWidth auf .mdetail-scroll), clamp(1..6). */
+	/* M7-F4 P4 (t_c3367dfb): Grid-DENSITY — minmax so kalibriert, dass bei
+	   breiter Shell (70vw @ 3440 → Detailspalte ~2076px) regelmässig 4 Spalten
+	   entstehen (4×470+3×8 = 1904 ≤ 2076, 5 Spalten brauchen 2382 > 2076);
+	   schmalere Fenster stufen automatisch auf 3/2/1 ab (auto-fill). */
 	.mdetail-scroll {
 		min-width: 0;
 	}
 	.dcards {
 		display: grid;
-		grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+		grid-template-columns: repeat(auto-fill, minmax(470px, 1fr));
 		gap: 8px;
 	}
 	.dcard {
@@ -1185,51 +1228,60 @@
 		display: block;
 		height: 100%;
 	}
-	/* M7-F3: Konzentrations-Balken in 6 FESTE Stufen unterteilt —
-	   Gitterlinien bei 1/4/8/15/25 % (immer sichtbar, unabhängig vom Wert). */
-	.dbar-seg {
-		position: relative;
-	}
-	.seg-line {
-		position: absolute;
-		top: -2px;
-		bottom: -2px;
-		width: 1px;
-		/* Dezent, aber ERKENNBAR: helle Linie, auch über der Füllung sichtbar. */
-		background: color-mix(in srgb, var(--fg, #e8ecf3) 60%, transparent);
-		z-index: 1;
-	}
-	/* Ort-Detail (M7-F2): Erze am Ort */
-	.lorow {
+	/* M7-F4 P5: 6 GLEICHE Segmente mit sichtbaren Trennlinien — gefüllt =
+	   Tier-Stufe (1..6), ungefüllt dezent sichtbar (Grenze + leichte Fläche). */
+	.segbar {
+		flex: 1;
 		display: flex;
-		flex-direction: column;
+		gap: 2px;
+		height: 7px;
+		min-width: 60px;
 	}
-	.lorow-line {
+	.segbar i {
+		flex: 1;
+		background: color-mix(in srgb, var(--fgdim, #9aa3b2) 18%, transparent);
+		border: 1px solid color-mix(in srgb, var(--fgdim, #9aa3b2) 30%, transparent);
+	}
+	.segbar i.fill {
+		background: var(--tc, var(--accent));
+		border-color: var(--tc, var(--accent));
+	}
+	/* M7-F4 P3: Ort-Detail-Karten — Kürzel-Kachel (1.25:1) mit Rarity-Border */
+	.locard-top {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		padding: 6px 4px;
-		border-bottom: 1px solid color-mix(in srgb, var(--fgdim, #9aa3b2) 15%, transparent);
+		min-width: 0;
 	}
-	.lorow-name {
+	.ltile {
+		flex: 0 0 auto;
+		width: 40px;
+		height: 32px; /* 1.25:1 */
+		display: grid;
+		place-items: center;
+		border: 1px solid var(--lineb); /* Rarity-Farbe via inline border-color */
+		background: color-mix(in srgb, var(--rc, var(--lineb)) 10%, transparent);
+		font: 700 10.5px/1 var(--font-mono, monospace);
+		letter-spacing: 0.06em;
+		color: var(--fg, #e8ecf3);
+	}
+	.locard-head {
 		flex: 1;
 		min-width: 0;
-		font-weight: 600;
-		font-size: 13px;
-		color: var(--fg, #e8ecf3);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		display: flex;
+		align-items: center;
+		gap: 6px;
 	}
-	.lorow-conc {
-		font-size: 12px;
-		font-weight: 600;
-		white-space: nowrap;
-	}
-	.lorow-sig {
+	.locard-sig {
+		display: flex;
+		align-items: baseline;
+		gap: 6px;
 		font-size: 11px;
 		color: var(--fgdim, #9aa3b2);
-		white-space: nowrap;
+	}
+	.locard-sig-v {
+		font: 600 12.5px/1.15 var(--font-mono, monospace);
+		color: var(--fg, #e8ecf3);
 	}
 	/* Legende */
 	.mlegend {

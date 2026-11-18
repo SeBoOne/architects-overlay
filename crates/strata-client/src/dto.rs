@@ -120,7 +120,10 @@ pub struct LocationRef {
 pub struct LocationRow {
     pub location_id: String,
     pub location: String,
-    pub system: String,
+    /// Live-Drift (2026-11-18, t_c3367dfb-Smoke): FPS-Cave-Zeilen kommen mit
+    /// `system: null` — wie locations[].system null-fähig (M7-F1-Präzedenz).
+    #[serde(default)]
+    pub system: Option<String>,
     /// 0–100, NUR innerhalb der eigenen Gruppe vergleichbar.
     pub rank_pct: i64,
     /// Wettbewerbs-Rang innerhalb der Gruppe (1 = best, Ties gleicher Rang).

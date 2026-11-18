@@ -5,7 +5,14 @@
 // Tier-Badge) wird hier abgedeckt.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sigBarPct, sigTierBadge, sigValueDisplay } from './scan-signature.ts';
+import {
+	sigBarPct,
+	sigEntries,
+	sigRowsFor,
+	sigTierBadge,
+	sigToggleEntry,
+	sigValueDisplay
+} from './scan-signature.ts';
 
 test('sigValueDisplay: fehlende Daten → „—" (Karten-Spec: pinnt trotzdem)', () => {
 	assert.equal(sigValueDisplay(null), '—');
@@ -46,4 +53,58 @@ test('sigTierBadge: nur bei vorhandener Stufe', () => {
 	assert.equal(sigTierBadge(4.4), 'T4');
 	assert.equal(sigTierBadge(null), null);
 	assert.equal(sigTierBadge(undefined), null);
+});
+
+// ---- M7-F4 (t_c3367dfb): Sammel-Signatur-Pin (P1 Dedupe + P2 Payload) ----
+test('sigEntries: dedupe nach oreId — jeder Wert nur EINMAL (P1)', () => {
+	const entries = sigEntries({
+		entries: [
+			{ oreId: 'a', label: 'Quantum', value: 4400, rarity: 'rare' },
+			{ oreId: 'a', label: 'Quantum', value: 4400, rarity: 'rare' },
+			{ oreId: 'b', label: 'Copper', value: 120, rarity: 'common' }
+		]
+	});
+	assert.equal(entries.length, 2);
+	assert.deepEqual(entries.map((e) => e.oreId), ['a', 'b']);
+});
+
+test('sigEntries: nicht-objektige/ohne-oreId Einträge raus (F3-Contract: oreId ist Key)', () => {
+	const entries = sigEntries({
+		entries: [null, 42, { label: 'Laranite', value: null, rarity: null }, { oreId: '', label: '' }]
+	} as never);
+	assert.equal(entries.length, 0);
+});
+
+test('sigEntries: fehlende/ungültige Payload → leere Liste (kein Throw)', () => {
+	assert.deepEqual(sigEntries(null), []);
+	assert.deepEqual(sigEntries({ entries: undefined }), []);
+	assert.deepEqual(sigEntries({ entries: null }), []);
+});
+
+test('sigRowsFor: eine Row pro Entry, idx als String (pin_add-Contract)', () => {
+	const rows = sigRowsFor([
+		{ oreId: 'a', label: 'Quantum', value: 4400, rarity: 'rare' },
+		{ oreId: 'b', label: 'Copper', value: null, rarity: 'common' }
+	]);
+	assert.equal(rows.length, 2);
+	assert.deepEqual(rows[0], { idx: '0', name: 'Quantum', value: '4400' });
+	assert.deepEqual(rows[1], { idx: '1', name: 'Copper', value: '—' });
+});
+
+test('sigToggleEntry: add und remove (dedupe nach oreId, Reihenfolge stabil)', () => {
+	let e: { oreId: string; label: string; value: number | null; rarity?: string | null }[] = [
+		{ oreId: 'a', label: 'Quantum', value: 4400 },
+		{ oreId: 'b', label: 'Copper', value: 120 }
+	];
+	e = sigToggleEntry(e, { oreId: 'c', label: 'Titanium', value: 9 });
+	assert.deepEqual(e.map((x) => x.oreId), ['a', 'b', 'c']);
+	e = sigToggleEntry(e, { oreId: 'b', label: 'Copper', value: 120 });
+	assert.deepEqual(e.map((x) => x.oreId), ['a', 'c']); // remove, nicht add
+	e = sigToggleEntry(e, { oreId: 'c', label: 'Titanium', value: 9 });
+	assert.deepEqual(e.map((x) => x.oreId), ['a']); // Toggle remove
+});
+
+test('sigToggleEntry: Rarity wird im Entry mitgefuehrt (P2 Payload)', () => {
+	let e = sigToggleEntry([], { oreId: 'a', label: 'Quantum', value: 4400, rarity: 'rare' });
+	assert.equal(e[0].rarity, 'rare');
 });

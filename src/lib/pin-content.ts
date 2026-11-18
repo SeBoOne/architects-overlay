@@ -39,3 +39,14 @@ export function pinContentFor(type: string | null | undefined): Component<PinCon
 export function clearPinContentRegistry(): void {
 	registry.clear();
 }
+
+/// M7-F4 (t_c3367dfb) Punkt 1 (Dedupe): Content-Renderer, die ihren Wert
+/// selbst UND NUR EINMAL im Körper zeigen — der Header-KPI der Pin-Box
+/// würde denselben Wert duplizieren („2× die Signatur für EIN Vorkommen").
+/// Die Pin-Ansicht blendet den KPI für diese Typen aus; DealChat u. a.
+/// bleiben unverändert (deren KPI ist Information, kein Duplikat).
+const HIDE_HEADER_KPI = new Set(['scan-signature', 'scan-signatures']);
+
+export function hideHeaderKpi(type: string | null | undefined): boolean {
+	return type != null && HIDE_HEADER_KPI.has(type);
+}

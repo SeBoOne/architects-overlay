@@ -65,9 +65,11 @@ export type ScanSignatureEntry = {
 	oreId: string;
 	label: string;
 	value: number | null;
+	/** M7-F4 (t_c3367dfb): Rarity-String der Quelle (ores[].tier) — Chip-Farbe. */
+	rarity?: string | null;
 };
 export type ScanSignaturesPayload = {
-	entries?: ScanSignatureEntry[];
+	entries?: ScanSignatureEntry[] | null;
 	/** Nachrüstbar (Pin-Resize-Welle): angezeigte Multiplikator-Slots, Default 5. */
 	visibleSlots?: number;
 };
@@ -102,4 +104,39 @@ export function sigToggleEntry(
 	return list.some((e) => e.oreId === entry.oreId)
 		? list.filter((e) => e.oreId !== entry.oreId)
 		: [...list, entry];
+}
+
+// ---- M7-F4 (t_c3367dfb): Normalisierung + Rows-Snapshot --------------------
+/// Normalisiert die Payload-Entries: nicht-objektige Einträge raus,
+/// Dedupe nach oreId — jeder Wert bleibt EINMAL im Pin (Spec P1).
+export function sigEntries(
+	payload: Partial<ScanSignaturesPayload> | null | undefined
+): ScanSignatureEntry[] {
+	const raw = Array.isArray(payload?.entries) ? payload!.entries! : [];
+	const seen = new Set<string>();
+	const out: ScanSignatureEntry[] = [];
+	for (const e of raw as unknown[]) {
+		if (!e || typeof e !== 'object') continue;
+		const rec = e as Record<string, unknown>;
+		const oreId = typeof rec.oreId === 'string' ? rec.oreId : null;
+		if (!oreId || seen.has(oreId)) continue;
+		seen.add(oreId);
+		out.push({
+			oreId,
+			label: typeof rec.label === 'string' ? rec.label : '—',
+			value: typeof rec.value === 'number' && Number.isFinite(rec.value) ? rec.value : null,
+			rarity: typeof rec.rarity === 'string' ? rec.rarity : null
+		});
+	}
+	return out;
+}
+
+/// Rows-Snapshot für pin_add/pin_update (Geometrie pinBoxEstHeight: eine
+/// Zeile pro Entry) — Anzeige-Wert über sigValueDisplay („—“ bei null).
+export function sigRowsFor(entries: ScanSignatureEntry[]): { idx: string; name: string; value: string }[] {
+	return entries.map((e, i) => ({
+		idx: String(i),
+		name: e.label,
+		value: sigValueDisplay(e.value)
+	}));
 }
