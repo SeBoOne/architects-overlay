@@ -8,14 +8,14 @@ export type Rarity = 'common' | 'uncommon' | 'rare' | 'epic' | 'legendary';
 
 export const RARITIES: Rarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 
-/// Kachel/Chip-Rampe: common grau → uncommon olivgrau → rare blaugrün →
-/// epic violett → legendary gold/mint (Overlay-Theme, Filter-Badge-Töne).
+/// Kachel/Chip-Rampe (Spec P2): common grau → uncommon hellgrün-grau →
+/// rare cyan → epic violett → legendary gold (Overlay-Theme-Töne).
 export const RARITY_COLORS: Record<Rarity, string> = {
 	common: '#8b949e',
 	uncommon: '#a8a23e',
-	rare: '#9dc451',
-	epic: '#6bd694',
-	legendary: '#4be08a'
+	rare: '#4db8c9',
+	epic: '#b48be8',
+	legendary: '#e2c14e'
 };
 
 /// Farbe zu einem Rarity-String oder null (fehlende Daten — Caller
