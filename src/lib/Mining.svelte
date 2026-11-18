@@ -737,17 +737,9 @@
 								role="listitem"
 								style={`--rc:${rarityColor(rarityOfOreId(or.oreId)) ?? '#8b949e'}`}
 							>
-								<div class="locard-top">
-									<span
-										class="ltile"
-										style={`border-color:${rarityColor(rarityOfOreId(or.oreId)) ?? 'var(--lineb)'}`}>{oreAbbrev(or.name)}</span
-									>
-									<div class="locard-head">
-										<span class="dcard-name" title={or.name}>{or.name}</span>
-										<span class="mtier-badge" style={`--tc:${tierColor(or.tier)}`}
-											>{tierName(or.tier)}</span
-										>
-									</div>
+								<span class="dcard-name" title={or.name}>{or.name}</span>
+								<div class="dcard-meta">
+									<span class="mtier-badge" style={`--tc:${tierColor(or.tier)}`}>{tierName(or.tier)}</span>
 									<button
 										type="button"
 										class="mpin"
@@ -763,15 +755,18 @@
 										</svg>
 									</button>
 								</div>
-								<div class="locard-sig">
-									<span class="locard-sig-l">{$t('mining.sig_short')}</span>
-									<span class="locard-sig-v">{or.scanSignature ?? '—'}</span>
-								</div>
-								<div class="dnum">
-									<span class="dnum-l">{$t('mining.concentration')}</span>
-									<span class="dnum-v">{concPct(or.concentration)} %</span>
-									<!-- M7-F4 P5: 6 GLEICHE Segmente, gefuellt = Tier-Stufe
-									     (OreRow tier 1-6) — Segment-Fuellmodell, NICHT kontinuierlich. -->
+								<!-- M7-F5 (User-Mockup): Portrait — Kürzel groß & mittig, Signatur darunter, Rarity-Border. -->
+								<div
+									class="ltile"
+									style={`border-color:${rarityColor(rarityOfOreId(or.oreId)) ?? 'var(--lineb)'}`}
+								>{oreAbbrev(or.name)}<span class="ltile-sig">{or.scanSignature ?? '—'}</span></div
+								>
+								<div class="dnums">
+									<div class="dnum">
+										<span class="dnum-l">{$t('mining.concentration')}</span>
+										<span class="dnum-v">{concPct(or.concentration)} %</span>
+									</div>
+									<!-- 6 GLEICHE Segmente, gefüllt = Tier-Stufe (1..6) — volle Zeile. -->
 									<span class="segbar" style={`--tc:${tierColor(or.tier)}`} role="img" aria-label={$t('mining.concentration')}>
 										{#each [1, 2, 3, 4, 5, 6] as s (s)}<i class:fill={s <= or.tier}></i>{/each}
 									</span>
@@ -820,43 +815,36 @@
 							<div class="dcards">
 								{#each g.rows as row (row.locationId)}
 									<div class="dcard">
-										<div class="dcard-top">
-											<span class="dcard-name" title={row.location}>{row.location}</span>
-											<span class="mtier-badge" style={`--tc:${tierColor(row.tier)}`}
-												>{tierName(row.tier)}</span
-											>
+										<span class="dcard-name" title={row.location}>{row.location}</span>
+										<div class="dcard-meta">
+											<span class="dcard-sub">{row.system ?? '—'}</span>
+											<span class="mtier-badge" style={`--tc:${tierColor(row.tier)}`}>{tierName(row.tier)}</span>
 										</div>
-										<!-- Punkt 4: „N spawn sites“ entfernt — die Orte SIND die Spawn-Orte -->
-										<span class="dcard-sub">{row.system ?? '—'}</span>
-										<div class="dcard-body">
-											<div class="abbr-block" aria-hidden="true">
-												<span class="abbr">{oreAbbrev(detail.ore.name)}</span>
-												<span class="abbr-sig">{detailOre?.scanSignature ?? '—'}</span>
+										<!-- M7-F5 (User-Mockup 2026-11-18): Portrait-Karte — Kürzel+Signatur groß & mittig, Balken darunter voll breit. -->
+										<div class="abbr-block" aria-hidden="true">
+											<span class="abbr">{oreAbbrev(detail.ore.name)}</span>
+											<span class="abbr-sig">{detailOre?.scanSignature ?? '—'}</span>
+										</div>
+										<div class="dnums">
+											<div class="dnum">
+												<span class="dnum-l">{$t('mining.rank')}</span>
+												<span class="dnum-v">{rankPlace(row.rank)}</span>
+												<span class="dbar"><i style={`width:${pct(row.rankPct)}%;background:var(--accent)`}></i></span>
 											</div>
-											<div class="dnums">
-												<div class="dnum">
-													<span class="dnum-l">{$t('mining.rank')}</span>
-													<span class="dnum-v">{rankPlace(row.rank)}</span>
-													<span class="dbar"
-														><i style={`width:${pct(row.rankPct)}%;background:var(--accent)`}></i
-													></span>
-												</div>
-												<div class="dnum">
-													<span class="dnum-l">{$t('mining.concentration')}</span>
-													<span class="dnum-v">{concPct(row.concentration)} %</span>
-<span class="segbar" style={`--tc:${tierColor(row.tier)}`}>
-																				{#each [1, 2, 3, 4, 5, 6] as s (s)}<i class:fill={s <= row.tier}></i>{/each}
-																			</span>
-												</div>
+											<div class="dnum">
+												<span class="dnum-l">{$t('mining.concentration')}</span>
+												<span class="dnum-v">{concPct(row.concentration)} %</span>
 											</div>
+											<!-- 6 GLEICHE Segmente, gefüllt = Tier-Stufe (1..6) — volle Zeile. -->
+											<span class="segbar" style={`--tc:${tierColor(row.tier)}`} role="img" aria-label={$t('mining.concentration')}>
+												{#each [1, 2, 3, 4, 5, 6] as s (s)}<i class:fill={s <= row.tier}></i>{/each}
+											</span>
 										</div>
 									</div>
 								{/each}
+								</div>
 							</div>
-						</div>
-					{:else}
-						<div class="mnote">{$t('mining.no_locations')}</div>
-					{/each}
+							{/each}
 					</div>
 					<!-- Legende: 6 absolute Bands (= Tier 1–6), bleibt sichtbar -->
 					<div class="mlegend">
@@ -1127,30 +1115,40 @@
 	}
 	.dcards {
 		display: grid;
-		/* F5-Fix (User 2026-11-18): OBERE BREITEN-CAP statt 1fr — eine
-		   Einzelkarte (Gruppe mit 1 Eintrag) dehnte sich sonst auf die volle
-		   Containerbreite (~47 % Leerraum, Badge einsam in der Ecke). Feste
-		   Kartenbreite + justify-content:start = dichte Reihe, letzte
-		   unvollständige Reihe bleibt kartenbreit statt aufzudehnen. */
-		grid-template-columns: repeat(auto-fill, minmax(360px, 430px));
+		/* M7-F5 (User-Mockup 2026-11-18): PORTRAIT-Karten (höher als breit,
+		   ~1:1.4) — dicht im Grid, keine 1fr-Stretch-Dehnung, letzte
+		   unvollständige Reihe bleibt kartenbreit. */
+		grid-template-columns: repeat(auto-fill, minmax(210px, 240px));
 		justify-content: start;
 		gap: 8px;
 	}
 	.dcard {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		padding: 5px 8px;
+		gap: 3px;
+		padding: 8px 10px;
 		border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 		background: color-mix(in srgb, var(--panel, #11100d) 60%, transparent);
 		border-radius: 3px;
 		min-width: 0;
 	}
-	.dcard-top {
+	.dcard-name {
+		display: block;
+		font-weight: 700;
+		font-size: 12px;
+		color: var(--fg, #e8ecf3);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	/* M7-F5: Meta-Zeile — System links, Badge/Pin rechts. */
+	.dcard-meta {
 		display: flex;
 		align-items: center;
+		justify-content: space-between;
 		gap: 6px;
 		min-width: 0;
+		font-size: 11px;
 	}
 	.dcard-name {
 		flex: 1;
@@ -1168,17 +1166,12 @@
 	}
 	/* M7-F3: Körper = links Kürzel-Block (1.25:1 Höhe×Breite — breiter als
 	   hoch), rechts die 2 Balken. */
-	.dcard-body {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
 	.abbr-block {
-		/* 1.25:1 (Höhe×Breite) — auf Mockup-Proportion getrimmt (User 2026-11-18):
-		   Kachel kompakt (56px), keine optische Dominanz — Metriken-Spalte trägt. */
+		/* M7-F5 (User-Mockup): großes mittiges Kürzel-Tile — Kachel trägt die Karte. */
 		aspect-ratio: 1 / 1.25;
 		flex: 0 0 auto;
-		width: 56px;
+		width: 118px;
+		margin: 8px auto;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -1189,7 +1182,7 @@
 		border-radius: 3px;
 	}
 	.abbr {
-		font-size: 20px;
+		font-size: 38px;
 		font-weight: 700;
 		line-height: 1;
 		color: var(--fg, #e8ecf3);
@@ -1256,41 +1249,26 @@
 		border-color: var(--tc, var(--accent));
 	}
 	/* M7-F4 P3: Ort-Detail-Karten — Kürzel-Kachel (1.25:1) mit Rarity-Border */
-	.locard-top {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		min-width: 0;
-	}
 	.ltile {
-		flex: 0 0 auto;
-		width: 40px;
-		height: 32px; /* 1.25:1 */
-		display: grid;
-		place-items: center;
+		/* M7-F5 (User-Mockup): großes mittiges Kürzel-Tile (Portrait-Karte) —
+		   Rarity-Border via inline border-color, Signatur-Zahl darunter. */
+		width: 110px;
+		height: 138px; /* 1 : 1.25 */
+		margin: 8px auto;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
 		border: 1px solid var(--lineb); /* Rarity-Farbe via inline border-color */
 		background: color-mix(in srgb, var(--rc, var(--lineb)) 10%, transparent);
-		font: 700 10.5px/1 var(--font-mono, monospace);
+		font: 700 34px/1 var(--font-mono, monospace);
 		letter-spacing: 0.06em;
 		color: var(--fg, #e8ecf3);
 	}
-	.locard-head {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-	.locard-sig {
-		display: flex;
-		align-items: baseline;
-		gap: 6px;
-		font-size: 11px;
+	.ltile-sig {
+		font: 400 12px/1 var(--font-mono, monospace);
 		color: var(--fgdim, #9aa3b2);
-	}
-	.locard-sig-v {
-		font: 600 12.5px/1.15 var(--font-mono, monospace);
-		color: var(--fg, #e8ecf3);
 	}
 	/* Legende */
 	.mlegend {
