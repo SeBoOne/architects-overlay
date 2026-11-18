@@ -1176,7 +1176,7 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 2px;
+		gap: 10px; /* M7-F5: Abstand Kürzel↔Signatur */
 		border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
 		background: color-mix(in srgb, var(--panel2, #14161b) 70%, transparent);
 		border-radius: 3px;
@@ -1189,7 +1189,8 @@
 		letter-spacing: 0.02em;
 	}
 	.abbr-sig {
-		font-size: 11px;
+		font-size: 16px; /* M7-F5: Signatur-Zahl größer */
+		font-weight: 600;
 		color: var(--fgdim, #9aa3b2);
 	}
 	/* Zahl+Balken-Zeile: exakte Werte OHNE Hover lesbar (Lesbarkeits-Fallback) */
@@ -1259,7 +1260,7 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 4px;
+		gap: 10px; /* M7-F5: Abstand Kürzel↔Signatur */
 		border: 1px solid var(--lineb); /* Rarity-Farbe via inline border-color */
 		background: color-mix(in srgb, var(--rc, var(--lineb)) 10%, transparent);
 		font: 700 34px/1 var(--font-mono, monospace);
@@ -1267,7 +1268,7 @@
 		color: var(--fg, #e8ecf3);
 	}
 	.ltile-sig {
-		font: 400 12px/1 var(--font-mono, monospace);
+		font: 600 16px/1 var(--font-mono, monospace); /* M7-F5: größer */
 		color: var(--fgdim, #9aa3b2);
 	}
 	/* Legende */
