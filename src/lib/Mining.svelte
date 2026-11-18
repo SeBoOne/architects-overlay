@@ -1139,8 +1139,8 @@
 	.dcard {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
-		padding: 8px 10px;
+		gap: 2px;
+		padding: 5px 8px;
 		border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 		background: color-mix(in srgb, var(--panel, #11100d) 60%, transparent);
 		border-radius: 3px;
@@ -1174,10 +1174,11 @@
 		gap: 10px;
 	}
 	.abbr-block {
-		/* 1.25:1 (Höhe×Breite) — Omar-Tendenz statt 1:1-Quadrat */
+		/* 1.25:1 (Höhe×Breite) — auf Mockup-Proportion getrimmt (User 2026-11-18):
+		   Kachel kompakt (56px), keine optische Dominanz — Metriken-Spalte trägt. */
 		aspect-ratio: 1 / 1.25;
 		flex: 0 0 auto;
-		width: 72px;
+		width: 56px;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -1188,7 +1189,7 @@
 		border-radius: 3px;
 	}
 	.abbr {
-		font-size: 26px;
+		font-size: 20px;
 		font-weight: 700;
 		line-height: 1;
 		color: var(--fg, #e8ecf3);
@@ -1202,8 +1203,8 @@
 	.dnums {
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
-		margin-top: 2px;
+		gap: 2px;
+		margin-top: 0;
 	}
 	.dnum {
 		display: flex;
