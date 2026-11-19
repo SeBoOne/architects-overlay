@@ -836,17 +836,27 @@
 								class:is-on={sortParam === 'concentration'}
 								onclick={() => setSort('concentration')}>{$t('mining.sort_concentration')}</button
 							>
-							<!-- M7-F6: System-Filter (Dropdown) neben der Sortierung. -->
-							<select
-								class="msel"
-								bind:value={detailSysFilter}
-								aria-label={$t('mining.filter_system')}
+						</div>
+						<!-- M7-F6b: System-Filter als CHIP-Zeile (natives <select>-Popup
+						     verliert den stay_focused-Fokusduell — wie der GTK-Filepicker
+						     damals; das Chip-Muster ist in der Ort-Liste bewährt und
+						     maus-klickbar). -->
+						<div class="mflrow" role="group" aria-label={$t('mining.filter_system')}>
+							<span class="mfl">{$t('mining.filter_system')}</span>
+							<button
+								type="button"
+								class="mchip"
+								class:is-on={detailSysFilter === 'all'}
+								onclick={() => (detailSysFilter = 'all')}>{$t('mining.sys_all')}</button
 							>
-								<option value="all">{$t('mining.sys_all')}</option>
-								{#each detailSystems as s (s)}
-									<option value={s}>{s}</option>
-								{/each}
-							</select>
+							{#each detailSystems as s (s)}
+								<button
+									type="button"
+									class="mchip"
+									class:is-on={detailSysFilter === s}
+									onclick={() => (detailSysFilter = s)}>{s}</button
+								>
+							{/each}
 						</div>
 					</div>
 					<!-- M7-F3 Karten-Redesign (Punkt 1): KEIN Dial mehr — links
@@ -986,6 +996,13 @@
 		flex-direction: column;
 		gap: 6px;
 	}
+	.mflrow {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 6px;
+		padding: 2px 12px 4px;
+	}
 	.mfl {
 		font-size: 10px;
 		text-transform: uppercase;
@@ -997,22 +1014,7 @@
 		flex-wrap: wrap;
 		gap: 4px;
 	}
-		/* M7-F6: System-Dropdown im Overlay-Stil (dark, Theme-Font). */
-	.msel {
-		appearance: none;
-		background: color-mix(in srgb, var(--panel2, #14161b) 70%, transparent);
-		color: var(--fg, #e8ecf3);
-		border: 1px solid color-mix(in srgb, var(--fgdim, #9aa3b2) 35%, transparent);
-		border-radius: 3px;
-		font: inherit;
-		font-size: 11px;
-		padding: 2px 6px;
-	}
-	.msel:focus-visible {
-		outline: 1px solid var(--accent);
-	}
-
-.mchip {
+	.mchip {
 		padding: 2px 8px;
 		font-size: 11px;
 		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
