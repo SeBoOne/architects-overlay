@@ -737,6 +737,12 @@ onMount(() => {
 		gap: 4px;
 		align-items: center;
 	}
+	/* M7-F7: in der has-sigs-Variante füllt die Controller-Zeile die
+	   Popover-Breite (sauber unter der Signaturliste, kein Leerraum rechts). */
+	.pin-popover.has-sigs .pbtn-row {
+		width: 100%;
+		justify-content: space-between;
+	}
 	.sigs-ctl {
 		display: flex;
 		flex-direction: column;
