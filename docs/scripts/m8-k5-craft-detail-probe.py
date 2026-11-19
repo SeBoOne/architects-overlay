@@ -154,6 +154,8 @@ WRAP = r"""
     }
     if (cmd === 'scwiki_craft_detail') {
       window.__STRATA_CALLS.push({ cmd, args: a });
+      // M8-K5-Fix-Probe: simulierter Backend-Fehler (z. B. API-Ausfall).
+      if (window.__SCWIKI_FAIL) throw new Error('SCWiki offline (probe)');
       return a.itemName === 'Greatsword Cannon' ? SCWIKI_DETAIL : null;
     }
     return orig(cmd, args);
@@ -196,6 +198,16 @@ WRAP = r"""
   };
   window.qsPresent = () => !!document.querySelector('.crafting .qs');
   window.attrText = () => document.querySelector('.crafting .cattr')?.textContent.trim() ?? '';
+  // M8-K5-Fix: Fehler-Hinweis + Retry (kein stummes Schlucken mehr).
+  window.scwikiErrState = () => {
+    const e = document.querySelector('.crafting .cscwiki-err');
+    return {
+      present: !!e,
+      text: e?.textContent.replace(/\s+/g, ' ').trim() ?? null,
+      retry: !!document.querySelector('.crafting .cscwiki-retry')
+    };
+  };
+  window.scwikiCalls = () => window.__STRATA_CALLS.filter((c) => c.cmd === 'scwiki_craft_detail').length;
   window.pressKey = (key) => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
   };
@@ -365,7 +377,35 @@ async def main():
         check("7a QualityStats erscheint via SC-Wiki-Aspekte", await js("qsPresent()") is True)
         check("7b Attribution SC-Wiki zusätzlich",
               "Data from star-citizen.wiki" in await js("attrText()"), await js("attrText()"))
+        # Distinkte Sektions-Aufnahmen (Review-Finding 2): Kopf/Stats, dann Planner/QS.
+        await js("document.querySelector('.crafting .cstats')?.scrollIntoView({ block: 'start' })")
+        await asyncio.sleep(0.3)
         await shot("k5-3-qualitystats.png")
+
+        # ---- Gate 8 (Review-Blocker): scwiki_craft_detail-Err NICHT stumm ----
+        await js("window.__SCWIKI_FAIL = true")
+        await js("window.pressKey('Escape')")
+        await js("openCraft('Greatsword Cannon')")
+        await wait_for("craftDetailOpen()", 8)
+        await wait_for("scwikiErrState().present", 8)
+        err = await js("scwikiErrState()")
+        check("8a Fehler-Hinweis sichtbar (Backend-Err)", err["present"] is True, err)
+        check("8b Hinweistext (i18n, nicht raw key)", "SC-Wiki data could not be loaded" in (err["text"] or ""), err)
+        check("8c Retry-Button vorhanden", err["retry"] is True, err)
+        await shot("k5-4-scwiki-error.png")
+        n_before = await js("scwikiCalls()")
+        await js("document.querySelector('.crafting .cscwiki-retry')?.click()")
+        await asyncio.sleep(0.3)
+        err2 = await js("scwikiErrState()")
+        check("8d Retry bei weiterem Fehler bleibt im Hinweis", err2["present"] is True, err2)
+        check("8e Retry feuert neuen Fetch", await js("scwikiCalls()") == n_before + 1)
+        # Fehler wieder weg → Retry lädt die Daten und der Hinweis verschwindet.
+        await js("window.__SCWIKI_FAIL = false")
+        await js("document.querySelector('.crafting .cscwiki-retry')?.click()")
+        await wait_for("propTexts().length > 0 && !scwikiErrState().present", 8)
+        check("8f Retry nach Erholung: Daten da, Hinweis weg",
+              await js("propTexts().length > 0") is True and (await js("scwikiErrState()"))["present"] is False)
+        check("8g QualityStats nach Retry-Verdrahtung", await js("qsPresent()") is True)
 
     server.kill()
     proc.kill()

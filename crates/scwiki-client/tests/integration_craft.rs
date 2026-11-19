@@ -2,7 +2,7 @@
 //! (Fixtures in `tests/fixtures/`, Live-Zug 2026-11-19). Wiremock wie
 //! `integration_scwiki.rs` — deterministisch, kein Live-API im CI-Pfad.
 
-use scwiki_client::{ATTRIBUTION_SCWIKI, Blueprint, CraftableItem, ScWikiClient};
+use scwiki_client::{ATTRIBUTION_SCWIKI, Blueprint, CraftableItem, ScWikiClient, ScWikiError};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -21,6 +21,16 @@ fn single_page(name: &str) -> String {
     let mut v: serde_json::Value =
         serde_json::from_str(&fixture(name)).expect("fixture valid json");
     v["meta"]["last_page"] = serde_json::json!(1);
+    v.to_string()
+}
+
+/// Gleiche Seite mit beliebiger last_page — der Mock serviert bei jedem
+/// page[number] denselben Inhalt; der Client loopt bis page >= last_page
+/// (oder bis der MAX_PAGES-Guard zuschlägt).
+fn paginated_fixture(last_page: u32) -> String {
+    let mut v: serde_json::Value =
+        serde_json::from_str(&fixture("items_craftable_page1.json")).expect("fixture valid json");
+    v["meta"]["last_page"] = serde_json::json!(last_page);
     v.to_string()
 }
 
@@ -289,4 +299,49 @@ async fn aspects_parse_real_fixture_and_serialize_k6_shape() {
 #[test]
 fn attribution_const_is_present() {
     assert_eq!(ATTRIBUTION_SCWIKI, "Data from star-citizen.wiki");
+}
+
+/// M8-K5-Review-Blocker-Regression (Live-Beleg 2026-11-19): Die echte API
+/// meldet meta.last_page=33 bei 1630 craftable Items (per_page=50). Ein
+/// Mock mit last_page=33 muss VOLL durchlaufen (kein TooManyPages) — der
+/// alte MAX_PAGES=30-Kappung hat hier hart fehlgeschlagen.
+#[tokio::test]
+async fn craftable_items_33_pages_no_longer_capped() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("filter[is_craftable]", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(paginated_fixture(33)))
+        .mount(&server)
+        .await;
+
+    let items: Vec<CraftableItem> = client(&server.uri())
+        .craftable_items(None)
+        .await
+        .expect("33 Seiten müssen durchlaufen (Live-Realität)");
+
+    assert!(!items.is_empty());
+}
+
+/// Guard-Regression: Ein hart-bounded Limit bleibt — last_page=60 (weit
+/// über MAX_PAGES=50) schlägt mit TooManyPages(50) fehl statt endlos zu
+/// loopen.
+#[tokio::test]
+async fn craftable_items_too_many_pages_still_bounded() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/items"))
+        .and(query_param("filter[is_craftable]", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(paginated_fixture(60)))
+        .mount(&server)
+        .await;
+
+    let err = client(&server.uri())
+        .craftable_items(None)
+        .await
+        .expect_err("über Limit muss TooManyPages liefern");
+    match err {
+        ScWikiError::TooManyPages(50) => {}
+        other => panic!("TooManyPages(50) erwartet, got: {other:?}"),
+    }
 }

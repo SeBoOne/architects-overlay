@@ -36,7 +36,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// (~85/min theoretisch, praktisch deutlich weniger Requests) bleibt safe.
 pub const MIN_INTERVAL: Duration = Duration::from_millis(700);
 /// Sicherheitsgrenze gegen Endlos-Pagination bei API-Änderungen.
-const MAX_PAGES: u32 = 30;
+/// Realität (Live-Beleg 2026-11-19): craftable items = 33 Seiten bei
+/// 1630 Items (per_page=50, meta.last_page=33) — 30 kapppte hart mit
+/// `TooManyPages`. 50 = Realität + Wachstumspuffer; der hart-bounded
+/// Guard bleibt (Endlos-Schleife bei API-Bug weiterhin ausgeschlossen).
+const MAX_PAGES: u32 = 50;
 const PAGE_SIZE: u32 = 50;
 
 /// Modul-relevante Item-Typen, die im Sync abgerufen werden. Bewusst

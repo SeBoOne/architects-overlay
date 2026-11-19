@@ -192,6 +192,8 @@
     "craft.range": "Range",
     "craft.required_quality": "Required input quality",
     "craft.rpm": "RPM",
+    "craft.scwiki_error": "SC-Wiki data could not be loaded — blueprint details and missions are hidden.",
+    "craft.scwiki_retry": "Retry",
     "craft.stats_note": "Modifiers scale linearly with input quality (SC-Wiki data). Shown as % deviation vs. base 1.0; multiple aspects affecting one property multiply. Data from star-citizen.wiki.",
     "craft.stats_reachable": "reachable",
     "craft.stats_title": "Stat changes at target quality",
