@@ -66,7 +66,8 @@ WRAP = r"""
     craftTime: 540,
     costs: [
       { material: 'Agricium', oreId: null, quantity: 0.36, unit: 'SCU', minQuality: 500 },
-      { material: 'Hadanite', oreId: null, quantity: 7, unit: 'items', minQuality: 1 }
+      { material: 'Hadanite', oreId: null, quantity: 7, unit: 'items', minQuality: 1 },
+      { material: 'Taranite', oreId: null, quantity: 0.06, unit: 'SCU', minQuality: null }
     ],
     blueprintAspects: [
       { key: 'FRAME', name: 'Frame', required_count: 1,
@@ -84,7 +85,10 @@ WRAP = r"""
             quality_range: { min: 0, max: 1000 },
             modifier_range: { at_min_quality: 0.95, at_max_quality: 1.05 },
             value_range_type: 'linear' }
-        ] }
+        ] },
+      { key: 'BARREL', name: 'Barrel', required_count: 1,
+        input: { name: 'Taranite', uuid: 'uuid-taranite', min_quality: null, quantity_scu: 0.06 },
+        modifiers: [] }
     ],
     blueprintSummary: [
       { property_key: 'health_maxhealth', label: 'Integrity', better_when: 'higher' },
@@ -312,15 +316,15 @@ async def main():
         await js("window.pressKey('Escape')")
         await asyncio.sleep(0.3)
         await js("openCraft('Quality Cannon')")
-        await wait_for("craftDetailOpen() && sliderRows().length === 2", 8)
+        await wait_for("craftDetailOpen() && sliderRows().length === 3", 8)
         rows = await js("sliderRows()")
-        check("1c 2 Regler-Zeilen (Agricium/Hadanite gematcht)", rows and len(rows) == 2, str(rows))
+        check("1c 3 Regler-Zeilen (Agricium/Hadanite/Taranite gematcht)", rows and len(rows) == 3, str(rows))
         check("1d Regler starten bei 500 (Mitte, User-Default)",
               all(r["range"] == "500" for r in rows), str(rows))
         snaps_called = await js("window.__SNAP_CALLS.length")
         uuids0 = (await js("window.__SNAP_CALLS[0].uuids")) or []
-        check("1e Snap-Fetch mit beiden Material-UUIDs",
-              snaps_called and set(uuids0) == {"uuid-agricium", "uuid-hadanite"},
+        check("1e Snap-Fetch mit allen 3 Material-UUIDs",
+              snaps_called and set(uuids0) == {"uuid-agricium", "uuid-hadanite", "uuid-taranite"},
               str(snaps_called))
         rows0 = await js("sliderRows()")
         check("1g Snap-Default an (Toggle is-on)", rows0 and rows0[0]["snapOn"] is True and rows0[1]["snapOn"] is True, str(rows0))
@@ -406,6 +410,14 @@ async def main():
         check("5f2 Toggle an: 550 → 588 gerastet", rows and rows[0]["snapOn"] is True and rows[0]["val"] == "588", str(rows))
         await shot("m8-r1a-detail-snap.png")
 
+        # ---- Gate 5x: Material OHNE Quant-Werte bleibt frei (User-Befund
+        #      „Wert ändert sich nichts" — 500-only-ZwangsRaster ist weg) ----
+        await js("setMat(2, 777)")
+        await asyncio.sleep(0.2)
+        rows = await js("sliderRows()")
+        check("5x Taranite ohne Quant-Werte: frei regelbar (777 bleibt 777)",
+              rows and rows[2]["val"] == "777" and rows[2]["snapOn"] is False, str(rows and rows[2]))
+
         # ---- Gate 6: Popup-Kompaktheit (t_e261c7f4-Update) ----
         # Seit der Stat-Block ab Start ALLE Modifier-Zeilen reserviert
         # (Raumstabilität, gewollt), ist Overflow normal — entscheidend ist,
@@ -419,7 +431,7 @@ async def main():
         # ---- Gate 7 (M8-R1-C×R1-A, t_1dbe8a85): Regler SICHTBAR ----
         vis = await js("sliderVisibility()")
         check("7a Regler-Zeilen gerendert (Box > 0, nicht display:none/hidden)",
-              vis and len(vis) == 2 and all(v["boxH"] > 0 and v["boxW"] > 0
+              vis and len(vis) == 3 and all(v["boxH"] > 0 and v["boxW"] > 0
                                             and v["display"] != "none"
                                             and v["visibility"] != "hidden" for v in vis), str(vis))
         check("7b Regler im sichtbaren Bereich (ohne Scrollen)",

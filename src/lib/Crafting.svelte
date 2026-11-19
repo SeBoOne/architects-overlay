@@ -442,11 +442,16 @@
 		(detail?.blueprintAspects ?? []).find(
 			(a) => materialKey(a.input?.name) === materialKey(c.material)
 		) ?? null;
-	// Snap-Punkte + Toggle-Status einer Zeile. 500 (Mitte) ist für ALLE
-	// Materialien ein Rasterpunkt — auch ohne Commodity-Quantwerte (User:
-	// „soll auch ein snap punkt sein für alle materialien“).
+	// Snap-Punkte + Toggle-Status einer Zeile. 500 (Mitte) ist Rasterpunkt
+	// für Materialien MIT Commodity-Quantwerten. Materialien OHNE echte
+	// Quant-Werte (z. B. Taranite/Hephaestanite — weder direkt noch als
+	// „(Ore)“-Gegenstück, LIVE-Beleg 2026-11-19) bleiben FREI regelbar:
+	// ein 500-only-ZwangsRaster sperrt den Regler sonst bei 500 ein
+	// (User-Befund: „Wert ändert sich nichts, als hätten die keine
+	// Snapwerte“). Kein Raten — kein echtes Raster, kein Snap.
 	const rowSnaps = (c: CostEntry): number[] => {
 		const quant = snapPoints[materialKey(c.material)] ?? [];
+		if (quant.length === 0) return [];
 		const set = new Set<number>([DEFAULT_ROW_QUALITY, ...quant]);
 		return [...set].sort((a, b) => a - b);
 	};
