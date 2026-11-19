@@ -291,20 +291,25 @@
 	// M8-K3 (t_a8088d06): Sprung aus dem Craft-Detail — sobald die Erzliste
 	// geladen ist, das Ziel-Erz suchen und das Orte-pro-Erz-Detail direkt
 	// öffnen (openDetail-Pfad, kein Extra-Backend-Aufruf in +page).
+	// M8-K3-Fix (t_ef0bcd6a): nur EINMAL pro Sprung-Ziel feuern — sonst reißt
+	// der Effect jede nachfolgende Erz-Auswahl wieder auf das Sprung-Erz zurück
+	// („Klebe-Effekt"). jumpHandledFor ist bewusst NICHT reaktiv ($state):
+	// unverändert pro mount, zurückgesetzt wird es durch den Remount.
+	let jumpHandledFor: string | null = null;
 	$effect(() => {
 		const id = jumpOreId;
 		if (!id || ores.length === 0) return;
+		if (jumpHandledFor === id) return;
 		const ore = ores.find((o) => o.id === id);
-		if (ore && detailOre?.id !== id) void openDetail(ore);
+		if (!ore) return; // noch nicht in der Liste (z. B. Filter) → später erneut
+		jumpHandledFor = id;
+		if (detailOre?.id !== id) void openDetail(ore);
 	});
 
-	// M8-K3: Back-Button im Erz-Detail — im Sprung-Kontext direkt zurück
-	// ins Craft-Detail (dort ist der Zustand keep-alive erhalten).
+	// M8-K3-Fix (t_ef0bcd6a): der Back-Button im Detail schließt wie im
+	// Normalmodus nur das Detail — der Rückweg ins Craft-Detail (onjumpexit)
+	// geschieht erst auf Listen-Ebene (Kaskade, kein Überspringen).
 	function detailBack() {
-		if (jumpOreId && onjumpexit) {
-			onjumpexit();
-			return;
-		}
 		closeDetail();
 	}
 
@@ -502,15 +507,13 @@
 			return;
 		}
 		if (detail) {
-			// M8-K3: Sprung aus Craft → Back/Esc direkt zurück ins Craft-Detail.
-			if (jumpOreId && onjumpexit) {
-				onjumpexit();
-				return;
-			}
+			// M8-K3-Fix (t_ef0bcd6a): Esc im Erz-Detail schließt zuerst das
+			// Detail (Kaskade wie Normalmodus) — der Sprung-Rückweg greift
+			// erst auf Listen-Ebene.
 			closeDetail();
 			return;
 		}
-		// M8-K3: auch auf Listen-Ebene direkt zurück ins Craft-Detail
+		// M8-K3: auf Listen-Ebene direkt zurück ins Craft-Detail
 		// (Craft-Detail-State bleibt keep-alive erhalten).
 		if (jumpOreId && onjumpexit) {
 			onjumpexit();
