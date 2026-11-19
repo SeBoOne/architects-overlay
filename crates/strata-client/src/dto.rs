@@ -190,3 +190,126 @@ pub struct LocationOresResponse {
     pub count: u64,
     pub attribution: String,
 }
+
+// ---- Crafting (M8-K1, t_a35b6344) -------------------------------------------
+//
+// CONTRACT-REALITÄT: Live-Fixtures 2026-11-19 (`tests/fixtures-live/items.*`,
+// `craft-cost.*.live.json`, echter Omar-Key). Live-Stand: 735 craftbare Items,
+// Kategorien freie Strings (Ship Weapon / FPS Weapon / Shield / Mining Laser /
+// Mission Item / …) — KEIN hartkodiertes Vokabular; die UI leitet die Filter
+// dynamisch aus den Daten ab (M7-Präzedenz: locations[].type).
+//
+// **Einheiten-Regel (verbindlich, NIE mischen/vergleichen):**
+// Schiff-Erze laufen über `CraftUnit::Scu` (Volumen, SCU),
+// FPS/Ground-Vehicle-Erze über `CraftUnit::Gems` (Stück; **1000 gems =
+// 1 SCU** — siehe [`CRAFT_GEMS_PER_SCU`]), Nicht-Erze über
+// `CraftUnit::Items` (Stück). Eine Menge ist NUR innerhalb ihrer eigenen
+// Einheit interpretierbar — Summen über `costs[]` dürfen nie die Einheit
+// überschreiten und Vergleichs-UI (Balken/Rankings) niemals SCU gegen gems
+// addieren.
+
+/// Einheitenumrechnung gems ↔ SCU: 1000 gems = 1 SCU (Plan M8, API-Realität
+/// 2026-11-19). Konstante statt Magie — die Craft-UI nutzt sie für den
+/// (nur-planerischen) Einheitenausgleich; im Mining-Modus gilt sie NICHT.
+pub const CRAFT_GEMS_PER_SCU: u64 = 1000;
+
+/// Kosteneinheit einer `craft-cost`-Zeile — `SCU` | `gems` | `items`
+/// (Wire-Strings exakt so; kein anderes Vokabular in den Live-Fixtures).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CraftUnit {
+    /// Volumen-Erze von Schiff-Rezepten.
+    #[serde(rename = "SCU")]
+    Scu,
+    /// FPS/Ground-Vehicle-Erze in Stück (1000 gems = 1 SCU).
+    #[serde(rename = "gems")]
+    Gems,
+    /// Nicht-Erz-Bestandteile in Stück.
+    #[serde(rename = "items")]
+    Items,
+}
+
+impl CraftUnit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CraftUnit::Scu => "SCU",
+            CraftUnit::Gems => "gems",
+            CraftUnit::Items => "items",
+        }
+    }
+
+    /// true = Volumen-Erz (SCU); gems sind Stück, items sind Stück — nur
+    /// innerhalb von `Scu` dürfen Dezimalmengen als Volumen gelesen werden.
+    pub fn is_volume(self) -> bool {
+        matches!(self, CraftUnit::Scu)
+    }
+}
+
+/// `GET /api/public/items` — ein craftbares Item. Live (2026-11-19): alle
+/// vier Felder IMMER gesetzt (String) — `category` ist trotzdem `Option`:
+/// Null-Disziplin wie `Ore.category` (M7-Präzedenz), die UI filtert dynamisch.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Item {
+    /// UUID — kanonischer Key für `craft-cost/{item}` (**id vor Slug**:
+    /// IDs kollidieren nie; Slugs sind Best-effort-Anzeige-Handle).
+    pub id: String,
+    pub name: String,
+    /// Best-effort-Slug — Anzeige/Suche, kein kanonischer Key (M7-Präzedenz).
+    pub slug: String,
+    /// Freie Kategorie — `Option` defensiv (siehe oben), UI-Filter dynamisch.
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ItemsResponse {
+    pub items: Vec<Item>,
+    pub count: u64,
+    /// Pflichtanzeige in der UI bei JEGLICHER öffentlichen Anzeige.
+    pub attribution: String,
+}
+
+/// Item-Kopf von `craft-cost/{item}` — live OHNE `slug` (nur id/name/
+/// category, Fixtures 2026-11-19). Absichtlich KEIN Slug-Feld: ein Feld mit
+/// `serde(default)` würde einen nicht-vorhandenen Vertrag suggerieren.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CraftItemRef {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub category: Option<String>,
+}
+
+/// Eine Kostenzeile. `oreId` ist NULL für `unit: gems`-Zeilen ohne
+/// Ore-Bezug (live: Hadanite, Fixtures a03-sniper-rifle) — `Option`, nie
+/// truthiness. `minQuality` ist Zahl-oder-null laut Spec (live: ganze Zahlen
+/// 0/1) → `Option<f64>`-tolerant; `0` ist gültige Daten.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CraftCostEntry {
+    /// Anzeige-Name des Materials (live z. B. `"Titanium"`, `"Hadanite"`).
+    pub material: String,
+    /// Ore-ID für den Mining-Modus-Sprung (M8-K3) — null-fähig (s. oben).
+    #[serde(default)]
+    pub ore_id: Option<String>,
+    /// Menge in `unit` — nie über Einheiten hinweg aufsummieren.
+    pub quantity: f64,
+    /// `SCU` | `gems` | `items` — Einheiten-Regel oben.
+    pub unit: CraftUnit,
+    /// Geforderte Mindest-Qualität des Inputs, 0–1000 — null = keine
+    /// Anforderung. Zahl-oder-null (Spec); 0 ist gültige Daten.
+    #[serde(default)]
+    pub min_quality: Option<f64>,
+}
+
+/// `GET /api/public/craft-cost/{item}` — `{item}` ist die UUID (id vor Slug;
+/// die API nimmt auch den Slug, aber IDs sind kanonisch). Kein Envelope.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CraftCostResponse {
+    pub item: CraftItemRef,
+    /// Craft-Zeit in Sekunden (live: 960 / 180 — Ganzzahl-Wire-Wert).
+    pub craft_time: i64,
+    pub costs: Vec<CraftCostEntry>,
+    /// Pflichtanzeige in der UI bei JEGLICHER öffentlichen Anzeige.
+    pub attribution: String,
+}

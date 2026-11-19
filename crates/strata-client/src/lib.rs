@@ -31,15 +31,16 @@ pub mod keystore;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use cache::{Cache, TTL_STRATA_DETAIL, TTL_STRATA_REFERENCE};
+use cache::{Cache, TTL_STRATA_CRAFT, TTL_STRATA_DETAIL, TTL_STRATA_REFERENCE};
 use http::{DEFAULT_BASE_URL, StrataHttpClient};
 use i18n_err::{err_key, err_keyp};
 use provider::{ProviderError, Result};
 use serde_json::json;
 
 pub use dto::{
-    Location, LocationOresResponse, LocationRef, LocationRow, LocationsResponse, Ore,
-    OreLocationGroups, OreLocationsResponse, OreRef, OreRow, OresResponse,
+    CRAFT_GEMS_PER_SCU, CraftCostEntry, CraftCostResponse, CraftItemRef, CraftUnit, Item,
+    ItemsResponse, Location, LocationOresResponse, LocationRef, LocationRow, LocationsResponse,
+    Ore, OreLocationGroups, OreLocationsResponse, OreRef, OreRow, OresResponse,
 };
 
 /// Sortierung von `ore-locations/{ore}`.
@@ -150,6 +151,29 @@ impl StrataClient {
         self.fetch_cached(
             &format!("location-ores:{}", location.trim()),
             TTL_STRATA_DETAIL,
+            &path,
+            &[],
+        )
+        .await
+    }
+
+    /// `GET /api/public/items` — cache-first, TTL [`TTL_STRATA_CRAFT`]
+    /// (Patch-zyklisch, wie alle Crafting-Daten; M8-K1).
+    pub async fn items(&self) -> Result<ItemsResponse> {
+        self.fetch_cached("items", TTL_STRATA_CRAFT, "/api/public/items", &[])
+            .await
+    }
+
+    /// `GET /api/public/craft-cost/{item}` — cache-first, TTL
+    /// [`TTL_STRATA_CRAFT`]. `{item}` ist die UUID (**id vor Slug** —
+    /// kanonischer Key; die API nimmt auch Slugs, aber die UI reicht
+    /// konsequent `Item.id` durch). Cache-Key enthält das Item.
+    pub async fn craft_cost(&self, item: &str) -> Result<CraftCostResponse> {
+        let item = item.trim();
+        let path = format!("/api/public/craft-cost/{}", urlenc(item));
+        self.fetch_cached(
+            &format!("craft-cost:{}", item),
+            TTL_STRATA_CRAFT,
             &path,
             &[],
         )
