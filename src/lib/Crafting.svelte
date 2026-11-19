@@ -352,9 +352,10 @@
 					detail.blueprintAspects = r.blueprint.aspects ?? null;
 					detail.blueprintSummary = r.blueprint.summary_properties ?? null;
 					// M8-R1-A: Snap-Punkte pro Material nachladen (Commodity-
-					// Endpoint, UNION je Material). Fehler degradieren still
-					// (Toggle zeigt dann keine Einrastpunkte).
-					void loadSnaps(detail.blueprintAspects ?? []);
+					// Endpoint, UNION je Material; t_1dd162e3: Namen + BP-
+					// UUID für den Raffinat→(Ore)-Fallback). Fehler degra-
+					// dieren still (Toggle zeigt dann keine Einrastpunkte).
+					void loadSnaps(detail.blueprintAspects ?? [], r.blueprint.uuid);
 				}
 			}
 		} catch {
@@ -384,18 +385,27 @@
 	type QualitySnapResponse = { uuid: string; values: number[] };
 
 	// Snap-Punkte je Material nachladen (Commodity-Endpoint, Union je
-	// Material) und per normiertem Materialnamen indizieren.
-	async function loadSnaps(aspects: Aspect[]) {
+	// Material) und per normiertem Materialnamen indizieren. Raffinat-
+	// Fallback (t_1dd162e3): Materialnamen + Blueprint-UUID reisen mit —
+	// das Backend mappt leere Raffinat-Inputs auf das `(Ore)`-Gegenstück.
+	async function loadSnaps(aspects: Aspect[], blueprintUuid?: string | null) {
 		const byUuid = new Map<string, string>(); // uuid → norm. Materialname
+		const names = new Map<string, string>(); // uuid → Rohname (`(Ore)`-Mapping)
 		for (const a of aspects ?? []) {
 			const uuid = a.input?.uuid?.trim();
 			const key = materialKey(a.input?.name);
-			if (uuid && key) byUuid.set(uuid, key);
+			if (uuid && key) {
+				byUuid.set(uuid, key);
+				names.set(uuid, (a.input?.name ?? '').trim());
+			}
 		}
 		if (byUuid.size === 0) return;
+		const uuids = [...byUuid.keys()];
 		try {
 			const snaps = await invoke<QualitySnapResponse[]>('scwiki_quality_snaps', {
-				uuids: [...byUuid.keys()]
+				uuids,
+				names: uuids.map((u) => names.get(u) ?? ''),
+				blueprintUuid: blueprintUuid ?? null
 			});
 			const map: Record<string, number[]> = {};
 			for (const s of snaps ?? []) {

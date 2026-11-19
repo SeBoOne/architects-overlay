@@ -785,6 +785,13 @@ pub struct Ingredient {
     /// `resource` oder `item` (Spec).
     pub kind: String,
     pub quantity_scu: Option<f64>,
+    /// Commodity-UUID aus `ingredients[].link` (LIVE-Beleg t_1dd162e3,
+    /// Blueprint SW16BR1 „Buzzsaw": ingredient Borase → resource_type_uuid
+    /// 33bff393 = Raffinat, link 728a3d7e = „Borase (Ore)") — SC-Wiki-
+    /// eigener Zeiger auf das Vorkommens-Commodity; sekundärer Anker des
+    /// Snap-Fallbacks Raffinat → Erz. `None` = kein parsbarer Link.
+    #[serde(default)]
+    pub commodity_uuid: Option<String>,
 }
 
 /// Qualitäts-Snap-Punkte eines Commodities (M8-R1-A) — UNION über alle
@@ -800,10 +807,24 @@ pub struct CommodityQuality {
     pub occurrences: Vec<Vec<u32>>,
 }
 
+/// Minimal-Referenz aus der paginierten Commodities-Liste
+/// (`GET /api/commodities`, t_1dd162e3) — Basis des Name-Mappings
+/// `<name>` → `<name> (Ore)` im Snap-Fallback (Raffinat → Erz).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CommodityRef {
+    pub uuid: String,
+    pub name: String,
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DismantleReturn {
     pub name: String,
     pub quantity_scu: Option<f64>,
+    /// Commodity-UUID hinter dem Return (Live-Beleg Blueprint-Endpoint,
+    /// `dismantle_returns[].resource_type_uuid`, t_1dd162e3) — sekundärer
+    /// Anker des Snap-Fallbacks (Raffinat → Erz); null degradiert.
+    #[serde(default)]
+    pub resource_type_uuid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1008,6 +1029,15 @@ struct CommodityMaterialDto {
     quality_quantized_values: Option<Vec<Option<u32>>>,
 }
 
+/// Listen-DTO der Commodities-Liste — nur die Fallback-relevanten Felder.
+#[derive(Debug, Deserialize)]
+struct CommodityRefDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    uuid: String,
+    #[serde(default, deserialize_with = "null_to_string")]
+    name: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct BlueprintDto {
     #[serde(default, deserialize_with = "null_to_string")]
@@ -1052,6 +1082,22 @@ where
     Ok(opt.unwrap_or(false))
 }
 
+/// Letztes Pfad-Segment einer API-Link-URL als UUID (z. B.
+/// `https://api.star-citizen.wiki/api/commodities/728a3d7e-…` → die UUID);
+/// `None` ohne UUID-förmiges Segment (36 Zeichen, 4 Bindestriche, Hex).
+fn link_uuid(link: &str) -> Option<String> {
+    let seg = link.rsplit('/').next()?.trim();
+    if seg.len() != 36 || seg.matches('-').count() != 4 {
+        return None;
+    }
+    let hex = |c: char| c.is_ascii_hexdigit();
+    if seg.chars().all(|c| hex(c) || c == '-') {
+        Some(seg.to_string())
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct IngredientDto {
     #[serde(default, deserialize_with = "null_to_string")]
@@ -1060,12 +1106,16 @@ struct IngredientDto {
     kind: String,
     #[serde(default)]
     quantity_scu: Option<f64>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    link: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct DismantleReturnDto {
     #[serde(default, deserialize_with = "null_to_string")]
     name: String,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    resource_type_uuid: Option<String>,
     #[serde(default)]
     quantity_scu: Option<f64>,
 }
@@ -1312,6 +1362,7 @@ fn blueprint_from(dto: BlueprintDto) -> Blueprint {
                 name: i.name,
                 kind: i.kind,
                 quantity_scu: i.quantity_scu,
+                commodity_uuid: i.link.as_deref().and_then(link_uuid),
             })
             .collect(),
         dismantle_returns: dto
@@ -1321,6 +1372,7 @@ fn blueprint_from(dto: BlueprintDto) -> Blueprint {
             .map(|d| DismantleReturn {
                 name: d.name,
                 quantity_scu: d.quantity_scu,
+                resource_type_uuid: d.resource_type_uuid,
             })
             .collect(),
         tiers: dto
@@ -1421,9 +1473,46 @@ impl ScWikiClient {
         Ok(blueprint_from(dto))
     }
 
+    /// Commodities-Liste (`GET /api/commodities`, paginiert, t_1dd162e3) —
+    /// nur `uuid` + `name` (Basis des Name-Mappings `<name> (Ore)` im
+    /// Snap-Fallback). Kein Server-Suchfilter (`filter[name_cont]` wird
+    /// ignoriert, LIVE-Beleg 2026-11-19: volle Liste, 206 Einträge / 7
+    /// Seiten) — daher EIN Vollabzug; leere Namen/UUIDs fliegen raus.
+    pub async fn commodities(&self) -> Result<Vec<CommodityRef>> {
+        let mut out = Vec::new();
+        let mut page: u32 = 1;
+        loop {
+            let query = vec![
+                ("page[size]", PAGE_SIZE.to_string()),
+                ("page[number]", page.to_string()),
+            ];
+            let env = self.get("/commodities", &query).await?;
+            let meta: PageMeta = serde_json::from_value(env.meta.clone())
+                .map_err(|e| ScWikiError::Json(format!("commodities meta: {e}")))?;
+            let items: Vec<CommodityRefDto> = serde_json::from_value(env.data)
+                .map_err(|e| ScWikiError::Json(format!("commodities: {e}")))?;
+            for it in items {
+                if it.uuid.trim().is_empty() || it.name.trim().is_empty() {
+                    continue;
+                }
+                out.push(CommodityRef {
+                    uuid: it.uuid,
+                    name: it.name,
+                });
+            }
+            if page >= meta.last_page {
+                break;
+            }
+            page += 1;
+            if page > MAX_PAGES {
+                return Err(ScWikiError::TooManyPages(MAX_PAGES));
+            }
+        }
+        Ok(out)
+    }
+
     /// Qualitäts-Snap-Punkte eines Commodities
     /// (`/api/commodities/{uuid}`, M8-R1-A).
-    ///
     /// LIVE-Beleg (Omar, 2026-11-19, Commodity-Endpoint — NICHT der
     /// Blueprint): `locations[].resources[].materials[]
     /// .quality_quantized_values`; die Werte variieren pro Vorkommen
@@ -1492,6 +1581,23 @@ mod tests {
             "10-series greatsword"
         );
         assert_eq!(normalize_name("IRON"), "iron");
+    }
+
+    // ---------- t_1dd162e3: Ingredient-Link → Commodity-UUID ----------
+
+    #[test]
+    fn link_uuid_parses_last_path_segment() {
+        assert_eq!(
+            link_uuid(
+                "https://api.star-citizen.wiki/api/commodities/728a3d7e-9567-4e1c-87fd-2bd45b458aa6"
+            ),
+            Some("728a3d7e-9567-4e1c-87fd-2bd45b458aa6".to_owned())
+        );
+        // Kein UUID-förmiges Segment → None (kein Raten).
+        assert_eq!(link_uuid("https://api.star-citizen.wiki/api"), None);
+        assert_eq!(link_uuid(""), None);
+        assert_eq!(link_uuid("a/b/c/not-a-uuid"), None);
+        assert_eq!(link_uuid("x/0123456789-0123-0123-0123-0123456789g"), None);
     }
 
     #[test]
