@@ -16,7 +16,12 @@
 		placeholder = '',
 		ariaLabel = '',
 		disabled = false,
-		onselect = (_value: string, _label: string) => {}
+		onselect = (_value: string, _label: string) => {},
+		// M8-R1-B (t_13ba04ff): Filter-Modus — bei Fokus die VOLLSTÄNDIGE Liste
+		// zeigen (Feldtext leeren) statt nur die Optionen, die zum aktuellen
+		// Label passen; Blur ohne Auswahl stellt das Label des gewählten Werts
+		// wieder her (KEIN Value-Leeren wie im Formular-Pflichtfeld-Modus).
+		showAllOnFocus = false
 	} = $props();
 
 	let open = $state(false);
@@ -115,6 +120,9 @@
 	function onfocus() {
 		if (disabled) return;
 		focused = true;
+		// Filter-Modus: VOLLSTÄNDIGE Liste zeigen — Label-Text leeren, damit
+		// der Typeahead-Filter nicht auf das aktuelle Label einschränkt.
+		if (showAllOnFocus) query = '';
 		open = true;
 		hi = 0;
 	}
@@ -127,6 +135,14 @@
 			// sich über die Form-Validierung), bei Fokus zeigt die komplette
 			// Optionsliste; erst eine Auswahl setzt wieder einen Wert.
 			if (query.trim() === '') {
+				// Filter-Modus (M8-R1-B): leer = „aktuelle Auswahl behalten“ —
+				// Label wiederherstellen statt Value zu leeren (kein Dead-End-
+				// Filter; das Crafting-Normalisieren auf 'all' greift hier nicht).
+				if (showAllOnFocus) {
+					const o = options.find((c) => c.value === value);
+					query = o ? o.label : value;
+					return;
+				}
 				value = '';
 				lastExternal = '';
 				return;
