@@ -102,7 +102,17 @@
 		tier_default: number;
 	};
 
-	let { onexit, filter = $bindable('') }: { onexit: () => void; filter?: string } = $props();
+	let {
+		onexit,
+		filter = $bindable(''),
+		jumpOreId = null, // M8-K3 (t_a8088d06): Erz aus dem Craft-Detail vorgewählt
+		onjumpexit // M8-K3: Rückweg ins Craft-Detail (State bleibt dort keep-alive)
+	}: {
+		onexit: () => void;
+		filter?: string;
+		jumpOreId?: string | null;
+		onjumpexit?: () => void;
+	} = $props();
 
 	// ---- State ---------------------------------------------------------------
 	let status = $state<StrataStatus | null>(null);
@@ -276,6 +286,26 @@
 		detail = null;
 		detailOre = null;
 		detailError = '';
+	}
+
+	// M8-K3 (t_a8088d06): Sprung aus dem Craft-Detail — sobald die Erzliste
+	// geladen ist, das Ziel-Erz suchen und das Orte-pro-Erz-Detail direkt
+	// öffnen (openDetail-Pfad, kein Extra-Backend-Aufruf in +page).
+	$effect(() => {
+		const id = jumpOreId;
+		if (!id || ores.length === 0) return;
+		const ore = ores.find((o) => o.id === id);
+		if (ore && detailOre?.id !== id) void openDetail(ore);
+	});
+
+	// M8-K3: Back-Button im Erz-Detail — im Sprung-Kontext direkt zurück
+	// ins Craft-Detail (dort ist der Zustand keep-alive erhalten).
+	function detailBack() {
+		if (jumpOreId && onjumpexit) {
+			onjumpexit();
+			return;
+		}
+		closeDetail();
 	}
 
 	// Ort-Detail (M7-F2): `strata_location_ores` — Erze am Ort (reine Info).
@@ -472,7 +502,18 @@
 			return;
 		}
 		if (detail) {
+			// M8-K3: Sprung aus Craft → Back/Esc direkt zurück ins Craft-Detail.
+			if (jumpOreId && onjumpexit) {
+				onjumpexit();
+				return;
+			}
 			closeDetail();
+			return;
+		}
+		// M8-K3: auch auf Listen-Ebene direkt zurück ins Craft-Detail
+		// (Craft-Detail-State bleibt keep-alive erhalten).
+		if (jumpOreId && onjumpexit) {
+			onjumpexit();
 			return;
 		}
 		onexit();
@@ -809,7 +850,7 @@
 						<button
 							type="button"
 							class="mback"
-							onclick={closeDetail}
+							onclick={detailBack}
 							title={$t('common.back_esc')}
 							aria-label={$t('common.back')}>←</button
 						>

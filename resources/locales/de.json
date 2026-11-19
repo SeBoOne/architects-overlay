@@ -170,6 +170,7 @@
         "craft.min_quality": "Min.-Qualität",
         "craft.min_quality_none": "Keine Qualitätsanforderung",
         "craft.no_materials": "Für diesen Artikel sind keine Materialkosten veröffentlicht.",
+        "craft.open_in_mining": "Orte im Mining-Modus zeigen (F5)",
         "craft.ph_main": "Crafting: Artikel…",
         "craft.planner_note": "Nur ein Machbarkeits-Check: zeigt die geforderte Mindest-Input-Qualität (das höchste minQuality aller Materialien). Item-Stats und Qualitäts-Kurven liefert die API nicht — KEINE Stat-Vorhersage.",
         "craft.planner_title": "Qualitäts-Planungsrechner (Machbarkeits-Check)",

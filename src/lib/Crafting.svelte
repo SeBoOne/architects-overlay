@@ -56,7 +56,17 @@
 		tier_default: number;
 	};
 
-	let { onexit, filter = $bindable('') }: { onexit: () => void; filter?: string } = $props();
+	let {
+		onexit,
+		filter = $bindable(''),
+		onOpenOre = null, // M8-K3 (t_a8088d06): Bedarfserz → Mining-Sprung
+		hidden = false // M8-K3: keep-alive während des Mining-Sprungs (Tastatur stumm)
+	}: {
+		onexit: () => void;
+		filter?: string;
+		onOpenOre?: ((oreId: string) => void) | null;
+		hidden?: boolean;
+	} = $props();
 
 	// ---- State ---------------------------------------------------------------
 	let status = $state<StrataStatus | null>(null);
@@ -179,8 +189,16 @@
 		Number.isInteger(q) ? String(q) : String(Math.round(q * 100) / 100);
 	const catName = (c: string | null) => c ?? '—';
 
+	// M8-K3: Bedarfserz-Klick → Mining-Sprung (Callback des Parents).
+	function openOre(id: string | null) {
+		if (id) onOpenOre?.(id);
+	}
+
 	// ---- Keyboard (Esc-Kaskade wie Mining: Komponente behandelt selbst) ------
 	function onKey(e: KeyboardEvent) {
+		// M8-K3: keep-alive (während des Mining-Sprungs versteckt gemountet)
+		// darf die Esc-Kaskade des sichtbaren Mining-Modus nicht stehlen.
+		if (hidden) return;
 		if (e.key !== 'Escape') return;
 		e.preventDefault();
 		e.stopPropagation();
@@ -307,7 +325,18 @@
 									class:is-fail={!meets(c.minQuality)}
 									role="listitem"
 								>
+									{#if c.oreId && onOpenOre}
+									<!-- M8-K3 (t_a8088d06): Bedarfserz klickbar → Mining-Modus
+									     mit dem Erz vorgewählt (Orte-pro-Erz-Detail). -->
+									<button
+										type="button"
+										class="cm-name cm-ore"
+										onclick={() => openOre(c.oreId)}
+										title={$t('craft.open_in_mining')}
+									>{c.material}</button>
+								{:else}
 									<span class="cm-name">{c.material}</span>
+								{/if}
 									<span class="cm-qty">
 										{fmtQty(c.quantity)}
 										<span class="cm-unit" style={`--uc:${UNIT_COLORS[c.unit] ?? '#b8bfc9'}`}
@@ -607,6 +636,21 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	/* M8-K3: klickbares Bedarfserz — sieht aus wie der Name, hover verrät den Sprung. */
+	.cm-ore {
+		background: none;
+		border: 0;
+		padding: 0;
+		font: inherit;
+		color: inherit;
+		cursor: pointer;
+		text-align: left;
+	}
+	.cm-ore:hover,
+	.cm-ore:focus-visible {
+		text-decoration: underline;
+		color: var(--acc, #e0a83e);
 	}
 	.cm-qty {
 		flex: none;

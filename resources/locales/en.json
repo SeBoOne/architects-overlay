@@ -170,6 +170,7 @@
         "craft.min_quality": "Min. quality",
         "craft.min_quality_none": "No quality requirement",
         "craft.no_materials": "No material requirements published for this item.",
+        "craft.open_in_mining": "Show locations in Mining mode (F5)",
         "craft.ph_main": "Crafting: item…",
         "craft.planner_note": "Feasibility check only: this shows the minimum input quality (the highest minQuality of all materials). Item stats and quality curves are not available via the API — this is NOT a stat prediction.",
         "craft.planner_title": "Quality planner (feasibility check)",
