@@ -35,7 +35,15 @@
 	// M8-R1-B: Custom-Dropdowns (DOM-Popover, kein natives <select> —
 	// Fokusduell-Bug im Spotlight-Webview, siehe M7-R1-Feedback).
 	import SelectCombo from './SelectCombo.svelte';
-	import type { Aspect, SummaryProperty } from './quality-calc';
+	// M8-R1-A: individuelle Material-Regler + Snap-Punkte
+	import {
+		aspectQuality,
+		materialKey,
+		nearestSnap,
+		statChanges,
+		type Aspect,
+		type SummaryProperty
+	} from './quality-calc';
 
 	type Item = {
 		id: string;
@@ -208,7 +216,28 @@
 	// ohne Hard-Fail, aber MIT sichtbarem Hinweis + Retry statt stummem Schlucken.
 	let scwikiError = $state(false);
 	// Qualitäts-Planungsrechner
-	let targetQuality = $state(0);
+	// M8-R1-A: individuelle Material-Regler — Qualität je Kosten-Zeile
+	// (Key `material:idx`), 0–1000; Snap-Punkte + Toggle je Regler.
+	let matQual = $state<Record<string, number>>({});
+	let snapOn = $state<Record<string, boolean>>({});
+	let snapPoints = $state<Record<string, number[]>>({}); // normMaterialname → Union
+	// Persistenz des Snap-Defaults (nice-to-have, localStorage — Craft-
+	// Setting ohne Backend-Roundtrip).
+	const SNAP_DEFAULT_KEY = 'craft.snap_default';
+	function snapDefault(): boolean {
+		try {
+			return localStorage.getItem(SNAP_DEFAULT_KEY) !== '0';
+		} catch {
+			return true;
+		}
+	}
+	function setSnapDefault(on: boolean) {
+		try {
+			localStorage.setItem(SNAP_DEFAULT_KEY, on ? '1' : '0');
+		} catch {
+			/* kein Persistenz-Zwang */
+		}
+	}
 	// Load-More (516 Items — bestehendes Muster: stückweise rendern)
 	let shown = $state(80);
 	const STEP = 80;
@@ -294,7 +323,9 @@
 		detail = null;
 		scwiki = null; // M8-K5: SC-Wiki-Detail des Vorgängers verfällt
 		scwikiError = false;
-		targetQuality = 0; // neuer Artikel → Planer neutral starten
+		matQual = {}; // M8-R1-A: individuelle Regler neutral
+		snapOn = {};
+		snapPoints = {};
 		try {
 			const r = await invoke<CraftCostResponse>('strata_craft_cost', { item: item.id });
 			detail = r;
@@ -320,6 +351,10 @@
 					// K6-Contract: QualityStats liest die Aspekte/Summary.
 					detail.blueprintAspects = r.blueprint.aspects ?? null;
 					detail.blueprintSummary = r.blueprint.summary_properties ?? null;
+					// M8-R1-A: Snap-Punkte pro Material nachladen (Commodity-
+					// Endpoint, UNION je Material). Fehler degradieren still
+					// (Toggle zeigt dann keine Einrastpunkte).
+					void loadSnaps(detail.blueprintAspects ?? []);
 				}
 			}
 		} catch {
@@ -344,7 +379,94 @@
 	const requiredQuality = $derived(
 		detail ? Math.max(0, ...detail.costs.map((c) => c.minQuality ?? 0)) : 0
 	);
-	const meets = (mq: number | null) => mq === null || targetQuality >= mq;
+
+	// ---- M8-R1-A: individuelle Material-Regler -------------------------------
+	type QualitySnapResponse = { uuid: string; values: number[] };
+
+	// Snap-Punkte je Material nachladen (Commodity-Endpoint, Union je
+	// Material) und per normiertem Materialnamen indizieren.
+	async function loadSnaps(aspects: Aspect[]) {
+		const byUuid = new Map<string, string>(); // uuid → norm. Materialname
+		for (const a of aspects ?? []) {
+			const uuid = a.input?.uuid?.trim();
+			const key = materialKey(a.input?.name);
+			if (uuid && key) byUuid.set(uuid, key);
+		}
+		if (byUuid.size === 0) return;
+		try {
+			const snaps = await invoke<QualitySnapResponse[]>('scwiki_quality_snaps', {
+				uuids: [...byUuid.keys()]
+			});
+			const map: Record<string, number[]> = {};
+			for (const s of snaps ?? []) {
+				const key = byUuid.get(s.uuid);
+				if (key && s.values?.length) map[key] = [...s.values];
+			}
+			snapPoints = map;
+		} catch {
+			snapPoints = {}; // still weg — Regler bleiben frei regelbar
+		}
+	}
+
+	const rowKey = (c: CostEntry, idx: number) => `${c.material}:${idx}`;
+	const rowQuality = (c: CostEntry, idx: number): number => matQual[rowKey(c, idx)] ?? 0;
+	// Zeile grün/rot am EIGENEN Reglerwert (User-P2: Badge klebt am Regler).
+	const rowMeets = (c: CostEntry, idx: number) =>
+		c.minQuality === null || rowQuality(c, idx) >= c.minQuality;
+	// Aspekt einer Kosten-Zeile (per normiertem Materialnamen gematcht).
+	const rowAspect = (c: CostEntry): Aspect | null =>
+		(detail?.blueprintAspects ?? []).find(
+			(a) => materialKey(a.input?.name) === materialKey(c.material)
+		) ?? null;
+	// Snap-Punkte + Toggle-Status einer Zeile.
+	const rowSnaps = (c: CostEntry): number[] => snapPoints[materialKey(c.material)] ?? [];
+	const rowSnapOn = (c: CostEntry, idx: number): boolean =>
+		rowSnaps(c).length > 0 && (snapOn[rowKey(c, idx)] ?? snapDefault());
+	function toggleSnap(c: CostEntry, idx: number) {
+		const key = rowKey(c, idx);
+		const next = !rowSnapOn(c, idx);
+		snapOn = { ...snapOn, [key]: next };
+		setSnapDefault(next); // letzter Toggle = neuer Default (nice-to-have)
+		if (next) {
+			const snapped = nearestSnap(rowSnaps(c), rowQuality(c, idx));
+			if (snapped !== null) matQual = { ...matQual, [key]: snapped };
+		}
+	}
+	function setRowQuality(c: CostEntry, idx: number, v: number) {
+		const key = rowKey(c, idx);
+		const snapped = rowSnapOn(c, idx) ? nearestSnap(rowSnaps(c), v) : v;
+		matQual = { ...matQual, [key]: snapped ?? v };
+	}
+
+	// Gematchte Aspekte + deren Aspekt-Qualitäten (aus den Einzel-Reglern).
+	const aspectQualities = $derived.by(() => {
+		const map = new Map<string, number>();
+		if (!detail?.blueprintAspects?.length) return map;
+		const mq = new Map<string, number>();
+		for (const [k, v] of Object.entries(matQual)) {
+			const name = k.slice(0, k.lastIndexOf(':'));
+			if (!name || typeof v !== 'number' || !Number.isFinite(v)) continue;
+			mq.set(materialKey(name), v);
+		}
+		for (const a of detail.blueprintAspects) {
+			const q = aspectQuality(a, mq);
+			if (q !== null) map.set(a.key, q);
+		}
+		return map;
+	});
+	// Gesamt-Qualität = min über die Aspekt-Qualitäten (schwächster Aspekt
+	// bestimmt — Rechenmodell im quality-calc-Header; null = nichts berechenbar).
+	const combined = $derived.by(() => {
+		const qs = [...aspectQualities.values()];
+		return qs.length ? Math.min(...qs) : null;
+	});
+	// Gemischte Effekte: eine Änderung am Regler → %-Abweichung je Eigenschaft
+	// (nur der betroffene Aspekt, K6-Modell).
+	const rowChanges = (c: CostEntry, idx: number) => {
+		const a = rowAspect(c);
+		if (!a) return [];
+		return statChanges([a], detail?.blueprintSummary ?? null, rowQuality(c, idx));
+	};
 
 	// ---- Anzeige-Helfer ------------------------------------------------------
 	// Einheiten FARBLICH GETRENNT — nie mischen (Einheiten-Regel M8-K1).
@@ -570,8 +692,8 @@
 							{#each detail.costs as c, idx (c.material + ':' + idx)}
 								<div
 									class="cmat"
-									class:is-ok={meets(c.minQuality)}
-									class:is-fail={!meets(c.minQuality)}
+									class:is-ok={rowMeets(c, idx)}
+									class:is-fail={!rowMeets(c, idx)}
 									role="listitem"
 								>
 									{#if c.oreId && onOpenOre}
@@ -583,9 +705,9 @@
 										onclick={() => openOre(c.oreId)}
 										title={$t('craft.open_in_mining')}
 									>{c.material}</button>
-								{:else}
-									<span class="cm-name">{c.material}</span>
-								{/if}
+									{:else}
+										<span class="cm-name">{c.material}</span>
+									{/if}
 									<span class="cm-qty">
 										{fmtQty(c.quantity)}
 										<span class="cm-unit" style={`--uc:${UNIT_COLORS[c.unit] ?? '#b8bfc9'}`}
@@ -594,7 +716,7 @@
 									</span>
 									<span
 										class="cmq"
-										class:is-req={c.minQuality !== null && requiredQuality > 0}
+										class:is-req={c.minQuality !== null && rowQuality(c, idx) < c.minQuality}
 										title={c.minQuality === null
 											? $t('craft.min_quality_none')
 											: $t('craft.min_quality') + ' ' + c.minQuality}
@@ -602,6 +724,47 @@
 										{c.minQuality === null ? '—' : String(c.minQuality)}
 									</span>
 								</div>
+								{#if rowAspect(c)}
+									<!-- M8-R1-A: individueller Material-Qualitätsregler (0–1000)
+									     mit minQuality-Badge (grün/rot am eigenen Wert), Snap-
+									     Toggle (quality_quantized_values) und %-Abweichungen. -->
+									<div class="cmq-slider" class:is-snap={rowSnapOn(c, idx)}>
+										<input
+											class="cmq-range"
+											type="range"
+											min="0"
+											max="1000"
+											step="1"
+											aria-label={`${$t('craft.mat_quality')}: ${c.material}`}
+											value={rowQuality(c, idx)}
+											oninput={(e) => setRowQuality(c, idx, Number(e.currentTarget.value))}
+										/>
+										<span class="cmq-val" class:is-ok={rowMeets(c, idx)} class:is-fail={!rowMeets(c, idx)}
+											>{rowQuality(c, idx)}</span
+										>
+										{#if rowSnaps(c).length > 0}
+											<button
+												type="button"
+												class="cmq-snap"
+												class:is-on={rowSnapOn(c, idx)}
+												aria-pressed={rowSnapOn(c, idx)}
+												title={rowSnapOn(c, idx)
+													? $t('craft.snap_on') + ' [' + rowSnaps(c).join(', ') + ']'
+													: $t('craft.snap_off')}
+												onclick={() => toggleSnap(c, idx)}
+											>{$t('craft.snap')}</button>
+										{/if}
+										<span class="cmq-changes">
+											{#each rowChanges(c, idx) as ch (ch.property_key)}
+												<span
+													class="cmq-change"
+													class:is-better={ch.better === true}
+													class:is-worse={ch.better === false}>{ch.label} {ch.pct === null ? '—' : (ch.pct > 0 ? '+' : '') + ch.pct + '%'}</span
+												>
+											{/each}
+										</span>
+									</div>
+								{/if}
 							{/each}
 							</div>
 
@@ -697,8 +860,11 @@
 							     echter Stat-Rechner via QualityStats (s. o.). -->
 						<div class="cplanner">
 							<div class="cp-head">{$t('craft.planner_title')}</div>
+							<!-- M8-R1-A: Gesamt-Qualität = Anzeige-/Mischwert aus den
+							     individuellen Reglern (min über Aspekte, s. quality-calc) —
+							     der alte Gesamt-Slider bleibt sichtbar, ist aber read-only. -->
 							<div class="cp-row">
-								<label class="cp-label" for="craft-target-q">{$t('craft.target_quality')}</label>
+								<label class="cp-label" for="craft-target-q">{$t('craft.combined_quality')}</label>
 								<input
 									id="craft-target-q"
 									class="cp-slider"
@@ -706,20 +872,22 @@
 									min="0"
 									max="1000"
 									step="1"
-									bind:value={targetQuality}
+									disabled
+									value={combined ?? 0}
 								/>
-								<span class="cp-val">{targetQuality}</span>
+								<span class="cp-val">{combined === null ? '—' : String(Math.round(combined))}</span>
 							</div>
 							<div class="cp-result">
 								{$t('craft.required_quality')}: <strong>{requiredQuality}</strong>
 							</div>
-							<!-- M8-K6: echter Stat-Rechner — nur wenn ein SC-Wiki-Blueprint
-							     mit Modifier-Daten gematcht hat (sonst still weg, kein Hard-Fail). -->
+							<!-- M8-K6/R1-A: echter Stat-Rechner über die individuellen
+							     Aspekt-Qualitäten — nur wenn ein SC-Wiki-Blueprint mit
+							     Modifier-Daten gematcht hat (sonst still weg, kein Hard-Fail). -->
 							{#if detail.blueprintAspects?.length}
 								<QualityStats
 									aspects={detail.blueprintAspects}
 									summary={detail.blueprintSummary ?? null}
-									targetQuality={targetQuality}
+									aspectQualities={aspectQualities}
 								/>
 							{/if}
 							<p class="cp-note">{$t('craft.planner_note')}</p>
@@ -1070,6 +1238,69 @@
 	}
 	.cmq.is-req {
 		border-color: var(--acc, #e0a83e);
+		opacity: 1;
+	}
+	/* M8-R1-A: individueller Material-Qualitätsregler unter der Zeile */
+	.cmq-slider {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 3px 10px 6px 14px;
+		border-bottom: 1px solid var(--line-soft, rgba(255, 255, 255, 0.05));
+	}
+	.cmq-slider:last-child {
+		border-bottom: 0;
+	}
+	.cmq-range {
+		flex: 1;
+		min-width: 0;
+		accent-color: var(--acc, #e0a83e);
+	}
+	.cmq-val {
+		flex: none;
+		width: 38px;
+		text-align: right;
+		font-size: 11px;
+		font-variant-numeric: tabular-nums;
+	}
+	.cmq-val.is-ok {
+		color: #4be08a;
+	}
+	.cmq-val.is-fail {
+		color: #ff6b6b;
+	}
+	.cmq-snap {
+		flex: none;
+		font-size: 10px;
+		padding: 1px 7px;
+		border-radius: 8px;
+		border: 1px solid var(--line, #2a2f3a);
+		background: none;
+		color: inherit;
+		cursor: pointer;
+		opacity: 0.65;
+	}
+	.cmq-snap.is-on {
+		border-color: var(--acc, #e0a83e);
+		color: var(--acc, #e0a83e);
+		opacity: 1;
+	}
+	.cmq-changes {
+		flex: none;
+		display: flex;
+		gap: 6px;
+		font-size: 10.5px;
+		font-variant-numeric: tabular-nums;
+	}
+	.cmq-change {
+		opacity: 0.75;
+	}
+	.cmq-change.is-better {
+		color: #4be08a;
+		opacity: 1;
+	}
+	.cmq-change.is-worse {
+		color: #ff6b6b;
 		opacity: 1;
 	}
 

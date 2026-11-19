@@ -98,6 +98,7 @@ pub fn run() {
             scwiki_craft::scwiki_craftable_items,
             scwiki_craft::scwiki_blueprint,
             scwiki_craft::scwiki_craft_detail,
+            scwiki_craft::scwiki_quality_snaps,
             trade::math_eval,
             trade::get_prices,
             trade::sync_status,

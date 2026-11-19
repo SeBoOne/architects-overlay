@@ -23,7 +23,8 @@ use std::sync::Arc;
 
 use cache::{Cache, TTL_SCWIKI_CRAFT};
 use scwiki_client::{
-    ATTRIBUTION_SCWIKI, Blueprint, CraftableItem, ScWikiClient, StrataIndex, normalize_name,
+    ATTRIBUTION_SCWIKI, Blueprint, CommodityQuality, CraftableItem, ScWikiClient, StrataIndex,
+    normalize_name,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -35,6 +36,8 @@ use crate::i18n_err::{err_key, err_keyp};
 const KEY_ITEMS: &str = "scwiki:craftable_items";
 /// Prefix der Blueprint-Cache-Keys (`scwiki:blueprint:{uuid}`).
 const KEY_BLUEPRINT_PREFIX: &str = "scwiki:blueprint:";
+/// Prefix der Commodity-Snap-Keys (`scwiki:commodity:{uuid}`, M8-R1-A).
+const KEY_COMMODITY_PREFIX: &str = "scwiki:commodity:";
 
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
@@ -148,6 +151,84 @@ pub struct CraftDetailResponse {
     pub item: CraftableItem,
     pub blueprint: Option<Blueprint>,
     pub attribution: String,
+}
+
+/// Snap-Punkte eines Materials (M8-R1-A) — leere Liste = keine Daten
+/// (unbekannte UUID, Fetch-Fehler) → UI degradiert (Toggle ohne Punkte).
+#[derive(Debug, Clone, Serialize)]
+pub struct QualitySnap {
+    pub uuid: String,
+    pub values: Vec<u32>,
+}
+
+/// Qualitäts-Snap-Punkte für mehrere Commodities (`/api/commodities/{uuid}`,
+/// M8-R1-A) — cache-first pro UUID, TTL [`TTL_SCWIKI_CRAFT`]. Fehler pro
+/// UUID degradieren auf eine leere Liste (Bereicherung, kein Hard-Fail);
+/// die UI zeigt den Regler dann ohne Einrastpunkte weiter an.
+#[tauri::command]
+pub async fn scwiki_quality_snaps(
+    state: tauri::State<'_, ScWikiCraftState>,
+    uuids: Vec<String>,
+) -> Result<Vec<QualitySnap>, String> {
+    quality_snaps_inner(&state.cache, &uuids).await
+}
+
+async fn quality_snaps_inner(cache: &Cache, uuids: &[String]) -> Result<Vec<QualitySnap>, String> {
+    let mut out = Vec::new();
+    for uuid in uuids {
+        let uuid = uuid.trim();
+        if uuid.is_empty() {
+            continue;
+        }
+        let values = cached_commodity_quality_at(cache, scwiki_client::DEFAULT_BASE_URL, uuid)
+            .await
+            .map(|c| c.quality_quantized_values)
+            .unwrap_or_else(|e| {
+                log::warn!("scwiki-craft: commodity {uuid}: {e} — keine Snap-Punkte");
+                Vec::new()
+            });
+        out.push(QualitySnap {
+            uuid: uuid.to_owned(),
+            values,
+        });
+    }
+    Ok(out)
+}
+
+/// Commodity-Snap-Punkte: frisch aus dem Cache, sonst Live-Fetch (Upsert).
+async fn cached_commodity_quality_at(
+    cache: &Cache,
+    base_url: &str,
+    uuid: &str,
+) -> Result<CommodityQuality, String> {
+    let key = format!("{KEY_COMMODITY_PREFIX}{uuid}");
+    if let Some((fetched_at, payload)) = cache.route_meta_get(&key).ok().flatten()
+        && now_unix().saturating_sub(fetched_at) < TTL_SCWIKI_CRAFT.as_secs()
+    {
+        return serde_json::from_str(&payload)
+            .map_err(|e| err_keyp("error.scwiki.bad_response", json!({ "msg": e.to_string() })));
+    }
+    let client = scwiki_client_at(base_url)
+        .map_err(|e| err_keyp("error.scwiki.bad_response", json!({ "msg": e })))?;
+    match client.commodity_quality(uuid).await {
+        Ok(cq) => {
+            if let Ok(payload) = serde_json::to_string(&cq)
+                && let Err(e) = cache.route_meta_set(&key, now_unix(), &payload)
+            {
+                log::warn!("scwiki-craft: cache write {key}: {e}");
+            }
+            Ok(cq)
+        }
+        Err(e) => {
+            if let Ok(Some((_, payload))) = cache.route_meta_get(&key)
+                && let Ok(cq) = serde_json::from_str::<CommodityQuality>(&payload)
+            {
+                log::warn!("scwiki-craft: commodity {uuid} live fehlgeschlagen ({e}) — stale");
+                return Ok(cq);
+            }
+            Err(scwiki_error_key(&e))
+        }
+    }
 }
 
 // ---------- Cache-First-Helfer (nicht-Command, testbar) -------------------
@@ -368,6 +449,63 @@ mod tests {
         assert!(!scwiki_ready(&cache));
         seed(&cache, &[item("x")], false); // stale zählt als vorhanden
         assert!(scwiki_ready(&cache));
+    }
+
+    // ---------- M8-R1-A: Quality-Snaps ----------
+
+    fn commodity(uuid: &str, values: &[u32]) -> CommodityQuality {
+        CommodityQuality {
+            uuid: uuid.to_owned(),
+            name: "Iron".to_owned(),
+            quality_quantized_values: values.to_vec(),
+            occurrences: vec![values.to_vec()],
+        }
+    }
+
+    fn seed_commodity(cache: &Cache, cq: &CommodityQuality, fresh: bool) {
+        let fetched_at = if fresh { now_unix() } else { 0 };
+        cache
+            .route_meta_set(
+                &format!("{KEY_COMMODITY_PREFIX}{}", cq.uuid),
+                fetched_at,
+                &serde_json::to_string(cq).unwrap(),
+            )
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn quality_snaps_read_fresh_cache_without_live_fetch() {
+        let cache = cache();
+        seed_commodity(&cache, &commodity("uuid-iron", &[325, 521, 1000]), true);
+        let out = quality_snaps_inner(&cache, &["uuid-iron".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].uuid, "uuid-iron");
+        assert_eq!(out[0].values, vec![325, 521, 1000]);
+    }
+
+    /// Unbekannte UUID (nur Live-Fetch möglich, der ins Leere läuft) →
+    /// leere Snap-Liste statt Fehler (Bereicherung degradiert).
+    #[tokio::test]
+    async fn quality_snaps_degrade_to_empty_on_fetch_error() {
+        let cache = cache(); // nichts geseedet → Live-Fetch nötig
+        let out = quality_snaps_inner(&cache, &["fehlt".to_owned(), String::new()])
+            .await
+            .unwrap();
+        assert_eq!(out.len(), 1, "leere UUID wird übersprungen");
+        assert!(out[0].values.is_empty());
+    }
+
+    /// Stale Commodity-Cache rettet den Fetch-Fehler (Offline-Toleranz).
+    #[tokio::test]
+    async fn quality_snaps_use_stale_cache_when_live_fails() {
+        let cache = cache();
+        seed_commodity(&cache, &commodity("uuid-iron", &[346, 588]), false);
+        let out = quality_snaps_inner(&cache, &["uuid-iron".to_owned()])
+            .await
+            .unwrap();
+        assert_eq!(out[0].values, vec![346, 588]);
     }
 
     /// Testbare Kernroute von `scwiki_craft_detail` (ohne Tauri-State).
