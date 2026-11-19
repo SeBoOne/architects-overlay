@@ -208,6 +208,15 @@ WRAP = r"""
     }
     return rows.length;
   };
+  // t_e261c7f4-Nachzug (0.5.84+): 500 ist Snap-Punkt für ALLE Materialien —
+  // mit Snap an rastet setSlider(1000) auf 500 zurück (korrektes Verhalten:
+  // „Snap an = nur vordefinierte Werte"). Die Q-Szenarien dieses Probes
+  // brauchen freie Werte → Snap pro Zeile temporär aus.
+  window.allSnapOff = () => {
+    const btns = [...document.querySelectorAll('.crafting .cmq-snap')];
+    for (const b of btns) if (b.classList.contains('is-on')) b.click();
+    return btns.length;
+  };
   // Scroll-Bug: Panel scrollen und die unterste Zeile einmessen.
   window.scrollPanel = () => {
     const d = document.querySelector('.crafting .cdetail');
@@ -249,6 +258,12 @@ WRAP = r"""
     };
   };
   window.pressKey = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
+  window.sliderDebug = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => ({
+    v: r.querySelector('.cmq-range')?.value,
+    snapOn: r.querySelector('.cmq-snap')?.classList.contains('is-on'),
+    disabled: r.querySelector('.cmq-snap')?.disabled,
+    ls: localStorage.getItem('craft.snap_default')
+  }));
 })();
 """
 
@@ -336,8 +351,11 @@ async def main():
         await wait_for("document.querySelector('.crafting .qs')", 10)
         await asyncio.sleep(0.4)
         await asyncio.sleep(1.5)
-        await js("setSlider(1000)")  # Q0-Baseline → Q1000 für die Vollanzeige
+        await js("allSnapOff()")  # Q-Szenarien brauchen freie Werte (500-Snap-Punkt-Regel)
+        await js("allSnapOff()")
+        await js("setSlider(1000)")
         await asyncio.sleep(0.3)
+        print("    DEBUG sliders:", await js("window.sliderDebug ? JSON.stringify(window.sliderDebug()) : 'nohelper'"))
 
         o = await js("orderOk()")
         check("1 Reihenfolge props→qs→desc→mats→planner→missions→dism",

@@ -315,7 +315,8 @@ async def main():
         await wait_for("craftDetailOpen() && sliderRows().length === 2", 8)
         rows = await js("sliderRows()")
         check("1c 2 Regler-Zeilen (Agricium/Hadanite gematcht)", rows and len(rows) == 2, str(rows))
-        check("1d Regler starten bei 0", all(r["range"] == "0" for r in rows), str(rows))
+        check("1d Regler starten bei 500 (Mitte, User-Default)",
+              all(r["range"] == "500" for r in rows), str(rows))
         snaps_called = await js("window.__SNAP_CALLS.length")
         uuids0 = (await js("window.__SNAP_CALLS[0].uuids")) or []
         check("1e Snap-Fetch mit beiden Material-UUIDs",
@@ -324,8 +325,8 @@ async def main():
         rows0 = await js("sliderRows()")
         check("1g Snap-Default an (Toggle is-on)", rows0 and rows0[0]["snapOn"] is True and rows0[1]["snapOn"] is True, str(rows0))
         badges = await js("badges()")
-        check("1f Zeilen starten ROT (0 < minQuality)",
-              badges and all("is-fail" in b["cls"] for b in badges), str(badges))
+        check("1f Zeilen starten GRÜN (500 ≥ minQuality; Agricium min 500, Hadanite min 1)",
+              badges and all("is-ok" in b["cls"] for b in badges), str(badges))
 
         # ---- Gate 2: minQuality am EIGENEN Regler (Snap aus → freie Werte) ----
         await js("toggleSnapAt(0)")
@@ -338,8 +339,10 @@ async def main():
         rows = await js("sliderRows()")
         check("2a Agricium Q600: Wert grün (≥ 500)",
               rows and "is-ok" in rows[0]["valCls"] and rows[0]["val"] == "600", str(rows))
-        check("2b Hadanite: Toggle-Snap auf 287 gerastet (≥ min 1 → grün)",
-              rows and rows[1]["val"] == "287" and "is-ok" in rows[1]["valCls"] and rows[1]["snapOn"] is False, str(rows))
+        # Startwert 500 = Mitte; 500 ist selbst Rasterpunkt → An-Toggle rastet
+        # 500 zu 500 (kein Sprung mehr auf 287 wie vor dem 500-Default).
+        check("2b Hadanite: bleibt 500 (Mitte = Rasterpunkt, ≥ min 1 → grün)",
+              rows and rows[1]["val"] == "500" and "is-ok" in rows[1]["valCls"] and rows[1]["snapOn"] is False, str(rows))
         badges = await js("badges()")
         check("2c Beide Zeilen grün (eigene Reglerwerte erfüllen minQuality)",
               badges and all("is-ok" in b["cls"] for b in badges), str(badges))
@@ -381,7 +384,8 @@ async def main():
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
         check("5b Snap an: 300 → 346 gerastet", rows and rows[0]["val"] == "346" and rows[0]["snapOn"] is True, str(rows))
-        check("5c Snap-Titel zeigt Union", rows and "346, 588, 1000" in (rows[0]["snapTitle"] or ""), str(rows and rows[0]["snapTitle"]))
+        check("5c Snap-Titel zeigt Union (inkl. 500-Mitte)",
+              rows and "346, 500, 588, 1000" in (rows[0]["snapTitle"] or ""), str(rows and rows[0]["snapTitle"]))
         await js("toggleSnapAt(0)")  # aus
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
@@ -390,11 +394,16 @@ async def main():
         await js("setMat(0, 500)")
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
-        check("5e Frei: 500 bleibt 500 (kein Quantwert)", rows and rows[0]["val"] == "500", str(rows))
-        await js("toggleSnapAt(0)")  # wieder an → 500 rastet auf 588
+        check("5e Frei: 500 bleibt 500 (Mitte ist jetzt selbst Rasterpunkt)",
+              rows and rows[0]["val"] == "500", str(rows))
+        await js("setMat(0, 550)")  # zwischen 500 und 588 — näher an 588
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
-        check("5f Toggle an: 500 → 588 gerastet", rows and rows[0]["snapOn"] is True and rows[0]["val"] == "588", str(rows))
+        check("5f Frei: 550 bleibt 550 (kein Rasten aus)", rows and rows[0]["val"] == "550", str(rows))
+        await js("toggleSnapAt(0)")  # wieder an → 550 rastet auf 588
+        await asyncio.sleep(0.2)
+        rows = await js("sliderRows()")
+        check("5f2 Toggle an: 550 → 588 gerastet", rows and rows[0]["snapOn"] is True and rows[0]["val"] == "588", str(rows))
         await shot("m8-r1a-detail-snap.png")
 
         # ---- Gate 6: Popup-Kompaktheit (t_e261c7f4-Update) ----

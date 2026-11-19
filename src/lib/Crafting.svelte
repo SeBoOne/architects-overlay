@@ -429,7 +429,11 @@
 	}
 
 	const rowKey = (c: CostEntry, idx: number) => `${c.material}:${idx}`;
-	const rowQuality = (c: CostEntry, idx: number): number => matQual[rowKey(c, idx)] ?? 0;
+	// User: Standard = 500 (Mitte) — auch als Snaps-Wert für ALLE Materialien
+	// (unter rowSnaps). Qualitäts-Mitte ist der neutrale Startwert.
+	const DEFAULT_ROW_QUALITY = 500;
+	const rowQuality = (c: CostEntry, idx: number): number =>
+		matQual[rowKey(c, idx)] ?? DEFAULT_ROW_QUALITY;
 	// Zeile grün/rot am EIGENEN Reglerwert (User-P2: Badge klebt am Regler).
 	const rowMeets = (c: CostEntry, idx: number) =>
 		c.minQuality === null || rowQuality(c, idx) >= c.minQuality;
@@ -438,8 +442,14 @@
 		(detail?.blueprintAspects ?? []).find(
 			(a) => materialKey(a.input?.name) === materialKey(c.material)
 		) ?? null;
-	// Snap-Punkte + Toggle-Status einer Zeile.
-	const rowSnaps = (c: CostEntry): number[] => snapPoints[materialKey(c.material)] ?? [];
+	// Snap-Punkte + Toggle-Status einer Zeile. 500 (Mitte) ist für ALLE
+	// Materialien ein Rasterpunkt — auch ohne Commodity-Quantwerte (User:
+	// „soll auch ein snap punkt sein für alle materialien“).
+	const rowSnaps = (c: CostEntry): number[] => {
+		const quant = snapPoints[materialKey(c.material)] ?? [];
+		const set = new Set<number>([DEFAULT_ROW_QUALITY, ...quant]);
+		return [...set].sort((a, b) => a - b);
+	};
 	const rowSnapOn = (c: CostEntry, idx: number): boolean =>
 		rowSnaps(c).length > 0 && (snapOn[rowKey(c, idx)] ?? snapDefault());
 	function toggleSnap(c: CostEntry, idx: number) {
