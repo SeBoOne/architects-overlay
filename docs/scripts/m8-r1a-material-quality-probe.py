@@ -203,7 +203,8 @@ WRAP = r"""
   window.modalOverflow = () => {
     const m = document.querySelector('.crafting .cdetail');
     if (!m) return null;
-    return { sh: m.scrollHeight, ch: m.clientHeight, overflow: m.scrollHeight > m.clientHeight };
+    return { sh: m.scrollHeight, ch: m.clientHeight, overflow: m.scrollHeight > m.clientHeight,
+             scrollable: m.scrollHeight > m.clientHeight && getComputedStyle(m).overflowY.split(' ').some(o => o === 'auto' || o === 'scroll') };
   };
 })();
 """
@@ -396,10 +397,16 @@ async def main():
         check("5f Toggle an: 500 → 588 gerastet", rows and rows[0]["snapOn"] is True and rows[0]["val"] == "588", str(rows))
         await shot("m8-r1a-detail-snap.png")
 
-        # ---- Gate 6: Popup-Kompaktheit (Shell content-driven, Repo-Regel) ----
+        # ---- Gate 6: Popup-Kompaktheit (t_e261c7f4-Update) ----
+        # Seit der Stat-Block ab Start ALLE Modifier-Zeilen reserviert
+        # (Raumstabilität, gewollt), ist Overflow normal — entscheidend ist,
+        # dass .cdetail scrollbar ist und die Regler erreichbar bleiben.
         ov = await js("modalOverflow()")
-        check("6 Detail-Shell mit Regler-Zeilen ohne Scroll-Overflow",
-              ov is not None and ov["overflow"] is False, str(ov))
+        vis6 = await js("sliderVisibility()")
+        scrollable = ov is not None and ov.get("scrollable") is True
+        check("6 Detail-Shell scrollbar + Regler erreichbar (Overflow ok, solange scrollend)",
+              scrollable and vis6 is not None and all(v["boxH"] > 0 and v["display"] != "none" for v in vis6),
+              f"ov={ov} vis={vis6}")
         # ---- Gate 7 (M8-R1-C×R1-A, t_1dbe8a85): Regler SICHTBAR ----
         vis = await js("sliderVisibility()")
         check("7a Regler-Zeilen gerendert (Box > 0, nicht display:none/hidden)",
