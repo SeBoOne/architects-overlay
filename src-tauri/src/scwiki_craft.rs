@@ -269,6 +269,41 @@ async fn snap_fallback_ore(
             None
         }
     };
+    // 0) Exact-Name-Match VOR dem (Ore)-Match: manche Raffinate sind selbst
+    //    Vorkommens-Commodities mit eigenen Locations + quantized values
+    //    (LIVE-Beleg t_8c0e6abc-Nachzug, 2026-11-19: Glacosite 960eda23 —
+    //    18 locations, Union [360..1000]), ohne dass es ein
+    //    „Glacosite (Ore)" gibt. Der Input-UUID-Fetch 404't hier, weil die
+    //    Blueprint-Inputs resource_type_uuids (Items-API-Namespace) tragen,
+    //    keine Commodity-UUIDs.
+    if let Some(exact) = list.as_ref().and_then(|l| {
+        l.iter()
+            .find(|c| normalize_name(&c.name) == normalize_name(name))
+    }) {
+        match cached_commodity_quality_at(cache, base_url, &exact.uuid).await {
+            Ok(cq) if !cq.quality_quantized_values.is_empty() => {
+                log::info!(
+                    "scwiki-craft: commodity {uuid}: exact-name {} ({}): {} Snap-Punkte",
+                    cq.name,
+                    cq.uuid,
+                    cq.quality_quantized_values.len()
+                );
+                return cq.quality_quantized_values;
+            }
+            Ok(_) => {
+                log::info!(
+                    "scwiki-craft: commodity {uuid}: exact-name {} ohne Werte — weiter",
+                    exact.uuid
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "scwiki-craft: commodity {uuid}: exact-name-Fetch {}: {e}",
+                    exact.uuid
+                );
+            }
+        }
+    }
     if let Some(ore) = list
         .as_ref()
         .and_then(|l| l.iter().find(|c| normalize_name(&c.name) == needle))
@@ -777,6 +812,40 @@ mod tests {
             out[0].values,
             BORASE_UNION.to_vec(),
             "Snap auf Borase-(Ore)-Union gerastet"
+        );
+    }
+
+    /// LIVE-Beleg (t_8c0e6abc-Nachzug, 2026-11-19): Glacosite ist ein
+    /// Raffinat OHNE „(Ore)"-Gegenstück, trägt aber SELBST Locations +
+    /// quantized values (Commodity 960eda23: 18 locations, Union
+    /// [360, 567, 678, 724, 857, 916, 972, 1000]). Der Input-UUID-Fetch
+    /// 404't (resource_type_uuid aus dem Items-API-Namespace) → der
+    /// Exact-Name-Match in der Commodities-Liste greift VOR dem
+    /// (Ore)-Match und liefert das Raster.
+    #[tokio::test]
+    async fn snap_fallback_resolves_refined_via_exact_name_match() {
+        let cache = cache();
+        seed_commodities_list(
+            &cache,
+            &[CommodityRef {
+                uuid: "uuid-glacosite".to_owned(),
+                name: "Glacosite".to_owned(),
+            }],
+            true,
+        );
+        seed_commodity(&cache, &commodity("uuid-glacosite", &[360, 567, 678]), true);
+        let out = quality_snaps_inner(
+            &cache,
+            &[req("uuid-resource-type", Some("Glacosite"))],
+            None,
+            TEST_URL,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            out[0].values,
+            vec![360, 567, 678],
+            "Exact-Name-Match liefert das Glacosite-Raster"
         );
     }
 
