@@ -476,8 +476,12 @@
 		// Snap sichtbar machen (User-Befund: „Werte snappen, Regler nicht“):
 		// der reactive value={}-Write feuert nur bei STATE-Änderung — zieht man
 		// innerhalb desselben Snap-Buckets (oder erneut in einen), bleibt der
-		// Thumb an der Zeigerposition hängen. Direkter DOM-Write schließt die
-		// Lücke; onchange (feuert nach dem Loslassen) lässt ihn stehen.
+		// Thumb an der Zeigerposition hängen. ABER: der el-Write darf NUR bei
+		// change (nach dem Loslassen) passieren — WebKitGTK bricht einen
+		// aktiven Drag ab, wenn das value programmatisch gesetzt wird
+		// (User-Befund: „bei Snap aktiv kann ich keine Werte ändern“); im
+		// headless-Chromium-Diag war das nicht sichtbar. oninput snappt also
+		// nur den State, onchange schreibt zusätzlich den Thumb.
 		if (el !== null && el !== undefined) el.value = String(snapped ?? v);
 		if (scroller !== null && top !== null) {
 			requestAnimationFrame(() => {
@@ -799,7 +803,7 @@
 											step="1"
 											aria-label={`${$t('craft.mat_quality')}: ${c.material}`}
 											value={rowQuality(c, idx)}
-											oninput={(e) => setRowQuality(c, idx, Number(e.currentTarget.value), e.currentTarget)}
+											oninput={(e) => setRowQuality(c, idx, Number(e.currentTarget.value))}
 											onchange={(e) => setRowQuality(c, idx, Number(e.currentTarget.value), e.currentTarget)}
 											/>
 										<span class="cmq-val" class:is-ok={rowMeets(c, idx)} class:is-fail={!rowMeets(c, idx)}
