@@ -487,6 +487,23 @@
 		{ tier: 5, band: '15–25 %' },
 		{ tier: 6, band: '≥ 25 %' }
 	]);
+
+	// M7-F5c: proportionale Karten-Skalierung — ResizeObserver setzt die
+	// Basis-Schriftgröße pro Karte (1em = Breite/24 → 10px @ 240px-Karte);
+	// ALLE inneren Maße sind em → der Karteninhalt skaliert exakt mit der
+	// Spaltenbreite. WebKitGTK-sicher: keine container-queries/cqw (kollabiert
+	// im App-DOM — lebte Erfahrung 2026-11-19), kein zoom, kein transform.
+	function cardScale(node: HTMLElement) {
+		const apply = () => {
+			node.style.fontSize = node.clientWidth / 24 + 'px';
+		};
+		const ro = new ResizeObserver(apply);
+		ro.observe(node);
+		apply();
+		return {
+			destroy: () => ro.disconnect()
+		};
+	}
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -734,6 +751,7 @@
 							     Non-Interactive-Keyboard-Handler (a11y-Regel svelte-check). -->
 							<div
 								class="dcard locard"
+								use:cardScale
 								role="listitem"
 								style={`--rc:${rarityColor(rarityOfOreId(or.oreId)) ?? '#8b949e'}`}
 							>
@@ -814,7 +832,7 @@
 							</div>
 							<div class="dcards">
 								{#each g.rows as row (row.locationId)}
-									<div class="dcard">
+									<div class="dcard" use:cardScale>
 										<span class="dcard-name" title={row.location}>{row.location}</span>
 										<div class="dcard-meta">
 											<span class="dcard-sub">{row.system ?? '—'}</span>
@@ -1115,22 +1133,22 @@
 	}
 	.dcards {
 		display: grid;
-		/* M7-F5b (User 2026-11-19): Karten skalieren seitenverhältnis-treu —
-		   Spalten füllen die Reihe KOMPLETT (1fr, gleichverteilt), min 210px
-		   bestimmt die Spaltenzahl (weniger/mehr je Platz). Kein Rest-Leerraum
-		   rechts — die Karten nutzen die Breite, die da ist. */
-		grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+		/* M7-F5c (User 2026-11-19): Spalten füllen die Reihe (1fr, gleich-
+		   verteilt) — die Skalierung macht der ResizeObserver unten: er setzt
+		   pro Karte die Basis-Schriftgröße (clientWidth/24), ALLE inneren
+		   Maße sind em → Karteninhalt skaliert exakt proportional, ohne
+		   container-queries/cqw (WebKitGTK-instabil im App-Kontext). */
+		grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 		gap: 8px;
 	}
 	.dcard {
-		/* M7-F5b: Seitenverhältnis 5:7 (Portrait ~1:1.4) + container-type:
-		   alle inneren Größen in cqw → Inhalt skaliert MIT der Kartenbreite. */
-		aspect-ratio: 5 / 7;
-		container-type: inline-size;
+		/* M7-F5c: Portrait ~1:1.4 — Höhe = Inhalt (Kachel 11em + Balken), alle
+		   Maße in em gegen die JS-gesetzte Karten-Basis-Schriftgröße (10px @
+		   240px Karte → 1em = Breite/24). */
 		display: flex;
 		flex-direction: column;
-		gap: 0.8cqw;
-		padding: 3.2cqw 4cqw;
+		gap: 0.35em;
+		padding: 0.8em 1em;
 		border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 		background: color-mix(in srgb, var(--panel, #11100d) 60%, transparent);
 		border-radius: 3px;
@@ -1139,7 +1157,7 @@
 	.dcard-name {
 		display: block;
 		font-weight: 700;
-		font-size: 5cqw;
+		font-size: 1.2em;
 		color: var(--fg, #e8ecf3);
 		white-space: nowrap;
 		overflow: hidden;
@@ -1150,9 +1168,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 2.5cqw;
+		gap: 0.6em;
 		min-width: 0;
-		font-size: 4.6cqw;
+		font-size: 1.05em;
 	}
 	.dcard-name {
 		flex: 1;
@@ -1171,11 +1189,11 @@
 	/* M7-F3: Körper = links Kürzel-Block (1.25:1 Höhe×Breite — breiter als
 	   hoch), rechts die 2 Balken. */
 	.abbr-block {
-		/* M7-F5b: Kachel skaliert mit (49cqw ≈ 118px @ 240px Karte). */
+		/* Kachel 11.8em × 14.75em (118×147px @ 240px Karte) — mittig. */
 		aspect-ratio: 1 / 1.25;
 		flex: 0 0 auto;
-		width: 49cqw;
-		margin: 3cqw auto;
+		width: 11.8em;
+		margin: 0.6em auto;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -1186,14 +1204,14 @@
 		border-radius: 3px;
 	}
 	.abbr {
-		font-size: 16cqw;
+		font-size: 3.8em;
 		font-weight: 700;
 		line-height: 1;
 		color: var(--fg, #e8ecf3);
 		letter-spacing: 0.02em;
 	}
 	.abbr-sig {
-		font-size: 6.7cqw; /* M7-F5: Signatur-Zahl größer — skaliert mit */
+		font-size: 1.6em; /* Signatur-Zahl größer — skaliert mit */
 		font-weight: 600;
 		color: var(--fgdim, #9aa3b2);
 	}
@@ -1201,15 +1219,15 @@
 	.dnums {
 		display: flex;
 		flex-direction: column;
-		gap: 0.8cqw;
+		gap: 0.35em;
 		margin-top: auto; /* unten verankert — Kachel bleibt optisch mittig-oben */
 	}
 	.dnum {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 2.5cqw;
-		font-size: 4.6cqw;
+		gap: 0.6em;
+		font-size: 1.05em;
 	}
 	.dnum-l {
 		color: var(--fgdim, #9aa3b2);
@@ -1219,13 +1237,13 @@
 		color: var(--fg, #e8ecf3);
 		font-weight: 600;
 		flex: 0 0 auto;
-		min-width: 21cqw;
+		min-width: 5.2em;
 	}
 	.dbar {
 		/* Volle Zeilenbreite (eigene Zeile unter Label+Wert) — flex:1 schrumpfte
 		   auf 0px, wenn Label+Wert die Zeile füllten (Review-Befund Runde 3). */
 		flex-basis: 100%;
-		height: 2.1cqw;
+		height: 0.5em;
 		background: color-mix(in srgb, var(--fgdim, #9aa3b2) 25%, transparent);
 		overflow: hidden;
 	}
@@ -1239,8 +1257,8 @@
 		/* EIGENE volle Zeile wie der Rank-Balken (flex-basis:100%). */
 		flex-basis: 100%;
 		display: flex;
-		gap: 0.8cqw;
-		height: 2.9cqw;
+		gap: 0.3em;
+		height: 0.7em;
 	}
 	.segbar i {
 		flex: 1;
@@ -1253,10 +1271,9 @@
 	}
 	/* M7-F4 P3: Ort-Detail-Karten — Kürzel-Kachel (1.25:1) mit Rarity-Border */
 	.ltile {
-		/* M7-F5 (User-Mockup): großes mittiges Kürzel-Tile (Portrait-Karte) —
-		   Rarity-Border via inline border-color, Signatur-Zahl darunter. */
-		width: 110px;
-		height: 138px; /* 1 : 1.25 */
+		/* Portrait-Kachel 11em × 13.8em — Rarity-Border, Signatur darunter. */
+		width: 11em;
+		height: 13.8em;
 		margin: 8px auto;
 		display: flex;
 		flex-direction: column;
@@ -1270,7 +1287,7 @@
 		color: var(--fg, #e8ecf3);
 	}
 	.ltile-sig {
-		font: 600 16px/1 var(--font-mono, monospace); /* M7-F5: größer */
+		font: 600 1.6em/1 var(--font-mono, monospace); /* skaliert mit */
 		color: var(--fgdim, #9aa3b2);
 	}
 	/* Legende */
