@@ -4735,6 +4735,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Erz vorgewählt (Orte-pro-Erz-Detail offen). Generisch über Callback-Prop
 	// an Crafting; kein Modi-Kopplungs-Hardcode in den Komponenten selbst.
 	function openOreInMining(oreId: string) {
+		// Defense-in-depth (t_ef0bcd6a): wie setMode den M7-F1-Guard beachtet —
+		// ohne Strata-Ready keinen Jump setzen (sonst leere crafting-keep-Shell).
+		if (!strataReady) return;
 		setMode('mining');
 		craftOreJump = oreId;
 	}

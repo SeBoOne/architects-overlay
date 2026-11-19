@@ -229,12 +229,19 @@ async def main():
         check("3a Craft-Detail versteckt gemountet (keep-alive)", await js("craftHidden()") is True)
         check("3b Craft-Detail-State erhalten", await js("craftDetailOpen()") is True and await js("craftTitle()") == "Rsi Andromeda")
 
-        # ---- 4) Rückweg Esc → Craft-Detail ----
+        # ---- 4) Rückweg-Kaskade (t_ef0bcd6a): Esc im Detail schließt ERST das
+        #         Detail (Liste bleibt); erst auf Listen-Ebene geht Esc zurück
+        #         ins Craft-Detail (State erhalten).
         await js("window.pressKey('Escape')")
         await asyncio.sleep(0.4)
-        check("4a Mining entladen", await js("miningOpen()") is False)
-        check("4b Craft-Detail wieder sichtbar", await js("craftHidden()") is False and await js("craftDetailOpen()") is True)
-        check("4c Craft-Detail-State unverändert (Rsi Andromeda)", await js("craftTitle()") == "Rsi Andromeda")
+        check("4a Esc im Detail: Detail geschlossen, Mining bleibt offen",
+              await js("miningOpen()") is True and await js("miningDetailTitle()") == "")
+        check("4b Esc im Detail: Craft weiter keep-alive versteckt", await js("craftHidden()") is True)
+        await js("window.pressKey('Escape')")
+        await asyncio.sleep(0.4)
+        check("4c Esc auf Liste: Mining entladen, Craft-Detail sichtbar mit State",
+              await js("miningOpen()") is False and await js("craftHidden()") is False
+              and await js("craftDetailOpen()") is True and await js("craftTitle()") == "Rsi Andromeda")
         await shot("m8-k3-back-to-craft-detail.png")
 
         # ---- 5) F6-Hotkey-Rückweg löst Jump-Kontext auf ----
