@@ -101,6 +101,19 @@ function clamp(v: number, lo: number, hi: number): number {
 	return Math.min(hi, Math.max(lo, v));
 }
 
+/** M8-R1-C (t_b6ee9f14): API-Stat-Wert × Modifier-Faktor — für die
+ *  Stats-Vollanzeige (default | neu). Auf 1 Nachkommastelle gerundet,
+ *  Integer-Werte ohne Dezimalstellen; null wenn kein Faktor. */
+export function scaledStat(
+	base: number | null | undefined,
+	factor: number | null | undefined
+): number | null {
+	if (base === null || base === undefined || !Number.isFinite(base)) return null;
+	if (factor === null || factor === undefined || !Number.isFinite(factor)) return null;
+	const v = base * factor;
+	return Math.round(v * 10) / 10;
+}
+
 /** Faktor → %-Abweichung gegenüber 1.0, auf 1 Nachkommastelle. */
 export function modifierPercent(factor: number | null): number | null {
 	if (factor === null || !Number.isFinite(factor)) return null;

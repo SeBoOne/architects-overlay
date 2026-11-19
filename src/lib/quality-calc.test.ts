@@ -13,6 +13,7 @@ import {
 	modifierPercent,
 	statChanges,
 	qualityReachable,
+	scaledStat,
 	type Aspect,
 	type AspectModifier,
 	type SummaryProperty
@@ -284,4 +285,20 @@ test('nearestSnap: nächster Punkt, null bei leerer Liste', () => {
 	assert.equal(nearestSnap(pts, 500), 521);
 	assert.equal(nearestSnap(pts, 999), 1000);
 	assert.equal(nearestSnap([], 500), null);
+	});
+
+// M8-R1-C (t_b6ee9f14): scaledStat — API-Basiswert × Modifier-Faktor für
+// die Stats-Vollanzeige (default | neu).
+test('scaledStat: Basiswert × Faktor, auf 1 Nachkommastelle gerundet', () => {
+	assert.equal(scaledStat(73, 1.05), 76.7); // 76.65 → 76.7 (round half up)
+	assert.equal(scaledStat(73, 1.1), 80.3);
+	assert.equal(scaledStat(100, 1.0), 100);
+	assert.equal(scaledStat(492, 0.95), 467.4);
+});
+
+test('scaledStat: null/undefined-Basis oder -Faktor → null (nichts erfinden)', () => {
+	assert.equal(scaledStat(null, 1.05), null);
+	assert.equal(scaledStat(undefined, 1.05), null);
+	assert.equal(scaledStat(73, null), null);
+	assert.equal(scaledStat(73, undefined), null);
 });

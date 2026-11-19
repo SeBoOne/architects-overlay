@@ -1654,6 +1654,20 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 /* M8-K3 (t_a8088d06): Craft→Mining-Sprung — keep-alive-Wrapper für das
    Crafting-Detail; versteckt während der Mining offen ist, unverändert
    sichtbar nach dem Rückweg. */
+/* M8-R1-C (t_b6ee9f14): Root-Cause des Scroll-Abschneide-Bugs — der
+   keep-alive-Wrapper war ein unstyled div zwischen .shell-main (column
+   flex) und .crafting (flex:1): die flex-Kette brach, der Wrapper wuchs
+   auf volle Content-Höhe und lief unscrollbar über die Shell-Kante
+   (Missionen unsichtbar, Zierramen fehlt). Fix: Wrapper wieder in die
+   flex-Kette aufnehmen (flex:1 + min-height:0), damit .ccols/.cdetail
+   ihre overflow-y-Regeln wirksam werden. */
+.crafting-keep {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .crafting-keep.is-hidden {
   display: none;
 }
