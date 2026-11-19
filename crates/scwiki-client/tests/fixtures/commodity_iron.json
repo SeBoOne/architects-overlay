@@ -1,0 +1,94 @@
+{
+ "data": {
+  "uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4",
+  "key": "Ore_Iron",
+  "name": "Iron (Ore)",
+  "display_name": "Iron (Ore) (UnrefinedOres)",
+  "slug": "iron-ore",
+  "is_mineable": true,
+  "locations": [
+   {
+    "name": "ARC L3",
+    "uuid": "8e1e3499-2188-4a1d-97eb-5cd45f66f908",
+    "resources": [
+     {
+      "materials": [
+       {
+        "quality_mean": 245,
+        "quality_quantized_values": [
+         325,
+         521
+        ],
+        "key": "Ore_Iron",
+        "name": "Iron (Ore)",
+        "quality_min": 245,
+        "quality_max": 490,
+        "uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4",
+        "quality_stddev": 70
+       },
+       {
+        "quality_mean": 500,
+        "quality_quantized_values": [
+         521,
+         664,
+         710,
+         874,
+         907,
+         970,
+         1000
+        ],
+        "key": "Ore_Iron",
+        "name": "Iron (Ore)",
+        "quality_min": 501,
+        "quality_max": 1000,
+        "uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4",
+        "quality_stddev": 143
+       }
+      ]
+     }
+    ]
+   },
+   {
+    "name": "ARC L5",
+    "uuid": "9320ba84-f110-4589-907f-e85d76e05c44",
+    "resources": [
+     {
+      "materials": [
+       {
+        "quality_mean": 245,
+        "quality_quantized_values": [
+         325,
+         521
+        ],
+        "key": "Ore_Iron",
+        "name": "Iron (Ore)",
+        "quality_min": 245,
+        "quality_max": 490,
+        "uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4",
+        "quality_stddev": 70
+       },
+       {
+        "quality_mean": 500,
+        "quality_quantized_values": [
+         521,
+         664,
+         710,
+         874,
+         907,
+         970,
+         1000
+        ],
+        "key": "Ore_Iron",
+        "name": "Iron (Ore)",
+        "quality_min": 501,
+        "quality_max": 1000,
+        "uuid": "32c57a12-5de5-49b1-827a-9fd80278fbc4",
+        "quality_stddev": 143
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ }
+}

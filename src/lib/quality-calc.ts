@@ -19,6 +19,18 @@
 // Aggregation über Aspekte: mehrere Aspekte können dieselbe Eigenschaft
 // modifizieren — interpretiert als multiplikative Kette (Faktor-Produkt).
 // Diese Interpretation ist dokumentiert, nicht als Spielwahrheit belegt.
+//
+// M8-R1-A (t_a81b04a6): Individuelle Material-Regler. Rechenmodell für die
+// Kombination (dokumentiert, im Probe-Skript gegen gemischte Werte geprüft):
+//
+//   Aspekt-Qualität = mengengewichtetes Mittel der Materialqualitäten
+//                     (Gewicht = quantity_scu; Materials ohne SCU-Gewicht
+//                     zählen 1.0 — simple Mittelung),
+//   Gesamt-Qualität = min über die Aspekt-Qualitäten
+//                     (der schwächste Aspekt bestimmt das Ende).
+//
+// Beide Regeln sind eine Interpretation (kein offizieller Beleg); falls
+// Live-Daten/Wiki dagegen sprechen, hier anpassen und Begründung notieren.
 
 export type QualityRange = { min: number; max: number };
 export type ModifierRange = { at_min_quality: number; at_max_quality: number };
@@ -34,6 +46,8 @@ export type AspectModifier = {
 
 export type AspectInput = {
 	name: string;
+	/** Commodity-UUID des Materials (M8-R1-A) — Schlüssel der Snap-Punkte. */
+	uuid?: string | null;
 	min_quality?: number | null;
 	quantity?: number | null;
 	quantity_scu?: number | null;
@@ -157,4 +171,137 @@ export function statChanges(
 export function qualityReachable(target: number, minQuality: number | null | undefined): boolean {
 	if (minQuality === null || minQuality === undefined) return true; // keine Grenze
 	return target >= minQuality;
+}
+
+// ---------- M8-R1-A: Individuelle Material-Regler + Kombination ----------
+
+/** Namens-Schlüssel für Material-Matching (trim + lowercase, wie Rust
+ *  `normalize_name` — exakt, keine Fuzzy-Heuristik). */
+export function materialKey(name: string | null | undefined): string {
+	return (name ?? '').trim().toLowerCase();
+}
+
+/** Mengengewichtetes Mittel (Gewicht = weight; Einträge ohne endliches
+ *  Gewicht zählen 1.0). Leere Liste / keine endlichen Qualitäten → null. */
+export function weightedMean(
+	entries: { weight: number | null | undefined; quality: number | null | undefined }[]
+): number | null {
+	let sumW = 0;
+	let sumWQ = 0;
+	for (const e of entries) {
+		if (e === null || e === undefined) continue;
+		const q = e.quality;
+		if (q === null || q === undefined || !Number.isFinite(q)) continue;
+		const w =
+			e.weight !== null && e.weight !== undefined && Number.isFinite(e.weight) && e.weight > 0
+				? e.weight
+				: 1;
+		sumW += w;
+		sumWQ += w * q;
+	}
+	if (sumW <= 0) return null;
+	return sumWQ / sumW;
+}
+
+/**
+ * Aspekt-Qualität aus den individuellen Material-Reglern (M8-R1-A):
+ * mengengewichtetes Mittel der Materialqualitäten (quantity_scu-Gewicht,
+ * s. Header). Ein Aspekt ohne gematchtes Material → null (trägt nicht bei).
+ */
+export function aspectQuality(
+	aspect: Aspect,
+	materialQuality: Map<string, number>
+): number | null {
+	const mats = [aspect.input].filter(
+		(i): i is NonNullable<typeof i> => !!i && materialQuality.has(materialKey(i.name))
+	);
+	if (mats.length === 0) return null;
+	return weightedMean(
+		mats.map((i) => ({
+			weight: i.quantity_scu ?? null,
+			quality: materialQuality.get(materialKey(i.name)) ?? null
+		}))
+	);
+}
+
+/**
+ * Gesamt-Qualität = min über die Aspekt-Qualitäten (schwächster Aspekt
+ * bestimmt; s. Header). Kein berechenbarer Aspekt → null.
+ */
+export function combinedQuality(
+	aspects: Aspect[],
+	materialQuality: Map<string, number>
+): number | null {
+	const qs = (aspects ?? [])
+		.map((a) => aspectQuality(a, materialQuality))
+		.filter((q): q is number => q !== null);
+	if (qs.length === 0) return null;
+	return Math.min(...qs);
+}
+
+/**
+ * Stat-Änderungen mit INDIVIDUELLEN Qualitäten pro Aspekt (M8-R1-A):
+ * jeder Aspekt wird mit seiner eigenen Ziel-Qualität interpoliert, die
+ * Faktoren einer Eigenschaft multiplizieren sich (K6-Modell). Aspekte
+ * ohne Qualität (null/undefined) fallen still raus — der Rückgabetyp
+ * und die Reihenfolge entsprechen `statChanges`.
+ */
+export function statChangesPerAspect(
+	aspects: Aspect[],
+	summary: SummaryProperty[] | null | undefined,
+	aspectQualities: Map<string, number>
+): StatChange[] {
+	const factors = new Map<string, number>();
+	let any = false;
+	for (const a of aspects ?? []) {
+		const q = aspectQualities.get(a.key);
+		if (q === null || q === undefined || !Number.isFinite(q)) continue;
+		for (const m of a.modifiers ?? []) {
+			const f = interpolateModifier(m, q);
+			if (f === null) continue;
+			any = true;
+			factors.set(m.property_key, (factors.get(m.property_key) ?? 1) * f);
+		}
+	}
+	if (!any) return [];
+
+	const order: string[] = [];
+	for (const s of summary ?? []) {
+		if (factors.has(s.property_key) && !order.includes(s.property_key)) {
+			order.push(s.property_key);
+		}
+	}
+	for (const k of factors.keys()) {
+		if (!order.includes(k)) order.push(k);
+	}
+	const summaryByKey = new Map<string, SummaryProperty>();
+	for (const s of summary ?? []) summaryByKey.set(s.property_key, s);
+
+	return order.map((key) => {
+		const factor = factors.get(key) ?? null;
+		const pct = modifierPercent(factor);
+		const betterWhen = summaryByKey.get(key)?.better_when ?? null;
+		let better: boolean | null = null;
+		if (pct !== null && pct !== 0) {
+			if (betterWhen === 'higher') better = pct > 0;
+			else if (betterWhen === 'lower') better = pct < 0;
+		}
+		const label = summaryByKey.get(key)?.label ?? key;
+		return { property_key: key, label, factor, pct, better };
+	});
+}
+
+/** Nächster Snap-Punkt (M8-R1-A) — null bei leerer Liste. */
+export function nearestSnap(points: number[], value: number): number | null {
+	if (points.length === 0) return null;
+	let best = points[0];
+	let bestD = Math.abs(best - value);
+	for (const p of points) {
+		const d = Math.abs(p - value);
+		if (d < bestD) {
+			best = p;
+			bestD = d;
+		}
+	}
+	return best;
 }

@@ -170,3 +170,118 @@ test('qualityReachable: null/undefined = keine Grenze, sonst Vergleich', () => {
 	assert.equal(qualityReachable(400, 500), false);
 	assert.equal(qualityReachable(500, 500), true);
 });
+
+// ---------- M8-R1-A: individuelle Regler + Kombination ----------
+
+import {
+	aspectQuality,
+	combinedQuality,
+	materialKey,
+	nearestSnap,
+	statChangesPerAspect,
+	weightedMean
+} from './quality-calc.ts';
+
+test('materialKey: trim + lowercase (exakt, wie Rust normalize_name)', () => {
+	assert.equal(materialKey('  Iron  '), 'iron');
+	assert.equal(materialKey(null), '');
+});
+
+test('weightedMean: mengengewichtet, fehlende Gewichte = 1.0', () => {
+	assert.equal(weightedMean([]), null);
+	assert.equal(
+		weightedMean([
+			{ weight: 0.64, quality: 200 },
+			{ weight: 0.32, quality: 800 }
+		]),
+		(0.64 * 200 + 0.32 * 800) / 0.96
+	);
+	// Ohne Gewicht → einfaches Mittel
+	assert.equal(
+		weightedMean([
+			{ weight: null, quality: 100 },
+			{ weight: null, quality: 300 }
+		]),
+		200
+	);
+	// Nur ungültige Qualitäten → null
+	assert.equal(weightedMean([{ weight: 1, quality: null }]), null);
+});
+
+test('aspectQuality: mengengewichtetes Mittel der gematchten Materialien', () => {
+	const aspects: Aspect[] = [
+		{
+			key: 'FRAME',
+			name: 'Frame',
+			input: { name: 'Iron', quantity_scu: 0.64 },
+			modifiers: [integrity]
+		},
+		{
+			key: 'BARREL',
+			name: 'Barrel',
+			input: { name: 'Titanium', quantity_scu: 0.32 },
+			modifiers: [impact]
+		}
+	];
+	const mq = new Map([
+		['iron', 200],
+		['titanium', 800]
+	]);
+	assert.equal(aspectQuality(aspects[0], mq), 200);
+	assert.equal(aspectQuality(aspects[1], mq), 800);
+	// Kein gematchtes Material → null
+	assert.equal(aspectQuality(aspects[0], new Map()), null);
+});
+
+test('combinedQuality: min über die Aspekt-Qualitäten', () => {
+	const aspects: Aspect[] = [
+		{ key: 'A', name: 'A', input: { name: 'Iron', quantity_scu: 1 }, modifiers: [integrity] },
+		{ key: 'B', name: 'B', input: { name: 'Titanium', quantity_scu: 1 }, modifiers: [impact] }
+	];
+	const mq = new Map([
+		['iron', 700],
+		['titanium', 300]
+	]);
+	assert.equal(combinedQuality(aspects, mq), 300);
+	// Nichts berechenbar → null
+	assert.equal(combinedQuality(aspects, new Map()), null);
+});
+
+test('statChangesPerAspect: jede Aspekt-Qualität einzeln interpoliert, Faktor-Produkt', () => {
+	// Zwei Aspekte auf dieselbe Eigenschaft (weapon_damage) mit
+	// unterschiedlichen Qualitäten — multiplikativ (K6-Modell).
+	const aspects: Aspect[] = [
+		{
+			key: 'CYCLER',
+			name: 'Cycler',
+			input: { name: 'Riccite' },
+			modifiers: [{ ...impact, quality_range: { min: 0, max: 1000 }, modifier_range: { at_min_quality: 0.9, at_max_quality: 1.1 } }]
+		},
+		{
+			key: 'BARREL',
+			name: 'Barrel',
+			input: { name: 'Titanium' },
+			modifiers: [{ ...impact, quality_range: { min: 0, max: 1000 }, modifier_range: { at_min_quality: 0.9, at_max_quality: 1.1 } }]
+		}
+	];
+	// Cycler 1000 → 1.1, Barrel 0 → 0.9 → Produkt 0.99 = −1 %
+	const aq = new Map([
+		['CYCLER', 1000],
+		['BARREL', 0]
+	]);
+	const ch = statChangesPerAspect(aspects, SUMMARY, aq);
+	assert.equal(ch.length, 1);
+	assert.equal(ch[0].property_key, 'weapon_damage');
+	assert.equal(ch[0].pct, -1);
+	// Aspekt ohne Qualität fällt still raus
+	const ch2 = statChangesPerAspect(aspects, SUMMARY, new Map([['CYCLER', 1000]]));
+	assert.equal(ch2[0].pct, 10);
+});
+
+test('nearestSnap: nächster Punkt, null bei leerer Liste', () => {
+	const pts = [325, 521, 664, 1000];
+	assert.equal(nearestSnap(pts, 330), 325);
+	assert.equal(nearestSnap(pts, 500), 521);
+	assert.equal(nearestSnap(pts, 999), 1000);
+	assert.equal(nearestSnap([], 500), null);
+});
