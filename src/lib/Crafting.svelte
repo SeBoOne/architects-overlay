@@ -28,7 +28,7 @@
 	// + Chips; KEIN natives <select> (Fokusduell — 2026-11-19 gelernt).
 	// Key-Missing-State wie Mining: Erklär-Card + Link
 	// https://strata.celd.space/api-keys. Attribution-Footer IMMER sichtbar.
-	import { t, tr, trError } from './i18n';
+	import { t, tr, trError, currentLang } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
 	// M8-K6 (t_f7a29367): echter Qualitäts-Stat-Rechner
 	import QualityStats from './QualityStats.svelte';
@@ -58,11 +58,71 @@
 		blueprintAspects?: Aspect[] | null;
 		blueprintSummary?: SummaryProperty[] | null;
 	};
+	// M8-K5 (t_03eafbfb): SC-Wiki-Craft-Daten (Item-Details + Blueprint).
+	// Feldnamen folgen den Rust-Structs (snake_case) — bewusst OHNE
+	// camelCase-Rename, damit Cache-Payload und Wire identisch sind.
+	type WeaponDamage = { damage_type: string; damage: number | null };
+	type VehicleWeapon = {
+		capacity: number | null;
+		range: number | null;
+		damage_per_shot: number | null;
+		rpm: number | null;
+		damages: WeaponDamage[];
+	};
+	type Ammunition = {
+		size: number | null;
+		capacity: number | null;
+		speed: number | null;
+		range: number | null;
+		lifetime: number | null;
+	};
+	type ScWikiItem = {
+		name: string;
+		item_type: string;
+		size: number | null;
+		grade: string | null;
+		class: string | null;
+		mass: number | null;
+		description_de: string | null;
+		description_en: string | null;
+		blueprint_uuids: string[];
+		vehicle_weapon: VehicleWeapon | null;
+		ammunition: Ammunition | null;
+	};
+	type UnlockingMission = {
+		title: string;
+		debug_name: string | null;
+		reward_scope: string | null;
+		count: number | null;
+		web_url: string | null;
+	};
+	type MissionGroup = {
+		label: string;
+		chance: number | null;
+		missions: UnlockingMission[];
+	};
+	type ScWikiBlueprint = {
+		uuid: string;
+		output_name: string;
+		is_available_by_default: boolean;
+		game_version: string | null;
+		dismantle_returns: { name: string; quantity_scu: number | null }[];
+		summary_properties: SummaryProperty[];
+		aspects: Aspect[];
+		unlocking_missions_grouped: MissionGroup[];
+		web_url: string | null;
+	};
+	type ScWikiCraftDetail = {
+		item: ScWikiItem;
+		blueprint: ScWikiBlueprint | null;
+		attribution: string;
+	};
 	type StrataStatus = {
 		enabled: boolean;
 		key_set: boolean;
 		key_ref: string;
 		tier_default: number;
+		scwiki_ready: boolean; // M8-K5: SC-Wiki-Craft-Daten im Cache
 	};
 
 	let {
@@ -90,6 +150,9 @@
 	let detail = $state<CraftCostResponse | null>(null);
 	let detailLoading = $state(false);
 	let detailError = $state('');
+	// M8-K5: SC-Wiki-Craft-Detail (Item-Kopf/Stats/Missionen) — null =
+	// kein Match (Abschnitte still weg, kein Hard-Fail).
+	let scwiki = $state<ScWikiCraftDetail | null>(null);
 	// Qualitäts-Planungsrechner
 	let targetQuality = $state(0);
 	// Load-More (516 Items — bestehendes Muster: stückweise rendern)
@@ -154,18 +217,41 @@
 		detailLoading = true;
 		detailError = '';
 		detail = null;
+		scwiki = null; // M8-K5: SC-Wiki-Detail des Vorgängers verfällt
 		targetQuality = 0; // neuer Artikel → Planer neutral starten
 		try {
 			const r = await invoke<CraftCostResponse>('strata_craft_cost', { item: item.id });
 			detail = r;
 			attribution = r.attribution || ATTRIBUTION_FALLBACK;
+			// M8-K5: SC-Wiki-Bereicherung parallel nachladen — Fehler/Nicht-
+			// Match degradiert still (Kopf-/Stats-/Missions-Blöcke bleiben weg).
+			void loadScwiki(item.name);
 		} catch (e) {
 			detailError = trError(e);
 		}
 		detailLoading = false;
 	}
+	async function loadScwiki(name: string) {
+		try {
+			const r = await invoke<ScWikiCraftDetail | null>('scwiki_craft_detail', {
+				itemName: name
+			});
+			// Race-Schutz: ein schnellerer Detailwechsel gewinnt.
+			if (detail && detail.item.name === name) {
+				scwiki = r;
+				if (r?.blueprint) {
+					// K6-Contract: QualityStats liest die Aspekte/Summary.
+					detail.blueprintAspects = r.blueprint.aspects ?? null;
+					detail.blueprintSummary = r.blueprint.summary_properties ?? null;
+				}
+			}
+		} catch {
+			/* kein Hard-Fail — SC-Wiki ist Bereicherung */
+		}
+	}
 	function closeDetail() {
 		detail = null;
+		scwiki = null;
 		detailError = '';
 	}
 
@@ -197,6 +283,43 @@
 	const fmtQty = (q: number) =>
 		Number.isInteger(q) ? String(q) : String(Math.round(q * 100) / 100);
 	const catName = (c: string | null) => c ?? '—';
+
+	// ---- M8-K5 Anzeige-Helfer (SC-Wiki-Detail) -------------------------------
+	// Beschreibung de_EN → en_EN-Fallback (Spec), sonstige Sprache → en.
+	const wikiDesc = $derived.by(() => {
+		const it = scwiki?.item;
+		if (!it) return null;
+		const de = it.description_de?.trim();
+		const en = it.description_en?.trim();
+		if (currentLang() === 'de') return de || en || null;
+		return en || de || null;
+	});
+	// Kopf-Zeilen nur für EXISTIERENDE Felder (keine „—"-Zeilen, Spec).
+	const wikiProps = $derived.by(() => {
+		const it = scwiki?.item;
+		if (!it) return [] as { label: string; value: string }[];
+		const out: { label: string; value: string }[] = [];
+		if (it.size !== null && it.size !== undefined)
+			out.push({ label: $t('craft.item_size'), value: `S${it.size}` });
+		if (it.grade) out.push({ label: $t('craft.grade'), value: it.grade });
+		if (it.class) out.push({ label: $t('craft.item_class'), value: it.class });
+		if (it.mass !== null && it.mass !== undefined)
+			out.push({ label: $t('craft.mass'), value: `${fmtQty(it.mass)} kg` });
+		if (it.ammunition && it.ammunition.size !== null && it.ammunition.size !== undefined)
+			out.push({ label: $t('craft.ammo'), value: `S${it.ammunition.size}` });
+		return out;
+	});
+	const bp = $derived(scwiki?.blueprint ?? null);
+	const bpAvailableByDefault = $derived(bp?.is_available_by_default ?? false);
+	const vw = $derived(scwiki?.item.vehicle_weapon ?? null);
+	const ammo = $derived(scwiki?.item.ammunition ?? null);
+	// Chance-Label: 1 = Guaranteed (Label kommt aus den Daten), sonst %.
+	const chanceLabel = (chance: number | null) =>
+		chance !== null && chance !== undefined && chance < 1
+			? `${Math.round(chance * 100)} %`
+			: null;
+	const isGuaranteed = (chance: number | null) =>
+		chance === null || chance === undefined || chance >= 1;
 
 	// M8-K3: Bedarfserz-Klick → Mining-Sprung (Callback des Parents).
 	function openOre(id: string | null) {
@@ -323,6 +446,26 @@
 						<span class="cd-time">{$t('craft.craft_time')}: {fmtTime(detail.craftTime)}</span>
 					</div>
 
+					<!-- M8-K5: Item-Detail-Kopf — nur EXISTIERENDE Felder (keine
+					     „—"-Zeilen); Standard-Blaupause-Badge bei default-Unlock. -->
+					{#if wikiProps.length > 0 || bpAvailableByDefault}
+						<div class="cd-props">
+							{#each wikiProps as p (p.label)}
+								<span class="cprop"><span class="cprop-l">{p.label}</span> {p.value}</span>
+							{/each}
+							{#if bpAvailableByDefault}
+								<span class="cprop is-default">{$t('craft.default_blueprint')}</span>
+							{/if}
+						</div>
+					{/if}
+					{#if wikiDesc}
+						<!-- kompakt klappbar (Spec) — Beschreibung de_EN/en_EN -->
+						<details class="cd-desc">
+							<summary>{$t('craft.description')}</summary>
+							<p>{wikiDesc}</p>
+						</details>
+					{/if}
+
 					{#if detail.costs.length === 0}
 						<div class="cnote">{$t('craft.no_materials')}</div>
 					{:else}
@@ -363,10 +506,98 @@
 									</span>
 								</div>
 							{/each}
-						</div>
+							</div>
 
-						<!-- Qualitäts-PLANUNGSRECHNER — Machbarkeits-Check + (M8-K6)
-						     echter Stat-Rechner via QualityStats (s. o.). -->
+							<!-- M8-K5: dismantle_returns klein unter der Materialliste. -->
+							{#if bp?.dismantle_returns?.length}
+								<div class="cdism">
+									<span class="cdl">{$t('craft.dismantle_returns')}</span>
+									{#each bp.dismantle_returns as d, di (d.name + ':' + di)}
+										<span class="cdi"
+											>{d.name}{#if d.quantity_scu !== null && d.quantity_scu !== undefined}
+												{fmtQty(d.quantity_scu)} SCU{/if}</span
+										>
+									{/each}
+								</div>
+							{/if}
+
+							<!-- M8-K5: Stat-Block — vehicle_weapon/ammunition-Details nur
+							     wenn vorhanden (Spec: damages-Liste, rpm, range, capacity). -->
+							{#if vw || ammo}
+								<div class="cstats">
+									<div class="cp-head">{$t('craft.weapon_stats')}</div>
+									{#if vw}
+										<div class="cs-grid">
+											{#if vw.damage_per_shot !== null && vw.damage_per_shot !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.dmg_per_shot')}</span>
+													{fmtQty(vw.damage_per_shot)}</span
+												>
+											{/if}
+											{#if vw.rpm !== null && vw.rpm !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.rpm')}</span>
+													{fmtQty(vw.rpm)}</span
+												>
+											{/if}
+											{#if vw.range !== null && vw.range !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.range')}</span>
+													{fmtQty(vw.range)} m</span
+												>
+											{/if}
+											{#if vw.capacity !== null && vw.capacity !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.capacity')}</span>
+													{fmtQty(vw.capacity)}</span
+												>
+											{/if}
+										</div>
+										{#if vw.damages.length}
+											<div class="cs-dmg">
+												{#each vw.damages as d, idx (d.damage_type + ':' + idx)}
+													<span class="cs-dmgrow"
+														>{d.damage_type}: {d.damage === null || d.damage === undefined
+															? '—'
+															: fmtQty(d.damage)}</span
+													>
+												{/each}
+											</div>
+										{/if}
+									{/if}
+									{#if ammo}
+										<div class="cs-grid">
+											{#if ammo.speed !== null && ammo.speed !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.ammo_speed')}</span>
+													{fmtQty(ammo.speed)} m/s</span
+												>
+											{/if}
+											{#if ammo.range !== null && ammo.range !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.range')}</span>
+													{fmtQty(ammo.range)} m</span
+												>
+											{/if}
+											{#if ammo.capacity !== null && ammo.capacity !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.capacity')}</span>
+													{fmtQty(ammo.capacity)}</span
+												>
+											{/if}
+											{#if ammo.lifetime !== null && ammo.lifetime !== undefined}
+												<span class="cs-item"
+													><span class="cs-l">{$t('craft.ammo_lifetime')}</span>
+													{fmtQty(ammo.lifetime)} s</span
+												>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							{/if}
+
+							<!-- Qualitäts-PLANUNGSRECHNER — Machbarkeits-Check + (M8-K6)
+							     echter Stat-Rechner via QualityStats (s. o.). -->
 						<div class="cplanner">
 							<div class="cp-head">{$t('craft.planner_title')}</div>
 							<div class="cp-row">
@@ -395,22 +626,57 @@
 								/>
 							{/if}
 							<p class="cp-note">{$t('craft.planner_note')}</p>
-							<div class="cp-legend">
-								<span class="cpl-ok">✓ {$t('craft.q_ok')}</span>
-								<span class="cpl-fail">✗ {$t('craft.q_fail')}</span>
-								<span class="cpl-units">
-									{$t('craft.units_legend', { gems: String(1000) })}
-								</span>
+								<div class="cp-legend">
+									<span class="cpl-ok">✓ {$t('craft.q_ok')}</span>
+									<span class="cpl-fail">✗ {$t('craft.q_fail')}</span>
+									<span class="cpl-units">
+										{$t('craft.units_legend', { gems: String(1000) })}
+									</span>
+								</div>
 							</div>
-						</div>
-					{/if}
+							{/if}
+
+							<!-- M8-K5: Blaupausen-Missionen — „Guaranteed" hervorgehoben,
+							     Chance-Missionen mit %-Angabe, reward_scope als Badge;
+							     Titel + Debug-Name kompakt (Spec). -->
+							{#if bp?.unlocking_missions_grouped?.length}
+								<div class="cmissions">
+									<div class="cp-head">{$t('craft.missions_title')}</div>
+									{#each bp.unlocking_missions_grouped as g, gi (g.label + ':' + gi)}
+										<div class="cmg" class:is-guaranteed={isGuaranteed(g.chance)}>
+											<div class="cmg-head">
+												<span class="cmg-label">{g.label}</span>
+												{#if chanceLabel(g.chance)}
+													<span class="cmg-chance">{chanceLabel(g.chance)}</span>
+												{/if}
+											</div>
+											{#each g.missions as m, mi (m.title + ':' + mi)}
+												<div class="cm-mission">
+													<span class="cm-title"
+														>{m.title}{#if (m.count ?? 1) > 1} ×{m.count}{/if}</span
+													>
+													{#if m.debug_name}
+														<span class="cm-debug" title={m.debug_name}>{m.debug_name}</span>
+													{/if}
+													{#if m.reward_scope}
+														<span class="cbadge">{m.reward_scope}</span>
+													{/if}
+												</div>
+											{/each}
+										</div>
+									{/each}
+								</div>
+							{/if}
 				{:else}
 					<div class="cnote cempty">{$t('craft.detail_hint')}</div>
 				{/if}
 			</div>
 		</div>
 	{/if}
-	<div class="cattr">{attribution || ATTRIBUTION_FALLBACK}</div>
+	<div class="cattr">
+		{attribution || ATTRIBUTION_FALLBACK}{#if scwiki}
+			<span class="cattr-scwiki"> · {scwiki.attribution}</span>{/if}
+	</div>
 </div>
 
 <style>
@@ -769,5 +1035,170 @@
 		font-size: 10.5px;
 		opacity: 0.55;
 		text-align: right;
+	}
+	/* M8-K5: zweite Quelle (SC-Wiki) im Footer — gleiche Zeile, kein Block */
+	.cattr-scwiki {
+		white-space: nowrap;
+	}
+
+	/* ========= M8-K5: Item-Detail-Kopf / Stats / Missionen ========= */
+	/* Kopf-Props: kleine Label-Wert-Chips, nur vorhandene Felder */
+	.cd-props {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 5px;
+		margin: 0 0 8px;
+	}
+	.cprop {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 4px;
+		font-size: 11px;
+		padding: 2px 8px;
+		border: 1px solid var(--line, #2a2f3a);
+		border-radius: 6px;
+		opacity: 0.85;
+	}
+	.cprop-l {
+		font-size: 9.5px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		opacity: 0.65;
+	}
+	.cprop.is-default {
+		border-color: var(--acc, #e0a83e);
+		color: var(--acc, #e0a83e);
+		opacity: 1;
+		font-weight: 600;
+	}
+	/* Beschreibung kompakt klappbar */
+	.cd-desc {
+		margin: 0 0 10px;
+		font-size: 12px;
+	}
+	.cd-desc summary {
+		cursor: pointer;
+		font-size: 10.5px;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		opacity: 0.6;
+		width: fit-content;
+	}
+	.cd-desc summary:hover {
+		opacity: 0.9;
+	}
+	.cd-desc p {
+		margin: 6px 0 0;
+		line-height: 1.45;
+		opacity: 0.85;
+		white-space: pre-line;
+	}
+	/* dismantle_returns: kompakte Zeile unter der Materialliste */
+	.cdism {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 4px 10px;
+		margin: 6px 2px 0;
+		font-size: 11px;
+		opacity: 0.8;
+	}
+	.cdl {
+		font-size: 9.5px;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		opacity: 0.65;
+	}
+	.cdi {
+		font-variant-numeric: tabular-nums;
+	}
+	/* Stat-Block: vehicle_weapon/ammunition */
+	.cstats {
+		margin-top: 10px;
+		border: 1px solid var(--line, #2a2f3a);
+		border-radius: 10px;
+		padding: 10px 12px;
+	}
+	.cs-grid {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 16px;
+	}
+	.cs-item {
+		display: inline-flex;
+		align-items: baseline;
+		gap: 5px;
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+	.cs-l {
+		font-size: 10px;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		opacity: 0.6;
+	}
+	.cs-dmg {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 3px 12px;
+		margin-top: 6px;
+		font-size: 11px;
+		opacity: 0.85;
+		font-variant-numeric: tabular-nums;
+	}
+	/* Blaupausen-Missionen */
+	.cmissions {
+		margin-top: 12px;
+		border: 1px solid var(--line, #2a2f3a);
+		border-radius: 10px;
+		padding: 10px 12px;
+	}
+	.cmg {
+		padding: 6px 0;
+		border-top: 1px solid var(--line-soft, rgba(255, 255, 255, 0.05));
+	}
+	.cmg:first-of-type {
+		border-top: 0;
+		padding-top: 0;
+	}
+	/* „Guaranteed" hervorgehoben (Spec) */
+	.cmg.is-guaranteed .cmg-label {
+		color: var(--acc, #e0a83e);
+		font-weight: 700;
+	}
+	.cmg-head {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		margin-bottom: 4px;
+	}
+	.cmg-label {
+		font-size: 12px;
+		font-weight: 600;
+	}
+	.cmg-chance {
+		font-size: 11px;
+		opacity: 0.75;
+		font-variant-numeric: tabular-nums;
+	}
+	.cm-mission {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 2px 0 2px 8px;
+		font-size: 11.5px;
+	}
+	.cm-title {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.cm-debug {
+		font-size: 10px;
+		opacity: 0.5;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-family: var(--mono, ui-monospace, monospace);
 	}
 </style>
