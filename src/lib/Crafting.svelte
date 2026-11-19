@@ -16,11 +16,13 @@
 	//                      null), Craft-Zeit.
 	//   4. Qualitäts-PLANUNGSRECHNER — Ziel-Slider 0–1000 → geforderte
 	//                      MINDEST-Input-Qualität = max(minQuality) über alle
-	//                      Kosten; je Material grün/rot. KEINE Stat-Vorhersage —
-	//                      Machbarkeits-Check (Stat-Lücke dokumentiert im Plan).
+	//                      Kosten; je Material grün/rot. M8-K6: dazu der echte
+	//                      Stat-Rechner (QualityStats) — Modifier-Interpolation
+	//                      als %-Abweichung, sobald ein SC-Wiki-Blueprint mit
+	//                      Modifier-Daten gematcht hat (sonst still weg).
 	//
-	// NICHT gebaut (API-Lücke, Plan „Offen“): Blaupausen-Missionen,
-	// Größe/Muni/Klasse/Grade-Details, echte Stat-Berechnung.
+	// NICHT gebaut (M8-K5): Item-Details (Size/Grade/Class), Blaupausen-
+	// Missionen, dismantle_returns.
 	//
 	// Formular-Konvention (Sebo): Liste startet VOLL, Filter per Haupt-Suchfeld
 	// + Chips; KEIN natives <select> (Fokusduell — 2026-11-19 gelernt).
@@ -28,6 +30,9 @@
 	// https://strata.celd.space/api-keys. Attribution-Footer IMMER sichtbar.
 	import { t, tr, trError } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
+	// M8-K6 (t_f7a29367): echter Qualitäts-Stat-Rechner
+	import QualityStats from './QualityStats.svelte';
+	import type { Aspect, SummaryProperty } from './quality-calc';
 
 	type Item = {
 		id: string;
@@ -48,6 +53,10 @@
 		craftTime: number; // Sekunden
 		costs: CostEntry[];
 		attribution: string;
+		// M8-K6: SC-Wiki-Blueprint-Match (optional — ohne Match bleibt der
+		// Stat-Rechner-Block weg, kein Hard-Fail; Befüllung durch M8-K5).
+		blueprintAspects?: Aspect[] | null;
+		blueprintSummary?: SummaryProperty[] | null;
 	};
 	type StrataStatus = {
 		enabled: boolean;
@@ -356,8 +365,8 @@
 							{/each}
 						</div>
 
-						<!-- Qualitäts-PLANUNGSRECHNER — Machbarkeits-Check, KEINE
-						     Stat-Vorhersage (Item-Stats/Qualitäts-Kurven: API-Lücke, Plan). -->
+						<!-- Qualitäts-PLANUNGSRECHNER — Machbarkeits-Check + (M8-K6)
+						     echter Stat-Rechner via QualityStats (s. o.). -->
 						<div class="cplanner">
 							<div class="cp-head">{$t('craft.planner_title')}</div>
 							<div class="cp-row">
@@ -376,6 +385,15 @@
 							<div class="cp-result">
 								{$t('craft.required_quality')}: <strong>{requiredQuality}</strong>
 							</div>
+							<!-- M8-K6: echter Stat-Rechner — nur wenn ein SC-Wiki-Blueprint
+							     mit Modifier-Daten gematcht hat (sonst still weg, kein Hard-Fail). -->
+							{#if detail.blueprintAspects?.length}
+								<QualityStats
+									aspects={detail.blueprintAspects}
+									summary={detail.blueprintSummary ?? null}
+									targetQuality={targetQuality}
+								/>
+							{/if}
 							<p class="cp-note">{$t('craft.planner_note')}</p>
 							<div class="cp-legend">
 								<span class="cpl-ok">✓ {$t('craft.q_ok')}</span>
