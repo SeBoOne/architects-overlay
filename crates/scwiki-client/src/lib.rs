@@ -849,6 +849,10 @@ pub struct MissionGroup {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UnlockingMission {
     pub title: String,
+    /// Interne Missions-ID (Live-Beleg `debug_name` in
+    /// `unlocking_missions`) — kompakte Anzeige unter dem Titel; null
+    /// degradiert (die grouped-Liste trägt sie nicht immer).
+    pub debug_name: Option<String>,
     pub reward_scope: Option<String>,
     pub count: Option<u32>,
     pub web_url: Option<String>,
@@ -1112,6 +1116,8 @@ struct MissionDto {
     #[serde(default, deserialize_with = "null_to_string")]
     title: String,
     #[serde(default, deserialize_with = "null_to_opt_string")]
+    debug_name: Option<String>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
     reward_scope: Option<String>,
     #[serde(default)]
     count: Option<u32>,
@@ -1299,6 +1305,7 @@ fn blueprint_from(dto: BlueprintDto) -> Blueprint {
                     .filter(|m| !m.title.is_empty())
                     .map(|m| UnlockingMission {
                         title: m.title,
+                        debug_name: m.debug_name,
                         reward_scope: m.reward_scope,
                         count: m.count,
                         web_url: m.web_url,
