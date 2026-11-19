@@ -457,12 +457,18 @@
 	// nach dem DOM-Flush (rAF) zurücksetzen, falls der Browser durch
 	// Layout-/Focus-Änderungen neu geankert hat.
 	let detailEl = $state<HTMLElement | null>(null);
-	function setRowQuality(c: CostEntry, idx: number, v: number) {
+	function setRowQuality(c: CostEntry, idx: number, v: number, el?: HTMLInputElement | null) {
 		const scroller = detailEl;
 		const top = scroller === null ? null : scroller.scrollTop;
 		const key = rowKey(c, idx);
 		const snapped = rowSnapOn(c, idx) ? nearestSnap(rowSnaps(c), v) : v;
 		matQual = { ...matQual, [key]: snapped ?? v };
+		// Snap sichtbar machen (User-Befund: „Werte snappen, Regler nicht“):
+		// der reactive value={}-Write feuert nur bei STATE-Änderung — zieht man
+		// innerhalb desselben Snap-Buckets (oder erneut in einen), bleibt der
+		// Thumb an der Zeigerposition hängen. Direkter DOM-Write schließt die
+		// Lücke; onchange (feuert nach dem Loslassen) lässt ihn stehen.
+		if (el !== null && el !== undefined) el.value = String(snapped ?? v);
 		if (scroller !== null && top !== null) {
 			requestAnimationFrame(() => {
 				scroller.scrollTop = top;
@@ -783,8 +789,9 @@
 											step="1"
 											aria-label={`${$t('craft.mat_quality')}: ${c.material}`}
 											value={rowQuality(c, idx)}
-											oninput={(e) => setRowQuality(c, idx, Number(e.currentTarget.value))}
-										/>
+											oninput={(e) => setRowQuality(c, idx, Number(e.currentTarget.value), e.currentTarget)}
+											onchange={(e) => setRowQuality(c, idx, Number(e.currentTarget.value), e.currentTarget)}
+											/>
 										<span class="cmq-val" class:is-ok={rowMeets(c, idx)} class:is-fail={!rowMeets(c, idx)}
 											>{rowQuality(c, idx)}</span
 										>

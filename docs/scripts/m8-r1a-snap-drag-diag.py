@@ -175,16 +175,29 @@ async def main():
         await js("setMat(0, 0)")
         await asyncio.sleep(0.2)
 
-        # ---- Echter Drag auf ~65 % → raw ~650 → nächster Snap = 588 ----
-        geo = await drag_slider(0, 0.65)
+        # ---- Echter Drag auf ~60 % → raw ~600 → nächster Snap = 588 ----
+        geo = await drag_slider(0, 0.60)
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
         dom_val = await js("document.querySelectorAll('.crafting .cmq-range')[0].value")
-        print(f"  drag-geo={geo} raw-expected~650  DOM-value={dom_val}  state-val={rows[0]['val'] if rows else None}")
+        print(f"  drag-geo={geo} raw-expected~600  DOM-value={dom_val}  state-val={rows[0]['val'] if rows else None}")
         check("D1 State snapt auf 588 (Rechnung korrekt)",
               rows and rows[0]["val"] == "588", str(rows and rows[0]["val"]))
         check("D2 Thumb/DOM-Wert snapt ebenfalls (User-Sicht)",
               dom_val == "588", f"DOM={dom_val} ( erwartet 588)")
+
+        # ---- ZWEITER Drag in denselben Bucket (0.65 → raw ~650 → 588):
+        #      der State ändert sich NICHT (schon 588) — hier war früher der
+        #      Bug: der Thumb blieb an der Zeigerposition hängen (User-Befund
+        #      „Werte snappen, Regler nicht"). ----
+        await drag_slider(0, 0.65)
+        await asyncio.sleep(0.2)
+        rows = await js("sliderRows()")
+        dom_val = await js("document.querySelectorAll('.crafting .cmq-range')[0].value")
+        print(f"  zweiter Drag (gleich Bucket): DOM-value={dom_val} state-val={rows[0]['val'] if rows else None}")
+        check("D3 Zweiter Drag im selben Bucket: Thumb rastet trotzdem auf 588",
+              dom_val == "588" and rows and rows[0]["val"] == "588",
+              f"DOM={dom_val} val={rows[0]['val'] if rows else None}")
         data = ok(await call("Page.captureScreenshot", {"format": "png"}))["data"]
         (OUT / "snap-drag-after.png").write_bytes(__import__("base64").b64decode(data))
         print(f"  shot {OUT / 'snap-drag-after.png'}")
