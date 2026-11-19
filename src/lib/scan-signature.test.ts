@@ -7,12 +7,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	sigBarPct,
+	sigCollectRows,
 	sigEntries,
 	sigMultiples,
+	sigRemoveEntry,
 	sigRowsFor,
 	sigTierBadge,
 	sigToggleEntry,
-	sigValueDisplay
+	sigValueDisplay,
+	type ScanSignatureEntry
 } from './scan-signature.ts';
 
 test('sigValueDisplay: fehlende Daten → „—" (Karten-Spec: pinnt trotzdem)', () => {
@@ -125,4 +128,38 @@ test('sigMultiples: beginnt bei x2 — die Basis IST x1 (M7-F5d, kein Doppel)', 
 	assert.deepEqual(sigMultiples(3000, 1), []);
 	// null-Wert → „—"-Zellen ab x2
 	assert.deepEqual(sigMultiples(null, 3).map((r) => r.display), ['—', '—']);
+});
+
+// ---- M7-F7 (t_84008140): Einzelsignatur entfernen (Popover-✕) -------------
+test('sigRemoveEntry: entfernt GENAU den einen oreId — Rest bleibt (Popover-✕)', () => {
+	const base: ScanSignatureEntry[] = [
+		{ oreId: 'a', label: 'Quantum', value: 4400, rarity: 'uncommon' },
+		{ oreId: 'b', label: 'Copper', value: 120, rarity: null },
+		{ oreId: 'c', label: 'Titanium', value: 9, rarity: 'rare' }
+	];
+	assert.deepEqual(sigRemoveEntry(base, 'b').map((e) => e.oreId), ['a', 'c']);
+	// mehrfaches ✕ auf denselben Key ist idempotent (kein Throw, keine Doppel)
+	assert.deepEqual(sigRemoveEntry(sigRemoveEntry(base, 'b'), 'b').map((e) => e.oreId), ['a', 'c']);
+	// unbekannter oreId → Liste unverändert
+	assert.deepEqual(sigRemoveEntry(base, 'zz').map((e) => e.oreId), ['a', 'b', 'c']);
+});
+
+test('sigRemoveEntry: undefined/leer → leer (Popover bei leerem Pin ruft pin_remove)', () => {
+	assert.deepEqual(sigRemoveEntry(undefined, 'a'), []);
+	assert.deepEqual(sigRemoveEntry([], 'a'), []);
+	const one: ScanSignatureEntry[] = [{ oreId: 'a', label: 'Quantum', value: 4400 }];
+	assert.deepEqual(sigRemoveEntry(one, 'a'), []); // letzter Entry → Pin weg
+});
+
+test('sigCollectRows: geteilter Snapshot (Kürzel + sub + Wert) — Mining UND PinBoxes-Popover', () => {
+	const rows = sigCollectRows([
+		{ oreId: 'a', label: 'Quantum', value: 4400, rarity: 'uncommon' },
+		{ oreId: 'b', label: 'Copper', value: null }
+	]);
+	assert.equal(rows.length, 2);
+	assert.equal(rows[0].idx, '0');
+	assert.equal(rows[0].sub, 'Quantum');
+	assert.equal(rows[0].value, '4400');
+	assert.equal(rows[1].value, '—'); // null-Wert → „—"
+	assert.deepEqual(rows[0].side, null);
 });
