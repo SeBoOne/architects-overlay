@@ -128,6 +128,11 @@
 	let detailLoading = $state(false);
 	let detailError = $state('');
 	let sortParam = $state<'rank' | 'concentration'>('rank');
+	// M7-F6 (User 2026-11-19): System-Filter im Erz-Detail — 'all' oder eine
+	// System-Anzeige (null-Systeme laufen als „—“). Client-seitig gefiltert
+	// (Daten sind komplett geladen; Sortierung bleibt server-seitig).
+	// Name mit ...Detail-Präfix — sysFilter existiert bereits (Ort-Liste).
+	let detailSysFilter = $state<string>('all');
 	// Ort-Detail (M7-F2)
 	let locDetail = $state<LocationOresResponse | null>(null);
 	let locDetailLoading = $state(false);
@@ -250,6 +255,7 @@
 		detailLoading = true;
 		detailError = '';
 		detail = null;
+		detailSysFilter = 'all'; // M7-F6: neuer Erz → Filter-Reset
 		try {
 			detail = await invoke<OreLocationsResponse>('strata_ore_locations', {
 				ore: ore.id,
@@ -300,12 +306,26 @@
 		['cave', 'mining.group_cave'],
 		['surface', 'mining.group_surface']
 	] as const;
+	const detailSystems = $derived.by(() => {
+		const d = detail;
+		if (!d) return [] as string[];
+		const set = new Set<string>();
+		for (const g of GROUPS) {
+			for (const r of d.results[g[0]]) set.add(r.system ?? '—');
+		}
+		return [...set].sort();
+	});
 	const detailGroups = $derived.by(() => {
 		const d = detail;
 		if (!d) return [];
-		return GROUPS.map(([key, label]) => ({ key, label, rows: d.results[key] })).filter(
-			(g) => g.rows.length > 0
-		);
+		return GROUPS.map(([key, label]) => ({
+			key,
+			label,
+			rows:
+				detailSysFilter === 'all'
+					? d.results[key]
+					: d.results[key].filter((r) => (r.system ?? '—') === detailSysFilter)
+		})).filter((g) => g.rows.length > 0);
 	});
 
 	// ---- Sammel-Signatur-Pin (M7-F3, Punkt 2) --------------------------------
@@ -816,6 +836,17 @@
 								class:is-on={sortParam === 'concentration'}
 								onclick={() => setSort('concentration')}>{$t('mining.sort_concentration')}</button
 							>
+							<!-- M7-F6: System-Filter (Dropdown) neben der Sortierung. -->
+							<select
+								class="msel"
+								bind:value={detailSysFilter}
+								aria-label={$t('mining.filter_system')}
+							>
+								<option value="all">{$t('mining.sys_all')}</option>
+								{#each detailSystems as s (s)}
+									<option value={s}>{s}</option>
+								{/each}
+							</select>
 						</div>
 					</div>
 					<!-- M7-F3 Karten-Redesign (Punkt 1): KEIN Dial mehr — links
@@ -966,7 +997,22 @@
 		flex-wrap: wrap;
 		gap: 4px;
 	}
-	.mchip {
+		/* M7-F6: System-Dropdown im Overlay-Stil (dark, Theme-Font). */
+	.msel {
+		appearance: none;
+		background: color-mix(in srgb, var(--panel2, #14161b) 70%, transparent);
+		color: var(--fg, #e8ecf3);
+		border: 1px solid color-mix(in srgb, var(--fgdim, #9aa3b2) 35%, transparent);
+		border-radius: 3px;
+		font: inherit;
+		font-size: 11px;
+		padding: 2px 6px;
+	}
+	.msel:focus-visible {
+		outline: 1px solid var(--accent);
+	}
+
+.mchip {
 		padding: 2px 8px;
 		font-size: 11px;
 		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
