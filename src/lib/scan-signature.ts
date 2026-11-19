@@ -84,8 +84,11 @@ export function sigMultiples(
 ): { n: number; display: string }[] {
 	const n = Math.max(1, Math.min(10, Math.round(slots ?? DEFAULT_SLOTS) || DEFAULT_SLOTS));
 	const base = value === null || value === undefined || !Number.isFinite(value) ? null : value;
+	// M7-F5d (User 2026-11-19): die Basis-Signatur IST der ×1-Wert und steht
+	// im Chip — die Multiplikator-Zellen beginnen deshalb beim DOPPELTEN
+	// (i = 2..n; kein ×1-Doppelrender mehr).
 	const rows: { n: number; display: string }[] = [];
-	for (let i = 1; i <= n; i++) {
+	for (let i = 2; i <= n; i++) {
 		rows.push({
 			n: i,
 			display: base === null ? '—' : String(Math.round(base * i))

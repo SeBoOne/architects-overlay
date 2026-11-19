@@ -32,18 +32,18 @@
 		<div class="sigs-empty">{$t('pins.scan_collect_empty')}</div>
 	{:else}
 		{#each entries as e (e.oreId)}
-			<div
-				class="sigs-row"
-				style={`--rc:${rarityColor(e.rarity) ?? 'var(--lineb)'}`}
-				title={e.rarity ?? ''}
-			>
-				<span class="sigs-abbr" title={e.label}>{oreAbbrev(e.label)}</span>
-				<span class="sigs-base">{sigValueDisplay(e.value)}</span>
-				<span class="sigs-mult">
-					{#each sigMultiples(e.value, slots) as m, i (m.n)}
-						<span class="sigs-mult-cell" class:is-first={i === 0}>{m.display}</span>
-					{/each}
+			<div class="sigs-row" style={`--rc:${rarityColor(e.rarity) ?? 'var(--lineb)'}`} title={e.rarity ?? ''}>
+				<!-- M7-F5d (User-Mockup 2026-11-19): Kürzel + Basis-Signatur in EINEM
+				     Rarity-Kasten; jede weitere Stufe (×2..×n) eigener Kasten,
+				     verbunden mit einfachen Strichen. Die Basis IST ×1 — kein Doppel. -->
+				<span class="sigs-chip" title={e.label}>
+					<span class="sigs-abbr">{oreAbbrev(e.label)}</span>
+					<span class="sigs-base">{sigValueDisplay(e.value)}</span>
 				</span>
+				{#each sigMultiples(e.value, slots) as m (m.n)}
+					<span class="sigs-link" aria-hidden="true"></span>
+					<span class="sigs-cell">{m.display}</span>
+				{/each}
 			</div>
 		{/each}
 	{/if}
@@ -66,37 +66,41 @@
 	.sigs-row {
 		display: flex;
 		align-items: center;
-		gap: 6px;
+		gap: 5px;
 		min-width: 0;
 		font: 600 12px/1.3 var(--font-mono, monospace);
+	}
+	/* Basis-Kasten: Kürzel + Basis-Signatur zusammen, Rarity-Border + Fill. */
+	.sigs-chip {
+		flex: 0 0 auto;
+		display: flex;
+		align-items: baseline;
+		gap: 5px;
 		padding: 2px 6px;
 		border: 1px solid var(--rc, var(--lineb));
 		background: color-mix(in srgb, var(--rc, var(--lineb)) 14%, transparent);
+		border-radius: 3px;
 	}
 	.sigs-abbr {
-		flex: 0 0 auto;
-		min-width: 2.4ch;
 		color: var(--fg);
 		font-weight: 700;
 	}
 	.sigs-base {
-		flex: 0 0 auto;
-		min-width: 4ch;
-		text-align: right;
 		color: var(--accent);
 	}
-	.sigs-mult {
-		flex: 1;
-		display: flex;
-		gap: 6px;
-		min-width: 0;
-		overflow: hidden;
+	/* Verbindung: einfacher Strich zwischen den Kästen (gedimmt Rarity-Farbe). */
+	.sigs-link {
+		flex: 0 0 9px;
+		height: 1px;
+		background: color-mix(in srgb, var(--rc, var(--lineb)) 45%, transparent);
 	}
-	.sigs-mult-cell {
+	/* Stufen-Kasten: eigener Rahmen (gedimmt), transparenter Fill. */
+	.sigs-cell {
+		flex: 0 0 auto;
+		padding: 2px 5px;
+		border: 1px solid color-mix(in srgb, var(--rc, var(--lineb)) 45%, transparent);
+		border-radius: 3px;
 		color: var(--fgdim, #9aa3b2);
 		white-space: nowrap;
-	}
-	.sigs-mult-cell.is-first {
-		color: var(--fg);
 	}
 </style>

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
 	sigBarPct,
 	sigEntries,
+	sigMultiples,
 	sigRowsFor,
 	sigTierBadge,
 	sigToggleEntry,
@@ -107,4 +108,21 @@ test('sigToggleEntry: add und remove (dedupe nach oreId, Reihenfolge stabil)', (
 test('sigToggleEntry: Rarity wird im Entry mitgefuehrt (P2 Payload)', () => {
 	let e = sigToggleEntry([], { oreId: 'a', label: 'Quantum', value: 4400, rarity: 'rare' });
 	assert.equal(e[0].rarity, 'rare');
+});
+
+test('sigMultiples: beginnt bei x2 — die Basis IST x1 (M7-F5d, kein Doppel)', () => {
+	const rows = sigMultiples(3000, 5);
+	assert.deepEqual(
+		rows.map((r) => r.display),
+		['6000', '9000', '12000', '15000']
+	);
+	assert.deepEqual(
+		rows.map((r) => r.n),
+		[2, 3, 4, 5]
+	);
+	// slots=2 → nur x2; slots=1 → keine Stufen-Zellen (Basis allein)
+	assert.deepEqual(sigMultiples(3000, 2).map((r) => r.display), ['6000']);
+	assert.deepEqual(sigMultiples(3000, 1), []);
+	// null-Wert → „—"-Zellen ab x2
+	assert.deepEqual(sigMultiples(null, 3).map((r) => r.display), ['—', '—']);
 });
