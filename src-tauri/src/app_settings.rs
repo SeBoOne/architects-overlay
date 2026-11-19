@@ -652,6 +652,9 @@ pub fn settings_set_mode_hotkey(
         "routes" => hotkeys.routes = key.clone(),
         "inventory" => hotkeys.inventory = key.clone(),
         "mining" => hotkeys.mining = key.clone(),
+        // M8-K2 (t_f95f9d97): Crafting-Modus (F6-Default) — wie die anderen
+        // konfigurierbaren Mode-Slots.
+        "crafting" => hotkeys.crafting = key.clone(),
         // Sebo: Marktplatz-Mode-Hotkey ist wie die anderen aenderbar (war
         // bisher fixiert auf F2).
         "market" => hotkeys.market = key.clone(),

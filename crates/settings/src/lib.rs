@@ -729,6 +729,10 @@ pub struct ModeHotkeys {
     /// Feld migrieren per `serde(default)` auf F5.
     #[serde(default = "ModeHotkeys::default_mining")]
     pub mining: String,
+    /// M8-K2 (t_f95f9d97): Crafting-Modus. Default F6 (F1–F5 belegt) —
+    /// alte Configs ohne das Feld migrieren per `serde(default)` auf F6.
+    #[serde(default = "ModeHotkeys::default_crafting")]
+    pub crafting: String,
 }
 
 impl Default for ModeHotkeys {
@@ -741,6 +745,7 @@ impl Default for ModeHotkeys {
             hangar: "F11".to_owned(),
             settings: "F12".to_owned(),
             mining: "F5".to_owned(),
+            crafting: "F6".to_owned(),
         }
     }
 }
@@ -748,6 +753,10 @@ impl Default for ModeHotkeys {
 impl ModeHotkeys {
     fn default_mining() -> String {
         "F5".to_owned()
+    }
+    /// M8-K2: Crafting-Default F6 (erste freie F-Taste nach F1–F5).
+    fn default_crafting() -> String {
+        "F6".to_owned()
     }
 }
 
@@ -802,6 +811,7 @@ impl ModeHotkeys {
             hangar: norm(&self.hangar),
             settings: norm(&self.settings),
             mining: norm(&self.mining),
+            crafting: norm(&self.crafting),
         }
     }
 
@@ -816,6 +826,7 @@ impl ModeHotkeys {
             ("hotkey.slot_hangar", self.hangar.as_str()),
             ("hotkey.slot_settings", self.settings.as_str()),
             ("hotkey.slot_min", self.mining.as_str()),
+            ("hotkey.slot_crafting", self.crafting.as_str()),
         ];
         let mut seen: Vec<String> = Vec::new();
         // T2 (t_c5904bcb): Fehler als error_key + params — `slot` ist ein

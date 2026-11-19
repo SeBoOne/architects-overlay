@@ -145,6 +145,8 @@ pub fn run() {
             strata::strata_locations,
             strata::strata_ore_locations,
             strata::strata_location_ores,
+            strata::strata_items,
+            strata::strata_craft_cost,
             app_settings::settings_set_strata_enabled,
             app_settings::settings_get,
             app_settings::settings_set_pins_default_opacity,

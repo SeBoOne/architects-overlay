@@ -389,6 +389,9 @@ pub async fn connector_set_hotkey(
                 s.mode_hotkeys().inventory.as_str(),
                 s.mode_hotkeys().hangar.as_str(),
                 s.mode_hotkeys().settings.as_str(),
+                // M8-K2: Crafting-Slot gegen Doppelbelegung schützen (mining
+                // fehlt hier historisch — bewusst nicht angefasst).
+                s.mode_hotkeys().crafting.as_str(),
             ];
             let clashes_other_connector = s
                 .connector_hotkeys()

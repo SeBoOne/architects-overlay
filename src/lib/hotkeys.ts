@@ -3,7 +3,15 @@
 // Frontend cai nos Defaults quando o snapshot ainda não tem o campo
 // (SSR/Probe/Config antiga = Migration automática para a nova Belegung).
 
-export type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'mining';
+export type Mode =
+	| 'search'
+	| 'market'
+	| 'routes'
+	| 'inventory'
+	| 'hangar'
+	| 'settings'
+	| 'mining'
+	| 'crafting';
 
 export type ModeHotkeys = Record<Mode, string>;
 
@@ -21,7 +29,10 @@ export const DEFAULT_MODE_HOTKEYS: ModeHotkeys = {
 	inventory: 'F4',
 	hangar: 'F11',
 	settings: 'F12',
-	mining: 'F5'
+	mining: 'F5',
+	// M8-K2 (t_f95f9d97): Crafting-Modus — F6 ist die erste freie F-Taste
+	// nach F1–F5 (F1–F4 Modi, F5 Mining).
+	crafting: 'F6'
 };
 
 const FKEY_RE = /^F([1-9]|1[0-2])$/;

@@ -11,13 +11,30 @@
 	// Bei schmaler Shell kollabiert sie auf reine Icons (`compact` vom
 	// Elternteil per bind:clientWidth gemessen).
 	// C2: 'own' = eigener Bereich eines aktivierten Connectors.
-	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'own' | 'mining';
+	type Mode =
+	| 'search'
+	| 'market'
+	| 'routes'
+	| 'inventory'
+	| 'hangar'
+	| 'settings'
+	| 'own'
+	| 'mining'
+	| 'crafting';
 	type Entry = {
 		id: Mode;
 		key: string;
 		label: string;
 		title: string;
-		icon: 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'mining';
+		icon:
+			| 'search'
+			| 'market'
+			| 'routes'
+			| 'inventory'
+			| 'hangar'
+			| 'settings'
+			| 'mining'
+			| 'crafting';
 	};
 
 	let {
@@ -55,10 +72,15 @@
 		{ id: 'inventory', key: 'F4', label: 'nav.inventory', title: 'nav.inventory_title', icon: 'inventory' },
 		// M7-K2 (t_bb3303d0): Mining-Modus (Strata) — F5-Default, siehe hotkeys.ts.
 		{ id: 'mining', key: 'F5', label: 'nav.mining', title: 'nav.mining_title', icon: 'mining' },
+		// M8-K2 (t_f95f9d97): Crafting-Modus (Strata) — F6-Default; wie Mining
+		// nur bei Strata enabled + Key (gleiche Datenquelle/ToS).
+		{ id: 'crafting', key: 'F6', label: 'nav.crafting', title: 'nav.crafting_title', icon: 'crafting' },
 		{ id: 'hangar', key: 'F11', label: 'nav.hangar', title: 'nav.hangar_title', icon: 'hangar' },
 		{ id: 'settings', key: 'F12', label: 'nav.settings', title: 'nav.settings_title', icon: 'settings' }
 	];
-	const ENTRIES = $derived(BASE_ENTRIES.filter((en) => en.id !== 'mining' || miningAvailable));
+	const ENTRIES = $derived(
+	BASE_ENTRIES.filter((en) => (en.id !== 'mining' && en.id !== 'crafting') || miningAvailable)
+);
 
 	// PB (t_1c9bc240, B1): angezeigte Taste = persistierter Wert (Settings-
 	// Snapshot) mit Fallback auf die Defaults — identische Quelle wie der
@@ -69,6 +91,7 @@
 		routes: 'F3',
 		inventory: 'F4',
 		mining: 'F5',
+		crafting: 'F6',
 		hangar: 'F11',
 		settings: 'F12'
 	};
@@ -125,6 +148,13 @@
 					<path d="M3 21 14.5 9.5" />
 					<path d="M12.5 7.5 16 4c2.8 1 5 3.2 6 6l-3.5 3.5" />
 					<path d="M12.5 7.5c2.6.2 5 1.3 6 3" />
+				</svg>
+			{:else if en.icon === 'crafting'}
+				<!-- M8-K2: Hammer/Amboss (Crafting-Modus) -->
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M14 4.5 19.5 10 14 15.5 8.5 10 14 4.5Z" />
+					<path d="M11 13 4 20" />
+					<path d="M14 4.5 12 2.5" />
 				</svg>
 			{:else if en.icon === 'hangar'}
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
