@@ -687,6 +687,17 @@
 							{/if}
 						</div>
 					{/if}
+					<!-- M8-R1-C (t_b6ee9f14): Stats-Vollanzeige direkt nach Size/Mass/Ammo —
+					     default | neu je Zeile (auch für Q-unbeeinflusste → „unaffected"). -->
+					{#if vw || ammo || detail.blueprintAspects?.length}
+						<QualityStats
+							aspects={detail.blueprintAspects ?? []}
+							summary={detail.blueprintSummary ?? null}
+							aspectQualities={aspectQualities}
+							weapon={vw}
+							ammo={ammo}
+						/>
+					{/if}
 					{#if wikiDesc}
 						<!-- kompakt klappbar (Spec) — Beschreibung de_EN/en_EN -->
 						<details class="cd-desc">
@@ -778,96 +789,9 @@
 							{/each}
 							</div>
 
-							<!-- M8-K5: dismantle_returns klein unter der Materialliste. -->
-							{#if bp?.dismantle_returns?.length}
-								<div class="cdism">
-									<span class="cdl">{$t('craft.dismantle_returns')}</span>
-									{#each bp.dismantle_returns as d, di (d.name + ':' + di)}
-										<span class="cdi"
-											>{d.name}{#if d.quantity_scu !== null && d.quantity_scu !== undefined}
-												{fmtQty(d.quantity_scu)} SCU{/if}</span
-										>
-									{/each}
-								</div>
-							{/if}
-
-							<!-- M8-K5: Stat-Block — vehicle_weapon/ammunition-Details nur
-							     wenn vorhanden (Spec: damages-Liste, rpm, range, capacity). -->
-							{#if vw || ammo}
-								<div class="cstats">
-									<div class="cp-head">{$t('craft.weapon_stats')}</div>
-									{#if vw}
-										<div class="cs-grid">
-											{#if vw.damage_per_shot !== null && vw.damage_per_shot !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.dmg_per_shot')}</span>
-													{fmtQty(vw.damage_per_shot)}</span
-												>
-											{/if}
-											{#if vw.rpm !== null && vw.rpm !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.rpm')}</span>
-													{fmtQty(vw.rpm)}</span
-												>
-											{/if}
-											{#if vw.range !== null && vw.range !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.range')}</span>
-													{fmtQty(vw.range)} m</span
-												>
-											{/if}
-											{#if vw.capacity !== null && vw.capacity !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.capacity')}</span>
-													{fmtQty(vw.capacity)}</span
-												>
-											{/if}
-										</div>
-										{#if vw.damages.length}
-											<div class="cs-dmg">
-												{#each vw.damages as d, idx (d.damage_type + ':' + idx)}
-													<span class="cs-dmgrow"
-														>{d.damage_type}: {d.damage === null || d.damage === undefined
-															? '—'
-															: fmtQty(d.damage)}</span
-													>
-												{/each}
-											</div>
-										{/if}
-									{/if}
-									{#if ammo}
-										<div class="cs-grid">
-											{#if ammo.speed !== null && ammo.speed !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.ammo_speed')}</span>
-													{fmtQty(ammo.speed)} m/s</span
-												>
-											{/if}
-											{#if ammo.range !== null && ammo.range !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.range')}</span>
-													{fmtQty(ammo.range)} m</span
-												>
-											{/if}
-											{#if ammo.capacity !== null && ammo.capacity !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.capacity')}</span>
-													{fmtQty(ammo.capacity)}</span
-												>
-											{/if}
-											{#if ammo.lifetime !== null && ammo.lifetime !== undefined}
-												<span class="cs-item"
-													><span class="cs-l">{$t('craft.ammo_lifetime')}</span>
-													{fmtQty(ammo.lifetime)} s</span
-												>
-											{/if}
-										</div>
-									{/if}
-								</div>
-							{/if}
-
-							<!-- Qualitäts-PLANUNGSRECHNER — Machbarkeits-Check + (M8-K6)
-							     echter Stat-Rechner via QualityStats (s. o.). -->
+							<!-- Qualitäts-PLANUNGSRECHNER — Machbarkeits-Check (Materialien
+							     mit Reglern). Die Stats-Vollanzeige (QualityStats) steht
+							     oben direkt nach Size/Mass/Ammo (M8-R1-C). -->
 						<div class="cplanner">
 							<div class="cp-head">{$t('craft.planner_title')}</div>
 							<!-- M8-R1-A: Gesamt-Qualität = Anzeige-/Mischwert aus den
@@ -890,16 +814,6 @@
 							<div class="cp-result">
 								{$t('craft.required_quality')}: <strong>{requiredQuality}</strong>
 							</div>
-							<!-- M8-K6/R1-A: echter Stat-Rechner über die individuellen
-							     Aspekt-Qualitäten — nur wenn ein SC-Wiki-Blueprint mit
-							     Modifier-Daten gematcht hat (sonst still weg, kein Hard-Fail). -->
-							{#if detail.blueprintAspects?.length}
-								<QualityStats
-									aspects={detail.blueprintAspects}
-									summary={detail.blueprintSummary ?? null}
-									aspectQualities={aspectQualities}
-								/>
-							{/if}
 							<p class="cp-note">{$t('craft.planner_note')}</p>
 								<div class="cp-legend">
 									<span class="cpl-ok">✓ {$t('craft.q_ok')}</span>
@@ -940,11 +854,24 @@
 											{/each}
 										</div>
 									{/each}
-								</div>
-							{/if}
-				{:else}
-					<div class="cnote cempty">{$t('craft.detail_hint')}</div>
-				{/if}
+							</div>
+						{/if}
+
+						<!-- M8-R1-C: dismantle_returns NACH den Missionen (Spec-Reihenfolge). -->
+						{#if bp?.dismantle_returns?.length}
+							<div class="cdism">
+								<span class="cdl">{$t('craft.dismantle_returns')}</span>
+								{#each bp.dismantle_returns as d, di (d.name + ':' + di)}
+									<span class="cdi"
+										>{d.name}{#if d.quantity_scu !== null && d.quantity_scu !== undefined}
+											{fmtQty(d.quantity_scu)} SCU{/if}</span
+									>
+								{/each}
+							</div>
+						{/if}
+					{:else}
+						<div class="cnote cempty">{$t('craft.detail_hint')}</div>
+					{/if}
 			</div>
 		</div>
 	{/if}
@@ -987,6 +914,15 @@
 		min-height: 0;
 		display: flex;
 		flex-direction: column;
+	}
+	/* M8-R1-C (t_b6ee9f14): Detail-Panel scrollt INNERHALB der Spalte
+	   (overflow-y:auto) + untere Padding, damit der Zierramen und die
+	   letzte Sektion (dismantle) nicht an der Panel-Kante abgeschnitten
+	   werden. Root-Cause des Abschneide-Bugs ist die nicht-scrollende
+	   Shell-Kette — gefixt in app.css (.crafting-keep, s. dort). */
+	.cdetail {
+		overflow-y: auto;
+		padding-bottom: 10px;
 	}
 	.cnote {
 		padding: 10px 2px;
@@ -1479,40 +1415,6 @@
 		opacity: 0.65;
 	}
 	.cdi {
-		font-variant-numeric: tabular-nums;
-	}
-	/* Stat-Block: vehicle_weapon/ammunition */
-	.cstats {
-		margin-top: 10px;
-		border: 1px solid var(--line, #2a2f3a);
-		border-radius: 10px;
-		padding: 10px 12px;
-	}
-	.cs-grid {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 4px 16px;
-	}
-	.cs-item {
-		display: inline-flex;
-		align-items: baseline;
-		gap: 5px;
-		font-size: 12px;
-		font-variant-numeric: tabular-nums;
-	}
-	.cs-l {
-		font-size: 10px;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		opacity: 0.6;
-	}
-	.cs-dmg {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 3px 12px;
-		margin-top: 6px;
-		font-size: 11px;
-		opacity: 0.85;
 		font-variant-numeric: tabular-nums;
 	}
 	/* Blaupausen-Missionen */

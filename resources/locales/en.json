@@ -192,7 +192,7 @@
     "craft.no_materials": "No material requirements published for this item.",
     "craft.open_in_mining": "Show locations in Mining mode (F5)",
     "craft.ph_main": "Crafting: item…",
-    "craft.planner_note": "Per material: set a quality 0–1000 (optionally snapped to SC-Wiki quantized values). Aspect quality = quantity-weighted mean of its materials; combined = min over aspects. Stat block: SC-Wiki modifiers as % deviation vs. base 1.0.",
+    "craft.planner_note": "Per material: set a quality 0–1000 (optionally snapped to SC-Wiki quantized values). Aspect quality = quantity-weighted mean of its materials; combined = min over aspects. The stats block above shows the default values from the API and how blueprint modifiers scale them (linear in quality).",
     "craft.planner_title": "Quality planner (feasibility check)",
     "craft.q_fail": "below requirement",
     "craft.q_ok": "meets requirement",
@@ -204,16 +204,15 @@
     "craft.snap": "Snap",
     "craft.snap_off": "Snap off — free 0–1000",
     "craft.snap_on": "Snap on — only quantized values",
-    "craft.stats_note": "Modifiers scale linearly with input quality (SC-Wiki data). Shown as % deviation vs. base 1.0; multiple aspects affecting one property multiply. Data from star-citizen.wiki.",
+    "craft.stats_note": "Modifiers scale linearly with input quality (SC-Wiki data). Default values come from the API; stats without a matching modifier are shown as unaffected. Multiple aspects affecting one property multiply. Data from star-citizen.wiki.",
     "craft.stats_reachable": "reachable",
-    "craft.stats_title": "Stat changes at target quality",
+    "craft.stats_title": "Stats (default → at target quality)",
     "craft.stats_unreachable": "not reachable",
     "craft.target_quality": "Target quality",
     "craft.unit_gems": "gems",
     "craft.unit_items": "items",
     "craft.unit_scu": "SCU",
     "craft.units_legend": "Units are never mixed — {gems} gems = 1 SCU.",
-    "craft.weapon_stats": "Weapon stats",
     "deals.list_foot_one": "{n} deal · chat in the overlay · start/close/rate on UEX only (deep-link) · polling 1/min",
     "deals.list_foot_other": "{n} deals · chat in the overlay · start/close/rate on UEX only (deep-link) · polling 1/min",
     "error.browser_open": "Browser could not be opened: {err}",
@@ -1281,6 +1280,9 @@
     "update.reason_deb_apt": ".deb installations update via apt — the app performs no root actions.",
     "update.reason_no_appimage": "No running AppImage found",
     "update.reason_rate_limit": "Rate limit (429) — check again later",
-    "update.reason_rate_limit_retry": "Rate limit (429) — try again later"
+    "update.reason_rate_limit_retry": "Rate limit (429) — try again later",
+    "craft.stats_default": "Default",
+    "craft.stats_new": "At target quality",
+    "craft.stats_unaffected": "unaffected"
   }
 }

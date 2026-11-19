@@ -192,7 +192,7 @@
     "craft.no_materials": "Für diesen Artikel sind keine Materialkosten veröffentlicht.",
     "craft.open_in_mining": "Orte im Mining-Modus zeigen (F5)",
     "craft.ph_main": "Crafting: Artikel…",
-    "craft.planner_note": "Pro Material: Qualität 0–1000 setzen (optional auf SC-Wiki-Quantisierte-Werte gerastet). Aspekt-Qualität = mengengewichtetes Mittel seiner Materialien; Gesamt = min über Aspekte. Stat-Block: SC-Wiki-Modifier als %-Abweichung gegenüber Basis 1.0.",
+    "craft.planner_note": "Pro Material: Qualität 0–1000 setzen (optional auf SC-Wiki-Quantisierte-Werte gerastet). Aspekt-Qualität = mengengewichtetes Mittel seiner Materialien; Gesamt = min über Aspekte. Der Stats-Block oben zeigt die Standard-Werte aus der API und wie Blueprint-Modifier sie skalieren (linear in der Qualität).",
     "craft.planner_title": "Qualitäts-Planungsrechner (Machbarkeits-Check)",
     "craft.q_fail": "unter Anforderung",
     "craft.q_ok": "erfüllt Anforderung",
@@ -204,16 +204,15 @@
     "craft.snap": "Rasten",
     "craft.snap_off": "Rasten aus — frei 0–1000",
     "craft.snap_on": "Rasten an — nur quantisierte Werte",
-    "craft.stats_note": "Modifier skalieren linear mit der Input-Qualität (SC-Wiki-Daten). Angezeigt als %-Abweichung gegenüber Basis 1.0; mehrere Aspekte auf eine Eigenschaft multiplizieren sich. Daten von star-citizen.wiki.",
+    "craft.stats_note": "Modifier skalieren linear mit der Input-Qualität (SC-Wiki-Daten). Standard-Werte kommen aus der API; Stats ohne passenden Modifier sind als unbeeinflusst ausgewiesen. Mehrere Aspekte auf einer Eigenschaft multiplizieren sich. Daten von star-citizen.wiki.",
     "craft.stats_reachable": "erreichbar",
-    "craft.stats_title": "Stat-Änderung bei Ziel-Qualität",
+    "craft.stats_title": "Stats (Standard → bei Ziel-Qualität)",
     "craft.stats_unreachable": "nicht erreichbar",
     "craft.target_quality": "Ziel-Qualität",
     "craft.unit_gems": "gems",
     "craft.unit_items": "items",
     "craft.unit_scu": "SCU",
     "craft.units_legend": "Einheiten werden nie gemischt — {gems} gems = 1 SCU.",
-    "craft.weapon_stats": "Waffen-Stats",
     "deals.list_foot_one": "{n} Deal · Chat im Overlay · Starten/Beenden/Bewerten nur auf UEX (Deep-Link) · Polling 1/min",
     "deals.list_foot_other": "{n} Deals · Chat im Overlay · Starten/Beenden/Bewerten nur auf UEX (Deep-Link) · Polling 1/min",
     "error.browser_open": "Browser konnte nicht geöffnet werden: {err}",
@@ -1281,6 +1280,9 @@
     "update.reason_deb_apt": ".deb-Installationen aktualisieren sich per apt — die App führt keine root-Aktionen aus.",
     "update.reason_no_appimage": "Kein laufendes AppImage gefunden",
     "update.reason_rate_limit": "Rate-Limit (429) — später erneut prüfen",
-    "update.reason_rate_limit_retry": "Rate-Limit (429) — später erneut versuchen"
+    "update.reason_rate_limit_retry": "Rate-Limit (429) — später erneut versuchen",
+    "craft.stats_default": "Standard",
+    "craft.stats_new": "Bei Ziel-Qualität",
+    "craft.stats_unaffected": "unbeeinflusst"
   }
 }
