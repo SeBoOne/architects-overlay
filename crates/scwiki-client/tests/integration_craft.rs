@@ -210,6 +210,82 @@ async fn blueprint_parses_real_detail() {
     );
 }
 
+/// M8-K5 (t_03eafbfb): `aspects`-Envelope → flache Aspekt-Liste, und das
+/// Serialize-JSON exakt im K6-Contract (`src/lib/quality-calc.ts`):
+/// snake_case (`property_key`, `min_quality`, `quantity_scu`,
+/// `value_range_type`, `at_min_quality`/`at_max_quality`), nested
+/// `{min, max}` / `{at_min_quality, at_max_quality}`.
+#[tokio::test]
+async fn aspects_parse_real_fixture_and_serialize_k6_shape() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/blueprints/b04aff42-d892-4ca9-991e-101c869a7caa"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(single_page("blueprint_greatsword.json")),
+        )
+        .mount(&server)
+        .await;
+
+    let bp: Blueprint = client(&server.uri())
+        .blueprint("b04aff42-d892-4ca9-991e-101c869a7caa")
+        .await
+        .expect("parse ok");
+
+    assert_eq!(bp.aspects.len(), 3, "FRAME/CYCLER/BARREL");
+    let frame = bp.aspects.iter().find(|a| a.key == "FRAME").unwrap();
+    assert_eq!(frame.name, "Frame");
+    assert_eq!(frame.required_count, Some(1));
+    let input = frame.input.as_ref().expect("input");
+    assert_eq!(input.name, "Iron");
+    assert_eq!(input.min_quality, Some(1.0));
+    assert_eq!(input.quantity_scu, Some(0.64));
+    let m = &frame.modifiers[0];
+    assert_eq!(m.property_key, "health_maxhealth");
+    assert_eq!(m.label, "Integrity");
+    assert_eq!(m.better_when.as_deref(), Some("higher"));
+    assert_eq!(m.value_range_type.as_deref(), Some("linear"));
+    assert_eq!(
+        m.quality_range.as_ref().unwrap(),
+        &scwiki_client::QualityRange {
+            min: Some(0.0),
+            max: Some(1000.0)
+        }
+    );
+    assert_eq!(
+        m.modifier_range.as_ref().unwrap(),
+        &scwiki_client::ModifierRange {
+            at_min_quality: Some(0.9),
+            at_max_quality: Some(1.1)
+        }
+    );
+
+    // Serialize-Contract: JSON-Keys exakt wie das K6-Frontend sie liest.
+    let json = serde_json::to_value(&bp.aspects).unwrap();
+    let frame_json = &json[0];
+    for key in ["key", "name", "required_count", "input", "modifiers"] {
+        assert!(frame_json.get(key).is_some(), "{key} fehlt: {frame_json}");
+    }
+    let mod_json = &frame_json["modifiers"][0];
+    for key in [
+        "property_key",
+        "label",
+        "better_when",
+        "quality_range",
+        "modifier_range",
+        "value_range_type",
+    ] {
+        assert!(mod_json.get(key).is_some(), "{key} fehlt: {mod_json}");
+    }
+    assert!(mod_json["quality_range"]["min"].is_number());
+    assert!(mod_json["modifier_range"]["at_min_quality"].is_number());
+    assert!(frame_json["input"]["min_quality"].is_number());
+    assert!(frame_json["input"]["quantity_scu"].is_number());
+    // Roundtrip (Cache-Readback-Pfad): Deserialize liefert dieselben Daten.
+    let rt: Vec<scwiki_client::BlueprintAspect> =
+        serde_json::from_value(json.clone()).expect("roundtrip");
+    assert_eq!(rt, bp.aspects);
+}
+
 #[test]
 fn attribution_const_is_present() {
     assert_eq!(ATTRIBUTION_SCWIKI, "Data from star-citizen.wiki");

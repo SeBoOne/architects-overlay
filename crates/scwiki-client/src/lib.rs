@@ -518,13 +518,139 @@ pub fn build_compat(vehicles: &[VehiclePorts], items: &[ModuleItem]) -> Vec<Comp
 //   tiers[].requirements (nested GROUPS FRAME/CYCLER/… → resources mit
 //   min_quality + modifiers[] mit quality/modifier-Range),
 //   unlocking_missions_grouped[{label,chance,missions[...]}],
-//   summary_properties, is_available_by_default, game_version.
+//   summary_properties, is_available_by_default, game_version — sowie
+//   `aspects` (Envelope `{aspects[], aspect_groups, has_interactive_…}`,
+//   Live-Beleg): die flache Aspekt-Liste mit `input` + `modifiers[]`
+//   (property_key/label/better_when/quality_range/modifier_range/
+//   value_range_type) — GENAU der Shape, den der Qualitäts-Stat-Rechner
+//   (M8-K6, `src/lib/quality-calc.ts`) erwartet. M8-K5 (t_03eafbfb)
+//   exposiert sie als `blueprintAspects` im Craft-Detail-Response.
 //
 // Kreuzreferenz-Strategie (Spec): SC-Wiki-Item.name ↔ Strata-Item.name,
 // exakt nach trim+lowercase-Normalisierung; Blueprint via
 // item.blueprint[0].uuid. Fehlender Match ist KEIN Fehler — der Caller
 // degradiert (Abschnitt „Daten fehlen"). Strata bleibt die Material-/
 // Mengen-/MIN-QUALITY-Basis, SC-Wiki liefert Details/Stats/Missionen.
+
+// ---------- Aspekte (M8-K5, t_03eafbfb) — K6-Stat-Rechner-Contract ----------
+
+/// Quality-Range eines Aspekt-Modifiers (`{min, max}`, Qualität 0–1000).
+/// Eigenes Struct (nicht Tuple), damit das JSON exakt dem K6-Contract
+/// (`src/lib/quality-calc.ts`) entspricht.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct QualityRange {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+}
+
+/// Modifier-Range (`{at_min_quality, at_max_quality}`) — linearer Faktor
+/// an den Range-Enden (z. B. 0.9 bei Q0, 1.1 bei Q1000).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ModifierRange {
+    #[serde(rename = "at_min_quality")]
+    pub at_min_quality: Option<f64>,
+    #[serde(rename = "at_max_quality")]
+    pub at_max_quality: Option<f64>,
+}
+
+/// Aspekt-Modifier — Serialize-Shape = SC-Wiki `aspects[].modifiers[]` =
+/// K6 `AspectModifier` (snake_case, bewusst KEIN camelCase-Rename: das
+/// Frontend rechnet mit `property_key`/`quality_range`/`value_range_type`).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AspectModifier {
+    pub property_key: String,
+    pub label: String,
+    pub better_when: Option<String>,
+    pub quality_range: Option<QualityRange>,
+    pub modifier_range: Option<ModifierRange>,
+    pub value_range_type: Option<String>,
+}
+
+/// Input eines Aspekts (Resource/Item) — K6 `AspectInput` (snake_case).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AspectInput {
+    pub name: String,
+    pub min_quality: Option<f64>,
+    pub quantity: Option<f64>,
+    pub quantity_scu: Option<f64>,
+}
+
+/// Ein Aspekt des Blueprints (FRAME/CYCLER/BARREL/…) — K6 `Aspect`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BlueprintAspect {
+    pub key: String,
+    pub name: String,
+    pub required_count: Option<u32>,
+    pub input: Option<AspectInput>,
+    pub modifiers: Vec<AspectModifier>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AspectsEnvelopeDto {
+    #[serde(default, deserialize_with = "null_to_vec")]
+    aspects: Vec<AspectDto>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AspectDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    key: String,
+    #[serde(default, deserialize_with = "null_to_string")]
+    name: String,
+    #[serde(default)]
+    required_count: Option<u32>,
+    #[serde(default)]
+    input: Option<AspectInputDto>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    modifiers: Vec<ModifierDto>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AspectInputDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    name: String,
+    #[serde(default)]
+    min_quality: Option<f64>,
+    #[serde(default)]
+    quantity: Option<f64>,
+    #[serde(default)]
+    quantity_scu: Option<f64>,
+}
+
+fn aspect_from(dto: AspectDto) -> Option<BlueprintAspect> {
+    if dto.key.trim().is_empty() && dto.name.trim().is_empty() {
+        return None; // dekorativer Eintrag ohne Identität
+    }
+    Some(BlueprintAspect {
+        key: dto.key,
+        name: dto.name,
+        required_count: dto.required_count,
+        input: dto.input.map(|i| AspectInput {
+            name: i.name,
+            min_quality: i.min_quality,
+            quantity: i.quantity,
+            quantity_scu: i.quantity_scu,
+        }),
+        modifiers: dto.modifiers.iter().map(aspect_modifier_from).collect(),
+    })
+}
+
+fn aspect_modifier_from(m: &ModifierDto) -> AspectModifier {
+    AspectModifier {
+        property_key: m.property_key.clone(),
+        label: m.name.clone(),
+        better_when: m.better_when.clone(),
+        quality_range: m.quality_range.as_ref().map(|r| QualityRange {
+            min: r.min,
+            max: r.max,
+        }),
+        modifier_range: m.modifier_range.as_ref().map(|r| ModifierRange {
+            at_min_quality: r.at_min_quality,
+            at_max_quality: r.at_max_quality,
+        }),
+        value_range_type: m.value_range_type.clone(),
+    }
+}
 
 /// Pflicht-Attribution (ToS-Muster wie Strata/UEX) — reist in jedem
 /// Craft-Response mit und wird zusätzlich zur Strata-Angabe gezeigt.
@@ -575,7 +701,7 @@ impl StrataIndex {
 }
 
 /// Craftbares Item aus `/api/items?filter[is_craftable]=1`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CraftableItem {
     pub name: String,
     pub item_type: String,
@@ -593,7 +719,7 @@ pub struct CraftableItem {
 }
 
 /// Fahrzeug-Waffen-Stats (`vehicle_weapon`).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct VehicleWeapon {
     pub capacity: Option<f64>,
     pub range: Option<f64>,
@@ -602,14 +728,14 @@ pub struct VehicleWeapon {
     pub damages: Vec<WeaponDamage>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct WeaponDamage {
     pub damage_type: String,
     pub damage: Option<f64>,
 }
 
 /// Munitions-Stats (`ammunition`) — nur die Anzeige-relevanten Felder.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Ammunition {
     pub size: Option<u32>,
     pub capacity: Option<u32>,
@@ -619,7 +745,7 @@ pub struct Ammunition {
 }
 
 /// Blueprint-Detail aus `/api/blueprints/{uuid}`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Blueprint {
     pub uuid: String,
     pub output_name: String,
@@ -633,12 +759,15 @@ pub struct Blueprint {
     /// pro Gruppe Resources mit min_quality + Quality-Modifiers.
     pub tiers: Vec<BlueprintTier>,
     pub summary_properties: Vec<SummaryProperty>,
+    /// Flache Aspekt-Liste (`aspects.aspects[]`, M8-K5) — Basis des
+    /// `blueprintAspects`-Felds im Craft-Detail-Response (K6-Contract).
+    pub aspects: Vec<BlueprintAspect>,
     /// Missions-Unlock-Gruppen (`Guaranteed`/Chance-Labels).
     pub unlocking_missions_grouped: Vec<MissionGroup>,
     pub web_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Ingredient {
     pub name: String,
     /// `resource` oder `item` (Spec).
@@ -646,13 +775,13 @@ pub struct Ingredient {
     pub quantity_scu: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DismantleReturn {
     pub name: String,
     pub quantity_scu: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BlueprintTier {
     pub tier_index: u32,
     pub requirements: RequirementGroup,
@@ -662,7 +791,7 @@ pub struct BlueprintTier {
 /// Requirement-Gruppe (kind=group): KEY (FRAME/CYCLER/…), Modifier und
 /// Kinder (Resources). `children` sind Resources ODER weitere Gruppen —
 /// die API nestet aktuell nur eine Ebene; leere Kinder sind erlaubt.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RequirementGroup {
     pub key: Option<String>,
     pub name: Option<String>,
@@ -674,7 +803,7 @@ pub struct RequirementGroup {
 
 /// Quality-Modifier an einer Gruppe/Resource: Qualität 0..1000 mappt
 /// linear auf modifier_range (at_min_quality..at_max_quality).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct QualityModifier {
     /// `property_key` (requirement_groups) bzw. `key` (tiers) — beides
     /// derselbe Schlüssel (Live-Beleg), via Alias vereint.
@@ -691,7 +820,7 @@ pub struct QualityModifier {
 
 /// Kind-Eintrag in einer Requirement-Gruppe: eine Resource (mit
 /// min_quality, Spec) — Items-Kinder kämen analog als kind=item.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RequirementChild {
     pub name: String,
     pub kind: Option<String>,
@@ -703,21 +832,21 @@ pub struct RequirementChild {
     pub group: Option<Box<RequirementGroup>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SummaryProperty {
     pub property_key: String,
     pub label: String,
     pub better_when: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MissionGroup {
     pub label: String,
     pub chance: Option<f64>,
     pub missions: Vec<UnlockingMission>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UnlockingMission {
     pub title: String,
     pub reward_scope: Option<String>,
@@ -842,6 +971,9 @@ struct BlueprintDto {
     tiers: Vec<TierDto>,
     #[serde(default, deserialize_with = "null_to_vec")]
     summary_properties: Vec<SummaryPropertyDto>,
+    /// `aspects`-Envelope (`{aspects[], …}`) — fehlt/null → leer.
+    #[serde(default)]
+    aspects: Option<AspectsEnvelopeDto>,
     #[serde(
         rename = "unlocking_missions_grouped",
         alias = "unlockingMissionsGrouped",
@@ -1151,6 +1283,10 @@ fn blueprint_from(dto: BlueprintDto) -> Blueprint {
                 better_when: p.better_when,
             })
             .collect(),
+        aspects: dto
+            .aspects
+            .map(|env| env.aspects.into_iter().filter_map(aspect_from).collect())
+            .unwrap_or_default(),
         unlocking_missions_grouped: dto
             .unlocking_missions_grouped
             .into_iter()
