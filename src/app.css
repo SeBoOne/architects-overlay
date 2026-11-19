@@ -1651,6 +1651,13 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   font-weight: 600;
 }
 
+/* M8-K3 (t_a8088d06): Craft→Mining-Sprung — keep-alive-Wrapper für das
+   Crafting-Detail; versteckt während der Mining offen ist, unverändert
+   sichtbar nach dem Rückweg. */
+.crafting-keep.is-hidden {
+  display: none;
+}
+
 /* Detail-Ansicht eines Angebots (Deep-Link) */
 .mdetail {
   display: flex;

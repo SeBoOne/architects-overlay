@@ -702,6 +702,11 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
 	let mTab = $state<'offers' | 'routes' | 'shop' | 'trades'>('offers');
 	let railMode = $state<'inventory' | 'hangar' | 'own' | 'mining' | 'crafting' | null>(null);
+	// M8-K3 (t_a8088d06): Sprung-Kontext Craft→Mining — oreId des Bedarfserzes.
+	// Nicht-null ⇒ Mining wurde aus dem Craft-Detail heraus geöffnet; das
+	// Crafting bleibt dann keep-alive gemountet (nur versteckt), damit Back/Esc
+	// das Craft-Detail unverändert wieder herstellt.
+	let craftOreJump = $state<string | null>(null);
 	let mode = $derived<Mode>(
 		(railMode === 'own' ? 'own' : railMode) ??
 			(inConfig
@@ -4726,11 +4731,27 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		}
 	}
 
+	// M8-K3 (t_a8088d06): Bedarfserz im Craft-Detail → Mining-Modus mit dem
+	// Erz vorgewählt (Orte-pro-Erz-Detail offen). Generisch über Callback-Prop
+	// an Crafting; kein Modi-Kopplungs-Hardcode in den Komponenten selbst.
+	function openOreInMining(oreId: string) {
+		setMode('mining');
+		craftOreJump = oreId;
+	}
+	// Rückweg (Back/Esc im Mining): Craft-Detail wieder herstellen — der State
+	// blieb keep-alive erhalten (Crafting blieb gemountet, nur versteckt).
+	function exitMiningJump() {
+		setMode('crafting'); // setMode löst craftOreJump selbst auf
+	}
+
 	// ---- Modi-Wechsel (Mode-Hotkeys + Rail-Klicks) ------------------------------
 	// Ein zentraler Einstieg: räumt den jeweiligen Alt-Zustand auf (Market-
 	// Reset, Config schließen, Detail schließen) und behält den Tastaturfokus
 	// im Suchfeld — wie bisher nach Market-Exit/Detail-Schließen.
 	function setMode(m: Mode) {
+		// M8-K3: Jeder Modus-Wechsel außerhalb des Sprungs löst den Craft→Mining-
+		// Jump auf (z. B. F6-Rückweg über den Hotkey statt Esc).
+		if (m !== 'mining') craftOreJump = null;
 		// M7-F1 (Bug 3): Mining ist nur nutzbar, wenn Strata enabled + Key
 		// gesetzt sind — sonst den Modus-Wechsel (Rail-Klick wie F5) IGNOREN,
 		// statt eine Disabled-Card zu zeigen.
@@ -5878,6 +5899,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{/if}
 
 		<!-- Inhalt je Zustand -->
+{#if railMode === 'crafting' || craftOreJump}
+			<!-- M8-K2 (t_f95f9d97) + M8-K3 (t_a8088d06): Crafting-Modus (Strata).
+			     M8-K3: Craft→Mining-Sprung — beim Sprung bleibt diese Instanz
+			     keep-alive gemountet (versteckt), damit Back/Esc im Mining das
+			     Craft-Detail UNVERÄNDERT wieder herstellt. -->
+			<div class="crafting-keep" class:is-hidden={!!craftOreJump}>
+				<Crafting
+					onexit={() => setMode('search')}
+					filter={input}
+					onOpenOre={openOreInMining}
+					hidden={!!craftOreJump}
+				/>
+				{#if invEmbed}
+					<!-- C2 embed: Manifest-Connector fügt sich als Unter-Sektion
+					     in die Inventar-Sektion ein (generische Views). -->
+					<ConnectorViews entry={invEmbed} embedded />
+				{/if}
+			</div>
+{/if}
 {#if railMode === 'inventory'}
 			<!-- Inventar-Modus (t_1bab1fea): eigene SPA-Komponente; das HAUPT-
 			     Suchfeld dient als In-Context-Filter (Standort/Material). -->
@@ -5886,16 +5926,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			<!-- M7-K2 (t_bb3303d0): Mining-Modus (Strata) — M7-F3 (t_cf1224c5):
 			     das HAUPT-Suchfeld ist jetzt der In-Context-Filter (Tab-abhängig:
 			     ORES→Erze, LOCATIONS→Orte; Muster Inventory `filter`-Prop). -->
-			<Mining onexit={() => setMode('search')} filter={input} />
-{:else if railMode === 'crafting'}
-			<!-- M8-K2 (t_f95f9d97): Crafting-Modus (Strata) — das HAUPT-Suchfeld
-			     ist der In-Context-Filter der Item-Liste (M7-F3-Muster). -->
-			<Crafting onexit={() => setMode('search')} filter={input} />
-				{#if invEmbed}
-					<!-- C2 embed: Manifest-Connector fügt sich als Unter-Sektion
-					     in die Inventar-Sektion ein (generische Views). -->
-					<ConnectorViews entry={invEmbed} embedded />
-				{/if}
+			<Mining
+				onexit={craftOreJump ? exitMiningJump : () => setMode('search')}
+				onjumpexit={exitMiningJump}
+				jumpOreId={craftOreJump}
+				filter={input}
+			/>
 {:else if railMode === 'hangar' && hangarReplace}
 			<!-- C2 replace: Connector-Views ERSETZEN die Hangar-Sektion — lokale
 			     Daten bleiben unangetastet (Deaktivieren holt sie zurück). -->
