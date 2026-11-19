@@ -1132,6 +1132,10 @@
 		border: 1px solid var(--line, #2a2f3a);
 		border-radius: 10px;
 		overflow: hidden;
+		/* t_8c0e6abc: overflow:hidden setzt die Flex-Min-Größe auf 0 — ohne
+		   flex-shrink:0 kollabiert .cmats als Flex-Item der .cdetail-Column
+		   auf ~0 und clippt die Regler-Zeilen (Höhen-Matrix im Fix-Card-Body). */
+		flex-shrink: 0;
 	}
 	.cmat {
 		display: flex;
@@ -1259,6 +1263,12 @@
 		gap: 6px;
 		font-size: 10.5px;
 		font-variant-numeric: tabular-nums;
+		/* t_e261c7f4: Raumstabilität — Labels wachsen nicht mehr in die
+		   Zeile (sonst drücken sie die Materialliste aus dem Viewport) */
+		max-width: 34ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.cmq-change {
 		opacity: 0.75;
