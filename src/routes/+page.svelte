@@ -55,6 +55,8 @@ import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/w
 	// `$lib`-Alias ist für svelte-check nicht aufgelöst.
 	import Rail from '../lib/Rail.svelte';
 	import Mining from '../lib/Mining.svelte';
+	// M8-K2 (t_f95f9d97): Crafting-Modus (Strata, F6-Default).
+	import Crafting from '../lib/Crafting.svelte';
 	// M4 (t_7bf507e6): Pin-Fenster-Frontend — rendert NUR gepinnte Boxen.
 	import PinBoxes from '../lib/PinBoxes.svelte';
 	import { PINS_CHANGED_EVENT, type PinEntry, type PinRow, type PinsState, type PinContent } from '../lib/pins';
@@ -484,7 +486,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	type ShortcutField = 'toggle' | 'click';
 	// PB (t_1c9bc240, B1): konfigurierbare Mode-Slots — Suche (F1), Marktplatz
 	// (F2) und Einstellungen (F12) bleiben fest belegt.
-	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory' | 'market' | 'mining';
+	type ModeHotkeyField = 'hangar' | 'routes' | 'inventory' | 'market' | 'mining' | 'crafting';
 	let scCapture = $state<ShortcutField | null>(null);
 	let scPreview = $state('');
 	let scNote = $state('');
@@ -612,7 +614,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		{ id: 'market', label: 'hotkey.slot_market' },
 		// M7-K2 (t_bb3303d0) / M7-F1: Mining-Modus — F5-Default. F5 ALLEIN
 		// gehört jetzt komplett dem Mining-Modus; der Resync läuft auf STRG+F5.
-		{ id: 'mining', label: 'nav.mining' }
+		{ id: 'mining', label: 'nav.mining' },
+		// M8-K2 (t_f95f9d97): Crafting-Modus — F6-Default (Backend-Slot 'crafting').
+		{ id: 'crafting', label: 'nav.crafting' }
 	];
 	let hkCapture: ModeHotkeyField | null = $state(null);
 	let hkNote = $state('');
@@ -685,10 +689,19 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// P1 t_a39f6811: Handelsrouten — eigener Mode für die Rail/Keyhandler;
 	// intern bleibt es der Market-Phase mit mTab='routes'.
 	// C2: 'own' = Manifest-Connector mit placement.kind=own (eigener Bereich).
-	type Mode = 'search' | 'market' | 'routes' | 'inventory' | 'hangar' | 'settings' | 'own' | 'mining';
+	type Mode =
+		| 'search'
+		| 'market'
+		| 'routes'
+		| 'inventory'
+		| 'hangar'
+		| 'settings'
+		| 'own'
+		| 'mining'
+		| 'crafting';
 	// M2a: dritter Tab „Mein Shop" (eigene Offers + letzte Trades, Read-Phase).
 	let mTab = $state<'offers' | 'routes' | 'shop' | 'trades'>('offers');
-	let railMode = $state<'inventory' | 'hangar' | 'own' | 'mining' | null>(null);
+	let railMode = $state<'inventory' | 'hangar' | 'own' | 'mining' | 'crafting' | null>(null);
 	let mode = $derived<Mode>(
 		(railMode === 'own' ? 'own' : railMode) ??
 			(inConfig
@@ -4722,6 +4735,9 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		// gesetzt sind — sonst den Modus-Wechsel (Rail-Klick wie F5) IGNOREN,
 		// statt eine Disabled-Card zu zeigen.
 		if (m === 'mining' && !strataReady) return;
+		// M8-K2: Crafting nutzt dieselbe Strata-Datenbasis (Key/ToS) — gleicher
+		// Guard wie Mining: ohne enabled+Key den Modus-Wechsel ignorieren.
+		if (m === 'crafting' && !strataReady) return;
 		if (m === 'search') {
 			railMode = null;
 			if (inConfig) closeConfig();
@@ -4765,6 +4781,14 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			else if (phase === 'market') exitMarket();
 			else if (inDetail) closeDetail();
 			railMode = 'mining';
+			if (debounce) clearTimeout(debounce);
+		} else if (m === 'crafting') {
+			// M8-K2 (t_f95f9d97): Crafting-Modus (Strata) — eigene SPA-Komponente
+			// (Rail-Modus wie Mining). Overlay-States räumen.
+			if (inConfig) closeConfig();
+			else if (phase === 'market') exitMarket();
+			else if (inDetail) closeDetail();
+			railMode = 'crafting';
 			if (debounce) clearTimeout(debounce);
 		} else if (m === 'own') {
 			// C2: eigener Bereich eines aktivierten own-Connectors.
@@ -5277,9 +5301,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						return;
 					}
 				}
-			} else if (railMode === 'mining') {
+			} else if (railMode === 'mining' || railMode === 'crafting') {
 				// M7-K2: Esc-Kaskade gehört Mining.svelte (Detail schließen →
 				// Modus verlassen) — hier NICHT anfassen (Inventory-Muster).
+				// M8-K2: Crafting.svelte folgt demselben Muster.
 				return;
 			} else if (railMode === 'own') {
 				// D-B (t_159ebc5c) Punkt 6: Die own-Mode-Esc-Kaskade gehört
@@ -5814,6 +5839,8 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				}}
 				placeholder={railMode === 'mining'
 					? $t('mining.ph_main')
+					: railMode === 'crafting'
+					? $t('craft.ph_main')
 					: railMode === 'own' && ownOpenFlow && !ownFlowActive
 				? $t('connector.flow.code_ph')
 				: railMode === 'inventory'
@@ -5860,6 +5887,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			     das HAUPT-Suchfeld ist jetzt der In-Context-Filter (Tab-abhängig:
 			     ORES→Erze, LOCATIONS→Orte; Muster Inventory `filter`-Prop). -->
 			<Mining onexit={() => setMode('search')} filter={input} />
+{:else if railMode === 'crafting'}
+			<!-- M8-K2 (t_f95f9d97): Crafting-Modus (Strata) — das HAUPT-Suchfeld
+			     ist der In-Context-Filter der Item-Liste (M7-F3-Muster). -->
+			<Crafting onexit={() => setMode('search')} filter={input} />
 				{#if invEmbed}
 					<!-- C2 embed: Manifest-Connector fügt sich als Unter-Sektion
 					     in die Inventar-Sektion ein (generische Views). -->

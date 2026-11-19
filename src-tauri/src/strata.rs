@@ -181,6 +181,32 @@ pub async fn strata_location_ores(
         .map_err(|e| strata_error(&e))
 }
 
+/// `GET /api/public/items` (cache-first, TTL 7d) — Item-Katalog für den
+/// Crafting-Modus (M8-K2).
+#[tauri::command]
+pub async fn strata_items(
+    state: tauri::State<'_, StrataState>,
+    settings: tauri::State<'_, SettingsState>,
+) -> Result<strata_client::ItemsResponse, String> {
+    let c = client(&state, &snapshot_of(&settings))?;
+    c.items().await.map_err(|e| strata_error(&e))
+}
+
+/// `GET /api/public/craft-cost/{item}` (cache-first, TTL 7d) — Materialliste
+/// + Craft-Zeit eines Items. `{item}` ist die UUID (id vor Slug — die UI
+/// reicht `Item.id` durch, nie den Slug).
+#[tauri::command]
+pub async fn strata_craft_cost(
+    state: tauri::State<'_, StrataState>,
+    settings: tauri::State<'_, SettingsState>,
+    item: String,
+) -> Result<strata_client::CraftCostResponse, String> {
+    let c = client(&state, &snapshot_of(&settings))?;
+    c.craft_cost(item.trim())
+        .await
+        .map_err(|e| strata_error(&e))
+}
+
 /// Keystore-Pfad-Konvention: `app_local_data_dir/strata-key.json` (neben
 /// `cache.sqlite3`) — ein Verzeichnis für alle App-Daten.
 pub fn keystore_path(app: &tauri::AppHandle) -> Option<PathBuf> {
@@ -223,5 +249,23 @@ mod tests {
         assert_eq!(sort("concentration"), strata_client::OreSort::Concentration);
         assert_eq!(sort("rank"), strata_client::OreSort::Rank);
         assert_eq!(sort(" Rubbish "), strata_client::OreSort::Rank);
+    }
+
+    /// M8-K2: Craft-Cost-Einheiten werden NIE gemischt — der UI-Vertrag
+    /// (farblich getrennte SCU/gems/items, keine Summen über Einheiten hinweg)
+    /// stützt sich auf die CraftUnit-Diskriminierung aus K1.
+    #[test]
+    fn craft_cost_units_stay_discriminated() {
+        use strata_client::{CraftCostEntry, CraftUnit};
+        let e = |unit: CraftUnit| CraftCostEntry {
+            material: "X".into(),
+            ore_id: None,
+            quantity: 1.0,
+            unit,
+            min_quality: None,
+        };
+        assert_ne!(e(CraftUnit::Scu), e(CraftUnit::Gems));
+        assert_ne!(e(CraftUnit::Gems), e(CraftUnit::Items));
+        assert_ne!(e(CraftUnit::Scu), e(CraftUnit::Items));
     }
 }
