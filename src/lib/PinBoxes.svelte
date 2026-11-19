@@ -43,6 +43,18 @@ import { listen } from '@tauri-apps/api/event';
 import { PINS_CHANGED_EVENT, PIN_BOX_W, SCALE_STEP, clampScale, pinBoxEstHeight, pinBoxSize, type PinEntry, type PinsState } from './pins';
 import { dragBasePos, patchPos, popoverPos } from './pin-patches';
 import { pinContentFor } from './pin-content';
+// M7-F7 (t_84008140): Sammel-Signatur-Pin-Popover — Eintragsliste mit ✕
+// (Entfernen per Klick, modusunabhängig). Invoke-Pfad geteilt über
+// scan-signature-pin.ts (auch Chip-Klick im Renderer), Farbe aus der
+// Rarity-Rampe.
+import { rarityColor } from './rarity';
+import { oreAbbrev } from './ore-abbrev';
+import { removeCollectEntry } from './scan-signature-pin';
+import {
+	sigEntries,
+	sigValueDisplay,
+	type ScanSignatureEntry
+} from './scan-signature';
 
 type OverlayState = {
 	visible: boolean;
@@ -323,6 +335,31 @@ function remove(pin: PinEntry) {
 	void load();
 }
 
+// ---- M7-F7 (t_84008140): Sammel-Signatur-Pin — Einträge im Popover entfernen
+// Der Sammel-Pin (content.type 'scan-signatures') bekommt im Controller-
+// Popover SEINE Eintragsliste (Kürzel + Basis-Signatur, Rarity-Farbe wie die
+// Chips) mit ✕ pro Entry. ✕ entfernt DEN EINEN Eintrag (dedupe-Key oreId)
+// über den GETEILTEN Pfad removeCollectEntry (scan-signature-pin.ts —
+// derselbe pin_update-Pfad wie der Chip-Klick im Pin-Renderer und
+// toggleSignaturePin in Mining.svelte; Payload-Vertrag bleibt). Erst bei
+// leerer Liste wird der Pin selbst entfernt. Danach load(): Popover-Inhalt
+// lebt, bei leerem Pin schließt es von selbst (der Key verschwindet aus
+// boxPins). Modusunabhängig frei: PinBoxes rendert in allen Modi — nichts
+// Zusätzliches, nur verifizieren (Market-Modus-Beleg).
+function isCollectPin(pin: PinEntry): boolean {
+	return (pin.content as { type?: string } | null)?.type === 'scan-signatures';
+}
+
+function collectEntries(pin: PinEntry): ScanSignatureEntry[] {
+	return sigEntries(pin.content as Parameters<typeof sigEntries>[0]);
+}
+
+async function removeSigEntry(pin: PinEntry, oreId: string) {
+	const ok = await removeCollectEntry(pin, oreId, $t('pins.scan_collect_title'));
+	if (!ok) dbg('removeSigEntry FAILED');
+	await load();
+}
+
 function onKeydown(e: KeyboardEvent) {
 	if (e.key === 'Escape') openKey = null;
 }
@@ -443,20 +480,46 @@ onMount(() => {
 			{#if openKey === boxKey(pin)}
 				<!-- Geschwister der .pin-Boxen unter .pin-layer (Viewport-Anker) —
 				     NICHT Kind einer Box, sonst doppelter Offset (M4-E Review R1). -->
+				<!-- M7-F7: beim Sammel-Signatur-Pin zeigt das Popover ÜBER dem
+				     Standard-Controller die Eintragsliste mit ✕ pro Entry
+				     (Signaturliste oben, Controller unten). -->
 				<div
 					class="pin-popover"
+					class:has-sigs={isCollectPin(pin)}
 					style={`left:${popoverPosFor(pin).x}px; top:${popoverPosFor(pin).y}px`}
 				>
-					<button type="button" class="pbtn" onclick={() => cycleOpacity(pin)} title={$t('pins.opacity_title')}>◐</button>
-					<button type="button" class="pbtn" onclick={() => stepOpacity(pin, -5)} title={$t('pins.opacity_title')}>−</button>
-					<button type="button" class="pbtn" onclick={() => stepOpacity(pin, 5)} title={$t('pins.opacity_title')}>+</button>
-					{#each presets as p (p)}
-						<button type="button" class="pbtn" class:active={pin.opacity === p} onclick={() => stepOpacity(pin, p - pin.opacity)} title={$t('pins.opacity_title')}>{p}</button>
-					{/each}
-					<!-- M6-F2: Größen-Step ± (50–200 %, Backend-Clamp). -->
-					<button type="button" class="pbtn" onclick={() => stepScale(pin, -SCALE_STEP)} title={$t('pins.size_title')}>⤡−</button>
-					<button type="button" class="pbtn" onclick={() => stepScale(pin, SCALE_STEP)} title={$t('pins.size_title')}>⤢+</button>
-					<button type="button" class="pbtn" onclick={() => remove(pin)} title={$t('pins.close_title')}>✕</button>
+					{#if isCollectPin(pin)}
+						<div class="sigs-ctl" role="list" aria-label={$t('pins.scan_collect_title')}>
+							{#each collectEntries(pin) as e (e.oreId)}
+								<div class="sigs-entry" style={`--rc:${rarityColor(e.rarity) ?? 'var(--lineb)'}`}>
+									<span class="se-chip" title={e.label}>
+										<span class="se-abbr">{oreAbbrev(e.label)}</span>
+										<span class="se-val">{sigValueDisplay(e.value)}</span>
+									</span>
+									<button
+										type="button"
+										class="pbtn se-x"
+										title={$t('pins.sig_remove_title')}
+										aria-label={`${$t('pins.sig_remove_title')}: ${e.label}`}
+										onclick={() => void removeSigEntry(pin, e.oreId)}
+									>✕</button>
+								</div>
+							{/each}
+						</div>
+						<div class="sigs-divider" aria-hidden="true"></div>
+					{/if}
+					<div class="pbtn-row">
+						<button type="button" class="pbtn" onclick={() => cycleOpacity(pin)} title={$t('pins.opacity_title')}>◐</button>
+						<button type="button" class="pbtn" onclick={() => stepOpacity(pin, -5)} title={$t('pins.opacity_title')}>−</button>
+						<button type="button" class="pbtn" onclick={() => stepOpacity(pin, 5)} title={$t('pins.opacity_title')}>+</button>
+						{#each presets as p (p)}
+							<button type="button" class="pbtn" class:active={pin.opacity === p} onclick={() => stepOpacity(pin, p - pin.opacity)} title={$t('pins.opacity_title')}>{p}</button>
+						{/each}
+						<!-- M6-F2: Größen-Step ± (50–200 %, Backend-Clamp). -->
+						<button type="button" class="pbtn" onclick={() => stepScale(pin, -SCALE_STEP)} title={$t('pins.size_title')}>⤡−</button>
+						<button type="button" class="pbtn" onclick={() => stepScale(pin, SCALE_STEP)} title={$t('pins.size_title')}>⤢+</button>
+						<button type="button" class="pbtn" onclick={() => remove(pin)} title={$t('pins.close_title')}>✕</button>
+					</div>
 				</div>
 			{/if}
 		{/each}
@@ -659,5 +722,59 @@ onMount(() => {
 	.pbtn.active {
 		border-color: var(--accent);
 		color: var(--accent);
+	}
+	/* M7-F7 (t_84008140): Sammel-Signatur-Pin-Variante — Signaturliste OBEN,
+	   Standard-Controller UNTEN (Popover ERWEITERT, ersetzt nicht). Default
+	   bleibt eine pbtn-Zeile; nur .has-sigs stapelt vertikal. */
+	.pin-popover.has-sigs {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 6px;
+		padding: 6px;
+	}
+	.pbtn-row {
+		display: flex;
+		gap: 4px;
+		align-items: center;
+	}
+	.sigs-ctl {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.sigs-entry {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.se-chip {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: baseline;
+		gap: 5px;
+		padding: 2px 6px;
+		border: 1px solid var(--rc, var(--lineb));
+		background: color-mix(in srgb, var(--rc, var(--lineb)) 14%, transparent);
+		border-radius: 3px;
+		font: 600 12px/1.3 var(--font-mono, monospace);
+	}
+	.se-abbr {
+		color: var(--fg);
+		font-weight: 700;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.se-val {
+		color: var(--accent);
+		white-space: nowrap;
+	}
+	.se-x {
+		flex: 0 0 auto;
+	}
+	.sigs-divider {
+		height: 1px;
+		background: var(--line);
 	}
 </style>

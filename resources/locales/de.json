@@ -1219,6 +1219,7 @@
         "mining.type_station": "Station",
         "pins.scan_collect_title": "Scan-Signaturen",
         "pins.scan_collect_empty": "Keine Signaturen angeheftet",
+        "pins.sig_remove_title": "Signatur entfernen",
         "pins.add_failed": "Anheften fehlgeschlagen — nochmal versuchen",
         "pins.removed": "Gelöst"
     }

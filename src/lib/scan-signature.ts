@@ -10,6 +10,7 @@
 //   vorhandenem Wert.
 // Die reine Logik steht hier (unit-getestbar mit node --test), die Komponente
 // (PinScanSignature.svelte) rendert nur.
+import { oreAbbrev } from './ore-abbrev.ts';
 
 export type ScanSignaturePayload = {
 	label?: string;
@@ -141,5 +142,31 @@ export function sigRowsFor(entries: ScanSignatureEntry[]): { idx: string; name: 
 		idx: String(i),
 		name: e.label,
 		value: sigValueDisplay(e.value)
+	}));
+}
+
+/// EINEN Entry aus der Sammel-Liste entfernen (M7-F7, dedupe-Key oreId) —
+/// der restliche Pin bleibt (anders als sigToggleEntry, das togglet).
+export function sigRemoveEntry(
+	entries: ScanSignatureEntry[] | undefined,
+	oreId: string
+): ScanSignatureEntry[] {
+	return (entries ?? []).filter((e) => e.oreId !== oreId);
+}
+
+// ---- M7-F7 (t_84008140): geteilter Rows-Snapshot des Sammel-Pins -----------
+/// Rows-Snapshot des Sammel-Pins (Kürzel in name, volle Bezeichnung als sub,
+/// Basis-Signatur als Wert) — genutzt von Mining.svelte (pin_add/pin_update)
+/// UND PinBoxes.svelte (pin_update nach dem ✕-Entfernen im Popover). Eine
+/// Definition, keine Kopie (Spec: „NICHT kopieren“).
+export function sigCollectRows(
+	entries: ScanSignatureEntry[]
+): { idx: string; name: string; sub: string; value: string; side: null }[] {
+	return entries.map((e, i) => ({
+		idx: String(i),
+		name: oreAbbrev(e.label),
+		sub: e.label,
+		value: e.value === null ? '—' : String(e.value),
+		side: null
 	}));
 }

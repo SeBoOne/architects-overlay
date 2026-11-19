@@ -38,7 +38,7 @@
 	// M7-F4 (t_c3367dfb): Rarity-Rampe an EINEM Ort (rarity.ts) — Mode-Badges
 	// und Pin-Chips/Ort-Kacheln teilen sich dieselbe Skala (Konsistenz P2).
 	import { RARITIES, RARITY_COLORS, rarityColor, type Rarity } from './rarity';
-	import { sigToggleEntry, type ScanSignatureEntry } from './scan-signature';
+	import { sigCollectRows, sigToggleEntry, type ScanSignatureEntry } from './scan-signature';
 	import { PINS_CHANGED_EVENT, type PinEntry, type PinsState } from './pins';
 
 	type Ore = {
@@ -369,17 +369,8 @@
 		void listen(PINS_CHANGED_EVENT, () => void loadPins());
 	});
 
-	function collectRows(entries: ScanSignatureEntry[]) {
-		// rows-Snapshot (Höhen-Schätzung pins.rs: 44 + 34/Zeile) — pro Erz
-		// eine Zeile; die reichhaltige ×1–×5-Anzeige macht der Content-Renderer.
-		return entries.map((e, i) => ({
-			idx: String(i),
-			name: oreAbbrev(e.label),
-			sub: e.label,
-			value: e.value === null ? '—' : String(e.value),
-			side: null
-		}));
-	}
+	// M7-F7: Rows-Snapshot aus dem geteilten Helper (scan-signature.ts) —
+	// denselben Snapshot nutzt auch das ✕-Entfernen im PinBoxes-Popover.
 
 	type SigToggleArg = { id: string; name: string; scanSignature: number | null; tier: string | null };
 	async function toggleSignaturePin(ore: SigToggleArg) {
@@ -434,7 +425,7 @@
 			}
 			const content = { type: 'scan-signatures', entries };
 			const title = tr('pins.scan_collect_title');
-			const rows = collectRows(entries);
+			const rows = sigCollectRows(entries);
 			if (collect) {
 				// Snapshot-Refresh (M6-F5): Identität bleibt, Inhalt frisch.
 				await invoke('pin_update', {
