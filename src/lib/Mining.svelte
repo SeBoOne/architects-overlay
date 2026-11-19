@@ -1115,18 +1115,22 @@
 	}
 	.dcards {
 		display: grid;
-		/* M7-F5 (User-Mockup 2026-11-18): PORTRAIT-Karten (höher als breit,
-		   ~1:1.4) — dicht im Grid, keine 1fr-Stretch-Dehnung, letzte
-		   unvollständige Reihe bleibt kartenbreit. */
-		grid-template-columns: repeat(auto-fill, minmax(210px, 240px));
-		justify-content: start;
+		/* M7-F5b (User 2026-11-19): Karten skalieren seitenverhältnis-treu —
+		   Spalten füllen die Reihe KOMPLETT (1fr, gleichverteilt), min 210px
+		   bestimmt die Spaltenzahl (weniger/mehr je Platz). Kein Rest-Leerraum
+		   rechts — die Karten nutzen die Breite, die da ist. */
+		grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
 		gap: 8px;
 	}
 	.dcard {
+		/* M7-F5b: Seitenverhältnis 5:7 (Portrait ~1:1.4) + container-type:
+		   alle inneren Größen in cqw → Inhalt skaliert MIT der Kartenbreite. */
+		aspect-ratio: 5 / 7;
+		container-type: inline-size;
 		display: flex;
 		flex-direction: column;
-		gap: 3px;
-		padding: 8px 10px;
+		gap: 0.8cqw;
+		padding: 3.2cqw 4cqw;
 		border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 		background: color-mix(in srgb, var(--panel, #11100d) 60%, transparent);
 		border-radius: 3px;
@@ -1135,7 +1139,7 @@
 	.dcard-name {
 		display: block;
 		font-weight: 700;
-		font-size: 12px;
+		font-size: 5cqw;
 		color: var(--fg, #e8ecf3);
 		white-space: nowrap;
 		overflow: hidden;
@@ -1146,9 +1150,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		gap: 6px;
+		gap: 2.5cqw;
 		min-width: 0;
-		font-size: 11px;
+		font-size: 4.6cqw;
 	}
 	.dcard-name {
 		flex: 1;
@@ -1167,11 +1171,11 @@
 	/* M7-F3: Körper = links Kürzel-Block (1.25:1 Höhe×Breite — breiter als
 	   hoch), rechts die 2 Balken. */
 	.abbr-block {
-		/* M7-F5 (User-Mockup): großes mittiges Kürzel-Tile — Kachel trägt die Karte. */
+		/* M7-F5b: Kachel skaliert mit (49cqw ≈ 118px @ 240px Karte). */
 		aspect-ratio: 1 / 1.25;
 		flex: 0 0 auto;
-		width: 118px;
-		margin: 8px auto;
+		width: 49cqw;
+		margin: 3cqw auto;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -1182,14 +1186,14 @@
 		border-radius: 3px;
 	}
 	.abbr {
-		font-size: 38px;
+		font-size: 16cqw;
 		font-weight: 700;
 		line-height: 1;
 		color: var(--fg, #e8ecf3);
 		letter-spacing: 0.02em;
 	}
 	.abbr-sig {
-		font-size: 16px; /* M7-F5: Signatur-Zahl größer */
+		font-size: 6.7cqw; /* M7-F5: Signatur-Zahl größer — skaliert mit */
 		font-weight: 600;
 		color: var(--fgdim, #9aa3b2);
 	}
@@ -1197,15 +1201,15 @@
 	.dnums {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
-		margin-top: 0;
+		gap: 0.8cqw;
+		margin-top: auto; /* unten verankert — Kachel bleibt optisch mittig-oben */
 	}
 	.dnum {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 6px;
-		font-size: 11px;
+		gap: 2.5cqw;
+		font-size: 4.6cqw;
 	}
 	.dnum-l {
 		color: var(--fgdim, #9aa3b2);
@@ -1215,13 +1219,13 @@
 		color: var(--fg, #e8ecf3);
 		font-weight: 600;
 		flex: 0 0 auto;
-		min-width: 52px;
+		min-width: 21cqw;
 	}
 	.dbar {
 		/* Volle Zeilenbreite (eigene Zeile unter Label+Wert) — flex:1 schrumpfte
 		   auf 0px, wenn Label+Wert die Zeile füllten (Review-Befund Runde 3). */
 		flex-basis: 100%;
-		height: 5px;
+		height: 2.1cqw;
 		background: color-mix(in srgb, var(--fgdim, #9aa3b2) 25%, transparent);
 		overflow: hidden;
 	}
@@ -1232,13 +1236,11 @@
 	/* M7-F4 P5: 6 GLEICHE Segmente mit sichtbaren Trennlinien — gefüllt =
 	   Tier-Stufe (1..6), ungefüllt dezent sichtbar (Grenze + leichte Fläche). */
 	.segbar {
-		/* F5-Fix: EIGENE volle Zeile wie der Rank-Balken (flex-basis:100%) —
-		   flex:1 liess den Balken neben Label+Wert schrumpfen (User: „sollte
-		   die selbe Breite wie der Rankbalken beibehalten"). */
+		/* EIGENE volle Zeile wie der Rank-Balken (flex-basis:100%). */
 		flex-basis: 100%;
 		display: flex;
-		gap: 2px;
-		height: 7px;
+		gap: 0.8cqw;
+		height: 2.9cqw;
 	}
 	.segbar i {
 		flex: 1;
