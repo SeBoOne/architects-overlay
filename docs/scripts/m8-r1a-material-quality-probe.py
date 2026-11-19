@@ -12,6 +12,9 @@ Gates:
   5. Snap-Punkte (stub: quality_quantized_values-Union): Toggle an →
      Regler rastet auf nächsten Quantwert; aus → frei; Titel zeigt Union.
   6. QualityStats-Block rechnet mit den individuellen Aspekt-Qualitäten.
+  6/7. M8-R1-C×R1-A (t_1dbe8a85): Detail-Panel füllt die Shell-Höhe
+     (kein Scroll-Overflow) UND die Regler sind SICHTBAR (Bounding-Box
+     > 0, nicht display:none, im sichtbaren Bereich ohne Scrollen).
 
 Backend = Tauri-Stub (docs/scripts/smoke-stub.js) + Override (dieses File).
 Rechenmodell dokumentiert in src/lib/quality-calc.ts (Header, M8-R1-A).
@@ -142,6 +145,24 @@ WRAP = r"""
     badge: r.querySelector('.cmq')?.textContent.trim(),
     cls: r.className
   }));
+  // M8-R1-C×R1-A (t_1dbe8a85): Regler-SICHTBARKEIT — Bounding-Box > 0,
+  // nicht display:none/hidden, im sichtbaren Bereich (ohne Scrollen).
+  // DOM-Präsenz allein genügt nicht (Regression am echten Fenster).
+  window.sliderVisibility = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((el) => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    return {
+      boxH: Math.round(r.height), boxW: Math.round(r.width),
+      display: cs.display, visibility: cs.visibility, opacity: cs.opacity,
+      inViewport: r.top >= 0 && r.bottom <= window.innerHeight && r.height > 0,
+      rangeVisible: (() => {
+        const inp = el.querySelector('.cmq-range');
+        if (!inp) return { present: false };
+        const ri = inp.getBoundingClientRect();
+        return { present: true, boxH: Math.round(ri.height), boxW: Math.round(ri.width) };
+      })()
+    };
+  });
   // Regler setzen: input-Event (Svelte oninput).
   window.setMat = (idx, v) => {
     const s = document.querySelectorAll('.crafting .cmq-range')[idx];
@@ -379,6 +400,18 @@ async def main():
         ov = await js("modalOverflow()")
         check("6 Detail-Shell mit Regler-Zeilen ohne Scroll-Overflow",
               ov is not None and ov["overflow"] is False, str(ov))
+        # ---- Gate 7 (M8-R1-C×R1-A, t_1dbe8a85): Regler SICHTBAR ----
+        vis = await js("sliderVisibility()")
+        check("7a Regler-Zeilen gerendert (Box > 0, nicht display:none/hidden)",
+              vis and len(vis) == 2 and all(v["boxH"] > 0 and v["boxW"] > 0
+                                            and v["display"] != "none"
+                                            and v["visibility"] != "hidden" for v in vis), str(vis))
+        check("7b Regler im sichtbaren Bereich (ohne Scrollen)",
+              vis and all(v["inViewport"] for v in vis), str(vis))
+        check("7c Range-Inputs selbst sichtbar (Box > 0)",
+              vis and all(v["rangeVisible"]["present"] and v["rangeVisible"]["boxH"] > 0
+                          and v["rangeVisible"]["boxW"] > 0 for v in vis), str(vis))
+        await shot("m8-r1a-detail-fullheight.png")
 
     for p in (proc, server):
         try:
