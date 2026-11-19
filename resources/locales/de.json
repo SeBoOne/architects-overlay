@@ -204,6 +204,7 @@
     "craft.snap": "Rasten",
     "craft.snap_off": "Rasten aus — frei 0–1000",
     "craft.snap_on": "Rasten an — nur quantisierte Werte",
+    "craft.snap_none": "Keine quantisierten Werte (SC-Wiki) für dieses Material",
     "craft.stats_note": "Modifier skalieren linear mit der Input-Qualität (SC-Wiki-Daten). Standard-Werte kommen aus der API; Stats ohne passenden Modifier sind als unbeeinflusst ausgewiesen. Mehrere Aspekte auf einer Eigenschaft multiplizieren sich. Daten von star-citizen.wiki.",
     "craft.stats_reachable": "erreichbar",
     "craft.stats_title": "Stats (Standard → bei Ziel-Qualität)",

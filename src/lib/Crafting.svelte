@@ -262,7 +262,17 @@
 		error = '';
 		try {
 			const r = await invoke<ItemsResponse>('strata_items');
-			items = [...r.items].sort((a, b) => a.name.localeCompare(b.name));
+			// t_9107f006: SC-Wiki-Daten-Dupes clientseitig entfernen ("Antium Core
+			// Jet" kam doppelt) — nach normalem Namen dedupen, erste Version gewinnt.
+			const seen = new Set<string>();
+			items = [...r.items]
+				.filter((it) => {
+					const k = (it.name ?? '').trim().toLowerCase();
+					if (seen.has(k)) return false;
+					seen.add(k);
+					return true;
+				})
+				.sort((a, b) => a.name.localeCompare(b.name));
 			attribution = r.attribution || ATTRIBUTION_FALLBACK;
 		} catch (e) {
 			error = trError(e);
@@ -763,18 +773,24 @@
 										<span class="cmq-val" class:is-ok={rowMeets(c, idx)} class:is-fail={!rowMeets(c, idx)}
 											>{rowQuality(c, idx)}</span
 										>
-										{#if rowSnaps(c).length > 0}
-											<button
-												type="button"
-												class="cmq-snap"
-												class:is-on={rowSnapOn(c, idx)}
-												aria-pressed={rowSnapOn(c, idx)}
-												title={rowSnapOn(c, idx)
-													? $t('craft.snap_on') + ' [' + rowSnaps(c).join(', ') + ']'
-													: $t('craft.snap_off')}
-												onclick={() => toggleSnap(c, idx)}
-											>{$t('craft.snap')}</button>
-										{/if}
+										<!-- t_9107f006: Toggle IMMER an der Regler-Zeile sichtbar (im
+										echten Fenster fehlte er, wenn der Endpoint keine Quant-
+										Werte lieferte — nur per Title-Hover erreichbar). Ohne
+										Werte: disabled mit Hinweis. -->
+										<button
+										type="button"
+										class="cmq-snap"
+										class:is-on={rowSnapOn(c, idx)}
+										class:is-empty={rowSnaps(c).length === 0}
+										aria-pressed={rowSnapOn(c, idx)}
+										disabled={rowSnaps(c).length === 0}
+										title={rowSnapOn(c, idx)
+											? $t('craft.snap_on') + ' [' + rowSnaps(c).join(', ') + ']'
+											: rowSnaps(c).length === 0
+												? $t('craft.snap_none')
+												: $t('craft.snap_off')}
+										onclick={() => toggleSnap(c, idx)}
+										>{$t('craft.snap')}</button>
 										<span class="cmq-changes">
 											{#each rowChanges(c, idx) as ch (ch.property_key)}
 												<span
@@ -863,7 +879,7 @@
 								<span class="cdl">{$t('craft.dismantle_returns')}</span>
 								{#each bp.dismantle_returns as d, di (d.name + ':' + di)}
 									<span class="cdi"
-										>{d.name}{#if d.quantity_scu !== null && d.quantity_scu !== undefined}
+										>{d.name}{' '}{#if d.quantity_scu !== null && d.quantity_scu !== undefined}
 											{fmtQty(d.quantity_scu)} SCU{/if}</span
 									>
 								{/each}
@@ -1230,6 +1246,12 @@
 		border-color: var(--acc, #e0a83e);
 		color: var(--acc, #e0a83e);
 		opacity: 1;
+	}
+	/* t_9107f006: ohne Quant-Werte dezenter, aber trotzdem sichtbar */
+	.cmq-snap.is-empty {
+		opacity: 0.35;
+		border-style: dashed;
+		cursor: default;
 	}
 	.cmq-changes {
 		flex: none;

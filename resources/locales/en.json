@@ -204,6 +204,7 @@
     "craft.snap": "Snap",
     "craft.snap_off": "Snap off — free 0–1000",
     "craft.snap_on": "Snap on — only quantized values",
+    "craft.snap_none": "No quantized values (SC-Wiki) for this material",
     "craft.stats_note": "Modifiers scale linearly with input quality (SC-Wiki data). Default values come from the API; stats without a matching modifier are shown as unaffected. Multiple aspects affecting one property multiply. Data from star-citizen.wiki.",
     "craft.stats_reachable": "reachable",
     "craft.stats_title": "Stats (default → at target quality)",
