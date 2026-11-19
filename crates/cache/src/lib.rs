@@ -55,6 +55,11 @@ pub const TTL_STRATA_REFERENCE: Duration = Duration::from_secs(604_800); // 7 Ta
 /// M7-K1 (t_e38faa51): Strata-Detaildaten (ore-locations / location-ores) —
 /// ebenso patch-gebunden → 24 h (M7-F3, t_cf1224c5).
 pub const TTL_STRATA_DETAIL: Duration = Duration::from_secs(86_400); // 24 h
+/// M8-K1 (t_a35b6344): Strata-Crafting-Daten (items / craft-cost/{item}) —
+/// ebenso patch-gebunden (Rezepturen ändern sich nur mit Game-Patch) → 7 Tage,
+/// analog [`TTL_STRATA_REFERENCE`]. items + craft-cost teilen dieselbe TTL —
+/// der Quell-Catalog (items) und die Rezepte driften gemeinsam.
+pub const TTL_STRATA_CRAFT: Duration = Duration::from_secs(604_800); // 7 Tage
 /// Marketplace listings are realtime; Phase 2 caches the last snapshot for a
 /// short TTL (5 min) so the offers view opens instantly from cache while the
 /// background sync keeps it warm — rate-limit-schonend (one listing fetch per

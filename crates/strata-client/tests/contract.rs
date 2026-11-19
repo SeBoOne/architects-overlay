@@ -388,3 +388,165 @@ async fn http_sends_bearer_and_maps_429_retry_after() {
     assert!(strata_client::StrataClient::for_base_url(&server.uri(), "  ").is_err());
     assert!(strata_client::StrataClient::for_base_url(&server.uri(), "").is_err());
 }
+
+// ---- M8-K1 (t_a35b6344): Crafting-DTOs --------------------------------------
+// Einheiten-Regel (dto.rs, verbindlich): SCU vs gems vs items — nie mischen;
+// gems = Stück, CRAFT_GEMS_PER_SCU = 1000 gems = 1 SCU.
+
+#[test]
+fn craft_units_wire_vocabulary() {
+    // Wire-Strings exakt: "SCU" | "gems" | "items" — kein anderes Vokabular.
+    for (wire, expected) in [
+        ("SCU", strata_client::CraftUnit::Scu),
+        ("gems", strata_client::CraftUnit::Gems),
+        ("items", strata_client::CraftUnit::Items),
+    ] {
+        let parsed: strata_client::CraftUnit =
+            serde_json::from_value(serde_json::json!(wire)).expect("CraftUnit-Wire-String");
+        assert_eq!(parsed, expected, "CraftUnit {wire} muss hin und her passen");
+        assert_eq!(
+            serde_json::to_value(parsed).unwrap(),
+            serde_json::json!(wire),
+            "Serialize bleibt beim Wire-String"
+        );
+    }
+}
+
+#[test]
+fn craft_unit_volume_rule() {
+    // Nur SCU ist Volumen; gems/items sind Stück-Mengen — die UI darf
+    // Dezimalmengen nur über `is_volume()` als Volumen lesen (Einheiten-Regel).
+    assert!(strata_client::CraftUnit::Scu.is_volume());
+    assert!(!strata_client::CraftUnit::Gems.is_volume());
+    assert!(!strata_client::CraftUnit::Items.is_volume());
+    // 1000 gems = 1 SCU — Konstante, damit die Craft-UI nicht mit Magie rechnet.
+    assert_eq!(strata_client::CRAFT_GEMS_PER_SCU, 1_000);
+}
+
+#[test]
+fn items_spec_example_parses() {
+    let json = r#"{
+      "items": [
+        { "id": "02a7f68a-5bdd-4887-a256-20c985a65bda",
+          "name": "10-Series Greatsword Cannon",
+          "slug": "10-series-greatsword-cannon",
+          "category": "Ship Weapon" }
+      ],
+      "count": 1,
+      "attribution": "Data from celd.space / Strata Mining Tools"
+    }"#;
+    let r: strata_client::ItemsResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(r.count, 1);
+    let item = &r.items[0];
+    assert_eq!(
+        item.category.as_deref(),
+        Some("Ship Weapon"),
+        "category Option-haltig, aber gesetzt"
+    );
+    assert!(!r.attribution.is_empty());
+}
+
+#[test]
+fn craft_cost_spec_example_parses() {
+    // Live-Contract (Fixtures 2026-11-19): item-Header OHNE slug,
+    // oreId null-fähig bei gems (Hadanite), minQuality Zahl (0 ist gültig).
+    let json = r#"{
+      "item": { "id": "6b1fb5e8-f9ec-49bc-befb-c81b7c08c5ea",
+                "name": "A03 Sniper Rifle", "category": "FPS Weapon" },
+      "craftTime": 180,
+      "costs": [
+        { "material": "Iron", "oreId": "iron_ore", "quantity": 0.03,
+          "unit": "SCU", "minQuality": 0 },
+        { "material": "Hadanite", "oreId": null, "quantity": 1,
+          "unit": "gems", "minQuality": 0 },
+        { "material": "Bewer", "oreId": "bewer_raw", "quantity": 2,
+          "unit": "items", "minQuality": null }
+      ],
+      "attribution": "Data from celd.space / Strata Mining Tools"
+    }"#;
+    let r: strata_client::CraftCostResponse = serde_json::from_str(json).unwrap();
+    assert_eq!(r.craft_time, 180);
+    assert_eq!(r.costs.len(), 3);
+    let iron = &r.costs[0];
+    assert_eq!(iron.unit, strata_client::CraftUnit::Scu);
+    assert_eq!(
+        iron.min_quality,
+        Some(0.0),
+        "minQuality 0 ist gültige Daten (null-check, nie truthiness)"
+    );
+    let hadanite = &r.costs[1];
+    assert_eq!(hadanite.unit, strata_client::CraftUnit::Gems);
+    assert_eq!(
+        hadanite.ore_id, None,
+        "oreId null bei gems — null-fähig, nie truthiness"
+    );
+    let bewer = &r.costs[2];
+    assert_eq!(bewer.unit, strata_client::CraftUnit::Items);
+    assert_eq!(
+        bewer.min_quality, None,
+        "minQuality null = keine Anforderung"
+    );
+}
+
+#[test]
+fn fixtures_live_items_parse() {
+    let raw = include_str!("fixtures-live/items.live.json");
+    let r: strata_client::ItemsResponse =
+        serde_json::from_str(raw).expect("items.live.json muss deserialisieren");
+    assert!(r.count > 0);
+    assert_eq!(r.items.len() as u64, r.count, "count = Anzahl der Items");
+    // Kategorien sind freie Strings — die Liste darf kein hartkodiertes
+    // Vokabular voraussetzen (M7-Präzedenz locations[].type).
+    let cats: Vec<String> = r.items.iter().filter_map(|i| i.category.clone()).collect();
+    assert!(cats.iter().any(|c| c == "Ship Weapon"));
+    assert!(cats.iter().any(|c| c == "FPS Weapon"));
+    // IDs sind UUIDs und Slug/Name immer gesetzt — id vor Slug als Key.
+    let greatsword = r
+        .items
+        .iter()
+        .find(|i| i.slug == "10-series-greatsword-cannon")
+        .expect("Fixtures-Beispiel-Item");
+    assert!(!greatsword.id.is_empty());
+    assert!(!r.attribution.is_empty());
+}
+
+#[test]
+fn fixtures_live_craft_costs_parse() {
+    // Schiff-Item: ausschließlich SCU-Zeilen (Einheiten-Regel).
+    let raw = include_str!("fixtures-live/craft-cost.10-series-greatsword-cannon.live.json");
+    let r: strata_client::CraftCostResponse =
+        serde_json::from_str(raw).expect("greatsword-craft-cost muss deserialisieren");
+    assert!(r.craft_time > 0);
+    assert!(!r.costs.is_empty());
+    assert!(!r.attribution.is_empty());
+    assert!(
+        r.costs
+            .iter()
+            .all(|c| c.unit == strata_client::CraftUnit::Scu),
+        "Schiff-Rezept: ausschließlich SCU (Einheiten-Regel)"
+    );
+
+    // FPS-Item: gems-Zeilen mit oreId null neben SCU-Zeilen.
+    let raw = include_str!("fixtures-live/craft-cost.a03-sniper-rifle.live.json");
+    let r: strata_client::CraftCostResponse =
+        serde_json::from_str(raw).expect("a03-craft-cost muss deserialisieren");
+    assert!(r.craft_time > 0);
+    assert!(!r.costs.is_empty());
+    assert!(
+        r.costs
+            .iter()
+            .any(|c| c.unit == strata_client::CraftUnit::Gems),
+        "FPS-Rezept: gems-Zeilen kommen live vor"
+    );
+    assert!(
+        r.costs
+            .iter()
+            .any(|c| c.unit == strata_client::CraftUnit::Gems && c.ore_id.is_none()),
+        "gems mit oreId null (live: Hadanite)"
+    );
+    // minQuality 0 ist gültige Daten — bleibt als Some(0.0) erhalten.
+    assert!(
+        r.costs.iter().any(|c| c.min_quality == Some(0.0)),
+        "minQuality 0 wird als Some(0.0) durchgereicht, nie truthiness"
+    );
+}
