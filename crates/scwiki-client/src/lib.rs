@@ -15,6 +15,15 @@
 //!
 //! Cross-Referenz: [`build_compat`] ordnet jedem Item die Fahrzeuge zu, deren
 //! Ports den Item-Typ (+ Sub-Typ) und die Item-Size akzeptieren.
+//!
+//! M8-K4 (t_72b27d99) erweitert den Client um Craft-Daten: [`ScWikiClient::
+//! craftable_items`] (is_craftable-Filter + `name_cont`-Suche) und
+//! [`ScWikiClient::blueprint`] (Detail mit tiers/modifiers/missions).
+//! Kreuzreferenz zu Strata über [`StrataIndex`] (trim+lowercase, exakt —
+//! fehlender Match degradiert, kein Hard-Fail); Strata bleibt die
+//! Material-/Mengen-/MIN-QUALITY-Basis, SC-Wiki liefert Details/Stats/
+//! Missionen. Attribution: [`ATTRIBUTION_SCWIKI`]. Cache-TTL für die
+//! Sync-Schicht: `cache::TTL_SCWIKI_CRAFT` (7 Tage, source `scwiki`).
 
 use std::time::{Duration, Instant};
 
@@ -496,6 +505,725 @@ pub fn build_compat(vehicles: &[VehiclePorts], items: &[ModuleItem]) -> Vec<Comp
     by_name.into_values().collect()
 }
 
+// =========================== Craft-Blueprints (M8-K4, t_72b27d99) ==========
+//
+// Quellen-Beleg (Live-Verifikation 2026-11-19, Fixtures in
+// `tests/fixtures/` — ECHTE Responses, nicht erfunden):
+// * `GET /api/items?filter[is_craftable]=1` (+ optional `filter[name_cont]`)
+//   — paginiert; craft-relevante Felder: size, grade, class, mass,
+//   ammunition, vehicle_weapon{capacity,range,damage_per_shot,rpm,
+//   damages[]}, description.{de_DE,en_EN}, blueprint[{uuid,link}].
+// * `GET /api/blueprints/{uuid}` — craft_time_seconds,
+//   ingredients[{name,kind,quantity_scu}], dismantle_returns,
+//   tiers[].requirements (nested GROUPS FRAME/CYCLER/… → resources mit
+//   min_quality + modifiers[] mit quality/modifier-Range),
+//   unlocking_missions_grouped[{label,chance,missions[...]}],
+//   summary_properties, is_available_by_default, game_version.
+//
+// Kreuzreferenz-Strategie (Spec): SC-Wiki-Item.name ↔ Strata-Item.name,
+// exakt nach trim+lowercase-Normalisierung; Blueprint via
+// item.blueprint[0].uuid. Fehlender Match ist KEIN Fehler — der Caller
+// degradiert (Abschnitt „Daten fehlen"). Strata bleibt die Material-/
+// Mengen-/MIN-QUALITY-Basis, SC-Wiki liefert Details/Stats/Missionen.
+
+/// Pflicht-Attribution (ToS-Muster wie Strata/UEX) — reist in jedem
+/// Craft-Response mit und wird zusätzlich zur Strata-Angabe gezeigt.
+pub const ATTRIBUTION_SCWIKI: &str = "Data from star-citizen.wiki";
+
+/// Namens-Normalisierung für die Kreuzreferenz (Spec: exakt, trim +
+/// lowercase — keine Fuzzy-Heuristik).
+pub fn normalize_name(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+/// Index über Strata-Item-Namen: normalisierter Name → Original-Name.
+#[derive(Debug, Clone, Default)]
+pub struct StrataIndex {
+    by_normalized: std::collections::HashMap<String, String>,
+}
+
+impl StrataIndex {
+    pub fn build<'a, I: IntoIterator<Item = &'a str>>(names: I) -> Self {
+        let mut by_normalized = std::collections::HashMap::new();
+        for n in names {
+            let n = n.trim();
+            if n.is_empty() {
+                continue;
+            }
+            by_normalized
+                .entry(normalize_name(n))
+                .or_insert_with(|| n.to_string());
+        }
+        Self { by_normalized }
+    }
+
+    /// SC-Wiki-Item-Name → Strata-Original-Name. `None` = kein Match
+    /// (Feature degradiert, kein Hard-Fail — Spec M8-K4).
+    pub fn find(&self, scwiki_name: &str) -> Option<&str> {
+        self.by_normalized
+            .get(&normalize_name(scwiki_name))
+            .map(String::as_str)
+    }
+
+    pub fn len(&self) -> usize {
+        self.by_normalized.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_normalized.is_empty()
+    }
+}
+
+/// Craftbares Item aus `/api/items?filter[is_craftable]=1`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CraftableItem {
+    pub name: String,
+    pub item_type: String,
+    pub size: Option<u32>,
+    pub grade: Option<String>,
+    pub class: Option<String>,
+    pub mass: Option<f64>,
+    pub description_de: Option<String>,
+    pub description_en: Option<String>,
+    /// Blueprint-UUIDs (`blueprint[]`) — für die `/api/blueprints/{uuid}`
+    /// Auflösung; leer = keine Craft-Details verfügbar (degradiert).
+    pub blueprint_uuids: Vec<String>,
+    pub vehicle_weapon: Option<VehicleWeapon>,
+    pub ammunition: Option<Ammunition>,
+}
+
+/// Fahrzeug-Waffen-Stats (`vehicle_weapon`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct VehicleWeapon {
+    pub capacity: Option<f64>,
+    pub range: Option<f64>,
+    pub damage_per_shot: Option<f64>,
+    pub rpm: Option<f64>,
+    pub damages: Vec<WeaponDamage>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WeaponDamage {
+    pub damage_type: String,
+    pub damage: Option<f64>,
+}
+
+/// Munitions-Stats (`ammunition`) — nur die Anzeige-relevanten Felder.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ammunition {
+    pub size: Option<u32>,
+    pub capacity: Option<u32>,
+    pub speed: Option<f64>,
+    pub range: Option<f64>,
+    pub lifetime: Option<f64>,
+}
+
+/// Blueprint-Detail aus `/api/blueprints/{uuid}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Blueprint {
+    pub uuid: String,
+    pub output_name: String,
+    pub craft_time_seconds: Option<u64>,
+    pub craft_time_label: Option<String>,
+    pub is_available_by_default: bool,
+    pub game_version: Option<String>,
+    pub ingredients: Vec<Ingredient>,
+    pub dismantle_returns: Vec<DismantleReturn>,
+    /// Tiers mit verschachtelten Requirement-Gruppen (FRAME/CYCLER/…) —
+    /// pro Gruppe Resources mit min_quality + Quality-Modifiers.
+    pub tiers: Vec<BlueprintTier>,
+    pub summary_properties: Vec<SummaryProperty>,
+    /// Missions-Unlock-Gruppen (`Guaranteed`/Chance-Labels).
+    pub unlocking_missions_grouped: Vec<MissionGroup>,
+    pub web_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ingredient {
+    pub name: String,
+    /// `resource` oder `item` (Spec).
+    pub kind: String,
+    pub quantity_scu: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DismantleReturn {
+    pub name: String,
+    pub quantity_scu: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlueprintTier {
+    pub tier_index: u32,
+    pub requirements: RequirementGroup,
+    pub craft_time_seconds: Option<u64>,
+}
+
+/// Requirement-Gruppe (kind=group): KEY (FRAME/CYCLER/…), Modifier und
+/// Kinder (Resources). `children` sind Resources ODER weitere Gruppen —
+/// die API nestet aktuell nur eine Ebene; leere Kinder sind erlaubt.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequirementGroup {
+    pub key: Option<String>,
+    pub name: Option<String>,
+    pub kind: Option<String>,
+    pub required_count: Option<u32>,
+    pub modifiers: Vec<QualityModifier>,
+    pub children: Vec<RequirementChild>,
+}
+
+/// Quality-Modifier an einer Gruppe/Resource: Qualität 0..1000 mappt
+/// linear auf modifier_range (at_min_quality..at_max_quality).
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualityModifier {
+    /// `property_key` (requirement_groups) bzw. `key` (tiers) — beides
+    /// derselbe Schlüssel (Live-Beleg), via Alias vereint.
+    pub property_key: String,
+    pub label: String,
+    pub better_when: Option<String>,
+    pub quality_min: Option<f64>,
+    pub quality_max: Option<f64>,
+    pub at_min_quality: Option<f64>,
+    pub at_max_quality: Option<f64>,
+    /// `linear` oder `segments` (value_segments non-null).
+    pub value_range_type: Option<String>,
+}
+
+/// Kind-Eintrag in einer Requirement-Gruppe: eine Resource (mit
+/// min_quality, Spec) — Items-Kinder kämen analog als kind=item.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequirementChild {
+    pub name: String,
+    pub kind: Option<String>,
+    pub uuid: Option<String>,
+    pub min_quality: Option<f64>,
+    pub quantity_scu: Option<f64>,
+    pub required_count: Option<u32>,
+    /// Verschachtelte Gruppe (kind=group) — aktuell max. 1 Ebene.
+    pub group: Option<Box<RequirementGroup>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SummaryProperty {
+    pub property_key: String,
+    pub label: String,
+    pub better_when: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MissionGroup {
+    pub label: String,
+    pub chance: Option<f64>,
+    pub missions: Vec<UnlockingMission>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UnlockingMission {
+    pub title: String,
+    pub reward_scope: Option<String>,
+    pub count: Option<u32>,
+    pub web_url: Option<String>,
+}
+
+// ---------- DTOs (serde) — null-tolerant wie der Rest des Crates ----------
+
+#[derive(Debug, Deserialize)]
+struct CraftItemDto {
+    #[serde(deserialize_with = "null_to_string")]
+    name: String,
+    #[serde(rename = "type", default, deserialize_with = "null_to_string")]
+    item_type: String,
+    #[serde(default)]
+    size: Option<u32>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    grade: Option<String>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    class: Option<String>,
+    #[serde(default)]
+    mass: Option<f64>,
+    #[serde(default)]
+    description: Option<DescriptionDto>,
+    #[serde(default, deserialize_with = "null_to_opt_vec")]
+    blueprint: Option<Vec<BlueprintRefDto>>,
+    #[serde(default)]
+    vehicle_weapon: Option<VehicleWeaponDto>,
+    #[serde(default)]
+    ammunition: Option<AmmunitionDto>,
+}
+
+fn null_to_opt_string<'de, D>(d: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Deserialize::deserialize(d)
+}
+
+#[derive(Debug, Deserialize)]
+struct DescriptionDto {
+    #[serde(
+        rename = "de_DE",
+        alias = "de_de",
+        alias = "deDE",
+        default,
+        deserialize_with = "null_to_opt_string"
+    )]
+    de_de: Option<String>,
+    #[serde(
+        rename = "en_EN",
+        alias = "en_en",
+        alias = "enEN",
+        default,
+        deserialize_with = "null_to_opt_string"
+    )]
+    en_en: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BlueprintRefDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    uuid: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct VehicleWeaponDto {
+    #[serde(default)]
+    capacity: Option<f64>,
+    #[serde(default)]
+    range: Option<f64>,
+    #[serde(default)]
+    damage_per_shot: Option<f64>,
+    #[serde(default)]
+    rpm: Option<f64>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    damages: Vec<WeaponDamageDto>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WeaponDamageDto {
+    #[serde(rename = "type", default, deserialize_with = "null_to_string")]
+    damage_type: String,
+    #[serde(default)]
+    damage: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AmmunitionDto {
+    #[serde(default)]
+    size: Option<u32>,
+    #[serde(default)]
+    capacity: Option<u32>,
+    #[serde(default)]
+    speed: Option<f64>,
+    #[serde(default)]
+    range: Option<f64>,
+    #[serde(default)]
+    lifetime: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BlueprintDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    uuid: String,
+    #[serde(default, deserialize_with = "null_to_string")]
+    output_name: String,
+    #[serde(default)]
+    craft_time_seconds: Option<u64>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    craft_time_label: Option<String>,
+    #[serde(default, deserialize_with = "null_to_bool")]
+    is_available_by_default: bool,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    game_version: Option<String>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    ingredients: Vec<IngredientDto>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    dismantle_returns: Vec<DismantleReturnDto>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    tiers: Vec<TierDto>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    summary_properties: Vec<SummaryPropertyDto>,
+    #[serde(
+        rename = "unlocking_missions_grouped",
+        alias = "unlockingMissionsGrouped",
+        default,
+        deserialize_with = "null_to_vec"
+    )]
+    unlocking_missions_grouped: Vec<MissionGroupDto>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    web_url: Option<String>,
+}
+
+fn null_to_bool<'de, D>(d: D) -> std::result::Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt: Option<bool> = Deserialize::deserialize(d)?;
+    Ok(opt.unwrap_or(false))
+}
+
+#[derive(Debug, Deserialize)]
+struct IngredientDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    name: String,
+    #[serde(default, deserialize_with = "null_to_string")]
+    kind: String,
+    #[serde(default)]
+    quantity_scu: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DismantleReturnDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    name: String,
+    #[serde(default)]
+    quantity_scu: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TierDto {
+    #[serde(default)]
+    tier_index: u32,
+    #[serde(default)]
+    requirements: Option<ReqNodeDto>,
+    #[serde(default)]
+    craft_time_seconds: Option<u64>,
+}
+
+/// Requirement-Baum-Knoten: group (key/name/children/modifiers) oder
+/// resource-Kind. Tiers nutzen `key`/`name`, requirement_groups oben
+/// `property_key`/`label` — Aliase decken beide Shapes ab (Live-Beleg).
+#[derive(Debug, Deserialize)]
+struct ReqNodeDto {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    key: Option<String>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    label: Option<String>,
+    #[serde(default)]
+    required_count: Option<u32>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    modifiers: Vec<ModifierDto>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    children: Vec<ReqNodeDto>,
+    // Resource-Kind-Felder:
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    uuid: Option<String>,
+    #[serde(default)]
+    min_quality: Option<f64>,
+    #[serde(default)]
+    quantity_scu: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModifierDto {
+    #[serde(
+        rename = "property_key",
+        alias = "key",
+        default,
+        deserialize_with = "null_to_string"
+    )]
+    property_key: String,
+    #[serde(alias = "label", default, deserialize_with = "null_to_string")]
+    name: String,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    better_when: Option<String>,
+    #[serde(default)]
+    quality_range: Option<RangeDto>,
+    #[serde(default)]
+    modifier_range: Option<RangeDto>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    value_range_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RangeDto {
+    #[serde(default)]
+    min: Option<f64>,
+    #[serde(default)]
+    max: Option<f64>,
+    #[serde(rename = "at_min_quality", alias = "atMinQuality", default)]
+    at_min_quality: Option<f64>,
+    #[serde(rename = "at_max_quality", alias = "atMaxQuality", default)]
+    at_max_quality: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SummaryPropertyDto {
+    #[serde(
+        rename = "property_key",
+        alias = "key",
+        default,
+        deserialize_with = "null_to_string"
+    )]
+    property_key: String,
+    #[serde(alias = "label", default, deserialize_with = "null_to_string")]
+    name: String,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    better_when: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MissionGroupDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    label: String,
+    #[serde(default)]
+    chance: Option<f64>,
+    #[serde(default, deserialize_with = "null_to_vec")]
+    missions: Vec<MissionDto>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MissionDto {
+    #[serde(default, deserialize_with = "null_to_string")]
+    title: String,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    reward_scope: Option<String>,
+    #[serde(default)]
+    count: Option<u32>,
+    #[serde(default, deserialize_with = "null_to_opt_string")]
+    web_url: Option<String>,
+}
+
+// ---------- Mapping DTO → Domänen-Structs ----------
+
+fn craft_item_from(dto: CraftItemDto) -> CraftableItem {
+    CraftableItem {
+        name: dto.name,
+        item_type: dto.item_type,
+        size: dto.size,
+        grade: dto.grade,
+        class: dto.class,
+        mass: dto.mass,
+        description_de: dto.description.as_ref().and_then(|d| d.de_de.clone()),
+        description_en: dto.description.as_ref().and_then(|d| d.en_en.clone()),
+        blueprint_uuids: dto
+            .blueprint
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|b| !b.uuid.is_empty())
+            .map(|b| b.uuid)
+            .collect(),
+        vehicle_weapon: dto.vehicle_weapon.map(|v| VehicleWeapon {
+            capacity: v.capacity,
+            range: v.range,
+            damage_per_shot: v.damage_per_shot,
+            rpm: v.rpm,
+            damages: v
+                .damages
+                .into_iter()
+                .map(|d| WeaponDamage {
+                    damage_type: d.damage_type,
+                    damage: d.damage,
+                })
+                .collect(),
+        }),
+        ammunition: dto.ammunition.map(|a| Ammunition {
+            size: a.size,
+            capacity: a.capacity,
+            speed: a.speed,
+            range: a.range,
+            lifetime: a.lifetime,
+        }),
+    }
+}
+
+fn req_node_to_group(node: ReqNodeDto) -> RequirementGroup {
+    // Gruppen heißen `label` ODER `name` (tier-Groups: name; keine
+    // top-level Groups ohne beide — Anzeige-Fallback ist beides erlaubt).
+    let display = node.label.clone().or_else(|| node.name.clone());
+    if node.children.is_empty() && node.kind.as_deref() != Some("group") && node.name.is_some() {
+        // Ressourcen-Kind ohne Kinder → als Gruppe mit einem Child rendern,
+        // damit requirement_groups + tiers denselben Typ haben.
+        return RequirementGroup {
+            key: node.key,
+            name: display,
+            kind: node.kind.clone(),
+            required_count: node.required_count,
+            modifiers: node.modifiers.iter().map(modifier_from).collect(),
+            children: vec![RequirementChild {
+                name: node.name.unwrap_or_default(),
+                kind: node.kind,
+                uuid: node.uuid,
+                min_quality: node.min_quality,
+                quantity_scu: node.quantity_scu,
+                required_count: node.required_count,
+                group: None,
+            }],
+        };
+    }
+    RequirementGroup {
+        key: node.key,
+        name: display,
+        kind: node.kind,
+        required_count: node.required_count,
+        modifiers: node.modifiers.iter().map(modifier_from).collect(),
+        children: node
+            .children
+            .into_iter()
+            .map(|c| {
+                if c.kind.as_deref() == Some("group") || !c.children.is_empty() {
+                    RequirementChild {
+                        name: c.name.clone().unwrap_or_default(),
+                        kind: c.kind.clone(),
+                        uuid: c.uuid.clone(),
+                        min_quality: c.min_quality,
+                        quantity_scu: c.quantity_scu,
+                        required_count: c.required_count,
+                        group: Some(Box::new(req_node_to_group(c))),
+                    }
+                } else {
+                    RequirementChild {
+                        name: c.name.unwrap_or_default(),
+                        kind: c.kind,
+                        uuid: c.uuid,
+                        min_quality: c.min_quality,
+                        quantity_scu: c.quantity_scu,
+                        required_count: c.required_count,
+                        group: None,
+                    }
+                }
+            })
+            .collect(),
+    }
+}
+
+fn modifier_from(m: &ModifierDto) -> QualityModifier {
+    QualityModifier {
+        property_key: m.property_key.clone(),
+        label: m.name.clone(),
+        better_when: m.better_when.clone(),
+        quality_min: m.quality_range.as_ref().and_then(|r| r.min),
+        quality_max: m.quality_range.as_ref().and_then(|r| r.max),
+        at_min_quality: m.modifier_range.as_ref().and_then(|r| r.at_min_quality),
+        at_max_quality: m.modifier_range.as_ref().and_then(|r| r.at_max_quality),
+        value_range_type: m.value_range_type.clone(),
+    }
+}
+
+fn blueprint_from(dto: BlueprintDto) -> Blueprint {
+    Blueprint {
+        uuid: dto.uuid,
+        output_name: dto.output_name,
+        craft_time_seconds: dto.craft_time_seconds,
+        craft_time_label: dto.craft_time_label,
+        is_available_by_default: dto.is_available_by_default,
+        game_version: dto.game_version,
+        ingredients: dto
+            .ingredients
+            .into_iter()
+            .filter(|i| !i.name.is_empty())
+            .map(|i| Ingredient {
+                name: i.name,
+                kind: i.kind,
+                quantity_scu: i.quantity_scu,
+            })
+            .collect(),
+        dismantle_returns: dto
+            .dismantle_returns
+            .into_iter()
+            .filter(|d| !d.name.is_empty())
+            .map(|d| DismantleReturn {
+                name: d.name,
+                quantity_scu: d.quantity_scu,
+            })
+            .collect(),
+        tiers: dto
+            .tiers
+            .into_iter()
+            .filter_map(|t| {
+                t.requirements.map(|r| BlueprintTier {
+                    tier_index: t.tier_index,
+                    requirements: req_node_to_group(r),
+                    craft_time_seconds: t.craft_time_seconds,
+                })
+            })
+            .collect(),
+        summary_properties: dto
+            .summary_properties
+            .into_iter()
+            .filter(|p| !p.property_key.is_empty())
+            .map(|p| SummaryProperty {
+                property_key: p.property_key,
+                label: p.name,
+                better_when: p.better_when,
+            })
+            .collect(),
+        unlocking_missions_grouped: dto
+            .unlocking_missions_grouped
+            .into_iter()
+            .map(|g| MissionGroup {
+                label: g.label,
+                chance: g.chance,
+                missions: g
+                    .missions
+                    .into_iter()
+                    .filter(|m| !m.title.is_empty())
+                    .map(|m| UnlockingMission {
+                        title: m.title,
+                        reward_scope: m.reward_scope,
+                        count: m.count,
+                        web_url: m.web_url,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        web_url: dto.web_url,
+    }
+}
+
+impl ScWikiClient {
+    /// Craftbare Items (`/api/items?filter[is_craftable]=1`), optional mit
+    /// `name_cont`-Suche. Paginiert; leere Namen fliegen raus.
+    pub async fn craftable_items(&self, name_search: Option<&str>) -> Result<Vec<CraftableItem>> {
+        let mut out = Vec::new();
+        let mut page: u32 = 1;
+        loop {
+            let mut query = vec![
+                ("filter[is_craftable]", "1".to_string()),
+                ("page[size]", PAGE_SIZE.to_string()),
+                ("page[number]", page.to_string()),
+            ];
+            if let Some(q) = name_search.map(str::trim).filter(|q| !q.is_empty()) {
+                query.push(("filter[name_cont]", q.to_string()));
+            }
+            let env = self.get("/items", &query).await?;
+            let meta: PageMeta = serde_json::from_value(env.meta.clone())
+                .map_err(|e| ScWikiError::Json(format!("items meta: {e}")))?;
+            let items: Vec<CraftItemDto> = serde_json::from_value(env.data)
+                .map_err(|e| ScWikiError::Json(format!("items[craftable]: {e}")))?;
+            for it in items {
+                if it.name.trim().is_empty() {
+                    continue;
+                }
+                out.push(craft_item_from(it));
+            }
+            if page >= meta.last_page {
+                break;
+            }
+            page += 1;
+            if page > MAX_PAGES {
+                return Err(ScWikiError::TooManyPages(MAX_PAGES));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Blueprint-Detail per UUID (`/api/blueprints/{uuid}`).
+    pub async fn blueprint(&self, uuid: &str) -> Result<Blueprint> {
+        let uuid = uuid.trim();
+        if uuid.is_empty() {
+            return Err(ScWikiError::Json("blueprint: uuid leer".into()));
+        }
+        let env = self.get(&format!("/blueprints/{uuid}"), &[]).await?;
+        let dto: BlueprintDto = serde_json::from_value(env.data)
+            .map_err(|e| ScWikiError::Json(format!("blueprints/{uuid}: {e}")))?;
+        Ok(blueprint_from(dto))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,6 +1238,32 @@ mod tests {
             min_size: Some(min),
             max_size: Some(max),
         }
+    }
+
+    // ---------- M8-K4: Kreuzreferenz (SC-Wiki-Name ↔ Strata-Name) ----------
+
+    #[test]
+    fn normalize_name_trims_and_lowercases() {
+        assert_eq!(
+            normalize_name("  10-Series Greatsword  "),
+            "10-series greatsword"
+        );
+        assert_eq!(normalize_name("IRON"), "iron");
+    }
+
+    #[test]
+    fn strata_index_matches_exactly_and_degrades_on_missing() {
+        let idx = StrataIndex::build(["10-Series Greatsword Cannon", "  Titanium  "]);
+        assert_eq!(idx.len(), 2);
+        assert_eq!(
+            idx.find("10-series greatsword cannon"),
+            Some("10-Series Greatsword Cannon")
+        );
+        assert_eq!(idx.find("  TITANIUM "), Some("Titanium"));
+        // Kein Match = None (Feature degradiert, KEIN hard fail).
+        assert_eq!(idx.find("Nicht Vorhanden"), None);
+        let empty = StrataIndex::build([""]);
+        assert!(empty.is_empty());
     }
 
     #[test]
