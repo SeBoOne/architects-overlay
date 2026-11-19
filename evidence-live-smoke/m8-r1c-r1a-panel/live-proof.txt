@@ -1,0 +1,24 @@
+# M8-R1-C × R1-A Kollisions-Fix — Live-Verify (t_1dbe8a85)
+
+Datum: 2026-11-19 · Branch: fix/m8-r1c-r1a-panel-height (524683c) · Build: pnpm tauri build --no-bundle (0.5.79)
+Isolierte Instanz: RT=/tmp/ao-live-t1dbe8a85 (eigene XDG-Dirs, DB-Kopie via .backup: entities 8911 / prices 2657),
+eigener Workspace 13, PID 3627824 (kill via exakte PID), Launcher live-smoke/launch.sh, Driver live-smoke/drive.py.
+
+## Pfad im echten Fenster
+WSFOCUS 13 → F6 (Crafting-Modus) → Klick Item „10-Series Greatsword Cannon" (Liste) → Detail offen.
+
+## Messungen (Pixel, aus live-07-detail-now.png, Fenster 3440x1440)
+- Shell oben:    y≈96  (Suchleiste Crafting-Item…)
+- Shell unten:   y≈1139 (Border-Linie (74,63,43)) → Shell-Höhe ≈ 1043px
+- Detail-Panel:  endet AN derselben Kante y≈1139 (kein 242px-Cutoff mehr;
+                 BUG war: Panel bei y≈342 = 242px hoch, Regler unter dem Cutoff)
+- Slider-Tracks (accent #e0a83e, Pixel-Scan): y=591–596 (x 1666→2766) und
+  y=652–657 (x 1666→2468) = 2 Material-Qualitätsregler SICHTBAR,
+  Daumen visuell bestätigt (live-07-detail-fullheight-sliders.png, Crop 1300x160+1600+560 @250%).
+- Scroll: Inhalt dieses Items passt ins Panel (kein Overflow); LONGEM-12-Missionen-
+  Scroll bleibt durch Probe m8-r1-c-stats-order-scroll-probe.py abgedeckt (PASS 5b–5e).
+
+## Gates
+- m8-r1a-material-quality-probe.py: PASS=27 FAIL=0 (inkl. 6 kein Overflow, 7a–c Regler-Sichtbarkeit)
+- m8-r1-c-stats-order-scroll-probe.py: PASS=23 FAIL=0 (LONGEM 12 Missionen, Dismantle im Panel)
+- cargo fmt --check ✓ · svelte-check 0/0 ✓ · cargo test 271 ok / 0 failed ✓ · pnpm build ✓

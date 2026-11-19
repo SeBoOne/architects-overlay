@@ -5698,6 +5698,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		class:shell-advert={advertOpen || trkOpen || hangarFormOpen}
 		class:shell-info={infoOpen}
 		class:shell-cockpitmodal={ownCockpitModalOpen}
+		class:shell-crafting={railMode === 'crafting'}
 	>
 
 												<!-- PT: Formular „Trade erfassen" als modales Popup.
@@ -8054,7 +8055,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				{/if}
 			</div>
 
-		{:else}
+		<!-- M8-R1-C×R1-A Kollisions-Fix (t_1dbe8a85): der finale {:else} (Suche-
+		     Pane) fing vorher auch railMode === 'crafting' — das Such-Pane
+		     (.pane-list, flex:1) saß ALSO NEBEN dem Crafting-Wrapper in der
+		     .shell-main-Flex-Kette und fraß die Hälfte der Höhe (Kollaborations-
+		     Beweis: .cdetail ch:242 statt ~500, R1-A-Probe FAIL 6). Suche-Pane
+		     nur noch im Default-Modus (railMode null). -->
+		{:else if railMode === null}
 			<div class="pane-list" class:in-detail={inDetail}>
 				{#if status?.online === false}
 					<div class="offlineband">

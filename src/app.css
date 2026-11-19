@@ -292,6 +292,20 @@ html[data-window="spotlight"] .shell {
   min-height: calc(640px / var(--ui-scale, 1));
 }
 
+/* M8-R1-C×R1-A Kollisions-Fix (t_1dbe8a85): Crafting-Modus — die
+   Content-Kette (.crafting-keep → .crafting → .ccols) besteht aus
+   flex:1 + min-height:0 + Scroll-Containern; deren min-content-Höhe
+   kollabiert auf ~0, die content-driven Shell schrumpfte auf die
+   Chrome-Restzeilen (~306px) und klemmte .cdetail auf 242px
+   (R1-A-Probe FAIL 6: sh:422, ch:242; Regler unter dem Cutoff).
+   Floor nach .shell-info-Muster (RB-Lektion t_94484d0c): die Shell
+   bekommt im Crafting-Modus eine feste Mindesthöhe, das Detail-Panel
+   wächst bis zur Shell-Grenze; nur der INHALT von .cdetail scrollt.
+   Inhaltlich größere Items wachsen weiter bis max-height 84vh. */
+.shell-crafting {
+  min-height: calc(640px / var(--ui-scale, 1));
+}
+
 /* Rail-Spalte: der bisherige Shell-Inhalt (Suchzeile, Panes, Fußzeile). */
 .shell-main {
   flex: 1;
