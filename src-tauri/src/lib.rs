@@ -47,6 +47,7 @@ mod overlay;
 mod providers;
 #[cfg(desktop)]
 mod routes;
+mod scwiki_craft;
 mod scwiki_sync;
 /// Hotkey-Diagnose-Sonden (t_ed01e8f7): WM_HOTKEY-Empfangs-Log +
 /// Status-IPC für die Windows-VM-Probe (fokussiertes Fenster, Elevation).
@@ -94,6 +95,9 @@ pub fn run() {
             scwiki_sync::modul_compat_status,
             scwiki_sync::modul_compat_refresh,
             scwiki_sync::modul_for_ship,
+            scwiki_craft::scwiki_craftable_items,
+            scwiki_craft::scwiki_blueprint,
+            scwiki_craft::scwiki_craft_detail,
             trade::math_eval,
             trade::get_prices,
             trade::sync_status,
@@ -413,6 +417,13 @@ fn setup_trade(app: &tauri::App) -> tauri::Result<()> {
         crate::strata::StrataState {
             cache: cache.clone(),
             keystore_path: keystore,
+        },
+    );
+    // M8-K5 (t_03eafbfb): SC-Wiki-Craft-Commands teilen denselben Cache.
+    tauri::Manager::manage(
+        app,
+        crate::scwiki_craft::ScWikiCraftState {
+            cache: cache.clone(),
         },
     );
 

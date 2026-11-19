@@ -44,6 +44,10 @@ pub struct StrataStatus {
     pub key_ref: String,
     /// Welle-2-Vorbelegung: Konzentrations-Tier-Schwelle (1–6).
     pub tier_default: u32,
+    /// M8-K5 (t_03eafbfb): SC-Wiki-Craft-Daten verfügbar (craftable-Items-
+    /// Liste im Cache — frisch oder stale, Hauptsache vorhanden). Anteil-
+    /// Anzeige der Crafting-UI; KEIN Key, nur Booles (M7-K2-Vertrag).
+    pub scwiki_ready: bool,
 }
 
 fn key_ref_of(s: &settings::Settings) -> String {
@@ -58,6 +62,7 @@ fn status(state: &tauri::State<StrataState>, s: &settings::Settings) -> StrataSt
         key_set,
         key_ref,
         tier_default: s.strata_default_tier_threshold(),
+        scwiki_ready: crate::scwiki_craft::scwiki_ready(&state.cache),
     }
 }
 
@@ -229,6 +234,7 @@ mod tests {
             key_set: true,
             key_ref: "default".to_owned(),
             tier_default: 4,
+            scwiki_ready: false,
         })
         .unwrap();
         let map = s.as_object().unwrap();
