@@ -452,21 +452,36 @@
 			if (snapped !== null) matQual = { ...matQual, [key]: snapped };
 		}
 	}
+	// t_e261c7f4 Scroll-Erhalt: der Detail-Panel-Scrollstand darf beim
+	// Regeln NICHT springen — scrollTop vor dem $state-Update sichern und
+	// nach dem DOM-Flush (rAF) zurücksetzen, falls der Browser durch
+	// Layout-/Focus-Änderungen neu geankert hat.
+	let detailEl = $state<HTMLElement | null>(null);
 	function setRowQuality(c: CostEntry, idx: number, v: number) {
+		const scroller = detailEl;
+		const top = scroller === null ? null : scroller.scrollTop;
 		const key = rowKey(c, idx);
 		const snapped = rowSnapOn(c, idx) ? nearestSnap(rowSnaps(c), v) : v;
 		matQual = { ...matQual, [key]: snapped ?? v };
+		if (scroller !== null && top !== null) {
+			requestAnimationFrame(() => {
+				scroller.scrollTop = top;
+			});
+		}
 	}
 
 	// Gematchte Aspekte + deren Aspekt-Qualitäten (aus den Einzel-Reglern).
+	// t_e261c7f4 Layout-Stabilität: ALLE Kosten-Zeilen tragen eine Qualität —
+	// unberührte Regler zählen 0 (wie rowQuality), nicht „nicht gesetzt“.
+	// Vorher war die Map leer, bis der erste Regler bewegt wurde → der
+	// Stat-Block (Modifier-Zeilen + combined) wuchs beim ersten Move und
+	// schob die Materialliste aus dem sichtbaren Bereich.
 	const aspectQualities = $derived.by(() => {
 		const map = new Map<string, number>();
 		if (!detail?.blueprintAspects?.length) return map;
 		const mq = new Map<string, number>();
-		for (const [k, v] of Object.entries(matQual)) {
-			const name = k.slice(0, k.lastIndexOf(':'));
-			if (!name || typeof v !== 'number' || !Number.isFinite(v)) continue;
-			mq.set(materialKey(name), v);
+		for (const [idx, c] of detail.costs.entries()) {
+			mq.set(materialKey(c.material), rowQuality(c, idx));
 		}
 		for (const a of detail.blueprintAspects) {
 			const q = aspectQuality(a, mq);
@@ -664,7 +679,7 @@
 			</div>
 
 			<!-- Rechte Spalte: Item-Detail (Materialliste + Planungsrechner) -->
-			<div class="cdetail">
+			<div class="cdetail" bind:this={detailEl}>
 				{#if detailLoading}
 					<div class="cnote">{$t('mining.loading')}</div>
 				{:else if detailError}
@@ -1258,9 +1273,15 @@
 		cursor: default;
 	}
 	.cmq-changes {
-		flex: none;
+		/* t_e261c7f4: feste Zeile — Effektlabels einzeilig mit Ellipsis,
+		   statt beim Regeln zu wachsen und die Liste zu verschieben. */
+		flex: 0 1 auto;
+		max-width: 38%;
+		min-width: 0;
 		display: flex;
 		gap: 6px;
+		overflow: hidden;
+		white-space: nowrap;
 		font-size: 10.5px;
 		font-variant-numeric: tabular-nums;
 		/* t_e261c7f4: Raumstabilität — Labels wachsen nicht mehr in die
@@ -1272,6 +1293,9 @@
 	}
 	.cmq-change {
 		opacity: 0.75;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.cmq-change.is-better {
 		color: #4be08a;

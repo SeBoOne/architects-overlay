@@ -302,3 +302,37 @@ test('scaledStat: null/undefined-Basis oder -Faktor → null (nichts erfinden)',
 	assert.equal(scaledStat(73, null), null);
 	assert.equal(scaledStat(73, undefined), null);
 });
+
+// t_e261c7f4 (Layout-Stabilität): Qualität 0 ist ein GÜLTIGER Zustand —
+// der Stat-Block muss die Zeilen von Anfang an zeigen (Seed über alle
+// Kosten-Zeilen), nicht erst beim ersten Regler-Move.
+test('statChanges/statChangesPerAspect: Qualität 0 liefert Zeilen (0 ≠ „nicht gesetzt")', () => {
+	const aspects: Aspect[] = [
+		{
+			key: 'BARREL',
+			name: 'Barrel',
+			modifiers: [
+				{
+					property_key: 'weapon_damage',
+					label: 'Damage',
+					better_when: 'higher',
+					quality_range: { min: 0, max: 1000 },
+					modifier_range: { at_min_quality: 0.9, at_max_quality: 1.1 },
+					value_range_type: 'linear'
+				}
+			]
+		}
+	];
+	// statChanges mit Qualität 0: Faktor = at_min_quality.
+	const ch0 = statChanges(aspects, null, 0);
+	assert.equal(ch0.length, 1);
+	assert.equal(ch0[0].pct, -10);
+	// statChangesPerAspect mit ges seedeter 0-Map: dieselben Zeilen wie bei
+	// Qualität 1000 — nur andere Werte. KEINE leere Liste (das wäre das
+	// Layout-Wachstum beim ersten Move).
+	const zeroMap = new Map([['BARREL', 0]]);
+	const ch = statChangesPerAspect(aspects, null, zeroMap);
+	assert.equal(ch.length, 1);
+	assert.equal(ch[0].property_key, 'weapon_damage');
+	assert.equal(ch[0].pct, -10);
+});
