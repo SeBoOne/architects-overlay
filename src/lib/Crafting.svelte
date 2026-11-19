@@ -32,6 +32,9 @@
 	import { invoke } from '@tauri-apps/api/core';
 	// M8-K6 (t_f7a29367): echter Qualitäts-Stat-Rechner
 	import QualityStats from './QualityStats.svelte';
+	// M8-R1-B: Custom-Dropdowns (DOM-Popover, kein natives <select> —
+	// Fokusduell-Bug im Spotlight-Webview, siehe M7-R1-Feedback).
+	import SelectCombo from './SelectCombo.svelte';
 	import type { Aspect, SummaryProperty } from './quality-calc';
 
 	type Item = {
@@ -145,7 +148,55 @@
 	let loading = $state(false);
 	let error = $state('');
 
-	let catFilter = $state<string>('all'); // dynamisch aus den Daten
+	// M8-R1-B (t_13ba04ff): Filter-Kategorisierung — Oberkategorien FPS/Ship/
+	// Mission Items als CUSTOM-Dropdown (SelectCombo, KEIN natives <select> —
+	// Fokusduell-Bug im Webview), Unterkategorie-Dropdown zeigt nur Optionen
+	// der gewählten Oberkategorie. „Alle“ bleibt PILL/BUTTON und ist der
+	// Filter-Reset (User-P5). Mapping datengetrieben auf die vorhandenen
+	// category-Strings (Substring/Mapping-Tabelle), keine Hardcode-Explosion.
+	let oberFilter = $state<string>('all');
+	let subFilter = $state<string>('all');
+	// Mapping-Tabelle: vorhandener category-String → { ober, sub }.
+	// sub = Anzeige-Label der Unterkategorie (FPS-Präfix „FPS “ wird abgestreift).
+	type Ober = 'fps' | 'ship' | 'mission' | 'other';
+	const CAT_MAP: Record<string, { ober: Ober; sub: string }> = {
+		'FPS Armor': { ober: 'fps', sub: 'Armor' },
+		'FPS Weapon': { ober: 'fps', sub: 'Weapons' },
+		'FPS Magazine': { ober: 'fps', sub: 'Magazine' },
+		Cooler: { ober: 'ship', sub: 'Cooler' },
+		'Mining Laser': { ober: 'ship', sub: 'Mining Laser' },
+		'Mining Module': { ober: 'ship', sub: 'Mining Module' },
+		'Ore Pod': { ober: 'ship', sub: 'Ore Pod' },
+		'Power Plant': { ober: 'ship', sub: 'Power Plant' },
+		'Quantum Drive': { ober: 'ship', sub: 'Quantum Drive' },
+		Radar: { ober: 'ship', sub: 'Radar' },
+		'Refuel Nozzle': { ober: 'ship', sub: 'Refuel Nozzle' },
+		'Salvage Module': { ober: 'ship', sub: 'Salvage Module' },
+		Shield: { ober: 'ship', sub: 'Shield' },
+		'Ship Weapon': { ober: 'ship', sub: 'Ship Weapon' },
+		'Mission Item': { ober: 'mission', sub: '' }
+	};
+	const oberOf = (cat: string | null): Ober => CAT_MAP[cat ?? '']?.ober ?? 'other';
+	// „Sonstige“-Ober nur anzeigen, wenn die Daten tatsächlich Unmapped/null
+	// enthalten (datengetrieben — in der Live-Basis nicht der Fall).
+	const hasOther = $derived(items.some((i) => oberOf(i.category) === 'other'));
+	// Unterkategorie-Optionen NUR der gewählten Oberkategorie (Spec): aus der
+	// Mapping-Tabelle, value = roher category-String (Filter-Ebene). Mission
+	// Items haben keine Unterkategorie (beides in einem).
+	const subOptions = $derived.by(() => {
+		if (oberFilter !== 'fps' && oberFilter !== 'ship') return [];
+		const subs = Object.entries(CAT_MAP)
+			.filter(([, v]) => v.ober === oberFilter)
+			.map(([cat, v]) => ({ value: cat, label: v.sub }))
+			.sort((a, b) => a.label.localeCompare(b.label));
+		return [{ value: 'all', label: $t('common.all') }, ...subs];
+	});
+	// SelectCombo leert das Feld bei Blur ohne Auswahl → value='' — im Filter-
+	// Kontext ist das ein Reset auf „Alle“ (kein Dead-End-Filter).
+	$effect(() => {
+		if (oberFilter === '') oberFilter = 'all';
+		if (subFilter === '') subFilter = 'all';
+	});
 	// Detail
 	let detail = $state<CraftCostResponse | null>(null);
 	let detailLoading = $state(false);
@@ -201,17 +252,38 @@
 		const q = filter.trim().toLowerCase();
 		return items.filter((i) => {
 			if (q && !itemMatches(i, q)) return false;
-			if (catFilter !== 'all' && (i.category ?? '—') !== catFilter) return false;
+			if (oberFilter !== 'all' && oberOf(i.category) !== oberFilter) return false;
+			if (subFilter !== 'all' && i.category !== subFilter) return false;
 			return true;
 		});
 	});
-	// Kategorie-Chips DYNAMISCH aus den Daten: 'all' + jede vorkommende
-	// category (null läuft als „—“-Slot — kein hartkodiertes Vokabular).
-	const categories = $derived([...new Set(items.map((i) => i.category ?? '—'))].sort());
+	// Oberkategorie-Optionen: Alle + FPS/Ship/Mission Items (+ „Sonstige“ nur
+	// wenn die Daten Unmapped/null enthalten — datengetrieben).
+	const oberOptions = $derived.by(() => {
+		const opts = [
+			{ value: 'all', label: $t('common.all') },
+			{ value: 'fps', label: $t('craft.ober_fps') },
+			{ value: 'ship', label: $t('craft.ober_ship') },
+			{ value: 'mission', label: $t('craft.ober_mission') }
+		];
+		if (hasOther) opts.push({ value: 'other', label: $t('craft.cat_other') });
+		return opts;
+	});
+	// Oberkategorie-Wechsel resettet die Unterkategorie (Spec).
+	function setOber(v: string) {
+		oberFilter = v;
+		subFilter = 'all';
+	}
+	// „Alle“-Pill = Filter-Reset (User-P5).
+	function resetFilters() {
+		oberFilter = 'all';
+		subFilter = 'all';
+	}
 	// Filter-/Kategorie-Wechsel: Liste wieder von vorn rendern.
 	$effect(() => {
 		void filter;
-		void catFilter;
+		void oberFilter;
+		void subFilter;
 		shown = STEP;
 	});
 
@@ -387,20 +459,34 @@
 					<div class="cf">
 						<span class="cfl">{$t('craft.filter_category')}</span>
 						<div class="cfchips">
+							<!-- „Alle" bleibt PILL/BUTTON und ist der Filter-Reset (User-P5) -->
 							<button
 								type="button"
 								class="cchip"
-								class:is-on={catFilter === 'all'}
-								onclick={() => (catFilter = 'all')}>{$t('common.all')}</button
+								class:is-on={oberFilter === 'all' && subFilter === 'all'}
+								onclick={resetFilters}>{$t('common.all')}</button
 							>
-							{#each categories as c (c)}
-								<button
-									type="button"
-									class="cchip"
-									class:is-on={catFilter === c}
-									onclick={() => (catFilter = catFilter === c ? 'all' : c)}>{catName(c)}</button
-								>
-							{/each}
+							<!-- Oberkategorie: CUSTOM-Dropdown (SelectCombo) — NIE natives <select> -->
+							<SelectCombo
+								bind:value={oberFilter}
+								onselect={setOber}
+								showAllOnFocus
+								options={oberOptions}
+								ariaLabel={$t('craft.filter_category')}
+								placeholder={$t('craft.filter_category')}
+							/>
+							<!-- Unterkategorie: nur Optionen der gewählten Oberkategorie; bei
+								Alle/Mission Items (keine Unterkategorie) komplett ausgeblendet -->
+							{#if subOptions.length}
+								<SelectCombo
+									bind:value={subFilter}
+									onselect={(v: string) => (subFilter = v)}
+									showAllOnFocus
+									options={subOptions}
+									ariaLabel={$t('craft.filter_sub')}
+									placeholder={$t('craft.filter_sub')}
+								/>
+							{/if}
 						</div>
 					</div>
 				</div>
