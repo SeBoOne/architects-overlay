@@ -153,6 +153,9 @@
 	// M8-K5: SC-Wiki-Craft-Detail (Item-Kopf/Stats/Missionen) — null =
 	// kein Match (Abschnitte still weg, kein Hard-Fail).
 	let scwiki = $state<ScWikiCraftDetail | null>(null);
+	// M8-K5-Fix: SC-Wiki-Fetch fehlgeschlagen (z. B. API-Ausfall) — degradiert
+	// ohne Hard-Fail, aber MIT sichtbarem Hinweis + Retry statt stummem Schlucken.
+	let scwikiError = $state(false);
 	// Qualitäts-Planungsrechner
 	let targetQuality = $state(0);
 	// Load-More (516 Items — bestehendes Muster: stückweise rendern)
@@ -218,6 +221,7 @@
 		detailError = '';
 		detail = null;
 		scwiki = null; // M8-K5: SC-Wiki-Detail des Vorgängers verfällt
+		scwikiError = false;
 		targetQuality = 0; // neuer Artikel → Planer neutral starten
 		try {
 			const r = await invoke<CraftCostResponse>('strata_craft_cost', { item: item.id });
@@ -232,6 +236,7 @@
 		detailLoading = false;
 	}
 	async function loadScwiki(name: string) {
+		scwikiError = false;
 		try {
 			const r = await invoke<ScWikiCraftDetail | null>('scwiki_craft_detail', {
 				itemName: name
@@ -246,12 +251,18 @@
 				}
 			}
 		} catch {
-			/* kein Hard-Fail — SC-Wiki ist Bereicherung */
+			// kein Hard-Fail — SC-Wiki ist Bereicherung. Aber NICHT stumm:
+			// sichtbarer Hinweis + Retry im Detail (Review-Blocker M8-K5).
+			scwikiError = true;
 		}
+	}
+	function retryScwiki() {
+		if (detail) void loadScwiki(detail.item.name);
 	}
 	function closeDetail() {
 		detail = null;
 		scwiki = null;
+		scwikiError = false;
 		detailError = '';
 	}
 
@@ -673,6 +684,16 @@
 			</div>
 		</div>
 	{/if}
+	{#if detail && scwikiError}
+		<div class="cscwiki-err">
+			{$t('craft.scwiki_error')}
+			<!-- Kein Unicode-Glyph (⟳) als Button-Label — Font-Fallback zeichnet
+			     Tofu/„D“ in Headless-Webviews. Beschrifteter i18n-Text statt Icon. -->
+			<button class="cscwiki-retry" onclick={retryScwiki}>
+				{$t('craft.scwiki_retry')}
+			</button>
+		</div>
+	{/if}
 	<div class="cattr">
 		{attribution || ATTRIBUTION_FALLBACK}{#if scwiki}
 			<span class="cattr-scwiki"> · {scwiki.attribution}</span>{/if}
@@ -1037,6 +1058,27 @@
 		text-align: right;
 	}
 	/* M8-K5: zweite Quelle (SC-Wiki) im Footer — gleiche Zeile, kein Block */
+	/* M8-K5-Fix: SC-Wiki-Fehler-Hinweis + Retry (degradiert sichtbar) */
+	.cscwiki-err {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 10px;
+		font-size: 11px;
+		color: var(--muted, #8b93a1);
+	}
+	.cscwiki-retry {
+		background: none;
+		border: 1px solid var(--border, #333a45);
+		border-radius: 4px;
+		color: inherit;
+		font-size: 11px;
+		padding: 2px 8px;
+		cursor: pointer;
+	}
+	.cscwiki-retry:hover {
+		border-color: var(--accent, #5aa9e6);
+	}
 	.cattr-scwiki {
 		white-space: nowrap;
 	}

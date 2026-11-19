@@ -192,6 +192,8 @@
     "craft.range": "Reichweite",
     "craft.required_quality": "Geforderte Input-Qualität",
     "craft.rpm": "RPM",
+    "craft.scwiki_error": "SC-Wiki-Daten konnten nicht geladen werden — Blueprint-Details und Missionen sind ausgeblendet.",
+    "craft.scwiki_retry": "Erneut versuchen",
     "craft.stats_note": "Modifier skalieren linear mit der Input-Qualität (SC-Wiki-Daten). Angezeigt als %-Abweichung gegenüber Basis 1.0; mehrere Aspekte auf eine Eigenschaft multiplizieren sich. Daten von star-citizen.wiki.",
     "craft.stats_reachable": "erreichbar",
     "craft.stats_title": "Stat-Änderung bei Ziel-Qualität",
