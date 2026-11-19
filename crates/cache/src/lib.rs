@@ -108,12 +108,19 @@ pub struct PriceSyncAges {
 /// `prices.source`, …). Legacy rows (pre-scheme v2) are all `uex`.
 pub const SOURCE_UEX: &str = "uex";
 pub const SOURCE_WIKI: &str = "wiki";
+/// SC-Wiki-Craft-Datensätze (M8-K4, t_72b27d99): Blueprints ändern sich nur
+/// mit Game-Patches — wie die Strata-Referenz 7 Tage TTL.
+pub const SOURCE_SCWIKI: &str = "scwiki";
+pub const TTL_SCWIKI_CRAFT: Duration = Duration::from_secs(604_800); // 7 Tage
 
 /// TTL for one reference dataset. Wiki-sourced rows live on the patch-driven
 /// long TTL, UEX rows keep the research-doc values.
 pub fn ttl_for_source(kind: EntityKind, source: &str) -> Duration {
     if source == SOURCE_WIKI {
         return TTL_WIKI_REFERENCE;
+    }
+    if source == SOURCE_SCWIKI {
+        return TTL_SCWIKI_CRAFT;
     }
     match kind {
         EntityKind::Commodities => TTL_COMMODITIES,

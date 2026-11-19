@@ -1,7 +1,7 @@
 [package]
 name = "scwiki_client"
 version = "0.1.0"
-description = "Schlanker SC-Wiki-API-Client — nur Zweck Schiffs-Modul-Kompatibilität (S3, t_988e132f)"
+description = "Schlanker SC-Wiki-API-Client — Modul-Kompatibilität (S3, t_988e132f) + Craft-Blueprints (M8-K4, t_72b27d99)"
 edition = "2024"
 rust-version = "1.90"
 
