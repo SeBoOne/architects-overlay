@@ -65,8 +65,26 @@ gegenüber Testern vermeiden: Changenotes sagen klar, was drin ist).
 - **K3 Modi-Verbindung:** Bedarfserz → Mining-Modus-Sprung (Erz vorgewählt,
   Orte-Detail offen); Rückweg per ESC/Back.
 
+## Welle 2 (2026-11-19, durch SC-Wiki-Live-Beleg möglich)
+
+SC-Wiki-API (api.star-citizen.wiki, live geprüft am Greatsword-Blueprint)
+liefert ALLES was Strata fehlte:
+- `items?filter[is_craftable]=1`: size, grade, class, mass, ammunition,
+  vehicle_weapon (vollständige Schadens-Stats), description (de_DE!)
+- `blueprints/{uuid}`: **unlocking_missions_grouped** (Guaranteed/Chance +
+  reward_scope), craft_time_seconds (= Strata), ingredients (SCU),
+  dismantle_returns, game_version
+- **Qualitäts-System:** tiers[].requirements → groups (FRAME/CYCLER) →
+  resources mit min_quality + **modifiers[]** (property_key, quality_range
+  0–1000, modifier_range at_min/at_max z.B. 0.9→1.1, value_range_type
+  „linear") + summary_properties (better_when)
+
+→ Karten: M8-K4 scwiki-client erweitern · M8-K5 Item-Details + Missionen ·
+M8-K6 echter Stat-Rechner (Modifier-Interpolation). Kreuzreferenz:
+SC-Wiki-Item-Name ↔ Strata-Item-Name; Blueprint via item.blueprint[0].uuid.
+Fehlender Match degradiert (kein Hard-Fail). Attribution zusätzlich
+„Data from star-citizen.wiki".
+
 ## Offen / später
 
-- Blaupausen-Missionen / Item-Stats / echter Stat-Rechner — Blocker: API.
-- SC-Wiki-Client als mögliche Stat-Quelle prüfen (separater Research-Punkt).
 - Mining-Listen (Welle 2 M7) + Craft-Bedarf-Import zusammenführen.
