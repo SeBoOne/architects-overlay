@@ -232,6 +232,11 @@
 		min-width: 7ch;
 		text-align: right;
 		opacity: 0.7;
+		/* t_e261c7f4: Zeilenhöhe konstant — Werte dürfen nicht umbrechen,
+		   wenn der „neu“-Wert beim Regeln breiter wird. */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.qs-prop-arrow {
 		flex: none;
@@ -240,8 +245,14 @@
 	.qs-prop-val {
 		flex: none;
 		min-width: 9ch;
+		max-width: 16ch;
 		text-align: right;
 		font-weight: 600;
+		/* t_e261c7f4: einzeilig — „123.4 (−10 %)“ darf die Zeile nicht
+		   höher machen als der unaffected-Zustand. */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	/* M8-R1-C: Q-unbeeinflusste Stats sauber ausweisen (Badge) */
 	.qs-unaffected {
