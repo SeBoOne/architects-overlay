@@ -13,6 +13,8 @@
 	// (Fokusduell-Bug im Spotlight-Webview). Esc übernimmt der Eltern-Modus.
 	import { t } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
+	// M9-D (t_36f3966c): Craft→Mining-Brücke — Aggregation → Mining-Listen-Einträge.
+	import { bridgeItems } from './list-bridge.ts';
 
 	type ListSummary = {
 		id: number;
@@ -55,9 +57,14 @@
 
 	// M8-K3-Konvention: Bedarfserz klickbar → Mining-Sprung (Callback des Parents).
 	let {
-		onOpenOre = null
+		onOpenOre = null,
+		// M9-D (t_36f3966c): nach dem Brücken-Anlegen zum Mining-Modus springen
+		// und die neue Liste öffnen (M8-K3-Muster: Callback des Parents, kein
+		// Modi-Kopplungs-Hardcode in der Komponente).
+		onOpenMiningList = null
 	}: {
 		onOpenOre?: ((oreId: string) => void) | null;
+		onOpenMiningList?: ((listId: number) => void) | null;
 	} = $props();
 
 	// ---- State ---------------------------------------------------------------
@@ -195,6 +202,8 @@
 		invNote = '';
 		invError = '';
 		addInvFor = null;
+		// M9-D: Brücken-Hinweis ebenso verfallen lassen.
+		bridgeNote = '';
 		try {
 			detail = await invoke<ListDetail>('list_detail', { listId: id });
 			activeId = id;
@@ -292,6 +301,34 @@
 		if (id) onOpenOre?.(id);
 	}
 
+	// M9-D (t_36f3966c) — Craft→Mining-Brücke: aus der Aggregation DIESER
+	// Liste eine Mining-Liste anlegen (Material + Menge + MAX-Qualität,
+	// ore_id aus den Eintrags-Snapshots). Die Engine ist generisch — kein
+	// Backend-Change: list_create('mining') + list_add_item je Material.
+	// Nach dem Anlegen → Mining-Modus-Sprung mit der neuen Liste (M8-K3).
+	let bridgeNote = $state('');
+	let bridgeBusy = $state(false);
+	async function bridgeToMining() {
+		if (detail === null || bridgeBusy) return;
+		const items = bridgeItems(detail);
+		if (!items.length) return;
+		error = '';
+		bridgeBusy = true;
+		try {
+			const id = await invoke<number>('list_create', { kind: 'mining', name: detail.name });
+			for (const item of items) {
+				await invoke('list_add_item', { listId: id, item });
+			}
+			await loadLists();
+			bridgeNote = $t('lists.bridge_note', { name: detail.name });
+			onOpenMiningList?.(id);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			bridgeBusy = false;
+		}
+	}
+
 	void loadLists();
 </script>
 
@@ -355,11 +392,24 @@
 						renameMode = true;
 					}}>{$t('lists.rename')}</button
 				>
+				<!-- M9-D: Craft→Mining-Brücke — benötigt Material als Mining-Liste. -->
+				<button
+					type="button"
+					class="cl-mini"
+					onclick={() => void bridgeToMining()}
+					disabled={bridgeBusy || !detail.aggregated.some((m) => m.quantity > 0)}
+					title={$t('lists.bridge_title')}
+				>{$t('lists.bridge')}</button
+				>
 				<button type="button" class="cl-mini is-danger" onclick={() => void deleteList()}>
 					{$t('lists.delete')}
 				</button>
 			{/if}
 		</div>
+
+		{#if bridgeNote}
+			<div class="cl-inv-note">{bridgeNote}</div>
+		{/if}
 
 		<!-- Einträge: Blueprint + copies + Entfernen -->
 		{#if detail.items.length}

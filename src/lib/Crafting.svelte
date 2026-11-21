@@ -147,11 +147,14 @@
 		onexit,
 		filter = $bindable(''),
 		onOpenOre = null, // M8-K3 (t_a8088d06): Bedarfserz → Mining-Sprung
+		// M9-D (t_36f3966c): Brücken-Anlegen → Mining-Modus mit neuer Liste.
+		onOpenMiningList = null,
 		hidden = false // M8-K3: keep-alive während des Mining-Sprungs (Tastatur stumm)
 	}: {
 		onexit: () => void;
 		filter?: string;
 		onOpenOre?: ((oreId: string) => void) | null;
+		onOpenMiningList?: ((listId: number) => void) | null;
 		hidden?: boolean;
 	} = $props();
 
@@ -769,7 +772,7 @@
 	{:else}
 		{#if tab === 'lists'}
 			<!-- M9-B: Listen-Tab — CRUD + Aggregation + Abhaken (CraftLists) -->
-			<CraftLists onOpenOre={openOre} />
+			<CraftLists onOpenOre={openOre} onOpenMiningList={onOpenMiningList} />
 		{:else}
 		<div class="ccols">
 			<!-- Linke Spalte: Kategorie-Chips + Item-Liste -->

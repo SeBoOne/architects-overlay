@@ -707,6 +707,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	// Crafting bleibt dann keep-alive gemountet (nur versteckt), damit Back/Esc
 	// das Craft-Detail unverändert wieder herstellt.
 	let craftOreJump = $state<string | null>(null);
+	// M9-D (t_36f3966c): Sprung-Kontext Craft→Mining-Brücke — id der neuen
+	// Mining-Liste. Anders als craftOreJump KEIN keep-alive nötig (kein
+	// Craft-Detail zu restaurieren); setMode räumt ihn wie oben auf.
+	let craftListJump = $state<number | null>(null);
 	let mode = $derived<Mode>(
 		(railMode === 'own' ? 'own' : railMode) ??
 			(inConfig
@@ -4741,6 +4745,12 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		setMode('mining');
 		craftOreJump = oreId;
 	}
+	// M9-D (t_36f3966c): Brücken-Anlegen → Mining-Modus mit der neuen Liste.
+	// Strata-Ready ist im Crafting-Modus per M8-K2-Guard garantiert.
+	function openMiningListFromCraft(listId: number) {
+		setMode('mining');
+		craftListJump = listId;
+	}
 	// Rückweg (Back/Esc im Mining): Craft-Detail wieder herstellen — der State
 	// blieb keep-alive erhalten (Crafting blieb gemountet, nur versteckt).
 	function exitMiningJump() {
@@ -4754,7 +4764,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function setMode(m: Mode) {
 		// M8-K3: Jeder Modus-Wechsel außerhalb des Sprungs löst den Craft→Mining-
 		// Jump auf (z. B. F6-Rückweg über den Hotkey statt Esc).
-		if (m !== 'mining') craftOreJump = null;
+		if (m !== 'mining') {
+			craftOreJump = null;
+			craftListJump = null;
+		}
 		// M7-F1 (Bug 3): Mining ist nur nutzbar, wenn Strata enabled + Key
 		// gesetzt sind — sonst den Modus-Wechsel (Rail-Klick wie F5) IGNOREN,
 		// statt eine Disabled-Card zu zeigen.
@@ -5913,6 +5926,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					onexit={() => setMode('search')}
 					filter={input}
 					onOpenOre={openOreInMining}
+					onOpenMiningList={openMiningListFromCraft}
 					hidden={!!craftOreJump}
 				/>
 				{#if invEmbed}
@@ -5934,6 +5948,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 				onexit={craftOreJump ? exitMiningJump : () => setMode('search')}
 				onjumpexit={exitMiningJump}
 				jumpOreId={craftOreJump}
+				jumpListId={craftListJump}
 				filter={input}
 			/>
 {:else if railMode === 'hangar' && hangarReplace}

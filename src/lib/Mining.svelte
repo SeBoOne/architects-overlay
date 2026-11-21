@@ -109,11 +109,14 @@
 		onexit,
 		filter = $bindable(''),
 		jumpOreId = null, // M8-K3 (t_a8088d06): Erz aus dem Craft-Detail vorgewählt
+		// M9-D (t_36f3966c): Mining-Liste aus der Craft→Mining-Brücke öffnen.
+		jumpListId = null,
 		onjumpexit // M8-K3: Rückweg ins Craft-Detail (State bleibt dort keep-alive)
 	}: {
 		onexit: () => void;
 		filter?: string;
 		jumpOreId?: string | null;
+		jumpListId?: number | null;
 		onjumpexit?: () => void;
 	} = $props();
 
@@ -307,6 +310,16 @@
 		if (!ore) return; // noch nicht in der Liste (z. B. Filter) → später erneut
 		jumpHandledFor = id;
 		if (detailOre?.id !== id) void openDetail(ore);
+	});
+
+	// M9-D (t_36f3966c): Brücken-Sprung — Mining-Listen-Tab öffnen (die Liste
+	// selbst öffnet MiningLists über `openListId`).
+	let listJumpHandled: number | null = null;
+	$effect(() => {
+		const id = jumpListId;
+		if (id === null || listJumpHandled === id) return;
+		listJumpHandled = id;
+		view = 'lists';
 	});
 
 	// M8-K3-Fix (t_ef0bcd6a): der Back-Button im Detail schließt wie im
@@ -594,7 +607,7 @@
 		{#if view === 'lists'}
 			<!-- M9-C: Listen-Tab — Mining-Listen (gleiche Engine, kind='mining')
 			     + Beste-Orte-Optimierung (Set-Cover, Qualitäts-Bänder) -->
-			<MiningLists ores={ores} tierDefault={status?.tier_default ?? 4} />
+			<MiningLists ores={ores} tierDefault={status?.tier_default ?? 4} openListId={jumpListId} />
 		{:else}
 		<div class="mcols">
 			<!-- Linke Spalte: Erz-/Ort-Suche -->

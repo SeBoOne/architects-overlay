@@ -72,11 +72,25 @@
 
 	let {
 		ores = [],
-		tierDefault = 4
+		tierDefault = 4,
+		// M9-D (t_36f3966c): Liste aus der Craft→Mining-Brücke — beim Eintreten
+		// direkt öffnen (einmal pro Sprung-Ziel, M8-K3-Fix-Muster).
+		openListId = null
 	}: {
 		ores?: Ore[];
 		tierDefault?: number;
+		openListId?: number | null;
 	} = $props();
+
+	// M9-D: Sprung-Ziel genau einmal öffnen — sonst reißt der Effect jede
+	// manuelle Listenauswahl wieder auf das Sprung-Ziel zurück (Klebe-Effekt).
+	let listJumpHandled: number | null = null;
+	$effect(() => {
+		const id = openListId;
+		if (id === null || listJumpHandled === id) return;
+		listJumpHandled = id;
+		void openList(id);
+	});
 
 	// ---- State ---------------------------------------------------------------
 	let lists = $state<ListSummary[]>([]);
