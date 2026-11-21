@@ -153,6 +153,8 @@ pub fn run() {
             lists::list_set_done,
             lists::list_detail,
             lists::inventory_add_for_list,
+            lists::reservation_add,
+            lists::reservation_delete,
             routes::get_routes,
             routes::get_route_locations,
             routes::vehicles_scu,

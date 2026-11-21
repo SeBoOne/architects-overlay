@@ -16,6 +16,7 @@
 use rusqlite::ToSql;
 use rusqlite::types::ToSqlOutput;
 
+use super::reservations::Reservation;
 use super::{Cache, CacheError, Result};
 
 /// One inventory position. `entity_kind` is `"commodity"` or `"item"`
@@ -47,11 +48,9 @@ pub struct InventoryEntry {
     pub quantity: f64,
     /// Optional purchase price in aUEC.
     pub price: Option<f64>,
-    /// M9-E (t_aae8d4c9): Liste, für die diese Position reserviert ist
-    /// (Verweis aus `list_reservations`) — `None` = normale Position.
-    #[serde(serialize_with = "ser_opt_id_as_string")]
-    pub reserved_list_id: Option<u64>,
-    pub reserved_list_name: Option<String>,
+    /// M9-F (t_bb97da62): Reservierungen dieser Position („wofür“) —
+    /// gesamt/reserviert/frei leiten sich aus `quantity` + Mengensumme ab.
+    pub reservations: Vec<Reservation>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -103,13 +102,14 @@ fn ser_opt_id_as_string<S: serde::Serializer>(
     }
 }
 
-fn row_to_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryEntry> {
+fn row_to_entry(
+    r: &rusqlite::Row<'_>,
+    reservations: Vec<Reservation>,
+) -> rusqlite::Result<InventoryEntry> {
     let entity_kind: Option<String> = r.get("entity_kind")?;
     let entity_id: Option<i64> = r.get("entity_id")?;
     let location_id: Option<i64> = r.get("location_id")?;
     let price: Option<f64> = r.get("price")?;
-    let reserved_list_id: Option<i64> = r.get("reserved_list_id")?;
-    let reserved_list_name: Option<String> = r.get("reserved_list_name")?;
     Ok(InventoryEntry {
         id: r.get::<_, i64>("id")? as u64,
         entity_kind,
@@ -120,8 +120,7 @@ fn row_to_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryEntry> {
         location_name: r.get("location_name")?,
         quantity: r.get("quantity")?,
         price,
-        reserved_list_id: reserved_list_id.map(|v| v as u64),
-        reserved_list_name,
+        reservations,
         created_at: r.get::<_, i64>("created_at")? as u64,
         updated_at: r.get::<_, i64>("updated_at")? as u64,
     })
@@ -173,10 +172,29 @@ impl Cache {
     }
 
     /// Overwrite an existing position (full-row update; the frontend edits
-    /// one row at a time). `Err` when the id does not exist.
+    /// one row at a time). `Err` when the id does not exist. M9-F: die
+    /// neue Menge darf die bereits reservierte Menge nicht unterschreiten.
     pub fn inventory_update(&self, id: u64, new: NewInventoryEntry) -> Result<()> {
         validate(&new)?;
         let now = super::now_unix();
+        // M9-F: die neue Menge darf die bereits reservierte Menge nicht
+        // unterschreiten (Freigabe separat abfragen — die `with`-Closure
+        // spricht rusqlite, semantische Fehler entstehen hier außen).
+        let reserved: f64 = self.with(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT COALESCE(SUM(qty), 0) FROM reservations WHERE inventory_id = ?1",
+                    [id as i64],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0.0))
+        })?;
+        if new.quantity + 1e-9 < reserved {
+            return Err(CacheError::Query(i18n_err::err_keyp(
+                "reservations.err_qty_floor",
+                serde_json::json!({ "reserved": reserved }),
+            )));
+        }
         let changed = self.with(move |conn| {
             conn.execute(
                 "UPDATE inventory SET entity_kind = ?1, entity_id = ?2, name = ?3, quality = ?4, \
@@ -208,9 +226,9 @@ impl Cache {
     /// Delete one position. `Err` when the id does not exist.
     pub fn inventory_delete(&self, id: u64) -> Result<()> {
         let changed = self.with(move |conn| {
-            // M9-E: Reservierungs-Verweis mitlöschen (kein FK — sauber selbst).
+            // M9-F: Reservierungen der Position mitlöschen (kein FK — sauber selbst).
             conn.execute(
-                "DELETE FROM list_reservations WHERE inventory_id = ?1",
+                "DELETE FROM reservations WHERE inventory_id = ?1",
                 [id as i64],
             )?;
             conn.execute("DELETE FROM inventory WHERE id = ?1", [id as i64])
@@ -226,20 +244,45 @@ impl Cache {
     /// order (Standort → Item → Qualität).
     pub fn inventory_list(&self) -> Result<Vec<InventoryEntry>> {
         self.with(|conn| {
+            // Reservierungen in einem Rutsch laden (M9-F: mehrere je Position;
+            // Hinweis-Konvention M9-D: Anzeige zeigt die erzeugende Crafting-Liste).
+            let mut res_stmt = conn.prepare(
+                "SELECT res.id, res.inventory_id, COALESCE(s.id, l.id) AS display_list_id, \
+                 COALESCE(s.name, l.name) AS list_name, res.purpose, res.qty, res.note, res.created_at \
+                 FROM reservations res \
+                 LEFT JOIN lists l ON l.id = res.list_id \
+                 LEFT JOIN lists s ON s.id = l.source_list_id \
+                 ORDER BY res.created_at ASC, res.id ASC",
+            )?;
+            let mut rows = res_stmt.query([])?;
+            let mut by_inv: std::collections::HashMap<i64, Vec<Reservation>> =
+                std::collections::HashMap::new();
+            while let Some(r) = rows.next()? {
+                let list_id: Option<i64> = r.get("display_list_id")?;
+                by_inv.entry(r.get("inventory_id")?).or_default().push(Reservation {
+                    id: r.get::<_, i64>("id")? as u64,
+                    inventory_id: r.get::<_, i64>("inventory_id")? as u64,
+                    list_id: list_id.map(|v| v as u64),
+                    list_name: r.get("list_name")?,
+                    purpose: r.get("purpose")?,
+                    qty: r.get("qty")?,
+                    note: r.get("note")?,
+                    created_at: r.get::<_, i64>("created_at")? as u64,
+                });
+            }
             let mut stmt = conn.prepare(
                 "SELECT inventory.id, inventory.entity_kind, inventory.entity_id, inventory.name, \
                  inventory.quality, inventory.location_id, inventory.location_name, \
-                 inventory.quantity, inventory.price, inventory.created_at, inventory.updated_at, \
-                 COALESCE(s.id, l.id) AS reserved_list_id, \
-                 COALESCE(s.name, l.name) AS reserved_list_name \
+                 inventory.quantity, inventory.price, inventory.created_at, inventory.updated_at \
                  FROM inventory \
-                 LEFT JOIN list_reservations r ON r.inventory_id = inventory.id \
-                 LEFT JOIN lists l ON l.id = r.list_id \
-                 LEFT JOIN lists s ON s.id = l.source_list_id \
                  ORDER BY inventory.location_name COLLATE NOCASE ASC, inventory.name COLLATE NOCASE ASC, \
                      inventory.quality DESC, inventory.id ASC"
             )?;
-            let rows = stmt.query_map([], row_to_entry)?;
+            let rows = stmt.query_map([], |r| {
+                let id: i64 = r.get("id")?;
+                let reservations = by_inv.remove(&id).unwrap_or_default();
+                row_to_entry(r, reservations)
+            })?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
         })
     }

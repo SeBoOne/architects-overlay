@@ -100,10 +100,17 @@ pub struct AggMat {
     pub unit: String,
     /// Summe aller Eintrags-Bedarfe (quantity × copies).
     pub quantity: f64,
-    /// MAX der Eintrags-Qualitäten — „höhere Qualität ist immer besser".
+    /// MAX der Eintrags-Qualitäten — „höhere Qualität ist immer besser“.
     pub min_quality: u32,
     /// Bereits abgehakt (ganz ODER teilweise).
     pub done_qty: f64,
+    /// M9-F (t_bb97da62): aus dem Inventar für dieses Material reservierte
+    /// Menge (Reservierungen mit `list_id` = diese Liste, gematcht über den
+    /// Inventar-Namen) — 0, wenn nichts reserviert.
+    pub reserved_qty: f64,
+    /// Mengengewichtete Ø-Qualität der reservierten Quelle — `None` ohne
+    /// Reservierung.
+    pub reserved_avg_quality: Option<u32>,
 }
 
 /// Vollständige Liste: Kopf + Einträge + Aggregation.
@@ -264,12 +271,9 @@ impl Cache {
             )?;
             conn.execute("DELETE FROM list_items WHERE list_id = ?1", [id as i64])?;
             conn.execute("DELETE FROM list_mat_done WHERE list_id = ?1", [id as i64])?;
-            // M9-E: nur die Verknüpfung lösen — die reservierten Inventar-
-            // Positionen bleiben im Inventar (nicht mehr „reserviert").
-            conn.execute(
-                "DELETE FROM list_reservations WHERE list_id = ?1",
-                [id as i64],
-            )?;
+            // M9-F: nur die Verknüpfung lösen — die reservierten Inventar-
+            // Positionen bleiben im Inventar (Reservierungen mitlöschen).
+            conn.execute("DELETE FROM reservations WHERE list_id = ?1", [id as i64])?;
             conn.execute("DELETE FROM lists WHERE id = ?1", [id as i64])?;
             Ok(())
         })
@@ -449,12 +453,23 @@ impl Cache {
             )));
         }
         let quality = entry.quality;
+        let qty = entry.quantity;
+        let mat = material.trim().to_string();
         let inv_id = self.inventory_add(entry)?;
         let (raised, requirement) = self.with(move |conn| {
+            // M9-F: Reservierung über das neue Inventar-first-Primitiv —
+            // die volle Menge der neuen Position, Zweck = die Liste,
+            // Material in der note (wie bei der v16-Übernahme).
             conn.execute(
-                "INSERT INTO list_reservations (inventory_id, list_id, material, unit) \
-                 VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![inv_id as i64, list_id as i64, material.trim(), unit.trim()],
+                "INSERT INTO reservations (inventory_id, list_id, purpose, qty, note, created_at) \
+                 VALUES (?1, ?2, '', ?3, ?4, ?5)",
+                rusqlite::params![
+                    inv_id as i64,
+                    list_id as i64,
+                    qty,
+                    mat,
+                    super::now_unix() as i64
+                ],
             )?;
             // Bisherige Anforderung (MAX über die Snapshot-Zeilen).
             let old: i64 = conn
@@ -511,7 +526,7 @@ impl Cache {
         };
 
         // Einträge + Material-Snapshots + done-Stand in einer Sperre lesen.
-        let (items, mut done_map) = self.with(|conn| {
+        let (items, mut done_map, reserved_map) = self.with(|conn| {
             let mut items: Vec<ListItem> = Vec::new();
             {
                 let mut stmt = conn.prepare(
@@ -569,7 +584,27 @@ impl Cache {
                     done_map.insert((m, u), r.get(2)?);
                 }
             }
-            Ok((items, done_map))
+            // M9-F (t_bb97da62): aus dem Inventar reservierte Mengen + mengen-
+            // gewichtete Ø-Qualität je Material (Reservierungen dieser Liste,
+            // gematcht über den Inventar-Namen — groß/klein egal).
+            let mut reserved_map: std::collections::HashMap<String, (f64, Option<u32>)> =
+                std::collections::HashMap::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT LOWER(i.name) AS m, SUM(res.qty), \
+                            SUM(res.qty * i.quality) / SUM(res.qty) \
+                     FROM reservations res JOIN inventory i ON i.id = res.inventory_id \
+                     WHERE res.list_id = ?1 GROUP BY LOWER(i.name)",
+                )?;
+                let mut rows = stmt.query([id as i64])?;
+                while let Some(r) = rows.next()? {
+                    let m: String = r.get(0)?;
+                    let sum: f64 = r.get(1)?;
+                    let avg: f64 = r.get(2)?;
+                    reserved_map.insert(m, (sum, Some(avg.round() as u32)));
+                }
+            }
+            Ok((items, done_map, reserved_map))
         })?;
 
         // Aggregation: (material, unit) → (Summe, MAX-Qualität). done
@@ -587,14 +622,22 @@ impl Cache {
         }
         let mut aggregated: Vec<AggMat> = agg
             .into_iter()
-            .map(|((material, unit), (quantity, q))| AggMat {
-                done_qty: done_map
-                    .remove(&(material.clone(), unit.clone()))
-                    .unwrap_or(0.0),
-                min_quality: q,
-                quantity,
-                material,
-                unit,
+            .map(|((material, unit), (quantity, q))| {
+                let (rq, ravg) = reserved_map
+                    .get(&material.to_lowercase())
+                    .copied()
+                    .unwrap_or((0.0, None));
+                AggMat {
+                    done_qty: done_map
+                        .remove(&(material.clone(), unit.clone()))
+                        .unwrap_or(0.0),
+                    min_quality: q,
+                    quantity,
+                    reserved_qty: rq,
+                    reserved_avg_quality: ravg,
+                    material,
+                    unit,
+                }
             })
             .collect();
         aggregated.sort_by_key(|a| a.material.to_lowercase());
@@ -848,8 +891,8 @@ mod tests {
             .unwrap();
         assert!(r.requirement_raised);
         assert_eq!(r.requirement, 700);
-        assert_eq!(r.entry.reserved_list_id, Some(id));
-        assert_eq!(r.entry.reserved_list_name, Some("Set".into()));
+        assert_eq!(r.entry.reservations[0].list_id, Some(id));
+        assert_eq!(r.entry.reservations[0].list_name, Some("Set".into()));
         assert_eq!(r.entry.quality, 700);
         // Anforderung der Snapshot-Zeilen auf 700 angehoben.
         let d = c.list_detail(id).unwrap();
@@ -907,11 +950,9 @@ mod tests {
         // Alle drei Positionen tauchen reserviert im Inventar auf.
         let invs = c.inventory_list().unwrap();
         assert_eq!(invs.len(), 3);
-        assert!(
-            invs.iter()
-                .all(|e| e.reserved_list_id == Some(id)
-                    && e.reserved_list_name == Some("Set".into()))
-        );
+        assert!(invs.iter().all(|e| e.reservations.len() == 1
+            && e.reservations[0].list_id == Some(id)
+            && e.reservations[0].list_name == Some("Set".into())));
 
         // Validierung: leeres Material / fehlende Liste legt KEINE Position an.
         assert!(
@@ -934,7 +975,7 @@ mod tests {
         c.list_delete(id).unwrap();
         let invs = c.inventory_list().unwrap();
         assert_eq!(invs.len(), 3);
-        assert!(invs.iter().all(|e| e.reserved_list_id.is_none()));
+        assert!(invs.iter().all(|e| e.reservations.is_empty()));
 
         // Position löschen entfernt den Verweis (hier: nach Neuaufbau).
         let id2 = c.list_create("craft", "Set2", None).unwrap();
@@ -951,7 +992,7 @@ mod tests {
             c.inventory_list()
                 .unwrap()
                 .iter()
-                .all(|e| e.reserved_list_id.is_none())
+                .all(|e| e.reservations.is_empty())
         );
     }
 
@@ -1012,8 +1053,8 @@ mod tests {
         let r = c
             .inventory_add_for_list(entry, mining, "Hadanite", "gems")
             .unwrap();
-        assert_eq!(r.entry.reserved_list_id, Some(craft));
-        assert_eq!(r.entry.reserved_list_name, Some("FPS-Set".into()));
+        assert_eq!(r.entry.reservations[0].list_id, Some(craft));
+        assert_eq!(r.entry.reservations[0].list_name, Some("FPS-Set".into()));
         // Reservierung an einer standalone (nicht verlinkten) Liste bleibt
         // unverändert bei der Liste selbst (M9-E-Verhalten).
         let solo = c.list_create("mining", "Solo", None).unwrap();
@@ -1044,8 +1085,8 @@ mod tests {
                 "gems",
             )
             .unwrap();
-        assert_eq!(r2.entry.reserved_list_id, Some(solo));
-        assert_eq!(r2.entry.reserved_list_name, Some("Solo".into()));
+        assert_eq!(r2.entry.reservations[0].list_id, Some(solo));
+        assert_eq!(r2.entry.reservations[0].list_name, Some("Solo".into()));
     }
 
     #[test]
