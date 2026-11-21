@@ -580,8 +580,10 @@ pub struct AspectModifier {
 pub struct AspectInput {
     pub name: String,
     /// Commodity-UUID des Materials (Live-Beleg M8-R1-A, Blueprint
-    /// Greatsword: `input.uuid`) — Schlüssel für die Snap-Punkte-Abfrage
-    /// am Commodity-Endpoint; null degradiert (keine Snap-Punkte).
+    /// Greatsword: `input.uuid`) — OPTIONALER Echo-Key für die Snap-Punkte-
+    /// Abfrage (t_24961acd: Cache-Einträge aus alten Builds tragen teils
+    /// kein uuid-Feld; die Snap-Auflösung ist NAME-basiert (M8-R2,
+    /// SCMDB qualityBands), die UUID wird nur zurückgegeben, nie auflöst).
     #[serde(default)]
     pub uuid: Option<String>,
     pub min_quality: Option<f64>,

@@ -189,9 +189,13 @@ pub async fn scmdb_quality_snaps(
 }
 
 /// (uuid, Materialname)-Paar → Band-Snap-Punkte; `names[i]` gehört zu
-/// `uuids[i]` (Frontend baut beide aus derselben Aspekt-Liste). Der
-/// Index-Fetch degradiert: Fehler → ALLE Zeilen ohne Punkte (Bereicherung,
-/// kein Hard-Fail — die Regler rasten auf 500-only).
+/// `uuids[i]` (Frontend baut beide aus derselben Aspekt-Liste). Die
+/// Antwort ist POSITIONAL: `out[i]` entspricht `requests[i]`, `uuid`
+/// wird nur als Echo-Key zurückgegeben (kann leer sein — Blueprint-Cache
+/// aus alten Builds trägt teils kein uuid-Feld, t_24961acd). Die
+/// Auflösung läuft rein über den Namen (M8-R2). Leerer Name → leere
+/// Werte. Der Index-Fetch degradiert: Fehler → ALLE Zeilen ohne Punkte
+/// (Bereicherung, kein Hard-Fail — die Regler rasten auf 500-only).
 async fn quality_snaps_inner(
     cache: &Cache,
     requests: &[(String, Option<String>)],
@@ -206,10 +210,6 @@ async fn quality_snaps_inner(
     };
     let mut out = Vec::new();
     for (uuid, name) in requests {
-        let uuid = uuid.trim();
-        if uuid.is_empty() {
-            continue;
-        }
         let trimmed = name.as_deref().map(str::trim).unwrap_or_default();
         let values = if trimmed.is_empty() {
             Vec::new()
@@ -598,8 +598,54 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(out.len(), 1, "leere UUID wird übersprungen");
+        assert_eq!(
+            out.len(),
+            2,
+            "Antwort ist positional (Echo auch für leere UUID)"
+        );
         assert!(out[0].values.is_empty());
+        assert!(out[1].values.is_empty());
+        assert_eq!(
+            out[1].uuid, "",
+            "leere UUID wird als leerer Echo-Key zurückgegeben"
+        );
+    }
+
+    /// Regression t_24961acd (reales A03-Cache-Payload): Blueprint-Aspekte
+    /// OHNE uuid-Feld (alter Cache-Build) — die Auflösung ist NAME-basiert,
+    /// leere UUID darf nicht mehr übersprungen werden.
+    #[tokio::test]
+    async fn quality_snaps_uuidless_payload_resolves_by_name() {
+        let cache = cache();
+        seed_mining(
+            &cache,
+            &[
+                mineable(
+                    "Taranite (Raw)",
+                    Some("Taranite"),
+                    &[310, 525, 646, 718, 853, 925, 957, 1000],
+                ),
+                mineable("Hadanite (Raw)", Some("Hadanite"), &[274, 526, 1000]),
+            ],
+            true,
+        );
+        // Exakt das reale A03-Input-Format: `input` ohne uuid-Feld.
+        let out = quality_snaps_inner(
+            &cache,
+            &[
+                req("", Some("Taranite")),
+                req("", Some("Hadanite")),
+                req("", None), // Aspekt ohne Input-Namen → leere Werte, trotzdem Echo
+            ],
+            TEST_URL,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.len(), 3, "alle Requests werden positional beantwortet");
+        assert_eq!(out[0].uuid, "");
+        assert_eq!(out[0].values, vec![310, 525, 646, 718, 853, 925, 957, 1000]);
+        assert_eq!(out[1].values, vec![274, 526, 1000]);
+        assert!(out[2].values.is_empty());
     }
 
     /// Stale Mining-Index rettet den Fetch-Fehler (Offline-Toleranz).

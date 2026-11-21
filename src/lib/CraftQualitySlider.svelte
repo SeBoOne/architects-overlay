@@ -198,7 +198,15 @@
 
 <style>
 	.cqs {
-		flex: 1;
+		/* t_24961acd (User-P2): FESTE Balkenbreite — alle Reglerbalken einer
+		   Blueprint-Liste sind pixel-gleich, die 500-Mitte sitzt in jeder
+		   Zeile auf derselben x-Position. Vorher flex:1 → der Track zog sich
+		   je nach cmq-changes-Breite unterschiedlich lang. Die Changes-
+		   Labels rücken in den Rest der Zeile (Ellipsis, siehe t_e261c7f4).
+		   Breite MESSEND gewählt (Probe t_24961acd, Panel-Row 570px):
+		   26rem kollabiert den Changes-Raum auf ~28px — bei 19rem bleiben
+		   ~130px für die Labels lesbar und der Balken bleibt gleich. */
+		flex: 0 0 19rem;
 		min-width: 0;
 		display: flex;
 		align-items: center;

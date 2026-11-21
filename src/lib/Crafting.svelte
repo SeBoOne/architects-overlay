@@ -401,27 +401,29 @@
 	// Kein Match im Mining-Index → leere Liste → Regler rastet auf
 	// 500-only (500 ist der Always-Punkt, Snap gilt für ALLE).
 	async function loadSnaps(aspects: Aspect[]) {
-		const byUuid = new Map<string, string>(); // uuid → norm. Materialname
-		const names = new Map<string, string>(); // uuid → Rohname (`(Ore)`-Mapping)
+		// t_24961acd: UUID ist OPTIONAL (Cache-Einträge aus alten Builds
+		// tragen teils kein uuid-Feld — reales A03-Blueprint) — die Auflösung
+		// ist NAME-basiert (M8-R2). Requests über ALLE Aspekte mit
+		// nicht-leerem Input-Namen; das Backend antwortet POSITIONAL
+		// (`snaps[i]` ↔ Anfrage i), das Zuordnen läuft über den Index, nicht
+		// über die (leerbare) UUID. Doppelte Materialnamen innerhalb eines
+		// Blueprints sind unkritisch: dieselbe Ressource → dieselben Werte.
+		const reqs: { uuid: string; name: string }[] = [];
 		for (const a of aspects ?? []) {
-			const uuid = a.input?.uuid?.trim();
-			const key = materialKey(a.input?.name);
-			if (uuid && key) {
-				byUuid.set(uuid, key);
-				names.set(uuid, (a.input?.name ?? '').trim());
-			}
+			const name = (a.input?.name ?? '').trim();
+			if (!name || !materialKey(name)) continue;
+			reqs.push({ uuid: a.input?.uuid?.trim() ?? '', name });
 		}
-		if (byUuid.size === 0) return;
-		const uuids = [...byUuid.keys()];
+		if (reqs.length === 0) return;
 		try {
 			const snaps = await invoke<QualitySnapResponse[]>('scmdb_quality_snaps', {
-				uuids,
-				names: uuids.map((u) => names.get(u) ?? '')
+				uuids: reqs.map((r) => r.uuid),
+				names: reqs.map((r) => r.name)
 			});
 			const map: Record<string, number[]> = {};
-			for (const s of snaps ?? []) {
-				const key = byUuid.get(s.uuid);
-				if (key && s.values?.length) map[key] = [...s.values];
+			for (let i = 0; i < (snaps?.length ?? 0); i++) {
+				const key = materialKey(reqs[i]?.name ?? '');
+				if (key && snaps[i].values?.length) map[key] = [...snaps[i].values];
 			}
 			snapPoints = map;
 		} catch {
