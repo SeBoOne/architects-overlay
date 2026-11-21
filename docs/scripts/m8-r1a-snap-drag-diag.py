@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""M8-R1-A Snap-Drag-Diagnose (User-Befund: „snap geht nicht so wirklich").
+"""M8-R1-A Snap-Drag-Diagnose (User-Befund: „snap geht nicht so wirklich“).
 
 Diagnostiziert den ECHTEN Drag-Fall: Maus drücken → ziehen → loslassen
 (CDP Input.dispatchMouseEvent). Der bestehende Probe (m8-r1a-material-
 quality-probe.py) setzt den Regler nur programmatisch (setMat → value +
 input-Event) und kann den Drag-Bug deshalb nicht sehen.
 
-Szenario (Stub wie im R1-A-Probe): Agricium-Snaps [346, 588, 1000].
-Drag auf ~65 % der Reglerbreite → raw ~650 → nächster Snap = 588.
-Gemessen wird NACH dem Loslassen:
-  - DOM value des Inputs (Thumb-Position, was der User sieht)
-  - cmq-val Text (State, was die Rechnung nutzt)
-Bug-Bild: val=588 (State snapt) aber DOM value ~650 (Thumb hängt frei).
+Band-agnostisch (M8-R2, SCMDB qualityBands): die erwarteten Snap-Punkte
+werden aus dem Snap-Titel der Zeile gelesen („only quantized values
+[...]“) und der Erwartungswert per nearest berechnet — der Test bricht
+nicht mehr, wenn sich die Bands/Quelle ändern.
+
+Szenario:
+  D1/D2 Drag auf ~60 % → raw aus dem DOM gelesen (during drag) →
+     nearest(Bands) → nach Release müssen State UND Thumb (DOM value)
+     auf diesem Punkt stehen.
+  D3 ZWEITER Drag in denselben Bucket: State ändert sich evtl. nicht —
+     auch dann muss der Thumb auf dem Punkt landen (Controlled-Input-Fall).
 """
-import asyncio, json, os, pathlib, shutil, urllib.request
+import asyncio, json, os, pathlib, re, shutil, urllib.request
 import websockets
 
 ROOT = pathlib.Path(os.environ.get("SHOT_ROOT", str(pathlib.Path(__file__).resolve().parents[2])))
@@ -22,13 +27,8 @@ OUT = pathlib.Path(os.environ.get("SHOT_DIR", str(pathlib.Path.home() / ".hermes
 OUT.mkdir(parents=True, exist_ok=True)
 URL = "http://127.0.0.1:8899/"
 
-import sys
-sys.path.insert(0, str(ROOT / "docs/scripts"))
-# WRAP + Helfer aus dem R1-A-Probe übernehmen (Stub-Overrides identisch).
-import importlib.util
-spec = importlib.util.spec_from_file_location("r1a", ROOT / "docs/scripts/m8-r1a-material-quality-probe.py")
-# probe.py führt asyncio.run(main()) auf Modulebene aus — nicht importierbar.
-# Deshalb: WRAP direkt aus der Datei extrahieren (zwischen WRAP = r""" und """).
+# WRAP aus dem R1-A-Probe extrahieren (Stub-Overrides identisch; probe.py
+# führt asyncio.run(main()) auf Modulebene aus — nicht importierbar).
 src = (ROOT / "docs/scripts/m8-r1a-material-quality-probe.py").read_text()
 start = src.index('WRAP = r"""') + len('WRAP = r"""')
 end = src.index('"""', start)
@@ -46,6 +46,10 @@ def check(name, cond, detail=""):
         print(f"  FAIL {name}  {detail}")
 
 shutil.rmtree("/tmp/cdp-snap-diag", ignore_errors=True)
+
+
+def nearest(points, value):
+    return min(points, key=lambda p: abs(p - value))
 
 
 async def main():
@@ -124,36 +128,53 @@ async def main():
                 await asyncio.sleep(0.15)
             return None
 
-        async def mouse(x, y, type_, btn="left", clicks=1):
+        async def mouse(x, y, type_, clicks=1):
             await call("Input.dispatchMouseEvent", {
-                "type": type_, "x": x, "y": y, "button": btn,
-                "buttons": 1 if type_ == "mouseMoved" else 0,
+                "type": type_, "x": int(x), "y": int(y), "button": "left",
+                "buttons": 1 if type_ in ("mouseMoved", "mousePressed") else 0,
                 "clickCount": clicks})
 
-        async def drag_slider(idx, frac):
-            """Echter Drag: Thumb der Zeile idx auf frac (0..1) der Breite ziehen."""
-            geo = await js(f"""(() => {{
-              const s = document.querySelectorAll('.crafting .cmq-slider')[{idx}];
-              const inp = s.querySelector('.cmq-range');
-              inp.scrollIntoView({{ block: 'center' }});
-              const r = inp.getBoundingClientRect();
-              return {{ x: r.left, y: r.top + r.height / 2, w: r.width, h: r.height }};
-            }})()""")
-            assert geo and geo["w"] > 0, f"no slider geometry: {geo}"
-            # Thumb bei value 0 sitzt am linken Rand (Thumb-Hälfte einrechnen).
-            tx = geo["x"] + 8
-            ty = geo["y"]
-            await mouse(tx, ty, "mousePressed", clicks=1)
-            await asyncio.sleep(0.1)
-            target = geo["x"] + geo["w"] * frac
-            await mouse(int(target), ty, "mouseMoved")
-            await asyncio.sleep(0.15)
-            await mouse(int(target), ty, "mouseReleased")
-            await asyncio.sleep(0.3)
-            return geo
+        # Bands aus dem Snap-Titel der Zeile lesen („[346, 500, 588, …]“).
+        async def row_bands(idx):
+            title = await js(
+                f"document.querySelectorAll('.crafting .cmq-snap')[{idx}]?.title || ''")
+            m = re.search(r"\[([\d,\s]+)\]", title or "")
+            return [int(x) for x in m.group(1).split(",")] if m else []
 
-        await (asyncio.create_subprocess_exec  # stub in Seite injizieren
-               ("true"))  # Platzhalter — wrap passiert unten
+        async def read_row(idx):
+            return await js(f"""(() => {{
+              const s = document.querySelectorAll('.crafting .cmq-slider')[{idx}];
+              return {{ dom: s.querySelector('.cmq-range')?.value,
+                        val: s.querySelector('.cmq-val')?.textContent.trim() }};
+            }})()""")
+
+        async def drag_slider(idx, frac):
+            """Echter Drag: Thumb der Zeile idx auf frac (0..1) ziehen.
+            Startet am AKTUELLEN Thumb (value→Pixel), 5 Zwischenschritte
+            (natives pointermove-Verhalten), raw-Wert during drag lesen."""
+            geo = await js(
+                "(function(){var s=document.querySelectorAll('.crafting .cmq-slider')[%d];"
+                "var inp=s.querySelector('.cmq-range');inp.scrollIntoView({block:'center'});"
+                "var r=inp.getBoundingClientRect();"
+                "return {x:r.left,y:r.top+r.height/2,w:r.width,v:Number(inp.value)};})()" % idx)
+            assert geo and geo["w"] > 0, f"no slider geometry: {geo}"
+            # Thumb-X für einen Wert (Chromium: thumb inset ≈ 8px je Seite)
+            def x_for(v):
+                t = max(0.0, min(1.0, v / 1000.0))
+                return geo["x"] + 8 + t * (geo["w"] - 16)
+            await mouse(x_for(geo["v"]), geo["y"], "mousePressed")
+            await asyncio.sleep(0.1)
+            raw = None
+            for i in range(1, 6):
+                f = geo["v"] + (frac * 1000 - geo["v"]) * i / 5
+                await mouse(x_for(f), geo["y"], "mouseMoved")
+                await asyncio.sleep(0.05)
+                raw = await js(
+                    "document.querySelectorAll('.crafting .cmq-range')[%d].value" % idx)
+            await mouse(x_for(frac * 1000), geo["y"], "mouseReleased")
+            await asyncio.sleep(0.3)
+            return raw
+
         async def wrap(expr):
             return ok(await call("Page.addScriptToEvaluateOnNewDocument", {"source": STUB + "\n" + expr}))
 
@@ -165,39 +186,36 @@ async def main():
         await js("window.pressKey('F6')")
         await wait_for("document.querySelector('.crafting')", 8)
         await js("openCraft('Quality Cannon')")
-        await wait_for("craftDetailOpen() && sliderRows().length === 2", 8)
+        await wait_for(
+            "craftDetailOpen() && document.querySelectorAll('.crafting .cmq-slider').length >= 1", 8)
 
-        # Snap-Toggle muss AN sein (Default an). Falls nicht: anmachen.
         rows = await js("sliderRows()")
         if rows and rows[0]["snapOn"] is False:
             await js("toggleSnapAt(0)")
             await asyncio.sleep(0.2)
-        await js("setMat(0, 0)")
-        await asyncio.sleep(0.2)
+        bands = await row_bands(0)
+        check("D0 Bands aus Snap-Titel gelesen (>=2 Punkte)", len(bands) >= 2, str(bands))
 
-        # ---- Echter Drag auf ~60 % → raw ~600 → nächster Snap = 588 ----
-        geo = await drag_slider(0, 0.60)
-        await asyncio.sleep(0.2)
-        rows = await js("sliderRows()")
-        dom_val = await js("document.querySelectorAll('.crafting .cmq-range')[0].value")
-        print(f"  drag-geo={geo} raw-expected~600  DOM-value={dom_val}  state-val={rows[0]['val'] if rows else None}")
-        check("D1 State snapt auf 588 (Rechnung korrekt)",
-              rows and rows[0]["val"] == "588", str(rows and rows[0]["val"]))
-        check("D2 Thumb/DOM-Wert snapt ebenfalls (User-Sicht)",
-              dom_val == "588", f"DOM={dom_val} ( erwartet 588)")
+        # ---- Drag 1: auf 60 % → raw ≈ 600 → nearest(Bands) ----
+        raw = await drag_slider(0, 0.60)
+        r = await read_row(0)
+        expect = nearest(bands, int(raw or 600))
+        print(f"  drag1: raw={raw} expect={expect} dom={r['dom']} state={r['val']}")
+        check("D1 State = nearest(Bands) nach Release",
+              r["val"] == str(expect), f"val={r['val']} expect={expect}")
+        check("D2 Thumb/DOM-Wert ebenfalls auf dem Punkt (User-Sicht)",
+              r["dom"] == str(expect), f"DOM={r['dom']} expect={expect}")
 
-        # ---- ZWEITER Drag in denselben Bucket (0.65 → raw ~650 → 588):
-        #      der State ändert sich NICHT (schon 588) — hier war früher der
-        #      Bug: der Thumb blieb an der Zeigerposition hängen (User-Befund
-        #      „Werte snappen, Regler nicht"). ----
-        await drag_slider(0, 0.65)
-        await asyncio.sleep(0.2)
-        rows = await js("sliderRows()")
-        dom_val = await js("document.querySelectorAll('.crafting .cmq-range')[0].value")
-        print(f"  zweiter Drag (gleich Bucket): DOM-value={dom_val} state-val={rows[0]['val'] if rows else None}")
-        check("D3 Zweiter Drag im selben Bucket: Thumb rastet trotzdem auf 588",
-              dom_val == "588" and rows and rows[0]["val"] == "588",
-              f"DOM={dom_val} val={rows[0]['val'] if rows else None}")
+        # ---- Drag 2: NOCHMAL in denselben Bereich (kein garantierter
+        #      State-Change) — Thumb muss trotzdem rasten ----
+        raw2 = await drag_slider(0, 0.65)
+        r = await read_row(0)
+        expect2 = nearest(bands, int(raw2 or expect))
+        print(f"  drag2: raw={raw2} expect={expect2} dom={r['dom']} state={r['val']}")
+        check("D3 Zweiter Drag: Thumb rastet ebenfalls",
+              r["dom"] == str(expect2) and r["val"] == str(expect2),
+              f"DOM={r['dom']} val={r['val']} expect={expect2}")
+
         data = ok(await call("Page.captureScreenshot", {"format": "png"}))["data"]
         (OUT / "snap-drag-after.png").write_bytes(__import__("base64").b64decode(data))
         print(f"  shot {OUT / 'snap-drag-after.png'}")
