@@ -7,7 +7,8 @@
 
 use crate::i18n_err::err_wrap;
 use crate::trade::TradeState;
-use cache::lists::{ListDetail, ListSummary, NewListItem};
+use cache::inventory::NewInventoryEntry;
+use cache::lists::{ListDetail, ListSummary, NewListItem, ReservedAdd};
 use tauri::State;
 
 /// Alle Listen eines Modus (`craft` | `mining`).
@@ -107,4 +108,22 @@ pub fn list_detail(state: State<'_, TradeState>, list_id: u64) -> Result<ListDet
         .cache
         .list_detail(list_id)
         .map_err(|e| err_wrap("lists.err_load", e.to_string()))
+}
+
+/// M9-E (t_aae8d4c9): Material über eine Liste ins Inventar aufnehmen —
+/// Ort + Qualität werden im Listen-Kontext abgefragt, die Position wird
+/// „reserviert für Liste X" und eine höhere Qualität hebt die Anforderung
+/// der Liste an (`requirement_raised` + neue `requirement`).
+#[tauri::command]
+pub fn inventory_add_for_list(
+    state: State<'_, TradeState>,
+    entry: NewInventoryEntry,
+    list_id: u64,
+    material: String,
+    unit: String,
+) -> Result<ReservedAdd, String> {
+    state
+        .cache
+        .inventory_add_for_list(entry, list_id, &material, &unit)
+        .map_err(|e| err_wrap("lists.err_add_inventory", e.to_string()))
 }

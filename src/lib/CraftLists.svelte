@@ -71,6 +71,93 @@
 	// Teilweise-Abhak-Eingabe je aggregierter Zeile (material:unit → Text).
 	let partial = $state<Record<string, string>>({});
 
+	// M9-E (t_aae8d4c9) — Inventar-Anbindung: „Material hinzufügen“ pro
+	// aggregierter Zeile. Ort + Qualität werden hier abgefragt, die Position
+	// landet reserviert für DIESE Liste im Inventar; eine höhere Qualität
+	// hebt die Anforderung an (Antwort aus inventory_add_for_list).
+	let addInvFor = $state<AggMat | null>(null);
+	let invLoc = $state('');
+	let invQ = $state('');
+	let invQty = $state('');
+	let invNote = $state('');
+	let invNoteRaised = $state(false);
+	let invRaisedQ = $state(0);
+	let invError = $state('');
+	let invLocs = $state<string[]>([]);
+	let invLocEl = $state<HTMLInputElement | null>(null);
+	const remaining = (m: AggMat) => Math.max(0, Math.round((m.quantity - m.done_qty) * 100) / 100);
+	function openAddInv(m: AggMat) {
+		addInvFor = m;
+		invNote = '';
+		invError = '';
+		// Vorschläge: Anforderung als Qualität, offene Menge als Menge.
+		invQ = String(m.min_quality);
+		invQty = String(remaining(m));
+		void loadInvLocs();
+		setTimeout(() => invLocEl?.focus(), 0);
+	}
+	async function loadInvLocs() {
+		try {
+			invLocs = await invoke<string[]>('inventory_locations');
+		} catch {
+			invLocs = [];
+		}
+	}
+	async function submitAddInv() {
+		if (addInvFor === null || activeId === null) return;
+		const m = addInvFor;
+		const loc = invLoc.trim();
+		const q = Number(invQ);
+		const qty = Number(invQty.replace(',', '.'));
+		if (!loc) {
+			invError = $t('inventory.err_location');
+			return;
+		}
+		if (!Number.isFinite(q) || q < 0 || q > 1000 || !Number.isInteger(q)) {
+			invError = $t('inventory.err_quality');
+			return;
+		}
+		if (!Number.isFinite(qty) || qty <= 0) {
+			invError = $t('inventory.err_qty');
+			return;
+		}
+		invError = '';
+		try {
+			const res = await invoke<{
+				entry: { name: string; quality: number; location_name: string };
+				requirement_raised: boolean;
+				requirement: number;
+			}>('inventory_add_for_list', {
+				entry: {
+					entity_kind: null,
+					entity_id: null,
+					name: m.material,
+					quality: q,
+					location_id: null,
+					location_name: loc,
+					quantity: qty,
+					price: null
+				},
+				listId: activeId,
+				material: m.material,
+				unit: m.unit
+			});
+			// Erst reloaden (openList räumt Hinweis/Formular auf), dann den
+			// Erfolgshinweis setzen, damit er stehen bleibt.
+			await openList(activeId);
+			invNote = $t('lists.reserved_note', {
+				name: res.entry.name,
+				q: res.entry.quality,
+				loc: res.entry.location_name,
+				list: detail?.name ?? ''
+			});
+			invNoteRaised = res.requirement_raised;
+			invRaisedQ = res.requirement;
+		} catch (e) {
+			invError = String(e);
+		}
+	}
+
 	const UNIT_COLORS: Record<string, string> = {
 		SCU: '#e0a83e',
 		gems: '#7ec8e3',
@@ -104,6 +191,10 @@
 	}
 	async function openList(id: number) {
 		error = '';
+		// M9-E: Hinweis/Formular der vorherigen Liste verfallen lassen.
+		invNote = '';
+		invError = '';
+		addInvFor = null;
 		try {
 			detail = await invoke<ListDetail>('list_detail', { listId: id });
 			activeId = id;
@@ -311,6 +402,12 @@
 
 		<!-- Aggregierte Materialmengen + Abhaken (ganz/teilweise) -->
 		<div class="cl-agg-head">{$t('lists.aggregated')}</div>
+		{#if invNote}
+			<div class="cl-inv-note" class:is-raised={invNoteRaised}>
+				{invNote}
+				{#if invNoteRaised}{$t('lists.req_raised', { q: invRaisedQ })}{/if}
+			</div>
+		{/if}
 		{#if detail.aggregated.length}
 			<div class="cl-agg">
 				{#each detail.aggregated as m (rowKey(m))}
@@ -366,6 +463,54 @@
 								<button type="button" class="cl-mini" onclick={() => void setDone(m, null)}>
 									{$t('lists.reset')}
 								</button>
+							{/if}
+								<button type="button" class="cl-mini" onclick={() => openAddInv(m)}>
+									{$t('lists.to_inventory')}
+								</button>
+							{#if addInvFor && addInvFor.material === m.material && addInvFor.unit === m.unit}
+								<div class="cl-inv-form">
+									<div class="cl-inv-title">{$t('lists.inv_title', { list: detail.name })}</div>
+									{#if invError}<div class="cl-err">{invError}</div>{/if}
+									<div class="cl-inv-fields">
+										<input
+											bind:this={invLocEl}
+											class="cl-input"
+											type="text"
+											bind:value={invLoc}
+											list="cl-inv-locs"
+											placeholder={$t('inventory.location')}
+											aria-label={$t('inventory.location')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<datalist id="cl-inv-locs">
+											{#each invLocs as loc}<option value={loc}></option>{/each}
+										</datalist>
+										<input
+											class="cl-input cl-inv-q"
+											type="text"
+											inputmode="numeric"
+											bind:value={invQ}
+											placeholder={$t('inventory.quality')}
+											aria-label={$t('inventory.quality')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<input
+											class="cl-input cl-inv-q"
+											type="text"
+											inputmode="decimal"
+											bind:value={invQty}
+											placeholder={$t('lists.done_partial_ph')}
+											aria-label={$t('lists.inv_qty')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<button type="button" class="cl-btn" onclick={() => void submitAddInv()}>
+											{$t('lists.inv_add')}
+										</button>
+										<button type="button" class="cl-mini" onclick={() => (addInvFor = null)}>
+											{$t('common.cancel')}
+										</button>
+									</div>
+								</div>
 							{/if}
 						</div>
 					</div>
@@ -614,6 +759,38 @@
 		flex-wrap: wrap;
 	}
 	.cl-partial {
+		width: 74px;
+		padding: 3px 8px;
+	}
+	/* M9-E: Inventar-Anbindung — Hinzufügen mit Ort+Qualität. */
+	.cl-inv-note {
+		font-size: 12px;
+		padding: 6px 10px;
+		border-radius: 6px;
+		background: rgba(111, 220, 140, 0.12);
+		border: 1px solid rgba(111, 220, 140, 0.3);
+		color: #6fdc8c;
+	}
+	.cl-inv-form {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 6px;
+		padding: 8px;
+	}
+	.cl-inv-title {
+		font-size: 12px;
+		opacity: 0.75;
+	}
+	.cl-inv-fields {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.cl-inv-q {
 		width: 74px;
 		padding: 3px 8px;
 	}

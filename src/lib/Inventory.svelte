@@ -32,6 +32,8 @@ function keyActivate(e: KeyboardEvent) {
 		location_name: string;
 		quantity: number;
 		price: number | null;
+		reserved_list_id: string | null;
+		reserved_list_name: string | null;
 		created_at: number;
 		updated_at: number;
 	};
@@ -784,7 +786,7 @@ function keyActivate(e: KeyboardEvent) {
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div class="main">
 							<div class="loc">{r.location_name}{#if r.location_id !== null}<span class="src">{$t('inventory.dot_location')}</span>{/if}</div>
-							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}</div>
+							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
 						</div>
 						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
 						<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
@@ -825,7 +827,7 @@ function keyActivate(e: KeyboardEvent) {
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div class="main">
 								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? $t('common.item') : $t('common.commodity')}</span>{/if}</div>
-								<div class="sub">{#if r.price}{$t('common.buy')} {fmtPrice(r.price)} aUEC{:else}{$t('inventory.no_purchase_price')}{/if}</div>
+								<div class="sub">{#if r.price}{$t('common.buy')} {fmtPrice(r.price)} aUEC{:else}{$t('inventory.no_purchase_price')}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
 							</div>
 							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
 							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
@@ -887,7 +889,7 @@ function keyActivate(e: KeyboardEvent) {
 										<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 										<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openLocation(r.location_name)}>
 											<div class="loc">{r.location_name}</div>
-											<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}</div>
+											<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
 										</div>
 										<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
 										<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
@@ -924,7 +926,7 @@ function keyActivate(e: KeyboardEvent) {
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 								<div class="loc">{r.name}</div>
-								<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}</div>
+								<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
 							</div>
 							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
 							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
@@ -938,7 +940,7 @@ function keyActivate(e: KeyboardEvent) {
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 							<div class="loc">{r.name} <small>{r.location_name}</small></div>
-							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}</div>
+							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
 						</div>
 						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
 						<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
@@ -1164,6 +1166,12 @@ function keyActivate(e: KeyboardEvent) {
 		font-size: 9px;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
+	}
+	/* M9-E (t_aae8d4c9): „reserviert für Liste" badge on inventory rows. */
+	.inv-row .resv {
+		color: #e0a83e;
+		font-size: 10px;
+		white-space: nowrap;
 	}
 	.inv-edit {
 		border: none;

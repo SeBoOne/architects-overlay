@@ -420,6 +420,17 @@ CREATE TABLE IF NOT EXISTS list_mat_done (
   done_qty REAL    NOT NULL DEFAULT 0,
   PRIMARY KEY (list_id, material, unit)
 );
+-- M9-E (t_aae8d4c9): Inventar-Anbindung — eine über eine Liste hinzugefügte
+-- Inventar-Position verweist auf diese Liste („reserviert für Liste X").
+-- Eine Position hat höchstens EINE Reservierung (PK = inventory_id); das
+-- Löschen der Liste löst nur die Verknüpfung (die Inventar-Position bleibt),
+-- das Löschen der Position entfernt den Verweis.
+CREATE TABLE IF NOT EXISTS list_reservations (
+  inventory_id INTEGER PRIMARY KEY, -- -> inventory.id
+  list_id      INTEGER NOT NULL,    -- -> lists.id
+  material     TEXT    NOT NULL,
+  unit         TEXT    NOT NULL
+);
 -- Handelsrouten (v6, Karte t_128b7547): JSON-Metadatensätze hinter einem
 -- Frischemarkierer — Terminal-Flags (Autoload/Cargodeck/Boden/Kette) und
 -- Ware-Flags (illegal/sellable/buyable) aus UEX, plus der Routen-Sweep-
@@ -702,7 +713,12 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   `list_item_mats` und `list_mat_done` (generische Listen-Engine —
 ///   Crafting-/Mining-Listen, siehe `lists`-Modul). Rein additiv —
 ///   `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten betroffen.
-pub const SCHEMA_VERSION: i64 = 13;
+/// * v14 — M9-E (t_aae8d4c9): neue additive Tabelle `list_reservations`
+///   (Inventar-Anbindung: eine Inventar-Position, die über eine Liste
+///   hinzugefügt wurde, verweist auf diese Liste — „reserviert für Liste
+///   X"). Rein additiv — `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten
+///   betroffen.
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.

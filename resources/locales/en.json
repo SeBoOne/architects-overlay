@@ -1319,6 +1319,15 @@
     "update.reason_deb_apt": ".deb installations update via apt — the app performs no root actions.",
     "update.reason_no_appimage": "No running AppImage found",
     "update.reason_rate_limit": "Rate limit (429) — check again later",
-    "update.reason_rate_limit_retry": "Rate limit (429) — try again later"
+    "update.reason_rate_limit_retry": "Rate limit (429) — try again later",
+    "lists.to_inventory": "Add to inventory",
+    "lists.inv_title": "Add inventory position — reserved for “{list}”",
+    "lists.inv_qty": "Quantity",
+    "lists.inv_add": "Reserve",
+    "lists.reserved_note": "Position recorded: {name} Q{q} · {loc} — reserved for “{list}”.",
+    "lists.req_raised": "Requirement raised to Q{q}.",
+    "lists.err_add_inventory": "Inventory position could not be recorded",
+    "inventory.reserved_badge": "reserved for {list}",
+    "inventory.quality": "Quality"
   }
 }

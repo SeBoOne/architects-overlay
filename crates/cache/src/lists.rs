@@ -18,6 +18,7 @@
 //! Lokal-first wie das Inventar: KEIN Sync, KEIN API-Zugriff, nur die App
 //! schreibt hier.
 
+use super::inventory::{InventoryEntry, NewInventoryEntry};
 use super::{Cache, CacheError, Result};
 use rusqlite::OptionalExtension;
 
@@ -110,6 +111,17 @@ pub struct ListDetail {
     pub created_at: u64,
     pub items: Vec<ListItem>,
     pub aggregated: Vec<AggMat>,
+}
+
+/// Ergebnis von `inventory_add_for_list` (M9-E): die neue Inventar-Position
+/// (inkl. Reservierungs-Verweis) + ob die Qualitäts-Anforderung der Liste
+/// angehoben wurde („höhere Qualität ist immer besser").
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ReservedAdd {
+    pub entry: InventoryEntry,
+    pub requirement_raised: bool,
+    /// Anforderung NACH der Anpassung (MAX aus Alt-Werten + gelieferter Q).
+    pub requirement: u32,
 }
 
 fn validate_kind(kind: &str) -> Result<()> {
@@ -214,6 +226,12 @@ impl Cache {
             )?;
             conn.execute("DELETE FROM list_items WHERE list_id = ?1", [id as i64])?;
             conn.execute("DELETE FROM list_mat_done WHERE list_id = ?1", [id as i64])?;
+            // M9-E: nur die Verknüpfung lösen — die reservierten Inventar-
+            // Positionen bleiben im Inventar (nicht mehr „reserviert").
+            conn.execute(
+                "DELETE FROM list_reservations WHERE list_id = ?1",
+                [id as i64],
+            )?;
             conn.execute("DELETE FROM lists WHERE id = ?1", [id as i64])?;
             Ok(())
         })
@@ -350,6 +368,90 @@ impl Cache {
                 }
             }
             Ok(())
+        })
+    }
+
+    /// M9-E (t_aae8d4c9) — Inventar-Anbindung: Material über eine Liste
+    /// hinzufügen. Legt die Inventar-Position an (Ort + Qualität sind
+    /// Pflichtfelder des Inventars), verknüpft sie mit der Liste
+    /// („reserviert für Liste X") und passt die Qualitäts-Anforderung der
+    /// Liste an, wenn die gelieferte Qualität HÖHER ist als die bisher
+    /// geforderte (`list_item_mats.quality` der passenden (material, unit)-
+    /// Zeilen wird auf die höhere Qualität gehoben — MAX-Regel, „höher ist
+    /// immer besser"). Eine niedrigere Qualität ändert NICHTS an der
+    /// Anforderung (sie ist eine Mindest-Qualität).
+    ///
+    /// Reservierung und Anforderungs-Anpassung laufen in einem Rutsch auf
+    /// derselben Verbindung; die Inventar-Zeile selbst entsteht vorher (dort
+    /// sitzt die Validierung) — schlägt der Reservierungs-Teil fehl, bleibt
+    /// eine ganz normale Inventar-Position ohne Verweis zurück.
+    pub fn inventory_add_for_list(
+        &self,
+        entry: NewInventoryEntry,
+        list_id: u64,
+        material: &str,
+        unit: &str,
+    ) -> Result<ReservedAdd> {
+        if material.trim().is_empty() || unit.trim().is_empty() {
+            return Err(CacheError::Query(i18n_err::err_key("lists.err_item")));
+        }
+        // Liste existiert? Vor dem Inventar-Insert prüfen, damit ein
+        // Tippfehler in der Listen-Id NICHT erst eine Position anlegt.
+        let exists: i64 = self.with(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM lists WHERE id = ?1",
+                [list_id as i64],
+                |r| r.get(0),
+            )
+        })?;
+        if exists == 0 {
+            return Err(CacheError::Query(i18n_err::err_keyp(
+                "lists.err_missing",
+                serde_json::json!({ "id": list_id }),
+            )));
+        }
+        let quality = entry.quality;
+        let inv_id = self.inventory_add(entry)?;
+        let (raised, requirement) = self.with(move |conn| {
+            conn.execute(
+                "INSERT INTO list_reservations (inventory_id, list_id, material, unit) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![inv_id as i64, list_id as i64, material.trim(), unit.trim()],
+            )?;
+            // Bisherige Anforderung (MAX über die Snapshot-Zeilen).
+            let old: i64 = conn
+                .query_row(
+                    "SELECT COALESCE(MAX(quality), 0) FROM list_item_mats \
+                     WHERE item_row IN (SELECT id FROM list_items WHERE list_id = ?1) \
+                       AND material = ?2 AND unit = ?3",
+                    rusqlite::params![list_id as i64, material.trim(), unit.trim()],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            // Höhere gelieferte Qualität hebt die Anforderung an.
+            let changed = conn.execute(
+                "UPDATE list_item_mats SET quality = ?1 \
+                 WHERE quality < ?1 \
+                   AND item_row IN (SELECT id FROM list_items WHERE list_id = ?2) \
+                   AND material = ?3 AND unit = ?4",
+                rusqlite::params![quality as i64, list_id as i64, material.trim(), unit.trim()],
+            )?;
+            Ok((changed > 0, (old.max(quality as i64)) as u32))
+        })?;
+        let entry = self
+            .inventory_list()?
+            .into_iter()
+            .find(|e| e.id == inv_id)
+            .ok_or_else(|| {
+                CacheError::Query(i18n_err::err_keyp(
+                    "inventory.err_position_missing",
+                    serde_json::json!({ "id": inv_id }),
+                ))
+            })?;
+        Ok(ReservedAdd {
+            entry,
+            requirement_raised: raised,
+            requirement,
         })
     }
 
@@ -670,6 +772,149 @@ mod tests {
                 .is_err()
         );
         assert!(c.list_rename(999_999, "n").is_err());
+    }
+
+    #[test]
+    fn inventory_add_for_list_reserves_and_raises_requirement() {
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("craft", "Set").unwrap();
+        c.list_add_item(
+            id,
+            bp(
+                "a",
+                "A",
+                1.0,
+                vec![
+                    ("Hadanite", "gems", 300.0, 500),
+                    ("Quantum Core", "items", 1.0, 800),
+                ],
+            ),
+        )
+        .unwrap();
+
+        let inv = |q: u32, name: &str| NewInventoryEntry {
+            entity_kind: None,
+            entity_id: None,
+            name: name.into(),
+            quality: q,
+            location_id: None,
+            location_name: "Levski".into(),
+            quantity: 250.0,
+            price: None,
+        };
+
+        // Niedrigere als die GEFORNDERTE? Nein — 700 > 500: höhere gelieferte
+        // Qualität hebt die Anforderung an („höher ist immer besser").
+        let r = c
+            .inventory_add_for_list(inv(700, "Hadanite"), id, "Hadanite", "gems")
+            .unwrap();
+        assert!(r.requirement_raised);
+        assert_eq!(r.requirement, 700);
+        assert_eq!(r.entry.reserved_list_id, Some(id));
+        assert_eq!(r.entry.reserved_list_name, Some("Set".into()));
+        assert_eq!(r.entry.quality, 700);
+        // Anforderung der Snapshot-Zeilen auf 700 angehoben.
+        let d = c.list_detail(id).unwrap();
+        let had = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Hadanite")
+            .unwrap();
+        assert_eq!(had.min_quality, 700);
+        assert_eq!(
+            d.items[0]
+                .mats
+                .iter()
+                .find(|m| m.material == "Hadanite")
+                .unwrap()
+                .quality,
+            700
+        );
+
+        // Niedrigere oder gleiche Qualität ändert NICHTS an der Anforderung
+        // (Mindest-Qualität — sie wird nicht gesenkt).
+        let r0 = c
+            .inventory_add_for_list(inv(600, "Hadanite"), id, "Hadanite", "gems")
+            .unwrap();
+        assert!(!r0.requirement_raised);
+        assert_eq!(r0.requirement, 700);
+
+        // Höhere Qualität HEBELT die Anforderung weiter an (nur Hadanite/gems —
+        // Quantum Core bleibt bei 800).
+        let r2 = c
+            .inventory_add_for_list(inv(900, "Hadanite"), id, "Hadanite", "gems")
+            .unwrap();
+        assert!(r2.requirement_raised);
+        assert_eq!(r2.requirement, 900);
+        let d = c.list_detail(id).unwrap();
+        assert_eq!(
+            d.items[0]
+                .mats
+                .iter()
+                .find(|m| m.material == "Hadanite")
+                .unwrap()
+                .quality,
+            900
+        );
+        assert_eq!(
+            d.items[0]
+                .mats
+                .iter()
+                .find(|m| m.material == "Quantum Core")
+                .unwrap()
+                .quality,
+            800
+        );
+
+        // Alle drei Positionen tauchen reserviert im Inventar auf.
+        let invs = c.inventory_list().unwrap();
+        assert_eq!(invs.len(), 3);
+        assert!(
+            invs.iter()
+                .all(|e| e.reserved_list_id == Some(id)
+                    && e.reserved_list_name == Some("Set".into()))
+        );
+
+        // Validierung: leeres Material / fehlende Liste legt KEINE Position an.
+        assert!(
+            c.inventory_add_for_list(inv(500, "X"), id, " ", "gems")
+                .is_err()
+        );
+        let before = c.inventory_list().unwrap().len();
+        assert!(
+            c.inventory_add_for_list(inv(500, "X"), 999_999, "Hadanite", "gems")
+                .is_err()
+        );
+        assert_eq!(c.inventory_list().unwrap().len(), before);
+        // Qualität > 1000 fliegt (Inventar-Validierung greift auch hier).
+        assert!(
+            c.inventory_add_for_list(inv(1001, "X"), id, "Hadanite", "gems")
+                .is_err()
+        );
+
+        // Liste löschen: Verknüpfung löst sich, Positionen bleiben.
+        c.list_delete(id).unwrap();
+        let invs = c.inventory_list().unwrap();
+        assert_eq!(invs.len(), 3);
+        assert!(invs.iter().all(|e| e.reserved_list_id.is_none()));
+
+        // Position löschen entfernt den Verweis (hier: nach Neuaufbau).
+        let id2 = c.list_create("craft", "Set2").unwrap();
+        c.list_add_item(
+            id2,
+            bp("a", "A", 1.0, vec![("Hadanite", "gems", 300.0, 500)]),
+        )
+        .unwrap();
+        let r3 = c
+            .inventory_add_for_list(inv(500, "Hadanite"), id2, "Hadanite", "gems")
+            .unwrap();
+        c.inventory_delete(r3.entry.id).unwrap();
+        assert!(
+            c.inventory_list()
+                .unwrap()
+                .iter()
+                .all(|e| e.reserved_list_id.is_none())
+        );
     }
 
     #[test]
