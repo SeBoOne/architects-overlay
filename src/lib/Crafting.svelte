@@ -12,14 +12,16 @@
 	//                      vorkommende category), nichts hartkodiert.
 	//   3. Item-Detail   — Materialliste mit Menge + EINHEIT farblich getrennt
 	//                      (SCU / gems / items — NIE mischen; 1000 gems = 1 SCU
-	//                      als Legenden-Anmerkung), minQuality-Badge („—“ bei
-	//                      null), Craft-Zeit.
-	//   4. Qualitäts-PLANUNGSRECHNER — Ziel-Slider 0–1000 → geforderte
-	//                      MINDEST-Input-Qualität = max(minQuality) über alle
-	//                      Kosten; je Material grün/rot. M8-K6: dazu der echte
-	//                      Stat-Rechner (QualityStats) — Modifier-Interpolation
-	//                      als %-Abweichung, sobald ein SC-Wiki-Blueprint mit
-	//                      Modifier-Daten gematcht hat (sonst still weg).
+	//                      als Legenden-Anmerkung über der Liste), Craft-Zeit.
+	//   4. Individuelle QUALITÄTSREGLER (M8-R1-A/R3) + Gesamt-Qualität:
+	//                      je Material Regler-Zeile (Balken + Wert + Snap-
+	//                      Toggle) und darunter die Effektzeile voll
+	//                      ausgeschrieben (M8-R4). Gesamt-Qualität = MITTELWERT
+	//                      aller Kosten-Zeilen-Regler (read-only Balken). M8-K6:
+	//                      dazu der echte Stat-Rechner (QualityStats) —
+	//                      Modifier-Interpolation als %-Abweichung, sobald ein
+	//                      SC-Wiki-Blueprint mit Modifier-Daten gematcht hat
+	//                      (sonst still weg).
 	//
 	// NICHT gebaut (M8-K5): Item-Details (Size/Grade/Class), Blaupausen-
 	// Missionen, dismantle_returns.
@@ -41,6 +43,7 @@
 	import {
 		aspectQuality,
 		materialKey,
+		meanQuality,
 		nearestSnap,
 		statChanges,
 		type Aspect,
@@ -386,13 +389,6 @@
 		detailError = '';
 	}
 
-	// ---- Qualitäts-PLANUNGSRECHNER (Machbarkeits-Check, KEINE Stat-Vorhersage)
-	// Geforderte MINDEST-Input-Qualität = max(minQuality) über alle Kosten;
-	// fehlende Angaben (null) tragen nicht bei. 0 ist gültige Daten.
-	const requiredQuality = $derived(
-		detail ? Math.max(0, ...detail.costs.map((c) => c.minQuality ?? 0)) : 0
-	);
-
 	// ---- M8-R1-A: individuelle Material-Regler -------------------------------
 	type QualitySnapResponse = { uuid: string; values: number[] };
 
@@ -437,9 +433,6 @@
 	const DEFAULT_ROW_QUALITY = 500;
 	const rowQuality = (c: CostEntry, idx: number): number =>
 		matQual[rowKey(c, idx)] ?? DEFAULT_ROW_QUALITY;
-	// Zeile grün/rot am EIGENEN Reglerwert (User-P2: Badge klebt am Regler).
-	const rowMeets = (c: CostEntry, idx: number) =>
-		c.minQuality === null || rowQuality(c, idx) >= c.minQuality;
 	// Aspekt einer Kosten-Zeile (per normiertem Materialnamen gematcht).
 	const rowAspect = (c: CostEntry): Aspect | null =>
 		(detail?.blueprintAspects ?? []).find(
@@ -520,11 +513,14 @@
 		}
 		return map;
 	});
-	// Gesamt-Qualität = min über die Aspekt-Qualitäten (schwächster Aspekt
-	// bestimmt — Rechenmodell im quality-calc-Header; null = nichts berechenbar).
+	// M8-R4 (t_e8f4f57d): Gesamt-Qualität = MITTELWERT der eingestellten
+	// Qualitäten über ALLE Kosten-Zeilen (unberührte Regler zählen mit ihrem
+	// Default 500 — wie angezeigt). Nicht mehr min über die Aspekte (User-
+	// Befund: falsches Modell); die Aspekt-Qualitäten oben bleiben UNBERÜHRT
+	// und dienen weiter der Effekt-/Modifier-Berechnung (QualityStats).
 	const combined = $derived.by(() => {
-		const qs = [...aspectQualities.values()];
-		return qs.length ? Math.min(...qs) : null;
+		if (!detail) return null;
+		return meanQuality(detail.costs.map((c, idx) => rowQuality(c, idx)));
 	});
 	// Gemischte Effekte: eine Änderung am Regler → %-Abweichung je Eigenschaft
 	// (nur der betroffene Aspekt, K6-Modell).
@@ -766,13 +762,11 @@
 						<div class="cnote">{$t('craft.no_materials')}</div>
 					{:else}
 						<div class="cmats" role="list">
-							{#each detail.costs as c, idx (c.material + ':' + idx)}
-								<div
-									class="cmat"
-									class:is-ok={rowMeets(c, idx)}
-									class:is-fail={!rowMeets(c, idx)}
-									role="listitem"
-								>
+							<!-- M8-R4: Einheiten-Legende am Materiallisten-Kopf (war im
+							     entfernten Planungsrechner-Kopf zu Hause). -->
+							<div class="cmat-legend">{$t('craft.units_legend', { gems: String(1000) })}</div>
+								{#each detail.costs as c, idx (c.material + ':' + idx)}
+									<div class="cmat" role="listitem">
 									{#if c.oreId && onOpenOre}
 									<!-- M8-K3 (t_a8088d06): Bedarfserz klickbar → Mining-Modus
 									     mit dem Erz vorgewählt (Orte-pro-Erz-Detail). -->
@@ -791,20 +785,12 @@
 											>{unitName(c.unit)}</span
 										>
 									</span>
-									<span
-										class="cmq"
-										class:is-req={c.minQuality !== null && rowQuality(c, idx) < c.minQuality}
-										title={c.minQuality === null
-											? $t('craft.min_quality_none')
-											: $t('craft.min_quality') + ' ' + c.minQuality}
-									>
-										{c.minQuality === null ? '—' : String(c.minQuality)}
-									</span>
-								</div>
-								{#if rowAspect(c)}
-									<!-- M8-R1-A: individueller Material-Qualitätsregler (0–1000)
-									     mit minQuality-Badge (grün/rot am eigenen Wert), Snap-
-									     Toggle (quality_quantized_values) und %-Abweichungen. -->
+									</div>
+									{#if rowAspect(c)}
+									<!-- M8-R1-A: individueller Material-Qualitätsregler (0–1000) —
+									     M8-R4: Balken + Wert + Snap-Toggle in EINER Zeile, der
+									     Effekttext in einer EIGENEN Zeile darunter (voll aus-
+									     geschrieben, mehrzeilig erlaubt). -->
 									<div class="cmq-slider" class:is-snap={rowSnapOn(c, idx)}>
 										<!-- M8-R3: Custom-Slider — Track fix 0–1000 (500 immer
 										     optische Mitte), Magnet-Snapping mit Hysterese im
@@ -816,9 +802,7 @@
 											bounds={rowBounds(c, idx)}
 											ariaLabel={`${$t('craft.mat_quality')}: ${c.material}`}
 										/>
-										<span class="cmq-val" class:is-ok={rowMeets(c, idx)} class:is-fail={!rowMeets(c, idx)}
-											>{rowQuality(c, idx)}</span
-										>
+										<span class="cmq-val">{rowQuality(c, idx)}</span>
 																				<!-- t_9107f006: Toggle IMMER an der Regler-Zeile sichtbar
 										(M8-R2: nie disabled — ohne Band-Match rastet der Regler
 										auf 500-only, der Title zeigt das Raster). -->
@@ -833,52 +817,42 @@
 											: $t('craft.snap_off')}
 										onclick={() => toggleSnap(c, idx)}
 										>{$t('craft.snap')}</button>
-										<span class="cmq-changes">
-											{#each rowChanges(c, idx) as ch (ch.property_key)}
-												<span
-													class="cmq-change"
-													class:is-better={ch.better === true}
-													class:is-worse={ch.better === false}>{ch.label} {ch.pct === null ? '—' : (ch.pct > 0 ? '+' : '') + ch.pct + '%'}</span
-												>
-											{/each}
-										</span>
-									</div>
-								{/if}
+										</div>
+										<!-- M8-R4: Effektzeile EIGENSTÄNDIG unter der Regler-Zeile —
+										Labels voll ausgeschrieben, mehrzeilig erlaubt, kein
+										Ellipsis-Cut mehr. -->
+										<div class="cmq-changes">
+										{#each rowChanges(c, idx) as ch (ch.property_key)}
+											<span
+												class="cmq-change"
+												class:is-better={ch.better === true}
+												class:is-worse={ch.better === false}>{ch.label} {ch.pct === null ? '—' : (ch.pct > 0 ? '+' : '') + ch.pct + '%'}</span
+											>
+										{/each}
+										</div>
+										{/if}
 							{/each}
 							</div>
 
-							<!-- Qualitäts-PLANUNGSRECHNER — Machbarkeits-Check (Materialien
-							     mit Reglern). Die Stats-Vollanzeige (QualityStats) steht
-							     oben direkt nach Size/Mass/Ammo (M8-R1-C). -->
-						<div class="cplanner">
-							<div class="cp-head">{$t('craft.planner_title')}</div>
-							<!-- M8-R1-A: Gesamt-Qualität = Anzeige-/Mischwert aus den
-							     individuellen Reglern (min über Aspekte, s. quality-calc) —
-							     der alte Gesamt-Slider bleibt sichtbar, ist aber read-only. -->
-							<div class="cp-row">
-								<label class="cp-label" for="craft-target-q">{$t('craft.combined_quality')}</label>
-								<input
-									id="craft-target-q"
-									class="cp-slider"
-									type="range"
-									min="0"
-									max="1000"
-									step="1"
-									disabled
-									value={combined ?? 0}
-								/>
-								<span class="cp-val">{combined === null ? '—' : String(Math.round(combined))}</span>
-							</div>
-							<div class="cp-result">
-								{$t('craft.required_quality')}: <strong>{requiredQuality}</strong>
-							</div>
-							<p class="cp-note">{$t('craft.planner_note')}</p>
-								<div class="cp-legend">
-									<span class="cpl-ok">✓ {$t('craft.q_ok')}</span>
-									<span class="cpl-fail">✗ {$t('craft.q_fail')}</span>
-									<span class="cpl-units">
-										{$t('craft.units_legend', { gems: String(1000) })}
-									</span>
+							<!-- M8-R4: Gesamt-Qualität = Mittelwert der Kosten-Zeilen-Regler
+							(s. Script-Teil) — nur noch der read-only Balken, kein Kopf,
+							keine required-Zeile, keine Legende (Einheiten-Legende hängt
+							am Materiallisten-Kopf). Die Stats-Vollanzeige (QualityStats)
+							steht oben direkt nach Size/Mass/Ammo (M8-R1-C). -->
+							<div class="cplanner">
+								<div class="cp-row">
+									<label class="cp-label" for="craft-target-q">{$t('craft.combined_quality')}</label>
+									<input
+										id="craft-target-q"
+										class="cp-slider"
+										type="range"
+										min="0"
+										max="1000"
+										step="1"
+										disabled
+										value={combined ?? 0}
+									/>
+									<span class="cp-val">{combined === null ? '—' : String(Math.round(combined))}</span>
 								</div>
 							</div>
 							{/if}
@@ -1190,12 +1164,12 @@
 	.cmat:last-child {
 		border-bottom: 0;
 	}
-	/* Planungsrechner-Färbung: grün = Ziel-Qualität ≥ minQuality, rot = darunter */
-	.cmat.is-ok {
-		border-left: 3px solid #4be08a;
-	}
-	.cmat.is-fail {
-		border-left: 3px solid #ff6b6b;
+	/* M8-R4: Einheiten-Legende am Materiallisten-Kopf (dezent, wie cpl-units) */
+	.cmat-legend {
+		padding: 5px 10px 4px;
+		font-size: 10.5px;
+		opacity: 0.6;
+		border-bottom: 1px solid var(--line-soft, rgba(255, 255, 255, 0.05));
 	}
 	.cm-name {
 		flex: 1;
@@ -1233,22 +1207,10 @@
 		color: var(--uc, #b8bfc9);
 		font-weight: 600;
 	}
-	.cmq {
-		flex: none;
-		width: 44px;
-		text-align: center;
-		font-size: 11px;
-		padding: 1px 0;
-		border-radius: 6px;
-		border: 1px solid var(--line, #2a2f3a);
-		opacity: 0.8;
-		font-variant-numeric: tabular-nums;
-	}
-	.cmq.is-req {
-		border-color: var(--acc, #e0a83e);
-		opacity: 1;
-	}
-	/* M8-R1-A: individueller Material-Qualitätsregler unter der Zeile */
+	/* M8-R1-A: individueller Material-Qualitätsregler unter der Zeile —
+	   M8-R4: Regler-Zeile = Balken (feste 19rem-Breite, 500-Mitte pixel-
+	   gleich bei allen Materialien) + Wert + Snap-Toggle; der Balken hat
+	   die Zeile für sich, nichts verdrängt ihn mehr. */
 	.cmq-slider {
 		display: flex;
 		align-items: center;
@@ -1256,21 +1218,12 @@
 		padding: 3px 10px 6px 14px;
 		border-bottom: 1px solid var(--line-soft, rgba(255, 255, 255, 0.05));
 	}
-	.cmq-slider:last-child {
-		border-bottom: 0;
-	}
 	.cmq-val {
 		flex: none;
 		width: 38px;
 		text-align: right;
 		font-size: 11px;
 		font-variant-numeric: tabular-nums;
-	}
-	.cmq-val.is-ok {
-		color: #4be08a;
-	}
-	.cmq-val.is-fail {
-		color: #ff6b6b;
 	}
 	.cmq-snap {
 		flex: none;
@@ -1294,30 +1247,22 @@
 		border-style: dashed;
 		cursor: default;
 	}
+	/* M8-R4: Effektzeile EIGENE Zeile unter der Regler-Zeile — Labels voll
+	   ausgeschrieben, mehrzeilig erlaubt (flex-wrap), KEIN Ellipsis-Cut.
+	   Die Regler-Zeilen sind isoliert (Balken + Wert + Toggle), die Effekt-
+	   Zeile kann wachsen, ohne den Balken zu verdrängen; Scroll-Erhalt
+	   (setRowQuality) stabilisiert die Position beim Regeln. */
 	.cmq-changes {
-		/* t_e261c7f4: feste Zeile — Effektlabels einzeilig mit Ellipsis,
-		   statt beim Regeln zu wachsen und die Liste zu verschieben. */
-		flex: 0 1 auto;
-		max-width: 38%;
-		min-width: 0;
 		display: flex;
-		gap: 6px;
-		overflow: hidden;
-		white-space: nowrap;
+		flex-wrap: wrap;
+		gap: 2px 10px;
+		padding: 2px 10px 6px 14px;
 		font-size: 10.5px;
 		font-variant-numeric: tabular-nums;
-		/* t_e261c7f4: Raumstabilität — Labels wachsen nicht mehr in die
-		   Zeile (sonst drücken sie die Materialliste aus dem Viewport) */
-		max-width: 34ch;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		border-bottom: 1px solid var(--line-soft, rgba(255, 255, 255, 0.05));
 	}
 	.cmq-change {
-		opacity: 0.75;
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		opacity: 0.8;
 	}
 	.cmq-change.is-better {
 		color: #4be08a;
@@ -1328,17 +1273,12 @@
 		opacity: 1;
 	}
 
-	/* Qualitäts-PLANUNGSRECHNER */
+	/* M8-R4: Gesamt-Qualität — nur noch der read-only Balken (Mittelwert) */
 	.cplanner {
 		margin-top: 12px;
 		border: 1px solid var(--line, #2a2f3a);
 		border-radius: 10px;
 		padding: 10px 12px;
-	}
-	.cp-head {
-		font-weight: 700;
-		font-size: 12.5px;
-		margin-bottom: 8px;
 	}
 	.cp-row {
 		display: flex;
@@ -1360,35 +1300,6 @@
 		font-variant-numeric: tabular-nums;
 		font-size: 12.5px;
 		font-weight: 600;
-	}
-	.cp-result {
-		margin-top: 8px;
-		font-size: 12.5px;
-	}
-	.cp-result strong {
-		color: var(--acc, #e0a83e);
-	}
-	.cp-note {
-		margin: 8px 0 0;
-		font-size: 11px;
-		line-height: 1.45;
-		opacity: 0.7;
-	}
-	.cp-legend {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 6px 14px;
-		margin-top: 8px;
-		font-size: 11px;
-	}
-	.cpl-ok {
-		color: #4be08a;
-	}
-	.cpl-fail {
-		color: #ff6b6b;
-	}
-	.cpl-units {
-		opacity: 0.65;
 	}
 
 	/* Attribution-Footer (ToS-Pflicht) — IMMER sichtbar */
@@ -1494,6 +1405,11 @@
 	}
 	.cdi {
 		font-variant-numeric: tabular-nums;
+	}
+	.cp-head {
+		font-weight: 700;
+		font-size: 12.5px;
+		margin-bottom: 8px;
 	}
 	/* Blaupausen-Missionen */
 	.cmissions {

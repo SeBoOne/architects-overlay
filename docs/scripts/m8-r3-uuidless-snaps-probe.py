@@ -160,7 +160,7 @@ WRAP = r"""
     return orig(cmd, args);
   };
   window.craftDetailOpen = () => !!document.querySelector('.crafting .cd-title');
-  window.sliderRows = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => ({
+  window.sliderRows = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r, i) => ({
     val: r.querySelector('.cmq-val')?.textContent.trim(),
     snapOn: r.querySelector('.cmq-snap')?.classList.contains('is-on') || false,
     snapEmpty: r.querySelector('.cmq-snap')?.classList.contains('is-empty') || false,
@@ -168,7 +168,8 @@ WRAP = r"""
     now: r.querySelector('.cqs-track')?.getAttribute('aria-valuenow'),
     min: r.querySelector('.cqs-track')?.getAttribute('aria-valuemin'),
     max: r.querySelector('.cqs-track')?.getAttribute('aria-valuemax'),
-    changes: [...r.querySelectorAll('.cmq-change')].map((c) => c.textContent.trim())
+    changes: [...((document.querySelectorAll('.crafting .cmq-changes') || [])[i] || [])
+      .querySelectorAll('.cmq-change')].map((c) => c.textContent.trim())
   }));
   // Balken-Gleichheit (User-P2): Track-Breite + 500-Mitte je Zeile.
   window.trackGeo = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => {
@@ -202,11 +203,13 @@ WRAP = r"""
   window.pressKey = (key) => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
   };
-  window.changesGeo = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => {
-    const c = r.querySelector('.cmq-changes')?.getBoundingClientRect();
-    const cs = r.querySelector('.cmq-changes') ? getComputedStyle(r.querySelector('.cmq-changes')) : null;
-    const row = r.getBoundingClientRect();
-    return c ? { cw: Math.round(c.width), rowW: Math.round(row.width), maxw: cs?.maxWidth } : null;
+  // M8-R4: Effektzeile ist ein EIGENES Row-Element unter .cmq-slider —
+  // voll ausgeschrieben (kein Ellipsis-Cut, kein max-width-Cap).
+  window.changesGeo = () => [...document.querySelectorAll('.crafting .cmq-changes')].map((r) => {
+    const c = r.getBoundingClientRect();
+    const cs = getComputedStyle(r);
+    return { cw: Math.round(c.width), wrap: cs.flexWrap, maxw: cs.maxWidth,
+             ellipsis: cs.textOverflow, hasOverflow: r.width < r.scrollWidth };
   });
   window.modalOverflow = () => {
     const m = document.querySelector('.crafting .cdetail');
@@ -363,7 +366,7 @@ async def main():
               max(widths) - min(widths) <= 1.0, str(widths))
         check("C4 500-Mitte auf derselben x-Position (±1px)",
               max(cxs) - min(cxs) <= 1.0, str(cxs))
-        check("C5 Balkenbreite plausibel (feste Breite ~19rem, Changes-Raum bleibt)",
+        check("C5 Balkenbreite plausibel (feste Breite ~19rem; Changes in EIGENER Zeile)",
               all(280 <= w <= 330 for w in widths), str(widths))
         await shot("m8-r3-uuidless-equal-tracks.png")
 
@@ -373,7 +376,11 @@ async def main():
         check("C6 Gleichheit stabil nach Wert-Änderung (±1px)",
               max(w2) - min(w2) <= 1.0, str(w2))
 
-        print("CHANGES_GEO", await js("changesGeo()"))
+        cgeo = await js("changesGeo()")
+        check("C7 M8-R4: Effektzeile voll ausgeschrieben — wrap, kein max-width/ellipsis, kein Overflow",
+              cgeo and all(c["wrap"] == "wrap" and c["maxw"] == "none" and c["ellipsis"] != "ellipsis"
+                           and not c["hasOverflow"] for c in cgeo), str(cgeo))
+        print("CHANGES_GEO", cgeo)
         await js("window.pressKey('Escape')")
 
     for p in (proc, server):

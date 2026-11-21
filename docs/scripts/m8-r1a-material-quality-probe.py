@@ -140,7 +140,7 @@ WRAP = r"""
   // M8-R3: Custom-Slider — Wert/Grenzen aus den ARIA-Attributen des
   // .cqs-track (nativ range ist ersetzt); setMat zieht per ECHTEN
   // Pointer-Events am Track (Hysterese/Clamp im Pointer-Handler).
-  window.sliderRows = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => ({
+  window.sliderRows = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r, i) => ({
     range: r.querySelector('.cqs-track')?.getAttribute('aria-valuenow'),
     min: r.querySelector('.cqs-track')?.getAttribute('aria-valuemin'),
     max: r.querySelector('.cqs-track')?.getAttribute('aria-valuemax'),
@@ -149,12 +149,21 @@ WRAP = r"""
     snapBtn: r.querySelector('.cmq-snap')?.textContent.trim() || null,
     snapOn: r.querySelector('.cmq-snap')?.classList.contains('is-on') || false,
     snapTitle: r.querySelector('.cmq-snap')?.title || null,
-    changes: [...r.querySelectorAll('.cmq-change')].map((c) => c.textContent.trim())
+    changes: [...((document.querySelectorAll('.crafting .cmq-changes') || [])[i] || [])
+      .querySelectorAll('.cmq-change')].map((c) => c.textContent.trim())
   }));
-  window.badges = () => [...document.querySelectorAll('.crafting .cmats .cmat')].map((r) => ({
-    name: r.querySelector('.cm-name')?.textContent.trim(),
-    badge: r.querySelector('.cmq')?.textContent.trim(),
+  // M8-R4 (t_e8f4f57d): minQuality-Badge (.cmq) ist ENTFERNT — die Prüfung
+  // dreht sich um: kein Badge-Element, kein Grün/Rot (is-ok/is-fail) mehr.
+  window.badges = () => [...document.querySelectorAll('.crafting .cmats .cmq')].map((r) => ({
+    name: r.textContent.trim(),
     cls: r.className
+  }));
+  window.changeRows = () => [...document.querySelectorAll('.crafting .cmq-changes')].map((r) => ({
+    text: r.textContent.trim(),
+    cls: r.className,
+    maxw: getComputedStyle(r).maxWidth,
+    wrap: getComputedStyle(r).flexWrap,
+    w: Math.round(r.getBoundingClientRect().width)
   }));
   // M8-R1-C×R1-A (t_1dbe8a85): Regler-SICHTBARKEIT — Bounding-Box > 0,
   // nicht display:none/hidden, im sichtbaren Bereich (ohne Scrollen).
@@ -341,9 +350,11 @@ async def main():
               str(snaps_called))
         rows0 = await js("sliderRows()")
         check("1g Snap-Default an (Toggle is-on)", rows0 and rows0[0]["snapOn"] is True and rows0[1]["snapOn"] is True, str(rows0))
-        badges = await js("badges()")
-        check("1f Zeilen starten GRÜN (500 ≥ minQuality; Agricium min 500, Hadanite min 1)",
-              badges and all("is-ok" in b["cls"] for b in badges), str(badges))
+        check("1f M8-R4: minQuality-Badge/Spalte komplett entfernt (kein .cmq, kein is-ok)",
+              (await js("badges()")) == [], str(await js("badges()")))
+        cro = await js("changeRows()")
+        check("1h M8-R4: Effektzeile eigene Zeile — mehrzeilig (flex-wrap), kein Ellipsis-Cut",
+              cro and all(c["wrap"] == "wrap" and c["maxw"] == "none" for c in cro), str(cro))
 
         # ---- Gate 2: minQuality am EIGENEN Regler (Snap aus → freie Werte) ----
         await js("toggleSnapAt(0)")
@@ -354,15 +365,14 @@ async def main():
         await js("setMat(0, 600)")  # Agricium: minQuality 500
         await asyncio.sleep(0.3)
         rows = await js("sliderRows()")
-        check("2a Agricium Q600: Wert grün (≥ 500)",
-              rows and "is-ok" in rows[0]["valCls"] and rows[0]["val"] == "600", str(rows))
+        check("2a Agricium Q600: Wert 600",
+              rows and rows[0]["val"] == "600", str(rows))
         # Startwert 500 = Mitte; 500 ist selbst Rasterpunkt → An-Toggle rastet
         # 500 zu 500 (kein Sprung mehr auf 287 wie vor dem 500-Default).
-        check("2b Hadanite: bleibt 500 (Mitte = Rasterpunkt, ≥ min 1 → grün)",
-              rows and rows[1]["val"] == "500" and "is-ok" in rows[1]["valCls"] and rows[1]["snapOn"] is False, str(rows))
-        badges = await js("badges()")
-        check("2c Beide Zeilen grün (eigene Reglerwerte erfüllen minQuality)",
-              badges and all("is-ok" in b["cls"] for b in badges), str(badges))
+        check("2b Hadanite: bleibt 500 (Mitte = Rasterpunkt)",
+              rows and rows[1]["val"] == "500" and rows[1]["snapOn"] is False, str(rows))
+        check("2c M8-R4: kein Grün/Rot an Werten (is-ok/is-fail entfernt)",
+              rows and all("is-ok" not in r["valCls"] and "is-fail" not in r["valCls"] for r in rows), str(rows))
         await shot("m8-r1a-detail-mixed.png")
 
         # ---- Gate 3: %-Abweichungen am Regler ----
@@ -371,18 +381,19 @@ async def main():
         await js("setMat(0, 1000)")
         await asyncio.sleep(0.3)
         rows = await js("sliderRows()")
-        check("3b Agricium Q1000: Integrity +10 %, grün",
-              rows and "Integrity +10%" in rows[0]["changes"] and "is-ok" in rows[0]["valCls"], str(rows))
+        check("3b Agricium Q1000: Integrity +10 %",
+              rows and "Integrity +10%" in rows[0]["changes"], str(rows))
         await js("setMat(0, 0)")
         await asyncio.sleep(0.3)
 
-        # ---- Gate 4: Gesamt-Qualität = min über Aspekte ----
+        # ---- Gate 4: Gesamt-Qualität = MITTELWERT über alle Kosten-Zeilen (M8-R4) ----
         await js("setMat(0, 200)")
         await js("setMat(1, 800)")
         await asyncio.sleep(0.4)
         comb = await js("combined()")
         check("4a Label 'Combined quality'", comb and "Combined quality" in (comb["label"] or ""), str(comb))
-        check("4b Gesamt = min(200, 800) = 200", comb and comb["value"] == "200" and comb["shown"] == "200", str(comb))
+        check("4b Gesamt = MITTELWERT (200+800+500)/3 = 500 — nicht min 200",
+              comb and comb["value"] == "500" and comb["shown"] == "500", str(comb))
         check("4c Gesamt-Slider read-only", comb and comb["disabled"] is True, str(comb))
         # mingewichtet: alles über die Einzel-Regler (1 Material pro Aspekt)
         props = await js("qsProps()")
