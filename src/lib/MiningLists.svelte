@@ -105,6 +105,114 @@
 	let renameVal = $state('');
 	let partial = $state<Record<string, string>>({});
 
+	// M9-H (t_7709c7f2, Punkt 5): „Als erledigt" öffnet die Inventar-Maske
+	// mit dem fehlenden Restbetrag voreingetragen (nur Qualität + Lagerort
+	// werden abgefragt); Teil-Eintrag → Teilmenge voreingetragen. Reserviert
+	// wird NUR für verknüpfte Listen (source_list_id, Craft→Mining-Brücke
+	// M9-D) — standalone Mining-Listen landen ohne Reservierungs-Verweis.
+	let addInvFor = $state<AggMat | null>(null);
+	let invLoc = $state('');
+	let invQ = $state('');
+	let invQty = $state('');
+	let invNote = $state('');
+	let invError = $state('');
+	let invLocs = $state<string[]>([]);
+	let invLocEl = $state<HTMLInputElement | null>(null);
+	// Verknüpfte Liste? (Brücken-Kind — nur diese reservieren, Spec Punkt 5)
+	const activeLinked = $derived(lists.find((l) => l.id === activeId)?.source_list_id != null);
+	const remaining = (m: AggMat) => Math.max(0, Math.round((m.quantity - m.done_qty) * 100) / 100);
+	function openAddInv(m: AggMat, qty: number) {
+		addInvFor = m;
+		invNote = '';
+		invError = '';
+		// Vorschläge: Anforderung als Qualität, offene Menge als Menge.
+		invQ = String(m.min_quality);
+		invQty = String(qty);
+		void loadInvLocs();
+		setTimeout(() => invLocEl?.focus(), 0);
+	}
+	/// „Als erledigt": Restbetrag voreingetragen.
+	function doneAllInv(m: AggMat) {
+		openAddInv(m, remaining(m));
+	}
+	/// Teil-Eintrag: eingegebene Teilmenge voreingetragen (ungültige Eingabe
+	/// → Restbetrag, damit die Maske nie mit 0/leer startet).
+	function donePartialInv(m: AggMat) {
+		const raw = (partial[rowKey(m)] ?? '').replace(',', '.').trim();
+		const v = Number(raw);
+		openAddInv(m, raw && Number.isFinite(v) && v > 0 ? v : remaining(m));
+	}
+	async function loadInvLocs() {
+		try {
+			invLocs = await invoke<string[]>('inventory_locations');
+		} catch {
+			invLocs = [];
+		}
+	}
+	async function submitAddInv() {
+		if (addInvFor === null || activeId === null) return;
+		const m = addInvFor;
+		const loc = invLoc.trim();
+		const q = Number(invQ);
+		const qty = Number(String(invQty).replace(',', '.'));
+		if (!loc) {
+			invError = $t('inventory.err_location');
+			return;
+		}
+		if (!Number.isFinite(q) || q < 0 || q > 1000 || !Number.isInteger(q)) {
+			invError = $t('inventory.err_quality');
+			return;
+		}
+		if (!Number.isFinite(qty) || qty <= 0) {
+			invError = $t('inventory.err_qty');
+			return;
+		}
+		invError = '';
+		const entry = {
+			entity_kind: null,
+			entity_id: null,
+			name: m.material,
+			quality: q,
+			location_id: null,
+			location_name: loc,
+			quantity: qty,
+			price: null
+		};
+		try {
+			// Fortschritt der Liste mitführen: Menge addieren, auf Soll klemmen.
+			const newDone = Math.min(m.quantity, m.done_qty + qty);
+			// NUR verknüpfte Listen reservieren (Spec Punkt 5) — standalone
+			// Listen bekommen eine normale Inventar-Position ohne Verweis.
+			const addedName = activeLinked
+				? (
+						await invoke<{ entry: { name: string; quality: number; location_name: string } }>(
+							'inventory_add_for_list',
+							{ entry, listId: activeId, material: m.material, unit: m.unit }
+						)
+					).entry.name
+				: (await invoke<{ name: string }>('inventory_add', { entry })).name;
+			await invoke('list_set_done', {
+				listId: activeId,
+				material: m.material,
+				unit: m.unit,
+				doneQty: newDone
+			});
+			// Erst reloaden (openList räumt Eingaben/Formular auf), dann den
+			// Erfolgshinweis setzen, damit er stehen bleibt.
+			await openList(activeId);
+			invNote = activeLinked
+				? $t('lists.reserved_note', {
+						name: addedName,
+						q: q,
+						loc: loc,
+						list: detail?.name ?? ''
+					})
+				: $t('inventory.added_note', { name: addedName, q: q, loc: loc });
+		} catch (e) {
+			invError = String(e);
+		}
+	}
+
 	// Eintrag hinzufügen: Material-Typeahead + Menge + Einheit + Qualität.
 	let addQuery = $state('');
 	let addQty = $state('100');
@@ -160,6 +268,10 @@
 	}
 	async function openList(id: number) {
 		error = '';
+		// M9-H: Hinweis/Formular der vorherigen Liste verfallen lassen.
+		invNote = '';
+		invError = '';
+		addInvFor = null;
 		try {
 			detail = await invoke<ListDetail>('list_detail', { listId: id });
 			activeId = id;
@@ -285,15 +397,8 @@
 			error = String(e);
 		}
 	}
-	function doneAll(m: AggMat) {
-		void setDone(m, m.quantity);
-	}
-	function donePartial(m: AggMat) {
-		const raw = (partial[rowKey(m)] ?? '').replace(',', '.').trim();
-		const v = Number(raw);
-		if (!raw || !Number.isFinite(v) || v < 0) return;
-		void setDone(m, v);
-	}
+	// (doneAll/donePartial ersetzt durch doneAllInv/donePartialInv — M9-H
+	// Punkt 5: Abhaken läuft jetzt über die Inventar-Maske mit Vorbefüllung.)
 
 	// ---- Beste Orte (Set-Cover + Qualitäts-Bänder) ----------------------------
 	async function computePlaces() {
@@ -553,6 +658,7 @@
 
 		<!-- Aggregierte Mengen + Abhaken (ganz/teilweise/Reset) -->
 		<div class="ml-agg-head">{$t('lists.aggregated')}</div>
+		{#if invNote}<div class="ml-inv-note">{invNote}</div>{/if}
 		{#if detail.aggregated.length}
 			<div class="ml-agg">
 				{#each detail.aggregated as m (rowKey(m))}
@@ -579,7 +685,7 @@
 							<div class="ml-bar-fill" class:is-done={p >= 100} style={`width:${p}%`}></div>
 						</div>
 						<div class="ml-agg-actions">
-							<button type="button" class="ml-mini" onclick={() => doneAll(m)} disabled={p >= 100}>
+							<button type="button" class="ml-mini" onclick={() => doneAllInv(m)} disabled={p >= 100}>
 								{$t('lists.done_all')}
 							</button>
 							<input
@@ -589,12 +695,12 @@
 								bind:value={partial[rowKey(m)]}
 								placeholder={$t('lists.done_partial_ph')}
 								aria-label={$t('lists.done_partial')}
-								onkeydown={(e) => e.key === 'Enter' && donePartial(m)}
+								onkeydown={(e) => e.key === 'Enter' && donePartialInv(m)}
 							/>
 							<button
 								type="button"
 								class="ml-mini"
-								onclick={() => donePartial(m)}
+								onclick={() => donePartialInv(m)}
 								disabled={p >= 100}>{$t('lists.done_partial')}</button
 							>
 							{#if m.done_qty > 0}
@@ -602,13 +708,61 @@
 									{$t('lists.reset')}
 								</button>
 							{/if}
-						</div>
-					</div>
-				{/each}
-			</div>
-		{:else}
-			<div class="ml-hint">{$t('lists.no_mats')}</div>
-		{/if}
+							<button type="button" class="ml-mini" onclick={() => openAddInv(m, remaining(m))}>
+								{$t('lists.to_inventory')}
+							</button>
+							{#if addInvFor && addInvFor.material === m.material && addInvFor.unit === m.unit}
+								<div class="ml-inv-form">
+									<div class="ml-inv-title">{$t('lists.inv_title', { list: detail.name })}</div>
+									{#if invError}<div class="ml-err">{invError}</div>{/if}
+									<div class="ml-inv-fields">
+										<input
+											bind:this={invLocEl}
+											class="ml-input"
+											type="text"
+											bind:value={invLoc}
+											list="ml-inv-locs"
+											placeholder={$t('inventory.location')}
+											aria-label={$t('inventory.location')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<datalist id="ml-inv-locs">
+											{#each invLocs as loc}<option value={loc}></option>{/each}
+										</datalist>
+										<input
+											class="ml-input ml-inv-q"
+											type="text"
+											inputmode="numeric"
+											bind:value={invQ}
+											placeholder={$t('inventory.quality')}
+											aria-label={$t('inventory.quality')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<input
+											class="ml-input ml-inv-q"
+											type="text"
+											inputmode="decimal"
+											bind:value={invQty}
+											placeholder={$t('lists.done_partial_ph')}
+											aria-label={$t('lists.inv_qty')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<button type="button" class="ml-btn" onclick={() => void submitAddInv()}>
+											{$t('lists.inv_add')}
+										</button>
+										<button type="button" class="ml-mini" onclick={() => (addInvFor = null)}>
+											{$t('common.cancel')}
+										</button>
+									</div>
+								</div>
+							{/if}
+							</div>
+							</div>
+							{/each}
+							</div>
+							{:else}
+							<div class="ml-hint">{$t('lists.no_mats')}</div>
+							{/if}
 
 		<!-- Beste Orte: möglichst wenige Orte, Qualitäts-Bänder als Filter -->
 		<div class="ml-places-head">
@@ -682,6 +836,49 @@
 		min-height: 0;
 		flex: 1;
 		color: var(--fg, #d7dde5);
+		/* M9-H (t_7709c7f2, Punkt 6): eigener Scroll + Padding — Inhalt war
+		   an der Kante abgeschnitten (kein Scroll-Container) und klebte am Rand. */
+		overflow-y: auto;
+		padding: 2px 10px 12px 2px;
+	}
+	.mlists::-webkit-scrollbar {
+		width: 8px;
+	}
+	.mlists::-webkit-scrollbar-thumb {
+		background: color-mix(in srgb, var(--accent, #4aa3ff) 35%, transparent);
+		border-radius: 4px;
+	}
+	/* M9-H Punkt 5: Inventar-Maske (Port aus CraftLists .cl-inv-*). */
+	.ml-inv-note {
+		font-size: 12px;
+		padding: 6px 10px;
+		border-radius: 6px;
+		background: rgba(111, 220, 140, 0.12);
+		border: 1px solid rgba(111, 220, 140, 0.3);
+		color: #6fdc8c;
+	}
+	.ml-inv-form {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 6px;
+		padding: 8px;
+	}
+	.ml-inv-title {
+		font-size: 12px;
+		opacity: 0.75;
+	}
+	.ml-inv-fields {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.ml-inv-q {
+		width: 74px;
+		padding: 3px 8px;
 	}
 	.ml-bar {
 		display: flex;

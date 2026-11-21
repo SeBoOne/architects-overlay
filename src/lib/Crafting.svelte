@@ -1287,7 +1287,9 @@
 	   Shell-Kette — gefixt in app.css (.crafting-keep, s. dort). */
 	.cdetail {
 		overflow-y: auto;
-		padding-bottom: 10px;
+		/* M9-H (t_7709c7f2, Punkt 6): horizontales Padding — Blueprint-Details
+		   klebten am Panel-Rand (gleiche Problematik wie die Listen-Tabs). */
+		padding: 2px 10px 10px 2px;
 	}
 	.cnote {
 		padding: 10px 2px;

@@ -604,6 +604,35 @@
 			<div class="mc-foot">{$t('mining.key_missing_settings')}</div>
 		</div>
 	{:else}
+		<!-- M9-H (t_7709c7f2, Punkt 1): Tab-Zeile IMMER sichtbar — auch im
+		     Listen-Reiter gibt es den Rückweg zu Erze/Orte (Konsistenz mit
+		     dem Crafting-Modus, dessen .ctabs über beiden Tabs hängt). -->
+		<div class="mtabs" role="tablist">
+			<button
+				type="button"
+				class="mtab"
+				class:is-on={view === 'ores'}
+				role="tab"
+				aria-selected={view === 'ores'}
+				onclick={() => (view = 'ores')}>{$t('mining.tab_ores')}</button
+			>
+			<button
+				type="button"
+				class="mtab"
+				class:is-on={view === 'locations'}
+				role="tab"
+				aria-selected={view === 'locations'}
+				onclick={() => (view = 'locations')}>{$t('mining.tab_locations')}</button
+			>
+			<button
+				type="button"
+				class="mtab"
+				class:is-on={(view as string) === 'lists'}
+				role="tab"
+				aria-selected={(view as string) === 'lists'}
+				onclick={() => (view = 'lists')}>{$t('mining.tab_lists')}</button
+			>
+		</div>
 		{#if view === 'lists'}
 			<!-- M9-C: Listen-Tab — Mining-Listen (gleiche Engine, kind='mining')
 			     + Beste-Orte-Optimierung (Set-Cover, Qualitäts-Bänder) -->
@@ -612,33 +641,6 @@
 		<div class="mcols">
 			<!-- Linke Spalte: Erz-/Ort-Suche -->
 			<div class="mcol">
-				<div class="mtabs" role="tablist">
-					<button
-						type="button"
-						class="mtab"
-						class:is-on={view === 'ores'}
-						role="tab"
-						aria-selected={view === 'ores'}
-						onclick={() => (view = 'ores')}>{$t('mining.tab_ores')}</button
-					>
-					<button
-						type="button"
-						class="mtab"
-						class:is-on={view === 'locations'}
-						role="tab"
-						aria-selected={view === 'locations'}
-						onclick={() => (view = 'locations')}>{$t('mining.tab_locations')}</button
-					>
-					<button
-						type="button"
-						class="mtab"
-						class:is-on={(view as string) === 'lists'}
-						role="tab"
-						aria-selected={(view as string) === 'lists'}
-						onclick={() => (view = 'lists')}>{$t('mining.tab_lists')}</button
-					>
-				</div>
-
 				{#if view === 'ores'}
 				<!-- M7-F3 (Punkt 8): kein eigenes Textfeld mehr — das Haupt-Suchfeld -->
 				<div class="mfrow">
