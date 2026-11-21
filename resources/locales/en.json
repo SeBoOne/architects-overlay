@@ -1335,6 +1335,7 @@
     "lists.bridge_title": "Create the required materials (with qualities) as a mining list",
     "lists.bridge_note": "Mining list “{name}” created — materials + qualities transferred.",
     "lists.source_badge": "from crafting list “{name}”",
+    "lists.linked_readonly": "Linked to crafting list “{name}” — materials and quantities are managed there.",
     "lists.inv_title": "Add inventory position — reserved for “{list}”",
     "lists.inv_qty": "Quantity",
     "lists.inv_add": "Reserve",

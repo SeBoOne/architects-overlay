@@ -559,6 +559,9 @@
 		</div>
 
 		<!-- Eintrag hinzufügen: Material (Typeahead) + Menge + Einheit + Qualität -->
+		<!-- M9-G: verknüpfte Listen sind abhängig — Material/Mengen kommen aus
+		     der Crafting-Liste und werden dort gepflegt (read-only hier). -->
+		{#if !activeLinked}
 		<div class="ml-add">
 			<input
 				class="ml-input ml-add-mat"
@@ -622,33 +625,41 @@
 				</div>
 			{/if}
 		</div>
+		{/if}
 
 		<!-- Einträge: Material + Mengen-Stepper + Entfernen -->
+		{#if activeLinked}
+			<div class="ml-hint">
+				{$t('lists.linked_readonly', { name: activeSourceName ?? '' })}
+			</div>
+		{/if}
 		{#if detail.items.length}
 			<div class="ml-items">
 				{#each detail.items as it (it.id)}
 					<div class="ml-item">
 						<span class="ml-item-name">{it.item_name}</span>
-						<span class="ml-copies">
+						{#if !activeLinked}
+							<span class="ml-copies">
+								<button
+									type="button"
+									class="ml-step"
+									aria-label={$t('lists.copies_less')}
+									onclick={() => void stepQty(it.id, it.copies, -1)}>−</button
+								>
+								<span class="ml-copies-n">{fmtQty(it.copies)}</span>
+								<button
+									type="button"
+									class="ml-step"
+									aria-label={$t('lists.copies_more')}
+									onclick={() => void stepQty(it.id, it.copies, 1)}>＋</button
+								>
+							</span>
 							<button
 								type="button"
-								class="ml-step"
-								aria-label={$t('lists.copies_less')}
-								onclick={() => void stepQty(it.id, it.copies, -1)}>−</button
+								class="ml-mini is-danger"
+								onclick={() => void removeItem(it.id)}>{$t('lists.remove')}</button
 							>
-							<span class="ml-copies-n">{fmtQty(it.copies)}</span>
-							<button
-								type="button"
-								class="ml-step"
-								aria-label={$t('lists.copies_more')}
-								onclick={() => void stepQty(it.id, it.copies, 1)}>＋</button
-							>
-						</span>
-						<button
-							type="button"
-							class="ml-mini is-danger"
-							onclick={() => void removeItem(it.id)}>{$t('lists.remove')}</button
-						>
+						{/if}
 					</div>
 				{/each}
 			</div>

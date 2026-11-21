@@ -20,7 +20,7 @@
 
 use super::inventory::{InventoryEntry, NewInventoryEntry};
 use super::{Cache, CacheError, Result};
-use rusqlite::OptionalExtension;
+use rusqlite::{Connection, OptionalExtension};
 
 /// Craft-Zeit-Snapshot eines Eintrags (Sekunden, 0 = unbekannt).
 pub const KIND_CRAFT: &str = "craft";
@@ -145,6 +145,113 @@ fn validate_kind(kind: &str) -> Result<()> {
 fn validate_name(name: &str) -> Result<()> {
     if name.trim().is_empty() {
         return Err(CacheError::Query(i18n_err::err_key("lists.err_name")));
+    }
+    Ok(())
+}
+
+/// M9-G (t_131614e0) — Aggregation einer Liste für den Spiegel: (material,
+/// unit) → (Menge, MAX-Qualität, ore_id). ore_id wie in `bridgeItems` (M9-D):
+/// letzter Treffer in item/mats-Reihenfolge gewinnt (ORDER BY ... DESC, LIMIT 1).
+type SyncAgg = Vec<(String, String, f64, i64, Option<String>)>;
+
+fn craft_agg(conn: &Connection, list_id: i64) -> rusqlite::Result<SyncAgg> {
+    let mut stmt = conn.prepare(
+        "SELECT mim.material, mim.unit, SUM(mim.quantity * li.copies), MAX(mim.quality), \
+                (SELECT m2.ore_id FROM list_item_mats m2 \
+                 JOIN list_items li2 ON li2.id = m2.item_row \
+                 WHERE li2.list_id = ?1 AND m2.material = mim.material AND m2.unit = mim.unit \
+                 ORDER BY li2.id DESC, m2.id DESC LIMIT 1) \
+         FROM list_items li JOIN list_item_mats mim ON mim.item_row = li.id \
+         WHERE li.list_id = ?1 \
+         GROUP BY mim.material, mim.unit \
+         ORDER BY LOWER(mim.material) ASC",
+    )?;
+    let rows = stmt.query_map([list_id], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, f64>(2)?,
+            r.get::<_, i64>(3)?,
+            r.get::<_, Option<String>>(4)?,
+        ))
+    })?;
+    rows.collect()
+}
+
+/// Spiegelt den Stand der Crafting-Liste `source_id` in ALLE verknüpften
+/// Mining-Listen (lists.source_list_id): Einträge werden neu aufgebaut
+/// (Material/Menge/Qualität = Aggregation, M9-D-Brücke), der Abhak-Stand
+/// bleibt für weitergeführte Materialien erhalten (auf die neue Menge
+/// geklemmt) und fällt für entfernte Materialien weg. Wird nach jeder
+/// Struktur-Änderung der Quell-Liste aufgerufen — die Verknüpfung ist
+/// damit dauerhaft live, nicht nur beim Anlegen.
+fn sync_linked_mining(conn: &mut Connection, source_id: u64) -> rusqlite::Result<()> {
+    let agg = craft_agg(conn, source_id as i64)?;
+    let linked: Vec<i64> = {
+        let mut stmt = conn.prepare(
+            "SELECT id FROM lists WHERE source_list_id = ?1 AND kind = 'mining' ORDER BY id",
+        )?;
+        let rows = stmt.query_map([source_id as i64], |r| r.get::<_, i64>(0))?;
+        rows.collect::<rusqlite::Result<Vec<i64>>>()?
+    };
+    for m in linked {
+        // Abhak-Stand VOR dem Neuaufbau lesen (er bleibt für Materialien,
+        // die weitergeführt werden, erhalten — auf die neue Menge geklemmt).
+        let done: Vec<(String, String, f64)> = {
+            let mut stmt = conn
+                .prepare("SELECT material, unit, done_qty FROM list_mat_done WHERE list_id = ?1")?;
+            let rows = stmt.query_map([m], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, f64>(2)?,
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<(String, String, f64)>>>()?
+        };
+        conn.execute(
+            "DELETE FROM list_item_mats WHERE item_row IN \
+             (SELECT id FROM list_items WHERE list_id = ?1)",
+            [m],
+        )?;
+        conn.execute("DELETE FROM list_items WHERE list_id = ?1", [m])?;
+        conn.execute("DELETE FROM list_mat_done WHERE list_id = ?1", [m])?;
+        for (material, unit, qty, quality, ore_id) in &agg {
+            if *qty <= 0.0 {
+                continue;
+            }
+            conn.execute(
+                "INSERT INTO list_items (list_id, item_id, item_name, craft_time, copies, created_at) \
+                 VALUES (?1, ?2, ?3, 0, ?4, ?5)",
+                rusqlite::params![
+                    m,
+                    ore_id.clone().unwrap_or_else(|| material.clone()),
+                    material,
+                    qty,
+                    super::now_unix() as i64
+                ],
+            )?;
+            let row = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO list_item_mats (item_row, material, ore_id, unit, quantity, quality) \
+                 VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+                rusqlite::params![row, material, ore_id, unit, quality],
+            )?;
+        }
+        // done-Stand neu schreiben: nur Materialien, die es noch gibt,
+        // done auf die (ggf. geschrumpfte) Sollmenge geklemmt.
+        for (material, unit, dq) in done {
+            if let Some((_, _, qty, _, _)) = agg
+                .iter()
+                .find(|(am, au, aq, _, _)| *am == material && *au == unit && *aq > 0.0)
+            {
+                conn.execute(
+                    "INSERT INTO list_mat_done (list_id, material, unit, done_qty) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![m, material, unit, dq.min(*qty)],
+                )?;
+            }
+        }
     }
     Ok(())
 }
@@ -308,7 +415,7 @@ impl Cache {
         if dupe > 0 {
             return Err(CacheError::Query(i18n_err::err_key("lists.err_dupe")));
         }
-        self.with(move |conn| {
+        let row = self.with(move |conn| {
             conn.execute(
                 "INSERT INTO list_items (list_id, item_id, item_name, craft_time, copies, created_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -337,17 +444,32 @@ impl Cache {
                 )?;
             }
             Ok(row as u64)
-        })
+        })?;
+        // M9-G: Struktur-Änderung an der Quell-Liste → Spiegel aktualisieren.
+        self.with(|conn| sync_linked_mining(conn, list_id))?;
+        Ok(row)
     }
 
     /// Eintrag (inkl. Snapshot) aus der Liste nehmen.
     pub fn list_remove_item(&self, item_row: u64) -> Result<()> {
         let changed = self.with(|conn| {
-            conn.execute(
+            let list_id: Option<i64> = conn
+                .query_row(
+                    "SELECT list_id FROM list_items WHERE id = ?1",
+                    [item_row as i64],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let changed = conn.execute(
                 "DELETE FROM list_item_mats WHERE item_row = ?1",
                 [item_row as i64],
             )?;
-            conn.execute("DELETE FROM list_items WHERE id = ?1", [item_row as i64])
+            conn.execute("DELETE FROM list_items WHERE id = ?1", [item_row as i64])?;
+            // M9-G: Entfernen aus der Quell-Liste → Spiegel aktualisieren.
+            if let Some(src) = list_id {
+                sync_linked_mining(conn, src as u64)?;
+            }
+            Ok(changed)
         })?;
         if changed == 0 {
             return Err(CacheError::Query(i18n_err::err_keyp(
@@ -364,10 +486,22 @@ impl Cache {
             return Err(CacheError::Query(i18n_err::err_key("lists.err_copies")));
         }
         let changed = self.with(|conn| {
-            conn.execute(
+            let list_id: Option<i64> = conn
+                .query_row(
+                    "SELECT list_id FROM list_items WHERE id = ?1",
+                    [item_row as i64],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let changed = conn.execute(
                 "UPDATE list_items SET copies = ?1 WHERE id = ?2",
                 rusqlite::params![copies, item_row as i64],
-            )
+            )?;
+            // M9-G: Mengen-Änderung an der Quell-Liste → Spiegel aktualisieren.
+            if let Some(src) = list_id {
+                sync_linked_mining(conn, src as u64)?;
+            }
+            Ok(changed)
         })?;
         if changed == 0 {
             return Err(CacheError::Query(i18n_err::err_keyp(
@@ -407,6 +541,36 @@ impl Cache {
                          ON CONFLICT(list_id, material, unit) DO UPDATE SET done_qty = ?4",
                         rusqlite::params![list_id as i64, material.trim(), unit.trim(), q],
                     )?;
+                }
+            }
+            // M9-G (t_131614e0), Welle-2 Punkt 2: Abhaken in einer VERKNÜPFTEN
+            // Mining-Liste schlägt auf die erzeugende Crafting-Liste durch —
+            // derselbe (material, unit)-Stand wird dort gesetzt/gelöscht.
+            let (kind, source): (String, Option<i64>) = conn
+                .query_row(
+                    "SELECT kind, source_list_id FROM lists WHERE id = ?1",
+                    [list_id as i64],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap_or_default();
+            let sync_to: Option<i64> = if kind == "mining" { source } else { None };
+            if let Some(src) = sync_to {
+                match done {
+                        None => {
+                            conn.execute(
+                                "DELETE FROM list_mat_done WHERE list_id = ?1 AND material = ?2 AND unit = ?3",
+                                rusqlite::params![src, material.trim(), unit.trim()],
+                            )?;
+                        }
+                        Some(q) => {
+                            let q = q.max(0.0);
+                            conn.execute(
+                                "INSERT INTO list_mat_done (list_id, material, unit, done_qty) \
+                                 VALUES (?1, ?2, ?3, ?4) \
+                                 ON CONFLICT(list_id, material, unit) DO UPDATE SET done_qty = ?4",
+                                rusqlite::params![src, material.trim(), unit.trim(), q],
+                            )?;
+                        }
                 }
             }
             Ok(())
@@ -674,6 +838,138 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn m9g_sync_mirrors_craft_changes_into_linked_mining() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+
+        // Startzustand: 2 Blueprints → 2 Materialien in der Spiegel-Liste.
+        let a = c
+            .list_add_item(
+                craft,
+                bp("a", "A", 2.0, vec![("Hadanite", "gems", 100.0, 500)]),
+            )
+            .unwrap();
+        c.list_add_item(
+            craft,
+            bp("b", "B", 1.0, vec![("Taranite", "SCU", 50.0, 300)]),
+        )
+        .unwrap();
+        let d = c.list_detail(mining).unwrap();
+        assert_eq!(d.items.len(), 2);
+        let had = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Hadanite")
+            .unwrap();
+        assert_eq!(had.quantity, 200.0);
+        assert_eq!(had.min_quality, 500);
+
+        // Abhaken auf der Mining-Seite (durchschlägt später) — hier Stand setzen.
+        c.list_set_done(mining, "Hadanite", "gems", Some(120.0))
+            .unwrap();
+
+        // copies ändern → Spiegel folgt sofort.
+        c.list_set_copies(a, 3.0).unwrap();
+        let d = c.list_detail(mining).unwrap();
+        let had = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Hadanite")
+            .unwrap();
+        assert_eq!(had.quantity, 300.0);
+        // done bleibt für weitergeführtes Material erhalten.
+        assert_eq!(had.done_qty, 120.0);
+
+        // Eintrag entfernen → Material verschwindet (inkl. done-Stand).
+        c.list_remove_item(a).unwrap();
+        let d = c.list_detail(mining).unwrap();
+        assert_eq!(d.items.len(), 1);
+        assert!(d.aggregated.iter().all(|m| m.material != "Hadanite"));
+        let tar = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Taranite")
+            .unwrap();
+        assert_eq!(tar.quantity, 50.0);
+        assert_eq!(tar.done_qty, 0.0);
+
+        // done über der neuen Sollmenge wird beim Spiegeln geklemmt.
+        c.list_set_done(mining, "Taranite", "SCU", Some(100.0))
+            .unwrap();
+        c.list_set_copies(c.list_detail(craft).unwrap().items[0].id, 1.0)
+            .unwrap();
+        // Taranite bleibt 50 — kein weiteres Blueprint-Item beteiligt; aber
+        // ein NEUES Material erscheint automatisch:
+        c.list_add_item(
+            craft,
+            bp("c", "C", 2.0, vec![("Quantainium", "SCU", 10.0, 200)]),
+        )
+        .unwrap();
+        let d = c.list_detail(mining).unwrap();
+        let q = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Quantainium")
+            .unwrap();
+        assert_eq!(q.quantity, 20.0);
+        assert_eq!(q.min_quality, 200);
+        // Taranite done wurde auf Soll (50) geklemmt.
+        let tar = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Taranite")
+            .unwrap();
+        assert_eq!(tar.done_qty, 50.0);
+
+        // Unverknüpfte Mining-Listen bleiben unberührt.
+        let solo = c.list_create("mining", "Solo", None).unwrap();
+        c.list_add_item(solo, bp("s", "S", 1.0, vec![("Inert", "SCU", 5.0, 100)]))
+            .unwrap();
+        c.list_set_copies(c.list_detail(craft).unwrap().items[0].id, 9.0)
+            .unwrap();
+        let d = c.list_detail(solo).unwrap();
+        assert_eq!(d.items.len(), 1);
+        assert_eq!(d.aggregated[0].material, "Inert");
+    }
+
+    #[test]
+    fn m9g_mining_done_propagates_to_craft_source() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        c.list_add_item(
+            craft,
+            bp("a", "A", 2.0, vec![("Hadanite", "gems", 100.0, 500)]),
+        )
+        .unwrap();
+
+        // Ganz: Mining → Craft übernimmt done = Soll.
+        c.list_set_done(mining, "Hadanite", "gems", Some(200.0))
+            .unwrap();
+        let cd = c.list_detail(craft).unwrap();
+        assert_eq!(cd.aggregated[0].done_qty, 200.0);
+
+        // Teilweise: Wert wird 1:1 durchgeschlagen.
+        c.list_set_done(mining, "Hadanite", "gems", Some(70.0))
+            .unwrap();
+        let cd = c.list_detail(craft).unwrap();
+        assert_eq!(cd.aggregated[0].done_qty, 70.0);
+
+        // Reset: Craft-Seite wird mit geleert.
+        c.list_set_done(mining, "Hadanite", "gems", None).unwrap();
+        let cd = c.list_detail(craft).unwrap();
+        assert_eq!(cd.aggregated[0].done_qty, 0.0);
+
+        // Unverknüpfte Mining-Liste: KEIN Durchschlag.
+        let solo = c.list_create("mining", "Solo", None).unwrap();
+        c.list_set_done(solo, "Hadanite", "gems", Some(5.0))
+            .unwrap();
+        let cd = c.list_detail(craft).unwrap();
+        assert_eq!(cd.aggregated[0].done_qty, 0.0);
     }
 
     #[test]
