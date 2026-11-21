@@ -1335,6 +1335,7 @@
     "lists.bridge_title": "Benötigtes Material (mit Qualitäten) als Mining-Liste anlegen",
     "lists.bridge_note": "Mining-Liste „{name}“ angelegt — Material + Qualitäten übernommen.",
     "lists.source_badge": "aus Crafting-Liste „{name}“",
+    "lists.linked_readonly": "Verknüpft mit Crafting-Liste „{name}“ — Material und Mengen werden dort gepflegt.",
     "lists.inv_title": "Inventar-Position erfassen — reserviert für „{list}“",
     "lists.inv_qty": "Menge",
     "lists.inv_add": "Reservieren",
