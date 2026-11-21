@@ -40,6 +40,8 @@
 	// M8-R1-A: individuelle Material-Regler + Snap-Punkte
 	// M8-R3 (t_399b10d8): Custom-Quality-Slider (nativ range → div-basiert)
 	import CraftQualitySlider from './CraftQualitySlider.svelte';
+	// M9-B (t_36778bc3): Listen-Tab + "Zur Liste hinzufügen" im Detail.
+	import CraftLists from './CraftLists.svelte';
 	import {
 		aspectQuality,
 		materialKey,
@@ -246,6 +248,69 @@
 	// Load-More (516 Items — bestehendes Muster: stückweise rendern)
 	let shown = $state(80);
 	const STEP = 80;
+
+	// ---- M9-B (t_36778bc3): Tabs + "Zur Liste hinzufügen" --------------------
+	// Tab-Wechsel Craft ↔ Listen (Listen-Engine-View; M9-Plan Welle 1 B —
+	// eigener F-Modus blieb Offen-Punkt, daher reversibel als Tab gelöst).
+	let tab = $state<'craft' | 'lists'>('craft');
+	// Popover "Zur Liste hinzufügen" im Detail: existierende Listen + Neu.
+	type ListSummaryLite = { id: number; name: string; item_count: number };
+	let listPickOpen = $state(false);
+	let myLists = $state<ListSummaryLite[]>([]);
+	let newListName = $state('');
+	let listNote = $state(''); // Erfolg/Fehler-Hinweis am Popover
+	async function loadMyLists() {
+		try {
+			myLists = await invoke<ListSummaryLite[]>('lists_list', { kind: 'craft' });
+		} catch {
+			myLists = [];
+		}
+	}
+	function toggleListPick() {
+		listPickOpen = !listPickOpen;
+		listNote = '';
+		if (listPickOpen) void loadMyLists();
+	}
+	// Blueprint-Snapshot anhängen: Materialliste + AKTUELLE Regler-Werte
+	// (Default 500 — „Qualität wird im Calculator beim Hinzufügen übernommen").
+	async function addToList(listId: number) {
+		if (!detail) return;
+		listNote = '';
+		try {
+			await invoke('list_add_item', {
+				listId,
+				item: {
+					item_id: detail.item.id,
+					item_name: detail.item.name,
+					craft_time: detail.craftTime,
+					copies: 1,
+					mats: detail.costs.map((c, idx) => ({
+						material: c.material,
+						ore_id: c.oreId,
+						unit: c.unit,
+						quantity: c.quantity,
+						quality: rowQuality(c, idx)
+					}))
+				}
+			});
+			listNote = $t('lists.added');
+		} catch (e) {
+			listNote = trError(e);
+		}
+	}
+	async function createAndAdd() {
+		const name = newListName.trim();
+		if (!name || !detail) return;
+		listNote = '';
+		try {
+			const id = await invoke<number>('list_create', { kind: 'craft', name });
+			newListName = '';
+			await addToList(id);
+			await loadMyLists();
+		} catch (e) {
+			listNote = trError(e);
+		}
+	}
 
 	const ATTRIBUTION_FALLBACK = 'Data from celd.space / Strata Mining Tools';
 
@@ -612,6 +677,27 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="crafting" role="region" aria-label={$t('nav.crafting')}>
+	{#if checked && status?.enabled && status?.key_set}
+		<!-- M9-B: Tab-Zeile Craft ↔ Listen (Listen-Engine, t_36778bc3) -->
+		<div class="ctabs" role="tablist">
+			<button
+				type="button"
+				class="ctab"
+				class:is-on={tab === 'craft'}
+				role="tab"
+				aria-selected={tab === 'craft'}
+				onclick={() => (tab = 'craft')}>{$t('craft.tab_craft')}</button
+			>
+			<button
+				type="button"
+				class="ctab"
+				class:is-on={tab === 'lists'}
+				role="tab"
+				aria-selected={tab === 'lists'}
+				onclick={() => (tab = 'lists')}>{$t('craft.tab_lists')}</button
+			>
+		</div>
+	{/if}
 	{#if !checked}
 		<div class="cnote">{$t('mining.loading')}</div>
 	{:else if error}
@@ -636,6 +722,10 @@
 			<div class="cc-foot">{$t('mining.key_missing_settings')}</div>
 		</div>
 	{:else}
+		{#if tab === 'lists'}
+			<!-- M9-B: Listen-Tab — CRUD + Aggregation + Abhaken (CraftLists) -->
+			<CraftLists onOpenOre={openOre} />
+		{:else}
 		<div class="ccols">
 			<!-- Linke Spalte: Kategorie-Chips + Item-Liste -->
 			<div class="ccol">
@@ -721,6 +811,43 @@
 							aria-label={$t('common.back')}>←</button
 						>
 						<span class="cd-title">{detail.item.name}</span>
+						<!-- M9-B: Blueprint mit aktuellen Regler-Qualitäten an eine Liste hängen -->
+						<div class="cl-pick-wrap">
+							<button type="button" class="cl-add" onclick={toggleListPick}>
+								＋ {$t('lists.add_to_list')}
+							</button>
+							{#if listPickOpen}
+								<div class="cl-pick" role="menu">
+									{#each myLists as l (l.id)}
+										<button
+											type="button"
+											class="cl-pick-row"
+											role="menuitem"
+											onclick={() => void addToList(l.id)}
+										>
+											<span class="cl-pick-name">{l.name}</span>
+											<span class="cl-pick-n">{l.item_count}</span>
+										</button>
+									{:else}
+										<div class="cl-pick-hint">{$t('lists.empty')}</div>
+									{/each}
+									<div class="cl-pick-new">
+										<input
+											class="cl-pick-input"
+											type="text"
+											bind:value={newListName}
+											placeholder={$t('lists.new_list_ph')}
+											aria-label={$t('lists.new_list_ph')}
+											onkeydown={(e) => e.key === 'Enter' && void createAndAdd()}
+										/>
+										<button type="button" class="cl-pick-go" onclick={() => void createAndAdd()}>
+											{$t('lists.new_list')}
+										</button>
+									</div>
+									{#if listNote}<div class="cl-pick-note">{listNote}</div>{/if}
+								</div>
+							{/if}
+						</div>
 					</div>
 					<div class="cd-sub">
 						{#if detail.item.category}<span class="cbadge">{catName(detail.item.category)}</span>{/if}
@@ -904,10 +1031,11 @@
 					{:else}
 						<div class="cnote cempty">{$t('craft.detail_hint')}</div>
 					{/if}
-			</div>
-		</div>
-	{/if}
-	{#if detail && scwikiError}
+					</div>
+					</div>
+					{/if}
+					{/if}
+					{#if detail && scwikiError}
 		<div class="cscwiki-err">
 			{$t('craft.scwiki_error')}
 			<!-- Kein Unicode-Glyph (⟳) als Button-Label — Font-Fallback zeichnet
@@ -925,6 +1053,124 @@
 
 <style>
 	/* Muster: Mining.svelte (Overlay-Stil, Variablen des Shells) */
+	/* M9-B: Tab-Zeile Craft ↔ Listen + Listen-Popover im Detail. */
+	.ctabs {
+		display: flex;
+		gap: 6px;
+		margin-bottom: 10px;
+		flex: 0 0 auto;
+	}
+	.ctab {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		border-radius: 999px;
+		color: inherit;
+		padding: 4px 14px;
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+	}
+	.ctab.is-on {
+		background: var(--accent, #4aa3ff);
+		border-color: transparent;
+		color: #0b0f14;
+		font-weight: 600;
+	}
+	.cl-pick-wrap {
+		position: relative;
+		margin-left: auto;
+	}
+	.cl-add {
+		background: rgba(255, 255, 255, 0.07);
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		border-radius: 999px;
+		color: inherit;
+		padding: 3px 12px;
+		font: inherit;
+		font-size: 11px;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.cl-pick {
+		position: absolute;
+		top: calc(100% + 6px);
+		right: 0;
+		z-index: 20;
+		min-width: 200px;
+		max-height: 260px;
+		overflow: auto;
+		background: #141a21;
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		border-radius: 10px;
+		padding: 8px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+	}
+	.cl-pick-row {
+		display: flex;
+		gap: 8px;
+		align-items: center;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 6px;
+		color: inherit;
+		padding: 5px 9px;
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+		text-align: left;
+	}
+	.cl-pick-name {
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.cl-pick-n {
+		opacity: 0.6;
+		font-size: 11px;
+	}
+	.cl-pick-hint {
+		opacity: 0.6;
+		font-size: 11px;
+		padding: 2px 4px;
+	}
+	.cl-pick-new {
+		display: flex;
+		gap: 6px;
+		border-top: 1px solid rgba(255, 255, 255, 0.12);
+		padding-top: 8px;
+	}
+	.cl-pick-input {
+		flex: 1;
+		min-width: 0;
+		background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		border-radius: 6px;
+		color: inherit;
+		padding: 4px 8px;
+		font: inherit;
+		font-size: 12px;
+	}
+	.cl-pick-go {
+		background: var(--accent, #4aa3ff);
+		border: none;
+		border-radius: 6px;
+		color: #0b0f14;
+		padding: 4px 10px;
+		font: inherit;
+		font-size: 11px;
+		font-weight: 600;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.cl-pick-note {
+		font-size: 11px;
+		opacity: 0.85;
+	}
 	.crafting {
 		display: flex;
 		flex-direction: column;
