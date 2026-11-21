@@ -54,6 +54,50 @@
 - **E Inventar:** Material hinzufügen (Ort + Qualität + Reservierungs-Hinweis),
   Anforderungs-Anpassung bei höherer Qualität.
 
+## Welle 2 (Feedback-Runde nach Welle 1, 2026-11-21 — 8 Punkte)
+
+**Live-Test der Welle 1 ergab:**
+
+1. **Tab-Navigation:** Mining-Modus → Reiter „Listen" hat KEINEN Weg zurück zu
+   den anderen Reitern (nur Modus-Wechsel). → Tab-Header in allen Modi
+   konsistent, Rückweg immer da.
+2. **Sync Mining→Craft fehlt:** Teil-Material hinzufügen oder „erledigt" in
+   einer AUS CRAFTING entstammten Mining-Liste ist in der Crafting-Liste
+   NICHT sichtbar. → Abhaken muss durchschlagen.
+3. **MODELL-UMKEHR (Inventar-first):** NICHT über die Crafting-Liste Material
+   ins Inventar schreiben, sondern umgekehrt: **Material zuerst ins Inventar,
+   dann aus dem Inventar die benötigte Menge reservieren** — aus allen
+   verfügbaren Quellen und Qualitäten. Reservierung im Inventar sichtbar
+   (pro Material: gesamt / reserviert / frei, und wofür reserviert).
+   Crafting-Liste zeigt **Durchschnittsqualität der reservierten Materialien**.
+   Plus: Button in der Crafting-Liste, der die **Inventar-Eingabemaske** öffnet
+   (Material direkt aus der Liste anlegen).
+4. **Autocomplete-Doppel:** Freitext-Ort im Inventar erscheint als eigener
+   Vorschlag und verdeckt teils die SC-Location-Vorschläge. → Freitext
+   entweder nicht vorschlagen ODER in denselben Autocomplete integrieren.
+5. **Mining-Liste → Inventar bleibt:** Material direkt aus (unverknüpften)
+   Mining-Listen ins Inventar — mit Vorbefüllung: „als erledigt"-Flow öffnet
+   die Inventar-Eingabemaske mit dem fehlenden Restbetrag voreingetragen
+   (nur Qualität + Lagerort eintragen); Teil-Eintrag → Teilmenge voreingetragen.
+   **Nur bei verknüpften Listen Reservierung** — unverknüpfte Mining-Listen
+   reservieren NICHTS.
+6. **Scroll + Padding:** Beide Listen (Craft + Mining) haben Inhalt außerhalb
+   des sichtbaren Bereichs, zu dem man nicht scrollen kann; alles klebt am
+   Rand (Zier-Rahmen teils abgeschnitten). → Scrollbar für alles + Padding.
+   Gleiche Padding-Problematik in den Blueprint-Details des Crafting-Modus.
+7. **Craft→Mining-Sync:** Änderungen an der Crafting-Liste (Mengen, Material)
+   spiegeln sich automatisch in der verknüpften Mining-Liste. Verknüpfte
+   Mining-Listen können Materialien/Mengen NICHT selbst ändern (abhängig).
+8. **Reservierungen allgemein (größer als Listen):** Reservieren ist NICHT
+   nur über Crafting-Listen — direkt im Inventar für beliebige Zwecke
+   (unabhängige Projekte, Verkauf). Partielle Reservierung (auch Teil-Mengen
+   reservierbar), Anzeige gesamt/reserviert/frei + je Zweck.
+
+**Konsequenz fürs Datenmodell:** Reservierungen werden zum Inventar-first-
+Primtiv (`reservations`: inventory_id, purpose/list_ref, qty, note) statt
+Liste-an-Inventar-Schreibrichtung. Listen-Reservierung = Zweck „Liste X".
+Qualitäts-Mix: Durchschnitt über reservierte Positionen (gewichtet nach Menge).
+
 ## Offen
 
 - Modus-Taste für die Listen-Ansicht (F2? F3? — belegt-Prüfung nötig).
