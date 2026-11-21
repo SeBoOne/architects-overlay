@@ -1406,6 +1406,11 @@
 	.cdi {
 		font-variant-numeric: tabular-nums;
 	}
+	.cp-head {
+		font-weight: 700;
+		font-size: 12.5px;
+		margin-bottom: 8px;
+	}
 	/* Blaupausen-Missionen */
 	.cmissions {
 		margin-top: 12px;
