@@ -31,6 +31,9 @@
 		name: string;
 		created_at: number;
 		item_count: number;
+		// M9-D (t_36f3966c): erzeugende Crafting-Liste (Brücke), null = standalone.
+		source_list_id: number | null;
+		source_list_name: string | null;
 	};
 	type ListItemMat = {
 		material: string;
@@ -136,6 +139,10 @@
 	});
 	const addSelected = $derived(
 		ores.find((o) => o.name.toLowerCase() === addQuery.trim().toLowerCase()) ?? null
+	);
+	// M9-D: erzeugende Crafting-Liste der aktiven Liste (Brücke) — Badge im Kopf.
+	const activeSourceName = $derived(
+		lists.find((l) => l.id === activeId)?.source_list_name ?? null
 	);
 
 	// ---- Laden / CRUD (identisch zur Engine in CraftLists) --------------------
@@ -384,7 +391,9 @@
 					class="ml-chip"
 					class:is-on={activeId === l.id}
 					onclick={() => void openList(l.id)}
-					title={l.name}>{l.name} <span class="ml-count">{l.item_count}</span></button
+					title={l.source_list_name
+						? $t('lists.source_badge', { name: l.source_list_name })
+						: l.name}>{l.name} <span class="ml-count">{l.item_count}</span></button
 				>
 			{:else}
 				<span class="ml-hint">{$t('lists.empty')}</span>
@@ -425,6 +434,11 @@
 				</button>
 			{:else}
 				<span class="ml-title">{detail.name}</span>
+				{#if activeSourceName}
+					<span class="ml-src" title={$t('lists.source_badge', { name: activeSourceName })}
+						>{$t('lists.source_badge', { name: activeSourceName })}</span
+					>
+				{/if}
 				<button
 					type="button"
 					class="ml-mini"
@@ -793,6 +807,15 @@
 	.ml-title {
 		font-weight: 700;
 		font-size: 15px;
+	}
+	/* M9-D: Badge „aus Crafting-Liste X“ bei Brücken-verlinkten Listen. */
+	.ml-src {
+		font-size: 11px;
+		color: var(--txt-dim, #9aa4b2);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 220px;
 	}
 	/* Typeahead-Vorschläge (Position unter dem Add-Formular). */
 	.ml-add {

@@ -390,10 +390,12 @@ CREATE TABLE IF NOT EXISTS inventory (
 -- list_mat_done — ganz (done=Soll) oder teilweise (freier Wert). Lokal-first
 -- wie inventory: KEIN Sync, KEIN API-Zugriff.
 CREATE TABLE IF NOT EXISTS lists (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind       TEXT    NOT NULL, -- 'craft' | 'mining'
-  name       TEXT    NOT NULL,
-  created_at INTEGER NOT NULL
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind           TEXT    NOT NULL, -- 'craft' | 'mining'
+  name           TEXT    NOT NULL,
+  created_at     INTEGER NOT NULL,
+  source_list_id INTEGER,          -- v15: erzeugende Liste (M9-D-Brücke), NULL = standalone
+  FOREIGN KEY (source_list_id) REFERENCES lists(id)
 );
 CREATE TABLE IF NOT EXISTS list_items (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -718,7 +720,12 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   hinzugefügt wurde, verweist auf diese Liste — „reserviert für Liste
 ///   X"). Rein additiv — `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten
 ///   betroffen.
-pub const SCHEMA_VERSION: i64 = 14;
+/// * v15 — M9-D (t_36f3966c): additive Spalte `lists.source_list_id` —
+///   persistente Verknüpfung einer Brücken-erzeugten Mining-Liste auf die
+///   erzeugende Crafting-Liste („der Hinweis verweist immer auf die
+///   Craftingliste"). NULL = standalone. ALTER mit Spalten-Probe, Bestands-
+///   zeilen bleiben NULL (standalone).
+pub const SCHEMA_VERSION: i64 = 15;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -848,6 +855,21 @@ fn migrate_source_columns(conn: &Connection) -> Result<()> {
             [],
         )
         .map_err(|e| CacheError::Open(format!("v11 own_negotiations.date_closed_client: {e}")))?;
+    }
+    // v15 (M9-D t_36f3966c): `lists.source_list_id` — persistente Brücken-
+    // Verknüpfung Mining-Liste → erzeugende Crafting-Liste. Rein additiv,
+    // Bestandszeilen bleiben NULL (= standalone).
+    let lists_has_source = conn
+        .prepare("SELECT 1 FROM pragma_table_info('lists') WHERE name = 'source_list_id'")
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?
+        .exists([])
+        .map_err(|e| CacheError::Open(format!("migration probe: {e}")))?;
+    if !lists_has_source {
+        conn.execute(
+            "ALTER TABLE lists ADD COLUMN source_list_id INTEGER REFERENCES lists(id)",
+            [],
+        )
+        .map_err(|e| CacheError::Open(format!("v15 lists.source_list_id: {e}")))?;
     }
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;

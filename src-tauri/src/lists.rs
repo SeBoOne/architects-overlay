@@ -26,10 +26,12 @@ pub fn list_create(
     state: State<'_, TradeState>,
     kind: String,
     name: String,
+    // M9-D (t_36f3966c): erzeugende Liste der Brücke — optional, NULL = standalone.
+    source_list_id: Option<u64>,
 ) -> Result<u64, String> {
     state
         .cache
-        .list_create(&kind, &name)
+        .list_create(&kind, &name, source_list_id)
         .map_err(|e| err_wrap("lists.err_create", e.to_string()))
 }
 
