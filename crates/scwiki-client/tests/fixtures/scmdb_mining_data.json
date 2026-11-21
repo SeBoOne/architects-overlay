@@ -1,0 +1,65 @@
+{
+  "version": "4.10.3-live.13220821",
+  "mineableElements": {
+    "8893c670-f9f7-48df-a05b-e85764994256": {
+      "name": "Taranite (Raw)",
+      "resourceType": "42e5f3a1-0000-0000-0000-000000000000",
+      "density": 4.5,
+      "instability": 470.0,
+      "resistance": 0.9,
+      "rarity": "exotic",
+      "scanSignature": 4100,
+      "groundScanSignature": 4600,
+      "qualityBands": [310, 525, 646, 718, 853, 925, 957, 1000],
+      "materialName": "Taranite"
+    },
+    "728a3d7e-9567-4e1c-87fd-2bd45b458aa6": {
+      "name": "Borase (Ore)",
+      "resourceType": "42e5f3a1-0000-0000-0000-000000000001",
+      "density": 5.1,
+      "instability": 120.0,
+      "resistance": 0.3,
+      "rarity": "uncommon",
+      "scanSignature": 2200,
+      "groundScanSignature": 2500,
+      "qualityBands": [274, 526, 665, 762, 867, 916, 959, 1000],
+      "materialName": "Borase"
+    },
+    "a1111111-1111-1111-1111-111111111111": {
+      "name": "Aphorite",
+      "resourceType": "42e5f3a1-0000-0000-0000-000000000002",
+      "density": 6.0,
+      "instability": 210.0,
+      "resistance": 0.4,
+      "rarity": "rare",
+      "scanSignature": 3000,
+      "groundScanSignature": 3300,
+      "qualityBands": [280, 520, 640, 720, 850, 920, 960, 1000],
+      "materialName": null
+    },
+    "c793af1c-7dab-457e-a74d-88c435c9708b": {
+      "name": "Carinite",
+      "resourceType": "42e5f3a1-0000-0000-0000-000000000003",
+      "density": 3.0,
+      "instability": 90.0,
+      "resistance": 0.2,
+      "rarity": "common",
+      "scanSignature": 1800,
+      "groundScanSignature": 2000,
+      "qualityBands": [273, 554, 647, 716, 880, 909, 959, 1000],
+      "materialName": null
+    },
+    "d793af1c-7dab-457e-a74d-88c435c9708b": {
+      "name": "Carinite (Pure)",
+      "resourceType": "42e5f3a1-0000-0000-0000-000000000004",
+      "density": 3.0,
+      "instability": 90.0,
+      "resistance": 0.2,
+      "rarity": "common",
+      "scanSignature": 1800,
+      "groundScanSignature": 2000,
+      "qualityBands": [273, 554, 647, 716, 880, 909, 959, 1000],
+      "materialName": null
+    }
+  }
+}

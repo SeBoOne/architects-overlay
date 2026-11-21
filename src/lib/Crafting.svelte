@@ -365,7 +365,7 @@
 					// Endpoint, UNION je Material; t_1dd162e3: Namen + BP-
 					// UUID für den Raffinat→(Ore)-Fallback). Fehler degra-
 					// dieren still (Toggle zeigt dann keine Einrastpunkte).
-					void loadSnaps(detail.blueprintAspects ?? [], r.blueprint.uuid);
+					void loadSnaps(detail.blueprintAspects ?? []);
 				}
 			}
 		} catch {
@@ -394,11 +394,11 @@
 	// ---- M8-R1-A: individuelle Material-Regler -------------------------------
 	type QualitySnapResponse = { uuid: string; values: number[] };
 
-	// Snap-Punkte je Material nachladen (Commodity-Endpoint, Union je
-	// Material) und per normiertem Materialnamen indizieren. Raffinat-
-	// Fallback (t_1dd162e3): Materialnamen + Blueprint-UUID reisen mit —
-	// das Backend mappt leere Raffinat-Inputs auf das `(Ore)`-Gegenstück.
-	async function loadSnaps(aspects: Aspect[], blueprintUuid?: string | null) {
+	// Snap-Punkte je Material nachladen (M8-R2: SCMDB qualityBands,
+	// Union je Material) und per normiertem Materialnamen indizieren.
+	// Kein Match im Mining-Index → leere Liste → Regler rastet auf
+	// 500-only (500 ist der Always-Punkt, Snap gilt für ALLE).
+	async function loadSnaps(aspects: Aspect[]) {
 		const byUuid = new Map<string, string>(); // uuid → norm. Materialname
 		const names = new Map<string, string>(); // uuid → Rohname (`(Ore)`-Mapping)
 		for (const a of aspects ?? []) {
@@ -412,10 +412,9 @@
 		if (byUuid.size === 0) return;
 		const uuids = [...byUuid.keys()];
 		try {
-			const snaps = await invoke<QualitySnapResponse[]>('scwiki_quality_snaps', {
+			const snaps = await invoke<QualitySnapResponse[]>('scmdb_quality_snaps', {
 				uuids,
-				names: uuids.map((u) => names.get(u) ?? ''),
-				blueprintUuid: blueprintUuid ?? null
+				names: uuids.map((u) => names.get(u) ?? '')
 			});
 			const map: Record<string, number[]> = {};
 			for (const s of snaps ?? []) {
@@ -424,7 +423,7 @@
 			}
 			snapPoints = map;
 		} catch {
-			snapPoints = {}; // still weg — Regler bleiben frei regelbar
+			snapPoints = {}; // 500-only-Raster für ALLE Materialien
 		}
 	}
 
@@ -442,28 +441,38 @@
 		(detail?.blueprintAspects ?? []).find(
 			(a) => materialKey(a.input?.name) === materialKey(c.material)
 		) ?? null;
-	// Snap-Punkte + Toggle-Status einer Zeile. 500 (Mitte) ist Rasterpunkt
-	// für Materialien MIT Commodity-Quantwerten. Materialien OHNE echte
-	// Quant-Werte (z. B. Taranite/Hephaestanite — weder direkt noch als
-	// „(Ore)“-Gegenstück, LIVE-Beleg 2026-11-19) bleiben FREI regelbar:
-	// ein 500-only-ZwangsRaster sperrt den Regler sonst bei 500 ein
-	// (User-Befund: „Wert ändert sich nichts, als hätten die keine
-	// Snapwerte“). Kein Raten — kein echtes Raster, kein Snap.
+	// Snap-Punkte + Toggle-Status einer Zeile (M8-R2): SCMDB-Bänder
+	// sind das Raster; 500 (Mitte) ist IMMER mit drin (Always-Punkt) —
+	// auch ohne Band-Match rastet der Regler dann auf 500-only (das
+	// 0.5.88-Verhalten „frei bei leer“ ist zurückgenommen).
 	const rowSnaps = (c: CostEntry): number[] => {
-		const quant = snapPoints[materialKey(c.material)] ?? [];
-		if (quant.length === 0) return [];
-		const set = new Set<number>([DEFAULT_ROW_QUALITY, ...quant]);
+		const bands = snapPoints[materialKey(c.material)] ?? [];
+		const set = new Set<number>([DEFAULT_ROW_QUALITY, ...bands]);
 		return [...set].sort((a, b) => a - b);
 	};
 	const rowSnapOn = (c: CostEntry, idx: number): boolean =>
-		rowSnaps(c).length > 0 && (snapOn[rowKey(c, idx)] ?? snapDefault());
+		snapOn[rowKey(c, idx)] ?? snapDefault();
+	// Hartes Clamp (M8-R2): bei Snap-an physische Regler-Grenzen
+	// min = bands[0], max = bands[-1] (ohne Bands: 500/500 — der Regler
+	// sitzt fest auf dem Always-Punkt); Snap-aus: das alte 0–1000.
+	const rowBounds = (c: CostEntry, idx: number): [number, number] => {
+		if (!rowSnapOn(c, idx)) return [0, 1000];
+		const bands = snapPoints[materialKey(c.material)] ?? [];
+		if (bands.length === 0) return [DEFAULT_ROW_QUALITY, DEFAULT_ROW_QUALITY];
+		return [bands[0], bands[bands.length - 1]];
+	};
 	function toggleSnap(c: CostEntry, idx: number) {
 		const key = rowKey(c, idx);
 		const next = !rowSnapOn(c, idx);
 		snapOn = { ...snapOn, [key]: next };
 		setSnapDefault(next); // letzter Toggle = neuer Default (nice-to-have)
 		if (next) {
-			const snapped = nearestSnap(rowSnaps(c), rowQuality(c, idx));
+			// Hartes Clamp (M8-R2): Wert in die Band-Grenzen ziehen + auf den
+			// nächsten Rasterpunkt rasten (min/max sitzen zusätzlich als
+			// Slider-Attribute physisch).
+			const [min, max] = rowBounds(c, idx);
+			const v = Math.min(max, Math.max(min, rowQuality(c, idx)));
+			const snapped = nearestSnap(rowSnaps(c), v);
 			if (snapped !== null) matQual = { ...matQual, [key]: snapped };
 		}
 	}
@@ -803,8 +812,8 @@
 										<input
 											class="cmq-range"
 											type="range"
-											min="0"
-											max="1000"
+											min={rowBounds(c, idx)[0]}
+											max={rowBounds(c, idx)[1]}
 											step="1"
 											aria-label={`${$t('craft.mat_quality')}: ${c.material}`}
 											value={rowQuality(c, idx)}
@@ -814,22 +823,18 @@
 										<span class="cmq-val" class:is-ok={rowMeets(c, idx)} class:is-fail={!rowMeets(c, idx)}
 											>{rowQuality(c, idx)}</span
 										>
-										<!-- t_9107f006: Toggle IMMER an der Regler-Zeile sichtbar (im
-										echten Fenster fehlte er, wenn der Endpoint keine Quant-
-										Werte lieferte — nur per Title-Hover erreichbar). Ohne
-										Werte: disabled mit Hinweis. -->
+																				<!-- t_9107f006: Toggle IMMER an der Regler-Zeile sichtbar
+										(M8-R2: nie disabled — ohne Band-Match rastet der Regler
+										auf 500-only, der Title zeigt das Raster). -->
 										<button
 										type="button"
 										class="cmq-snap"
 										class:is-on={rowSnapOn(c, idx)}
-										class:is-empty={rowSnaps(c).length === 0}
+										class:is-empty={snapPoints[materialKey(c.material)] === undefined}
 										aria-pressed={rowSnapOn(c, idx)}
-										disabled={rowSnaps(c).length === 0}
 										title={rowSnapOn(c, idx)
 											? $t('craft.snap_on') + ' [' + rowSnaps(c).join(', ') + ']'
-											: rowSnaps(c).length === 0
-												? $t('craft.snap_none')
-												: $t('craft.snap_off')}
+											: $t('craft.snap_off')}
 										onclick={() => toggleSnap(c, idx)}
 										>{$t('craft.snap')}</button>
 										<span class="cmq-changes">

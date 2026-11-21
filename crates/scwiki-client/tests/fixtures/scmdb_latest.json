@@ -1,0 +1,13 @@
+{
+  "schema": 2,
+  "generated_at": "2026-11-20T21:43:07Z",
+  "channels": {
+    "live": {
+      "version": "4.10.3-live.13220821",
+      "generated_at": "2026-11-20T21:43:07Z",
+      "files": {
+        "mining_data": "mining_data-4.10.3-live.13220821.json"
+      }
+    }
+  }
+}

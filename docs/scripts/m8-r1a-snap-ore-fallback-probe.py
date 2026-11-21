@@ -1,27 +1,19 @@
 #!/usr/bin/env python3
-"""M8-R1-A Snap-Fallback probe (t_1dd162e3) — Raffinat → (Ore)-Commodity.
+"""M8-R2 probe (t_7a7844cb) — SCMDB-Snap-Quelle + 500-only-Fallback.
 
-Live-Beleg Omar (2026-11-19): Blueprint-Inputs tragen die Raffinat-Commodity-
-UUID (z. B. Borase 33bff393) — 0 locations → 0 quality_quantized_values →
-Snap tot. Die Union liegt am `(Ore)`-Commodity („Borase (Ore)" 728a3d7e,
-39 locations). Der Backend-Fallback (Name-Mapping → Blueprint-Ingredient-
-link → dismantle_returns) ist cargo-test- und live-belegt; diese Probe
-prüft den Frontend-Contract + das UI-Verhalten mit dem Ergebnis des
-Fallbacks:
+Früher (M8-R1-A/t_1dd162e3): SC-Wiki-Commodity-Union mit Raffinat→(Ore)-
+Fallback. Seit M8-R2 ist die Quelle der SCMDB-Mining-Index
+(KrovaxCode/SCMDB_DATA qualityBands) und die Auflösung läuft rein über
+den Materialnamen (normalize + (Ore)/(Raw)/(Pure)-Strip) — kein
+blueprintUuid mehr. Diese Probe prüft den Frontend-Contract:
 
-  1. Snap-Fetch schickt NEU Materialnamen + Blueprint-UUID mit
-     (uuids=[raffinat], names=['Borase'], blueprintUuid='bp-borase') —
-     der Backend-Fallback-Contract (t_1dd162e3).
-  2. Fallback-Ergebnis (Raffinat-UUID liefert die Borase-(Ore)-Union):
-     Toggle an → Regler rastet auf den nächsten Union-Wert; Titel zeigt
-     die Union. (Der Regler bleibt über den NORMIERTEN Materialnamen
-     „borase" an die Werte gekoppelt — genau wie am echten Backend.)
-  3. Kein Raten: Material ohne (Ore)-Match („Quxdust", leere Werte) →
-     Regler frei, kein Fake-Raster (500 bleibt 500 bei Toggle an).
-  4. Detail-Shell ohne Scroll-Overflow (Repo-Regel, 1 Material).
-
-Backend = Tauri-Stub (docs/scripts/smoke-stub.js) + Override (dieses File).
-Ports 8898/9246 (Port-Hotspot-Regel: 8797/9234, 8897/9245 sind belegt).
+  1. Snap-Fetch schickt (uuids=[raffinat], names=['Borase']) und KEIN
+     blueprintUuid mehr.
+  2. Band-Match (Borase → SCMDB-Bänder): Toggle an → Regler rastet auf
+     den nächsten Bandwert; 500 bleibt 500 (Always-Punkt); Titel zeigt
+     die Bänder; min/max sitzen hart auf bands[0]/bands[-1].
+  3. Kein Match („Quxdust", leere Werte) → UI rastet auf 500-only
+     (das 0.5.88-Verhalten „frei bei leer" ist zurückgenommen).
 """
 import asyncio, json, os, pathlib, shutil, urllib.request
 import websockets
@@ -58,8 +50,8 @@ BP_QUX = "bp-quxdust-nomatch"
 
 WRAP = r"""
 (function () {
-  const BORASE_UNION = [264, 302, 359, 553, 584, 597, 632, 644, 676, 743, 756,
-                        786, 864, 875, 892, 903, 916, 941, 959, 976, 1000];
+  // M8-R2: SCMDB qualityBands für Borase (LIVE-Beleg Omar 2026-11-20).
+  const BORASE_BANDS = [274, 526, 665, 762, 867, 916, 959, 1000];
   const ITEMS = { items: [
     { id: 'item-0', name: 'Borase Cannon', slug: 'borase-cannon', category: 'weapon' },
     { id: 'item-1', name: 'Quxdust Cannon', slug: 'quxdust-cannon', category: 'weapon' }
@@ -133,13 +125,13 @@ WRAP = r"""
         attribution: 'Data from star-citizen.wiki'
       };
     }
-    if (cmd === 'scwiki_quality_snaps') {
+    if (cmd === 'scmdb_quality_snaps') {
       window.__SNAP_CALLS.push(a);
-      // Simuliert das Backend NACH dem Fallback: der Raffinat-UUID
-      // antwortet mit der Borase-(Ore)-Union; Quxdust bleibt leer
-      // (kein (Ore)-Match — kein Fake-Raster).
-      const union = String(a.uuids?.[0] || '').startsWith('33bff393') ? BORASE_UNION : [];
-      return (a.uuids || []).map((u) => ({ uuid: u, values: union }));
+      // M8-R2: Auflösung rein über den Namen (SCMDB-Mining-Index) —
+      // Borase matcht materialName; Quxdust bleibt leer (kein Match →
+      // UI rastet 500-only).
+      const bands = a.names?.[0] === 'Borase' ? BORASE_BANDS : [];
+      return (a.uuids || []).map((u) => ({ uuid: u, values: bands }));
     }
     return orig(cmd, args);
   };
@@ -283,8 +275,8 @@ async def main():
               call0 and call0.get("uuids") == [RAFFINAT], str(call0))
         check("1c Snap-Fetch schickt Materialnamen ['Borase']",
               call0 and call0.get("names") == ["Borase"], str(call0))
-        check("1d Snap-Fetch schickt Blueprint-UUID",
-              call0 and call0.get("blueprintUuid") == BP_BORASE, str(call0))
+        check("1d Snap-Fetch schickt KEIN blueprintUuid mehr (M8-R2)",
+              call0 and call0.get("blueprintUuid") is None, str(call0))
 
         # ---- Gate 2: Fallback-Ergebnis gerastet auf Borase-(Ore)-Union ----
         rows0 = await js("sliderRows()")
@@ -292,14 +284,14 @@ async def main():
         await js("setMat(0, 300)")
         await asyncio.sleep(0.3)
         rows = await js("sliderRows()")
-        check("2b 300 rastet auf 302 (Union-Wert)",
-              rows and rows[0]["val"] == "302" and rows[0]["snapOn"] is True, str(rows))
+        check("2b 300 rastet auf 274 (nächstes SCMDB-Band)",
+              rows and rows[0]["val"] == "274" and rows[0]["snapOn"] is True, str(rows))
         await js("setMat(0, 500)")
         await asyncio.sleep(0.3)
         rows = await js("sliderRows()")
-        check("2c 500 rastet auf 553 (nächster Union-Wert)", rows and rows[0]["val"] == "553", str(rows))
-        check("2d Snap-Titel zeigt die Borase-(Ore)-Union",
-              rows and "264" in (rows[0]["snapTitle"] or "") and "1000" in (rows[0]["snapTitle"] or ""),
+        check("2c 500 bleibt 500 (Always-Punkt im Band-Raster)", rows and rows[0]["val"] == "500", str(rows))
+        check("2d Snap-Titel zeigt die SCMDB-Bänder",
+              rows and "274" in (rows[0]["snapTitle"] or "") and "1000" in (rows[0]["snapTitle"] or ""),
               str(rows and rows[0]["snapTitle"]))
         await shot("m8r1a-orefb-snapped.png")
 
@@ -310,15 +302,17 @@ async def main():
         await wait_for("craftDetailOpen() && sliderRows().length === 1", 8)
         calls = await js("window.__SNAP_CALLS.length")
         last = await js(f"window.__SNAP_CALLS[{calls-1}] || null")
-        check("3a Quxdust-Fetch ebenfalls mit Namen + BP-UUID",
-              last and last.get("names") == ["Quxdust"] and last.get("blueprintUuid") == BP_QUX,
+        check("3a Quxdust-Fetch mit Namen, ohne blueprintUuid",
+              last and last.get("names") == ["Quxdust"] and last.get("blueprintUuid") is None,
               str(last))
-        await js("setMat(0, 500)")
+        await js("setMat(0, 777)")
         await asyncio.sleep(0.3)
         rows = await js("sliderRows()")
-        check("3b Kein (Ore)-Match: Regler frei (500 bleibt 500)", rows and rows[0]["val"] == "500", str(rows))
-        check("3c Kein Fake-Raster (kein Union-Titel)",
-              rows and "Quxdust" not in (rows[0]["snapTitle"] or ""), str(rows and rows[0]["snapTitle"]))
+        check("3b Kein Band-Match: 500-only-Raster (777 rastet auf 500)",
+              rows and rows[0]["val"] == "500" and rows[0]["snapOn"] is True, str(rows))
+        check("3c 500-only-Titel (nur 500, kein Fake-Band)",
+              rows and "500" in (rows[0]["snapTitle"] or "") and "Quxdust" not in (rows[0]["snapTitle"] or ""),
+              str(rows and rows[0]["snapTitle"]))
         await shot("m8r1a-orefb-free.png")
 
         # ---- Gate 4: Detail-Shell ohne Scroll-Overflow (Repo-Regel) ----
