@@ -4756,6 +4756,13 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 	function exitMiningJump() {
 		setMode('crafting'); // setMode löst craftOreJump selbst auf
 	}
+	// M9-F (t_bb97da62): Inventar-Eingabemaske aus der Crafting-Liste —
+	// Inventar-Modus + Erfassungsformular sofort öffnen (addTick-Impuls).
+	let inventoryAddTick = $state(0);
+	function openInventoryFromCraft() {
+		setMode('inventory');
+		inventoryAddTick += 1;
+	}
 
 	// ---- Modi-Wechsel (Mode-Hotkeys + Rail-Klicks) ------------------------------
 	// Ein zentraler Einstieg: räumt den jeweiligen Alt-Zustand auf (Market-
@@ -5927,6 +5934,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					filter={input}
 					onOpenOre={openOreInMining}
 					onOpenMiningList={openMiningListFromCraft}
+					onOpenInventory={openInventoryFromCraft}
 					hidden={!!craftOreJump}
 				/>
 				{#if invEmbed}
@@ -5939,7 +5947,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 {#if railMode === 'inventory'}
 			<!-- Inventar-Modus (t_1bab1fea): eigene SPA-Komponente; das HAUPT-
 			     Suchfeld dient als In-Context-Filter (Standort/Material). -->
-			<Inventory onexit={() => setMode('search')} filter={input} />
+			<Inventory onexit={() => setMode('search')} filter={input} addTick={inventoryAddTick} />
 {:else if railMode === 'mining'}
 			<!-- M7-K2 (t_bb3303d0): Mining-Modus (Strata) — M7-F3 (t_cf1224c5):
 			     das HAUPT-Suchfeld ist jetzt der In-Context-Filter (Tab-abhängig:

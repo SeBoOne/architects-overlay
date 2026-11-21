@@ -45,6 +45,18 @@
 		quantity: number;
 		min_quality: number;
 		done_qty: number;
+		// M9-F (t_bb97da62): aus dem Inventar reserviert (mengengewichtete Ø-Q).
+		reserved_qty: number;
+		reserved_avg_quality: number | null;
+	};
+	// M9-F: Inventar-Zeile als Reservierungs-Quelle (Mirror inventory_list).
+	type InvRow = {
+		id: string;
+		name: string;
+		quality: number;
+		location_name: string;
+		quantity: number;
+		reservations: { id: string; qty: number; purpose: string; list_id: string | null }[];
 	};
 	type ListDetail = {
 		id: number;
@@ -61,11 +73,14 @@
 		// M9-D (t_36f3966c): nach dem Brücken-Anlegen zum Mining-Modus springen
 		// und die neue Liste öffnen (M8-K3-Muster: Callback des Parents, kein
 		// Modi-Kopplungs-Hardcode in der Komponente).
-		onOpenMiningList = null
-	}: {
-		onOpenOre?: ((oreId: string) => void) | null;
-		onOpenMiningList?: ((listId: number) => void) | null;
-	} = $props();
+		onOpenMiningList = null,
+		// M9-F (t_bb97da62): Inventar-Eingabemaske aus der Crafting-Liste öffnen.
+		onOpenInventory = null
+		}: {
+			onOpenOre?: ((oreId: string) => void) | null;
+			onOpenMiningList?: ((listId: number) => void) | null;
+			onOpenInventory?: (() => void) | null;
+		} = $props();
 
 	// ---- State ---------------------------------------------------------------
 	let lists = $state<ListSummary[]>([]);
@@ -165,6 +180,65 @@
 		}
 	}
 
+	// M9-F (t_bb97da62) — Aus Inventar reservieren: Quellen-Zeilen des
+	// Materials (alle Qualitäten/Standorte, freie Mengen), Auswahl per
+	// Chips (KEIN natives <select>), partielle Mengen erlaubt.
+	let reserveFor = $state<AggMat | null>(null);
+	let reserveRows = $state<InvRow[]>([]);
+	let reserveSel = $state<Record<string, string>>({}); // id → qty-Text
+	let reserveBusy = $state(false);
+	let reserveError = $state('');
+	async function openReserve(m: AggMat) {
+		reserveFor = m;
+		reserveSel = {};
+		reserveError = '';
+		reserveRows = [];
+		try {
+			const all = await invoke<InvRow[]>('inventory_list');
+			reserveRows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
+		} catch (e) {
+			reserveError = String(e);
+		}
+	}
+	const freeQty = (r: InvRow) =>
+		Math.max(0, r.quantity - r.reservations.reduce((s, x) => s + x.qty, 0));
+	async function submitReserve() {
+		if (reserveFor === null || activeId === null || reserveBusy) return;
+		const m = reserveFor;
+		const picks = Object.entries(reserveSel)
+			.map(([id, raw]) => ({ id, qty: Number(raw.replace(',', '.')) }))
+			.filter((p) => p.qty > 0);
+		if (!picks.length) {
+			reserveError = $t('inventory.err_purpose');
+			return;
+		}
+		reserveBusy = true;
+		reserveError = '';
+		try {
+			let total = 0;
+			for (const p of picks) {
+				await invoke('reservation_add', {
+					'new': {
+						inventory_id: p.id,
+						list_id: String(activeId),
+						purpose: '',
+						qty: p.qty,
+						note: m.material
+					}
+				});
+				total += p.qty;
+			}
+			await openList(activeId);
+			reserveNote = $t('lists.reserved_note2', { q: total, name: m.material, list: detail?.name ?? '' });
+			reserveFor = null;
+		} catch (e) {
+			reserveError = String(e);
+		} finally {
+			reserveBusy = false;
+		}
+	}
+	let reserveNote = $state('');
+
 	const UNIT_COLORS: Record<string, string> = {
 		SCU: '#e0a83e',
 		gems: '#7ec8e3',
@@ -202,6 +276,10 @@
 		invNote = '';
 		invError = '';
 		addInvFor = null;
+		// M9-F: Reservierungs-Hinweis/Picker ebenso verfallen lassen.
+		reserveNote = '';
+		reserveError = '';
+		reserveFor = null;
 		// M9-D: Brücken-Hinweis ebenso verfallen lassen.
 		bridgeNote = '';
 		try {
@@ -408,6 +486,14 @@
 					title={$t('lists.bridge_title')}
 				>{$t('lists.bridge')}</button
 				>
+				<!-- M9-F: Inventar-Eingabemaske aus der Crafting-Liste öffnen. -->
+				<button
+					type="button"
+					class="cl-mini"
+					onclick={() => onOpenInventory?.()}
+					title={$t('lists.open_inventory')}
+				>{$t('lists.open_inventory')}</button
+				>
 				<button type="button" class="cl-mini is-danger" onclick={() => void deleteList()}>
 					{$t('lists.delete')}
 				</button>
@@ -416,6 +502,9 @@
 
 		{#if bridgeNote}
 			<div class="cl-inv-note">{bridgeNote}</div>
+		{/if}
+		{#if reserveNote}
+			<div class="cl-inv-note">{reserveNote}</div>
 		{/if}
 
 		<!-- Einträge: Blueprint + copies + Entfernen -->
@@ -493,11 +582,60 @@
 								>
 							</span>
 							<span class="cl-q" title={$t('lists.quality_req')}>Q ≥ {m.min_quality}</span>
-						</div>
-						<div class="cl-bar-track" role="progressbar" aria-valuenow={p} aria-valuemin="0" aria-valuemax="100">
+							{#if m.reserved_qty > 0}
+								<span class="cl-resv" title={$t('lists.reserve_title')}>
+									{$t('lists.reserved_chip', { q: fmtQty(m.reserved_qty), qq: m.reserved_avg_quality ?? '—' })}
+								</span>
+							{/if}
+							</div>
+							<div class="cl-bar-track" role="progressbar" aria-valuenow={p} aria-valuemin="0" aria-valuemax="100">
 							<div class="cl-bar-fill" class:is-done={p >= 100} style={`width:${p}%`}></div>
-						</div>
-						<div class="cl-agg-actions">
+							</div>
+							<div class="cl-agg-actions">
+							<button type="button" class="cl-mini" onclick={() => openReserve(m)} disabled={reserveBusy}>
+								{$t('lists.reserve_btn')}
+							</button>
+							{#if reserveFor && reserveFor.material === m.material && reserveFor.unit === m.unit}
+								<div class="cl-inv-form">
+									<div class="cl-inv-title">{$t('lists.reserve_title')}</div>
+									{#if reserveError}<div class="cl-err">{reserveError}</div>{/if}
+									{#if !reserveRows.length}
+										<div class="cl-hint">{$t('inventory.no_positions_material')}</div>
+									{:else}
+										<div class="cl-reserve-rows">
+											{#each reserveRows as r (r.id)}
+												{@const free = freeQty(r)}
+												<div class="cl-res-row">
+													<button
+														type="button"
+														class="cl-res-pick"
+														class:is-on={reserveSel[r.id] !== undefined}
+														onclick={() => reserveSel[r.id] === undefined ? reserveSel[r.id] = String(free) : delete reserveSel[r.id]}
+														title={r.location_name}
+													>Q{r.quality} · {r.location_name} · {$t('inventory.qty_breakdown', { free: fmtQty(free), total: fmtQty(r.quantity) })}</button>
+													{#if reserveSel[r.id] !== undefined}
+														<input
+															class="cl-input cl-res-qty"
+															type="text"
+															inputmode="decimal"
+															bind:value={reserveSel[r.id]}
+															placeholder={$t('lists.reserve_src_ph')}
+															aria-label={$t('lists.reserve_src_ph')}
+															onkeydown={(e) => e.key === 'Enter' && void submitReserve()}
+														/>
+														{/if}
+												</div>
+											{/each}
+										</div>
+										<button type="button" class="cl-btn" onclick={() => void submitReserve()} disabled={reserveBusy}>
+											{$t('lists.inv_add')}
+										</button>
+										<button type="button" class="cl-mini" onclick={() => (reserveFor = null)}>
+											{$t('common.cancel')}
+										</button>
+									{/if}
+								</div>
+							{/if}
 							<button type="button" class="cl-mini" onclick={() => doneAll(m)} disabled={p >= 100}>
 								{$t('lists.done_all')}
 							</button>
@@ -859,6 +997,45 @@
 	}
 	.cl-inv-q {
 		width: 74px;
+		padding: 3px 8px;
+	}
+	/* M9-F: Aus Inventar reservieren — Chip + Quellen-Picker. */
+	.cl-resv {
+		color: #e0a83e;
+		font-size: 11px;
+		white-space: nowrap;
+	}
+	.cl-reserve-rows {
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+		max-height: 140px;
+		overflow-y: auto;
+	}
+	.cl-res-row {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+	.cl-res-pick {
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(255, 255, 255, 0.05);
+		border-radius: 6px;
+		color: inherit;
+		font: inherit;
+		font-size: 11px;
+		padding: 3px 8px;
+		cursor: pointer;
+		text-align: left;
+	}
+	.cl-res-pick.is-on {
+		background: var(--accent, #4aa3ff);
+		border-color: transparent;
+		color: #0b0f14;
+		font-weight: 600;
+	}
+	.cl-res-qty {
+		width: 70px;
 		padding: 3px 8px;
 	}
 </style>

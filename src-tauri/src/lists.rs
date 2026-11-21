@@ -6,9 +6,11 @@
 //! en → raw key im Frontend).
 
 use crate::i18n_err::err_wrap;
+use crate::inventory::FlexId;
 use crate::trade::TradeState;
 use cache::inventory::NewInventoryEntry;
 use cache::lists::{ListDetail, ListSummary, NewListItem, ReservedAdd};
+use cache::reservations::{NewReservation, Reservation};
 use tauri::State;
 
 /// Alle Listen eines Modus (`craft` | `mining`).
@@ -128,4 +130,33 @@ pub fn inventory_add_for_list(
         .cache
         .inventory_add_for_list(entry, list_id, &material, &unit)
         .map_err(|e| err_wrap("lists.err_add_inventory", e.to_string()))
+}
+
+/// M9-F (t_bb97da62): Reservierung AUS dem Inventar anlegen — eine Position,
+/// eine Menge (partiell erlaubt) und ein Zweck (Liste und/oder freier Text).
+#[tauri::command]
+pub fn reservation_add(
+    state: State<'_, TradeState>,
+    new: NewReservation,
+) -> Result<Reservation, String> {
+    let id = state
+        .cache
+        .reservation_add(new)
+        .map_err(|e| err_wrap("reservations.err_add", e.to_string()))?;
+    state
+        .cache
+        .reservations_list()
+        .map_err(|e| err_wrap("reservations.err_add", e.to_string()))?
+        .into_iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| err_wrap("reservations.err_add", format!("row {id} vanished")))
+}
+
+/// M9-F: Reservierung aufheben.
+#[tauri::command]
+pub fn reservation_delete(state: State<'_, TradeState>, id: FlexId) -> Result<(), String> {
+    state
+        .cache
+        .reservation_delete(id.0)
+        .map_err(|e| err_wrap("reservations.err_delete", e.to_string()))
 }

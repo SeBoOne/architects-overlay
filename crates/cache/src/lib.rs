@@ -21,6 +21,7 @@
 pub mod inventory;
 pub mod lists;
 pub mod modul_compat;
+pub mod reservations;
 pub mod sync;
 
 use std::path::Path;
@@ -422,16 +423,21 @@ CREATE TABLE IF NOT EXISTS list_mat_done (
   done_qty REAL    NOT NULL DEFAULT 0,
   PRIMARY KEY (list_id, material, unit)
 );
--- M9-E (t_aae8d4c9): Inventar-Anbindung — eine über eine Liste hinzugefügte
--- Inventar-Position verweist auf diese Liste („reserviert für Liste X").
--- Eine Position hat höchstens EINE Reservierung (PK = inventory_id); das
--- Löschen der Liste löst nur die Verknüpfung (die Inventar-Position bleibt),
--- das Löschen der Position entfernt den Verweis.
-CREATE TABLE IF NOT EXISTS list_reservations (
-  inventory_id INTEGER PRIMARY KEY, -- -> inventory.id
-  list_id      INTEGER NOT NULL,    -- -> lists.id
-  material     TEXT    NOT NULL,
-  unit         TEXT    NOT NULL
+-- M9-F (Welle 2, t_bb97da62): Inventar-first-Reservierung — Reservierungen
+-- sind ein eigenes Primitiv AUS dem Inventar: jede Reservierung zeigt auf
+-- eine Inventar-Position (mehrere je Position möglich, partiell erlaubt)
+-- und trägt entweder einen Listen-Zweck (`list_id`, NULL = freier Zweck)
+-- oder einen freien `purpose` ('Projekt X', 'Verkauf', ...). Das Löschen
+-- der Liste löst nur die Verknüpfung (die Inventar-Position bleibt), das
+-- Löschen der Position entfernt ihre Reservierungen.
+CREATE TABLE IF NOT EXISTS reservations (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  inventory_id INTEGER NOT NULL, -- -> inventory.id
+  list_id      INTEGER,          -- -> lists.id, NULL = freier Zweck
+  purpose      TEXT    NOT NULL DEFAULT '', -- freier Zweck ('Projekt X', 'Verkauf', ...)
+  qty          REAL    NOT NULL,          -- reservierte Menge (partiell erlaubt)
+  note         TEXT    NOT NULL DEFAULT '',
+  created_at   INTEGER NOT NULL
 );
 -- Handelsrouten (v6, Karte t_128b7547): JSON-Metadatensätze hinter einem
 -- Frischemarkierer — Terminal-Flags (Autoload/Cargodeck/Boden/Kette) und
@@ -725,7 +731,15 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   erzeugende Crafting-Liste („der Hinweis verweist immer auf die
 ///   Craftingliste"). NULL = standalone. ALTER mit Spalten-Probe, Bestands-
 ///   zeilen bleiben NULL (standalone).
-pub const SCHEMA_VERSION: i64 = 15;
+/// * v16 — M9-F (t_bb97da62): neue additive Tabelle `reservations` — das
+///   Reservierungs-Modell ist umgedreht (Inventar-first): eine Reservierung
+///   zeigt AUF eine Inventar-Position (mehrere je Position, partielle
+///   Mengen erlaubt) und trägt einen Listen-Zweck (`list_id`) oder einen
+///   freien `purpose`. Bestehende `list_reservations`-Zeilen (v14-Modell:
+///   eine Position = eine Listen-Reservierung über die volle Menge) werden
+///   EINMALIG übernommen (qty = Positionsmenge, note = Material), die alte
+///   Tabelle bleibt ungeschrieben zurück (dormant).
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.
@@ -871,6 +885,8 @@ fn migrate_source_columns(conn: &Connection) -> Result<()> {
         )
         .map_err(|e| CacheError::Open(format!("v15 lists.source_list_id: {e}")))?;
     }
+    // v16 (M9-F t_bb97da62): die Legacy-Tabelle `list_reservations` bleibt als
+    // Dormant-Konstrukt ungeschrieben — Übernahme siehe `init` (v16-Migration).
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)
         .map_err(|e| CacheError::Open(format!("version bump: {e}")))?;
     Ok(())
@@ -921,10 +937,36 @@ impl Cache {
     fn init(conn: Connection) -> Result<Cache> {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| CacheError::Open(e.to_string()))?;
+        // v16 (M9-F t_bb97da62): Probe auf die Legacy-Tabelle VOR dem Schema-
+        // Batch — danach existiert `reservations` in jedem Fall und der
+        // Probe-Ansatz in migrate_source_columns könnte nicht mehr unterscheiden.
+        let legacy_reservations: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'list_reservations'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| CacheError::Open(format!("v16 legacy probe: {e}")))?;
         conn.execute_batch(SCHEMA)
             .map_err(|e| CacheError::Open(format!("schema: {e}")))?;
         migrate_columns(&conn)?;
         migrate_source_columns(&conn)?;
+        if legacy_reservations > 0 {
+            // EINMALIGE Übernahme der v14-`list_reservations`-Zeilen: alte
+            // Reservierung galt als vollständig (qty = Positionsmenge), das
+            // Material wandert in die note. Idempotent gegen mehrfaches
+            // Öffnen dank Inventar-Id-Dedupe (PK in der alten Tabelle).
+            conn.execute(
+                "INSERT INTO reservations (inventory_id, list_id, purpose, qty, note, created_at) \
+                 SELECT r.inventory_id, r.list_id, '', COALESCE(i.quantity, 0), \
+                        i.name, CAST(strftime('%s', 'now') AS INTEGER) \
+                 FROM list_reservations r \
+                 LEFT JOIN inventory i ON i.id = r.inventory_id \
+                 WHERE NOT EXISTS (SELECT 1 FROM reservations x WHERE x.inventory_id = r.inventory_id)",
+                [],
+            )
+            .map_err(|e| CacheError::Open(format!("v16 reservations migration: {e}")))?;
+        }
         Ok(Cache {
             conn: Mutex::new(conn),
         })

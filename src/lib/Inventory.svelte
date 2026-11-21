@@ -32,8 +32,9 @@ function keyActivate(e: KeyboardEvent) {
 		location_name: string;
 		quantity: number;
 		price: number | null;
-		reserved_list_id: string | null;
-		reserved_list_name: string | null;
+		// M9-F (t_bb97da62): Reservierungen AUS dieser Position (mehrere,
+		// partiell). gesamt/reserviert/frei leiten sich daraus ab.
+		reservations: { id: string; qty: number; purpose: string; list_id: string | null; list_name: string | null; note: string }[];
 		created_at: number;
 		updated_at: number;
 	};
@@ -44,7 +45,17 @@ function keyActivate(e: KeyboardEvent) {
 
 	type SortMode = 'loc' | 'qty' | 'quality';
 
-	let { onexit, filter = $bindable('') }: { onexit: () => void; filter?: string } = $props();
+	let { onexit, filter = $bindable(''), addTick = 0 }: { onexit: () => void; filter?: string; addTick?: number } = $props();
+
+	// M9-F (t_bb97da62): Inventar-Eingabemaske aus der Crafting-Liste öffnen —
+	// addTick-Impuls (0 = Initial, >0 = Öffnen-Anfrage).
+	let lastTick = $state(0);
+	$effect(() => {
+		if (addTick > lastTick) {
+			lastTick = addTick;
+			openAdd();
+		}
+	});
 
 	// ---- State ---------------------------------------------------------------
 	let rows = $state<InvEntry[]>([]);
@@ -364,6 +375,73 @@ function keyActivate(e: KeyboardEvent) {
 		}
 	}
 
+	// ---- M9-F (t_bb97da62): Direkte Reservierung im Inventar ------------------
+	// Beliebige Zwecke (Projekt, Verkauf, Liste): Inline-Panel pro Position.
+	let resAdd = $state<InvEntry | null>(null);
+	let resPurpose = $state('');
+	let resQty = $state('');
+	let resError = $state('');
+	let resBusy = $state(false);
+	function openReserve(e: InvEntry) {
+		resAdd = e;
+		resPurpose = '';
+		resQty = String(freeQty(e));
+		resError = '';
+	}
+	function closeReserve() {
+		resAdd = null;
+		resError = '';
+	}
+	function reservedQty(e: InvEntry): number {
+		return e.reservations.reduce((s, r) => s + r.qty, 0);
+	}
+	function freeQty(e: InvEntry): number {
+		return Math.max(0, e.quantity - reservedQty(e));
+	}
+	async function submitReserve() {
+		if (resAdd === null || resBusy) return;
+		const qty = Number(resQty.replace(',', '.'));
+		const purpose = resPurpose.trim();
+		if (!Number.isFinite(qty) || qty <= 0) {
+			resError = tr('inventory.err_qty');
+			return;
+		}
+		if (!purpose) {
+			resError = tr('inventory.err_purpose');
+			return;
+		}
+		resBusy = true;
+		resError = '';
+		const e = resAdd;
+		try {
+			await invoke('reservation_add', {
+				'new': { inventory_id: e.id, list_id: null, purpose, qty, note: '' }
+			});
+			const fresh = await invoke<InvEntry[]>('inventory_list');
+			rows = fresh;
+			toastMsg(tr('inventory.reservation_done', { q: qty, name: e.name, purpose }));
+			closeReserve();
+		} catch (err) {
+			resError = trError(err);
+		} finally {
+			resBusy = false;
+		}
+	}
+	async function removeReservation(resId: string) {
+		try {
+			await invoke('reservation_delete', { id: resId });
+			rows = await invoke<InvEntry[]>('inventory_list');
+			toastMsg(tr('inventory.reservation_removed'));
+		} catch (err) {
+			toastMsg(trError(err));
+		}
+	}
+	/// Zweck-Text einer Reservierung (Liste oder Freitext).
+	function resLabel(r: { qty: number; purpose: string; list_name: string | null }): string {
+		const purpose = r.list_name ? tr('inventory.purpose_list', { name: r.list_name }) : r.purpose;
+		return `${purpose} · ${r.qty}`;
+	}
+
 	function openAdd() {
 		editingId = null;
 		fEntityKind = null;
@@ -565,6 +643,15 @@ function keyActivate(e: KeyboardEvent) {
 	// ---- Tastatur (nur Inventar-Modus; F-Tasten/Esc-Root bleiben bei der
 	// Palette — hier greift ausschließlich dieser Handler) --------------------
 	function onKey(e: KeyboardEvent) {
+		if (resAdd) {
+			// M9-F: Reservierungs-Panel — Esc bricht ab, Eingaben tippen normal.
+			if (e.key === 'Escape') {
+				closeReserve();
+				e.preventDefault();
+				return;
+			}
+			return;
+		}
 		if (inForm) {
 			// Esc im Formular = Abbrechen. Eingaben tippen bleibt normal.
 			if (e.key === 'Escape') {
@@ -824,10 +911,12 @@ function keyActivate(e: KeyboardEvent) {
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div class="main">
 							<div class="loc">{r.location_name}{#if r.location_id !== null}<span class="src">{$t('inventory.dot_location')}</span>{/if}</div>
-							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
+							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 						</div>
-						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
-						<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
+						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
+							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
+						<button type="button" class="inv-edit" aria-label={$t('inventory.reserve_btn')} onclick={(ev) => (ev.stopPropagation(), openReserve(r))}>R</button>
+							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
 					</div>
 				{:else}
 					<div class="inv-empty">{$t('inventory.no_positions_material')}</div>
@@ -865,9 +954,11 @@ function keyActivate(e: KeyboardEvent) {
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div class="main">
 								<div class="loc">{r.name}{#if r.entity_kind !== null}<span class="src"> · {r.entity_kind === 'item' ? $t('common.item') : $t('common.commodity')}</span>{/if}</div>
-								<div class="sub">{#if r.price}{$t('common.buy')} {fmtPrice(r.price)} aUEC{:else}{$t('inventory.no_purchase_price')}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
+								<div class="sub">{#if r.price}{$t('common.buy')} {fmtPrice(r.price)} aUEC{:else}{$t('inventory.no_purchase_price')}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 							</div>
-							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
+							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
+							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
+							<button type="button" class="inv-edit" aria-label={$t('inventory.reserve_btn')} onclick={(ev) => (ev.stopPropagation(), openReserve(r))}>R</button>
 							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
 						</div>
 					{:else}
@@ -927,10 +1018,12 @@ function keyActivate(e: KeyboardEvent) {
 										<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 										<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openLocation(r.location_name)}>
 											<div class="loc">{r.location_name}</div>
-											<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
+											<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 										</div>
-										<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
-										<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
+										<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
+							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
+										<button type="button" class="inv-edit" aria-label={$t('inventory.reserve_btn')} onclick={(ev) => (ev.stopPropagation(), openReserve(r))}>R</button>
+							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
 									</div>
 								{/each}
 							{/each}
@@ -964,9 +1057,11 @@ function keyActivate(e: KeyboardEvent) {
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 								<div class="loc">{r.name}</div>
-								<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
+								<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 							</div>
-							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
+							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
+							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
+							<button type="button" class="inv-edit" aria-label={$t('inventory.reserve_btn')} onclick={(ev) => (ev.stopPropagation(), openReserve(r))}>R</button>
 							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
 							</div>
 							{/each}
@@ -978,10 +1073,12 @@ function keyActivate(e: KeyboardEvent) {
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 							<div class="loc">{r.name} <small>{r.location_name}</small></div>
-							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#if r.reserved_list_name} <span class="resv">{$t('inventory.reserved_badge', { list: r.reserved_list_name })}</span>{/if}</div>
+							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 						</div>
-						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small></div>
-						<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
+						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
+							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
+						<button type="button" class="inv-edit" aria-label={$t('inventory.reserve_btn')} onclick={(ev) => (ev.stopPropagation(), openReserve(r))}>R</button>
+							<button type="button" class="inv-edit" aria-label={$t('common.edit')} onclick={(ev) => (ev.stopPropagation(), openEdit(r))}>✎</button>
 					</div>
 				{/each}
 			{/if}
@@ -989,6 +1086,36 @@ function keyActivate(e: KeyboardEvent) {
 		<div class="inv-foot">
 			<span>{$t('inventory.count_pos_mat', { n: visRows.length, m: materialCount })}</span>
 			<span><kbd>↑↓</kbd>{$t('inventory.row')}<kbd>↵</kbd> {view === 'overview' ? $t('inventory.view_material') : $t('inventory.view_edit')} · <kbd>{$t('keyboard.key.delete')}</kbd>{$t('inventory.delete_row')}<kbd>Esc</kbd>{$t('search.back')}</span>
+		</div>
+	{/if}
+	{#if resAdd}
+		<!-- M9-F: Direkte Reservierung — beliebiger Zweck, partielle Menge. -->
+		<div class="res-panel" role="form" aria-label={$t('inventory.reserve_btn')}>
+			<div class="res-title">{resAdd.name} · Q{resAdd.quality} · {resAdd.location_name}</div>
+			{#if resError}<div class="res-error">{resError}</div>{/if}
+			<div class="res-fields">
+				<input
+					class="res-input"
+					type="text"
+					bind:value={resPurpose}
+					placeholder={$t('inventory.purpose_ph')}
+					aria-label={$t('inventory.reserve_btn')}
+					onkeydown={(e) => e.key === 'Enter' && void submitReserve()}
+				/>
+				<input
+					class="res-input res-qty"
+					type="text"
+					inputmode="decimal"
+					bind:value={resQty}
+					placeholder={$t('inventory.purpose_qty')}
+					aria-label={$t('inventory.purpose_qty')}
+					onkeydown={(e) => e.key === 'Enter' && void submitReserve()}
+				/>
+				<button type="button" class="res-save" onclick={() => void submitReserve()} disabled={resBusy}>
+					{$t('inventory.reserve_btn')}
+				</button>
+				<button type="button" class="res-cancel" onclick={closeReserve}>{$t('common.cancel')}</button>
+			</div>
 		</div>
 	{/if}
 	{#if toast}
@@ -1205,11 +1332,99 @@ function keyActivate(e: KeyboardEvent) {
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
 	}
-	/* M9-E (t_aae8d4c9): „reserviert für Liste" badge on inventory rows. */
+	/* M9-E (t_aae8d4c9): „reserviert für Liste“ badge on inventory rows. */
 	.inv-row .resv {
 		color: #e0a83e;
 		font-size: 10px;
 		white-space: nowrap;
+	}
+	/* M9-F: Reservierungs-Badges als löschbare Chips + Mengen-Breakdown. */
+	button.resv {
+		background: none;
+		border: none;
+		font: inherit;
+		font-size: 10px;
+		color: #e0a83e;
+		padding: 0;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	button.resv:hover {
+		text-decoration: line-through;
+	}
+	.inv-row .qty-sub {
+		font: 400 9.5px/1.4 var(--mono, monospace);
+		color: var(--fgdim);
+	}
+	.res-panel {
+		position: absolute;
+		left: 50%;
+		bottom: 40px;
+		transform: translateX(-50%);
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		background: color-mix(in srgb, var(--bg, #101010) 92%, transparent);
+		border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+		border-radius: 6px;
+		padding: 10px 12px;
+		z-index: 3;
+		max-width: calc(100% - 32px);
+	}
+	.res-title {
+		font-size: 11px;
+		color: var(--fgdim);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.res-error {
+		color: var(--alert, #ff6b6b);
+		font-size: 11px;
+	}
+	.res-fields {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+	}
+	.res-input {
+		background: color-mix(in srgb, var(--fg) 6%, transparent);
+		border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+		border-radius: 4px;
+		color: var(--fg);
+		font: inherit;
+		font-size: 12px;
+		padding: 5px 8px;
+		width: 220px;
+	}
+	.res-input.res-qty {
+		width: 80px;
+	}
+	.res-input:focus {
+		outline: none;
+		border-color: var(--accent);
+	}
+	.res-save {
+		border: none;
+		background: color-mix(in srgb, var(--accent) 20%, transparent);
+		color: var(--accent);
+		font: inherit;
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		padding: 5px 10px;
+		border-radius: 3px;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.res-cancel {
+		border: none;
+		background: transparent;
+		color: var(--fgdim);
+		font: inherit;
+		font-size: 11px;
+		padding: 5px 8px;
+		cursor: pointer;
 	}
 	.inv-edit {
 		border: none;
