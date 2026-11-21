@@ -40,6 +40,9 @@
 	import { RARITIES, RARITY_COLORS, rarityColor, type Rarity } from './rarity';
 	import { sigCollectRows, sigToggleEntry, type ScanSignatureEntry } from './scan-signature';
 	import { PINS_CHANGED_EVENT, type PinEntry, type PinsState } from './pins';
+	// M9-C (t_dc01f34b): Listen-Tab im Mining-Modus (eigener Reiter,
+	// Omar-Beschluss 2026-11-21 — analog Crafting-Listen, keine F-Taste).
+	import MiningLists from './MiningLists.svelte';
 
 	type Ore = {
 		id: string;
@@ -123,7 +126,7 @@
 	let loading = $state(false);
 	let error = $state('');
 
-	let view = $state<'ores' | 'locations'>('ores');
+	let view = $state<'ores' | 'locations' | 'lists'>('ores');
 	// M7-F3 (Punkt 8): oreQuery/locQuery ENTFERNT — `filter` (Haupt-Suchfeld)
 	// filtert tab-abhängig die aktuelle Liste.
 	let catFilter = $state<'all' | 'ship' | 'fps'>('all');
@@ -588,6 +591,11 @@
 			<div class="mc-foot">{$t('mining.key_missing_settings')}</div>
 		</div>
 	{:else}
+		{#if view === 'lists'}
+			<!-- M9-C: Listen-Tab — Mining-Listen (gleiche Engine, kind='mining')
+			     + Beste-Orte-Optimierung (Set-Cover, Qualitäts-Bänder) -->
+			<MiningLists ores={ores} tierDefault={status?.tier_default ?? 4} />
+		{:else}
 		<div class="mcols">
 			<!-- Linke Spalte: Erz-/Ort-Suche -->
 			<div class="mcol">
@@ -607,6 +615,14 @@
 						role="tab"
 						aria-selected={view === 'locations'}
 						onclick={() => (view = 'locations')}>{$t('mining.tab_locations')}</button
+					>
+					<button
+						type="button"
+						class="mtab"
+						class:is-on={(view as string) === 'lists'}
+						role="tab"
+						aria-selected={(view as string) === 'lists'}
+						onclick={() => (view = 'lists')}>{$t('mining.tab_lists')}</button
 					>
 				</div>
 
@@ -958,6 +974,7 @@
 				{/if}
 			</div>
 		</div>
+		{/if}
 
 		{#if note}
 			<div class="mtoast">{note}</div>
