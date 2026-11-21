@@ -102,6 +102,20 @@ pub fn norm_updater_interval(h: u32) -> u32 {
 pub const SCALE_MIN: u16 = 50;
 pub const SCALE_MAX: u16 = 200;
 
+/// M9-A (t_60af9ec1): Blueprint-Besitz-Liste normalisieren — trim, leere
+/// Einträge raus, dedupe, sortiert. Hand-Edits in der config.toml können die
+/// Liste nicht corrupten (identische Norm beim Laden und beim Setzen).
+pub fn norm_blueprint_owned(values: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = values
+        .iter()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
 pub fn norm_scale(pct: u16) -> u16 {
     pct.clamp(SCALE_MIN, SCALE_MAX)
 }
@@ -426,6 +440,8 @@ impl fmt::Display for MarketplaceConfirm {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct RawConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    blueprint_owned: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     uex: Option<UexSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -901,6 +917,11 @@ pub type Result<T> = std::result::Result<T, SettingsError>;
 #[derive(Debug, Clone)]
 pub struct Settings {
     path: PathBuf,
+    /// M9-A (t_60af9ec1): Blueprint-Pool-Besitz — Strata-Item-IDs der
+    /// Blueprints, die der User „im Besitz" markiert hat. Normalisiert
+    /// (trim + dedupe + sort) beim Laden UND beim Setzen — ein Hand-Edit
+    /// in der config.toml kann die Liste nicht corrupten.
+    blueprint_owned: Vec<String>,
     uex_api_key: Option<String>,
     /// M2a-Fix (t_2f197d1c): persönlicher UEX-Secret-Key (user-scoped Reads).
     uex_secret_key: Option<String>,
@@ -961,6 +982,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             path: PathBuf::from(CONFIG_FILE),
+            blueprint_owned: Vec::new(),
             uex_api_key: None,
             uex_secret_key: None,
             uex_username: None,
@@ -1014,6 +1036,9 @@ impl Settings {
         };
         let settings = Settings {
             path: path.to_path_buf(),
+            // M9-A (t_60af9ec1): Blueprint-Besitz — normalisiert laden (Hand-
+            // Edit kann die Liste nicht corrupten; identisch zum Set-Pfad).
+            blueprint_owned: norm_blueprint_owned(raw.blueprint_owned.as_deref().unwrap_or(&[])),
             uex_api_key: raw.uex.as_ref().and_then(|u| u.api_key.clone()),
             uex_secret_key: raw.uex.as_ref().and_then(|u| u.secret_key.clone()),
             uex_username: raw.uex.as_ref().and_then(|u| u.username.clone()),
@@ -1174,6 +1199,7 @@ impl Settings {
     pub fn with_path(path: PathBuf) -> Settings {
         Settings {
             path,
+            blueprint_owned: Vec::new(),
             uex_api_key: None,
             uex_secret_key: None,
             uex_username: None,
@@ -1252,6 +1278,36 @@ impl Settings {
 
     pub fn set_strata_enabled(&mut self, on: bool) {
         self.strata_enabled = on;
+    }
+
+    // ---- M9-A (t_60af9ec1): Blueprint-Pool-Besitz ----------------------------
+
+    /// Item-IDs der Blueprints, die der User „im Besitz" markiert hat.
+    pub fn blueprint_owned(&self) -> &[String] {
+        &self.blueprint_owned
+    }
+
+    /// Besitz-Liste ersetzen (normalisiert — siehe [`norm_blueprint_owned`]).
+    pub fn set_blueprint_owned(&mut self, ids: &[String]) {
+        self.blueprint_owned = norm_blueprint_owned(ids);
+    }
+
+    /// Besitz-Haken umschalten. `true` = jetzt im Besitz-Markiert.
+    pub fn blueprint_owned_toggle(&mut self, id: &str) -> bool {
+        let id = id.trim();
+        if let Some(pos) = self.blueprint_owned.iter().position(|v| v == id) {
+            self.blueprint_owned.remove(pos);
+            return false;
+        }
+        if !id.is_empty() {
+            self.blueprint_owned.push(id.to_owned());
+            self.blueprint_owned.sort();
+        }
+        true
+    }
+
+    pub fn blueprint_owned_contains(&self, id: &str) -> bool {
+        self.blueprint_owned.iter().any(|v| v == id.trim())
     }
 
     /// Keystore-Eintrag-Bezeichner für den `celd_`-Key — KEIN Secret selbst
@@ -1621,6 +1677,8 @@ impl Settings {
             window: Some(WindowSection {
                 geometry: self.window_geometry.clone(),
             }),
+            blueprint_owned: (!self.blueprint_owned.is_empty())
+                .then(|| self.blueprint_owned.clone()),
             pins: self.pins.clone(),
             strata: Some(StrataSection {
                 enabled: Some(self.strata_enabled),
@@ -2656,5 +2714,30 @@ mod tests {
         let loaded = Settings::load_from(&path).unwrap();
         assert_eq!(loaded.pins_default_opacity(), 35);
         assert_eq!(loaded.pins_presets(), vec![30, 60, 100]);
+    }
+
+    #[test]
+    fn blueprint_owned_roundtrip_and_toggle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp_path(&tmp, "config.toml");
+
+        // Fehlender Key → leere Liste.
+        let s = Settings::load_from(&path).unwrap();
+        assert!(s.blueprint_owned().is_empty());
+        assert!(!s.blueprint_owned_contains("bp-1"));
+
+        let mut s = Settings::with_path(path.clone());
+        assert!(s.blueprint_owned_toggle("bp-2"));
+        assert!(s.blueprint_owned_toggle("bp-1"));
+        assert!(!s.blueprint_owned_toggle("bp-2")); // Toggle off → false
+        assert_eq!(s.blueprint_owned(), vec!["bp-1".to_owned()]);
+        s.set_blueprint_owned(&[" x ".to_owned(), "x".to_owned(), String::new()]);
+        // Norm: trim + dedupe + leer raus.
+        assert_eq!(s.blueprint_owned(), vec!["x".to_owned()]);
+        s.save().unwrap();
+
+        let loaded = Settings::load_from(&path).unwrap();
+        assert_eq!(loaded.blueprint_owned(), vec!["x".to_owned()]);
+        assert!(loaded.blueprint_owned_contains("x"));
     }
 }
