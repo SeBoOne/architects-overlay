@@ -144,7 +144,7 @@ async def main():
         async def read_row(idx):
             return await js(f"""(() => {{
               const s = document.querySelectorAll('.crafting .cmq-slider')[{idx}];
-              return {{ dom: s.querySelector('.cmq-range')?.value,
+              return {{ dom: s.querySelector('.cqs-track')?.getAttribute('aria-valuenow'),
                         val: s.querySelector('.cmq-val')?.textContent.trim() }};
             }})()""")
 
@@ -154,14 +154,14 @@ async def main():
             (natives pointermove-Verhalten), raw-Wert during drag lesen."""
             geo = await js(
                 "(function(){var s=document.querySelectorAll('.crafting .cmq-slider')[%d];"
-                "var inp=s.querySelector('.cmq-range');inp.scrollIntoView({block:'center'});"
-                "var r=inp.getBoundingClientRect();"
-                "return {x:r.left,y:r.top+r.height/2,w:r.width,v:Number(inp.value)};})()" % idx)
+                "var tr=s.querySelector('.cqs-track');tr.scrollIntoView({block:'center'});"
+                "var r=tr.getBoundingClientRect();"
+                "return {x:r.left,y:r.top+r.height/2,w:r.width,v:Number(tr.getAttribute('aria-valuenow'))};})()" % idx)
             assert geo and geo["w"] > 0, f"no slider geometry: {geo}"
-            # Thumb-X für einen Wert (Chromium: thumb inset ≈ 8px je Seite)
+            # M8-R3 Custom-Slider: Thumb-Mitte = v/1000 der Track-Breite.
             def x_for(v):
                 t = max(0.0, min(1.0, v / 1000.0))
-                return geo["x"] + 8 + t * (geo["w"] - 16)
+                return geo["x"] + t * geo["w"]
             await mouse(x_for(geo["v"]), geo["y"], "mousePressed")
             await asyncio.sleep(0.1)
             raw = None
@@ -170,7 +170,7 @@ async def main():
                 await mouse(x_for(f), geo["y"], "mouseMoved")
                 await asyncio.sleep(0.05)
                 raw = await js(
-                    "document.querySelectorAll('.crafting .cmq-range')[%d].value" % idx)
+                    "document.querySelectorAll('.crafting .cqs-track')[%d].getAttribute('aria-valuenow')" % idx)
             await mouse(x_for(frac * 1000), geo["y"], "mouseReleased")
             await asyncio.sleep(0.3)
             return raw

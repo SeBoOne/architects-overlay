@@ -137,10 +137,13 @@ WRAP = r"""
     return orig(cmd, args);
   };
   window.craftDetailOpen = () => !!document.querySelector('.crafting .cd-title');
+  // M8-R3: Custom-Slider — Wert/Grenzen aus den ARIA-Attributen des
+  // .cqs-track (nativ range ist ersetzt); setMat zieht per ECHTEN
+  // Pointer-Events am Track (Hysterese/Clamp im Pointer-Handler).
   window.sliderRows = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => ({
-    range: r.querySelector('.cmq-range')?.value,
-    min: r.querySelector('.cmq-range')?.min,
-    max: r.querySelector('.cmq-range')?.max,
+    range: r.querySelector('.cqs-track')?.getAttribute('aria-valuenow'),
+    min: r.querySelector('.cqs-track')?.getAttribute('aria-valuemin'),
+    max: r.querySelector('.cqs-track')?.getAttribute('aria-valuemax'),
     val: r.querySelector('.cmq-val')?.textContent.trim(),
     valCls: r.querySelector('.cmq-val')?.className || '',
     snapBtn: r.querySelector('.cmq-snap')?.textContent.trim() || null,
@@ -164,19 +167,25 @@ WRAP = r"""
       display: cs.display, visibility: cs.visibility, opacity: cs.opacity,
       inViewport: r.top >= 0 && r.bottom <= window.innerHeight && r.height > 0,
       rangeVisible: (() => {
-        const inp = el.querySelector('.cmq-range');
+        const inp = el.querySelector('.cqs-track');
         if (!inp) return { present: false };
         const ri = inp.getBoundingClientRect();
         return { present: true, boxH: Math.round(ri.height), boxW: Math.round(ri.width) };
       })()
     };
   });
-  // Regler setzen: input-Event (Svelte oninput).
+  // M8-R3: Regler setzen per ECHTEN Pointer-Events am Custom-Slider-Track
+  // (pointerdown → Jump auf den nächsten Rasterpunkt / frei bei Snap-aus).
   window.setMat = (idx, v) => {
-    const s = document.querySelectorAll('.crafting .cmq-range')[idx];
-    if (!s) return false;
-    s.value = String(v);
-    s.dispatchEvent(new Event('input', { bubbles: true }));
+    const s = document.querySelectorAll('.crafting .cmq-slider')[idx];
+    const tr = s?.querySelector('.cqs-track');
+    if (!tr) return false;
+    const r = tr.getBoundingClientRect();
+    const x = r.left + (v / 1000) * r.width;
+    const y = r.top + r.height / 2;
+    const opts = { clientX: x, clientY: y, bubbles: true, pointerId: 1 };
+    tr.dispatchEvent(new PointerEvent('pointerdown', opts));
+    tr.dispatchEvent(new PointerEvent('pointerup', opts));
     return true;
   };
   window.toggleSnapAt = (idx) => {

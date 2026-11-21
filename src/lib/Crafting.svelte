@@ -36,6 +36,8 @@
 	// Fokusduell-Bug im Spotlight-Webview, siehe M7-R1-Feedback).
 	import SelectCombo from './SelectCombo.svelte';
 	// M8-R1-A: individuelle Material-Regler + Snap-Punkte
+	// M8-R3 (t_399b10d8): Custom-Quality-Slider (nativ range → div-basiert)
+	import CraftQualitySlider from './CraftQualitySlider.svelte';
 	import {
 		aspectQuality,
 		materialKey,
@@ -481,22 +483,15 @@
 	// nach dem DOM-Flush (rAF) zurücksetzen, falls der Browser durch
 	// Layout-/Focus-Änderungen neu geankert hat.
 	let detailEl = $state<HTMLElement | null>(null);
-	function setRowQuality(c: CostEntry, idx: number, v: number, el?: HTMLInputElement | null) {
+	// M8-R3: Der Custom-Slider (CraftQualitySlider) rastet selbst (Hysterese)
+	// — hier kommt nur noch der gerastete Wert an; der el-Write-Zirkus
+	// (0.5.85–0.5.87 WebKit-Drag-Bug) entfällt strukturell: der Thumb ist
+	// ein div, dessen Position rein aus dem State folgt.
+	function setRowQuality(c: CostEntry, idx: number, v: number) {
 		const scroller = detailEl;
 		const top = scroller === null ? null : scroller.scrollTop;
 		const key = rowKey(c, idx);
-		const snapped = rowSnapOn(c, idx) ? nearestSnap(rowSnaps(c), v) : v;
-		matQual = { ...matQual, [key]: snapped ?? v };
-		// Snap sichtbar machen (User-Befund: „Werte snappen, Regler nicht“):
-		// der reactive value={}-Write feuert nur bei STATE-Änderung — zieht man
-		// innerhalb desselben Snap-Buckets (oder erneut in einen), bleibt der
-		// Thumb an der Zeigerposition hängen. ABER: der el-Write darf NUR bei
-		// change (nach dem Loslassen) passieren — WebKitGTK bricht einen
-		// aktiven Drag ab, wenn das value programmatisch gesetzt wird
-		// (User-Befund: „bei Snap aktiv kann ich keine Werte ändern“); im
-		// headless-Chromium-Diag war das nicht sichtbar. oninput snappt also
-		// nur den State, onchange schreibt zusätzlich den Thumb.
-		if (el !== null && el !== undefined) el.value = String(snapped ?? v);
+		matQual = { ...matQual, [key]: v };
 		if (scroller !== null && top !== null) {
 			requestAnimationFrame(() => {
 				scroller.scrollTop = top;
@@ -809,17 +804,16 @@
 									     mit minQuality-Badge (grün/rot am eigenen Wert), Snap-
 									     Toggle (quality_quantized_values) und %-Abweichungen. -->
 									<div class="cmq-slider" class:is-snap={rowSnapOn(c, idx)}>
-										<input
-											class="cmq-range"
-											type="range"
-											min={rowBounds(c, idx)[0]}
-											max={rowBounds(c, idx)[1]}
-											step="1"
-											aria-label={`${$t('craft.mat_quality')}: ${c.material}`}
-											value={rowQuality(c, idx)}
-											oninput={(e) => setRowQuality(c, idx, Number(e.currentTarget.value))}
-											onchange={(e) => setRowQuality(c, idx, Number(e.currentTarget.value), e.currentTarget)}
-											/>
+										<!-- M8-R3: Custom-Slider — Track fix 0–1000 (500 immer
+										     optische Mitte), Magnet-Snapping mit Hysterese im
+										     Pointer-Handler, harte Grenzen via bounds-Clamp. -->
+										<CraftQualitySlider
+											bind:value={() => rowQuality(c, idx), (v) => setRowQuality(c, idx, v)}
+											snaps={rowSnaps(c)}
+											snapOn={rowSnapOn(c, idx)}
+											bounds={rowBounds(c, idx)}
+											ariaLabel={`${$t('craft.mat_quality')}: ${c.material}`}
+										/>
 										<span class="cmq-val" class:is-ok={rowMeets(c, idx)} class:is-fail={!rowMeets(c, idx)}
 											>{rowQuality(c, idx)}</span
 										>
@@ -1262,11 +1256,6 @@
 	}
 	.cmq-slider:last-child {
 		border-bottom: 0;
-	}
-	.cmq-range {
-		flex: 1;
-		min-width: 0;
-		accent-color: var(--acc, #e0a83e);
 	}
 	.cmq-val {
 		flex: none;

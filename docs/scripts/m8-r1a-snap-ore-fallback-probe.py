@@ -137,17 +137,23 @@ WRAP = r"""
   };
   window.craftDetailOpen = () => !!document.querySelector('.crafting .cd-title');
   window.sliderRows = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => ({
-    range: r.querySelector('.cmq-range')?.value,
+    range: r.querySelector('.cqs-track')?.getAttribute('aria-valuenow'),
     val: r.querySelector('.cmq-val')?.textContent.trim(),
     valCls: r.querySelector('.cmq-val')?.className || '',
     snapOn: r.querySelector('.cmq-snap')?.classList.contains('is-on') || false,
     snapTitle: r.querySelector('.cmq-snap')?.title || null
   }));
+  // M8-R3: setMat per ECHTEN Pointer-Events am Custom-Slider-Track.
   window.setMat = (idx, v) => {
-    const s = document.querySelectorAll('.crafting .cmq-range')[idx];
-    if (!s) return false;
-    s.value = String(v);
-    s.dispatchEvent(new Event('input', { bubbles: true }));
+    const s = document.querySelectorAll('.crafting .cmq-slider')[idx];
+    const tr = s?.querySelector('.cqs-track');
+    if (!tr) return false;
+    const r = tr.getBoundingClientRect();
+    const x = r.left + (v / 1000) * r.width;
+    const y = r.top + r.height / 2;
+    const opts = { clientX: x, clientY: y, bubbles: true, pointerId: 1 };
+    tr.dispatchEvent(new PointerEvent('pointerdown', opts));
+    tr.dispatchEvent(new PointerEvent('pointerup', opts));
     return true;
   };
   window.toggleSnapAt = (idx) => {
