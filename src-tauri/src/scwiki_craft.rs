@@ -23,8 +23,8 @@ use std::sync::Arc;
 
 use cache::{Cache, TTL_SCWIKI_CRAFT};
 use scwiki_client::{
-    ATTRIBUTION_SCWIKI, Blueprint, CommodityQuality, CommodityRef, CraftableItem, ScWikiClient,
-    StrataIndex, normalize_name,
+    ATTRIBUTION_SCWIKI, Blueprint, CraftableItem, MiningIndex, SCMDB_DEFAULT_BASE_URL,
+    ScWikiClient, ScmdbClient, StrataIndex, normalize_name,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -36,12 +36,9 @@ use crate::i18n_err::{err_key, err_keyp};
 const KEY_ITEMS: &str = "scwiki:craftable_items";
 /// Prefix der Blueprint-Cache-Keys (`scwiki:blueprint:{uuid}`).
 const KEY_BLUEPRINT_PREFIX: &str = "scwiki:blueprint:";
-/// Prefix der Commodity-Snap-Keys (`scwiki:commodity:{uuid}`, M8-R1-A).
-const KEY_COMMODITY_PREFIX: &str = "scwiki:commodity:";
-/// Route-Meta-Key der gecachten Commodities-Liste (EIN Datensatz, 206
-/// Einträge / 7 Seiten — LIVE-Beleg 2026-11-19; Basis des `(Ore)`-
-/// Name-Mappings im Snap-Fallback, t_1dd162e3).
-const KEY_COMMODITIES: &str = "scwiki:commodities";
+/// Route-Meta-Key des gecachten SCMDB-Mining-Index (EIN Datensatz —
+/// Name→Band-Map, Patch-zyklisch, TTL [`TTL_SCWIKI_CRAFT`], M8-R2).
+const KEY_SCMDB_MINING: &str = "scmdb:mining_index";
 
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
@@ -157,35 +154,30 @@ pub struct CraftDetailResponse {
     pub attribution: String,
 }
 
-/// Snap-Punkte eines Materials (M8-R1-A) — leere Liste = keine Daten
-/// (unbekannte UUID, Fetch-Fehler) → UI degradiert (Toggle ohne Punkte).
+/// Snap-Punkte eines Materials (M8-R2) — leere Liste = kein Match im
+/// SCMDB-Mining-Index → UI rastet auf 500-only (500 ist der Always-Punkt).
 #[derive(Debug, Clone, Serialize)]
 pub struct QualitySnap {
     pub uuid: String,
     pub values: Vec<u32>,
 }
 
-/// Qualitäts-Snap-Punkte für mehrere Commodities (`/api/commodities/{uuid}`,
-/// M8-R1-A) — cache-first pro UUID, TTL [`TTL_SCWIKI_CRAFT`]. Fehler pro
-/// UUID degradieren auf eine leere Liste (Bereicherung, kein Hard-Fail);
-/// die UI zeigt den Regler dann ohne Einrastpunkte weiter an.
+/// Qualitäts-Snap-Punkte für mehrere Materialien (M8-R2) — Quelle ist der
+/// SCMDB-Mining-Index (`data/latest.json` → `mining_data-<version>.json`,
+/// KrovaxCode/SCMDB_DATA), cache-first mit TTL [`TTL_SCWIKI_CRAFT`].
 ///
-/// Snap-Fallback Raffinat → Erz (t_1dd162e3): Blueprint-Inputs tragen die
-/// Raffinat-Commodity-UUID (`resource_type_uuid`, z. B. Borase 33bff393 —
-/// 0 locations → 0 quantisierte Werte → Snap tot). Die Werte liegen an den
-/// `(Ore)`-Commodities (z. B. „Borase (Ore)" 728a3d7e, 39 locations).
-/// Leere Werte am Input-UUID → Fallback:
-///   1. Name-Mapping `<name>` → `<name> (Ore)` über die gecachten
-///      Commodities-Liste (primär),
-///   2. `dismantle_returns[].resource_type_uuid` des Blueprints, per
-///      Materialname gematcht (sekundär).
-/// Kein Raten: bleibt auch der (Ore)-Match leer → keine Snap-Punkte.
+/// Auflösung rein über den Materialnamen: normalize (lowercase/trim +
+/// `(Ore)`/`(Raw)`/`(Pure)`-Suffix STRIPpen) → Match gegen materialName
+/// ODER name-Form („Taranite (Raw)" trägt materialName Taranite). Kein
+/// Match → leere Liste (die UI rastet dann auf dem 500-Always-Punkt) —
+/// NICHT mehr frei (das 0.5.88-Verhalten ist zurückgenommen). Der
+/// SC-Wiki-quantized-Codepfad (Commodity-Endpoint + (Ore)-Fallback,
+/// t_1dd162e3) ist entfernt: SCMDB deckt alle ab.
 #[tauri::command]
-pub async fn scwiki_quality_snaps(
+pub async fn scmdb_quality_snaps(
     state: tauri::State<'_, ScWikiCraftState>,
     uuids: Vec<String>,
     names: Option<Vec<String>>,
-    blueprint_uuid: Option<String>,
 ) -> Result<Vec<QualitySnap>, String> {
     let names = names.unwrap_or_default();
     let requests: Vec<(String, Option<String>)> = uuids
@@ -193,40 +185,43 @@ pub async fn scwiki_quality_snaps(
         .enumerate()
         .map(|(i, u)| (u.clone(), names.get(i).cloned()))
         .collect();
-    quality_snaps_inner(
-        &state.cache,
-        &requests,
-        blueprint_uuid.as_deref(),
-        scwiki_client::DEFAULT_BASE_URL,
-    )
-    .await
+    quality_snaps_inner(&state.cache, &requests, SCMDB_DEFAULT_BASE_URL).await
 }
 
-/// (uuid, Materialname)-Paar → Snap-Punkte; `names[i]` gehört zu
-/// `uuids[i]` (Frontend baut beide aus derselben Aspekt-Liste).
+/// (uuid, Materialname)-Paar → Band-Snap-Punkte; `names[i]` gehört zu
+/// `uuids[i]` (Frontend baut beide aus derselben Aspekt-Liste). Der
+/// Index-Fetch degradiert: Fehler → ALLE Zeilen ohne Punkte (Bereicherung,
+/// kein Hard-Fail — die Regler rasten auf 500-only).
 async fn quality_snaps_inner(
     cache: &Cache,
     requests: &[(String, Option<String>)],
-    blueprint_uuid: Option<&str>,
     base_url: &str,
 ) -> Result<Vec<QualitySnap>, String> {
+    let index = match cached_mining_index(cache, base_url).await {
+        Ok(idx) => idx,
+        Err(e) => {
+            log::warn!("scwiki-craft: SCMDB-Mining-Index: {e} — Snap-Punkte entfallen");
+            MiningIndex::default()
+        }
+    };
     let mut out = Vec::new();
     for (uuid, name) in requests {
         let uuid = uuid.trim();
         if uuid.is_empty() {
             continue;
         }
-        let mut values = cached_commodity_quality_at(cache, base_url, uuid)
-            .await
-            .map(|c| c.quality_quantized_values)
-            .unwrap_or_else(|e| {
-                log::warn!("scwiki-craft: commodity {uuid}: {e} — keine Snap-Punkte");
-                Vec::new()
-            });
-        if values.is_empty() {
-            values =
-                snap_fallback_ore(cache, base_url, uuid, name.as_deref(), blueprint_uuid).await;
-        }
+        let trimmed = name.as_deref().map(str::trim).unwrap_or_default();
+        let values = if trimmed.is_empty() {
+            Vec::new()
+        } else {
+            let bands = index.bands_for(trimmed);
+            if bands.is_empty() {
+                log::info!("scmdb: {trimmed}: kein Band-Match — Regler rastet auf 500-only");
+            } else {
+                log::info!("scmdb: {trimmed}: {} Band-Snap-Punkte", bands.len());
+            }
+            bands
+        };
         out.push(QualitySnap {
             uuid: uuid.to_owned(),
             values,
@@ -235,216 +230,37 @@ async fn quality_snaps_inner(
     Ok(out)
 }
 
-/// Snap-Fallback Raffinat → `(Ore)`-Commodity (t_1dd162e3): erst
-/// Name-Mapping (`<name> (Ore)`) über die gecachte Commodities-Liste,
-/// dann — falls der (Ore)-Match leer bleibt — der Blueprint: per
-/// Materialname gematcht zuerst `ingredients[].link`-UUID (SC-Wiki-eigener
-/// Zeiger aufs Vorkommens-Commodity, LIVE-Beleg), sonst
-/// `dismantle_returns[].resource_type_uuid`. Gibt NUR belegte Werte
-/// zurück; bleibt alles leer → leere Liste (kein Fake-Raster).
-async fn snap_fallback_ore(
-    cache: &Cache,
-    base_url: &str,
-    uuid: &str,
-    name: Option<&str>,
-    blueprint_uuid: Option<&str>,
-) -> Vec<u32> {
-    let name = match name.map(str::trim).filter(|n| !n.is_empty()) {
-        Some(n) => n,
-        None => {
-            log::warn!(
-                "scwiki-craft: commodity {uuid}: ohne Werte, aber ohne Materialnamen — kein Fallback"
-            );
-            return Vec::new();
-        }
-    };
-    // 1) Name-Mapping: `<name> (Ore)` in der gecachten Commodities-Liste.
-    let needle = format!("{} (ore)", normalize_name(name));
-    let list = match cached_commodities(cache, base_url).await {
-        Ok(list) => Some(list),
-        Err(e) => {
-            log::warn!(
-                "scwiki-craft: commodity {uuid}: Commodities-Liste: {e} — kein Name-Mapping"
-            );
-            None
-        }
-    };
-    // 0) Exact-Name-Match VOR dem (Ore)-Match: manche Raffinate sind selbst
-    //    Vorkommens-Commodities mit eigenen Locations + quantized values
-    //    (LIVE-Beleg t_8c0e6abc-Nachzug, 2026-11-19: Glacosite 960eda23 —
-    //    18 locations, Union [360..1000]), ohne dass es ein
-    //    „Glacosite (Ore)" gibt. Der Input-UUID-Fetch 404't hier, weil die
-    //    Blueprint-Inputs resource_type_uuids (Items-API-Namespace) tragen,
-    //    keine Commodity-UUIDs.
-    if let Some(exact) = list.as_ref().and_then(|l| {
-        l.iter()
-            .find(|c| normalize_name(&c.name) == normalize_name(name))
-    }) {
-        match cached_commodity_quality_at(cache, base_url, &exact.uuid).await {
-            Ok(cq) if !cq.quality_quantized_values.is_empty() => {
-                log::info!(
-                    "scwiki-craft: commodity {uuid}: exact-name {} ({}): {} Snap-Punkte",
-                    cq.name,
-                    cq.uuid,
-                    cq.quality_quantized_values.len()
-                );
-                return cq.quality_quantized_values;
-            }
-            Ok(_) => {
-                log::info!(
-                    "scwiki-craft: commodity {uuid}: exact-name {} ohne Werte — weiter",
-                    exact.uuid
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "scwiki-craft: commodity {uuid}: exact-name-Fetch {}: {e}",
-                    exact.uuid
-                );
-            }
-        }
-    }
-    if let Some(ore) = list
-        .as_ref()
-        .and_then(|l| l.iter().find(|c| normalize_name(&c.name) == needle))
-    {
-        match cached_commodity_quality_at(cache, base_url, &ore.uuid).await {
-            Ok(cq) if !cq.quality_quantized_values.is_empty() => {
-                log::info!(
-                    "scwiki-craft: commodity {uuid}: Fallback auf {} ({}) — {} Snap-Punkte",
-                    cq.name,
-                    cq.uuid,
-                    cq.quality_quantized_values.len()
-                );
-                return cq.quality_quantized_values;
-            }
-            Ok(_) => {
-                log::warn!(
-                    "scwiki-craft: commodity {uuid}: (Ore)-Match {} ohne Werte — weiter",
-                    ore.uuid
-                );
-            }
-            Err(e) => {
-                log::warn!(
-                    "scwiki-craft: commodity {uuid}: (Ore)-Fetch {}: {e}",
-                    ore.uuid
-                );
-            }
-        }
-    }
-    // 2) Blueprint-Anker: SC-Wiki-eigener Zeiger — ingredients[].link
-    //    zeigt LIVE auf das Vorkommens-Commodity („Borase (Ore)",
-    //    Blueprint SW16BR1 „Buzzsaw", t_1dd162e3). Per Materialname
-    //    gematcht; dismantle_returns[].resource_type_uuid (zeigt live auf
-    //    das Raffinat, damit wirkungslos) als letzter Versuch.
-    if let Some(bp_uuid) = blueprint_uuid.map(str::trim).filter(|u| !u.is_empty())
-        && let Ok(bp) = cached_blueprint(cache, bp_uuid).await
-        && let Some(anchor) = bp
-            .ingredients
-            .iter()
-            .find(|i| normalize_name(&i.name) == normalize_name(name))
-            .and_then(|i| i.commodity_uuid.as_deref())
-            .filter(|u| !u.trim().is_empty())
-            .map(str::to_owned)
-            .or_else(|| {
-                bp.dismantle_returns
-                    .iter()
-                    .find(|d| normalize_name(&d.name) == normalize_name(name))
-                    .and_then(|d| d.resource_type_uuid.as_deref())
-                    .filter(|u| !u.trim().is_empty())
-                    .map(str::to_owned)
-            })
-    {
-        match cached_commodity_quality_at(cache, base_url, &anchor).await {
-            Ok(cq) if !cq.quality_quantized_values.is_empty() => {
-                log::info!(
-                    "scwiki-craft: commodity {uuid}: Blueprint-Fallback auf {} ({}) — {} Snap-Punkte",
-                    cq.name,
-                    cq.uuid,
-                    cq.quality_quantized_values.len()
-                );
-                return cq.quality_quantized_values;
-            }
-            Ok(_) => {
-                log::warn!(
-                    "scwiki-craft: commodity {uuid}: Blueprint-Fallback {anchor} ohne Werte"
-                );
-            }
-            Err(e) => {
-                log::warn!("scwiki-craft: commodity {uuid}: Blueprint-Fetch {anchor}: {e}");
-            }
-        }
-    }
-    log::warn!(
-        "scwiki-craft: commodity {uuid}: kein (Ore)-Match ({name}) — keine Snap-Punkte (kein Raten)"
-    );
-    Vec::new()
-}
-
-/// Commodities-Liste: frisch aus dem Cache, sonst Live-Fetch (Upsert,
-/// EIN Datensatz). Fetch-Fehler mit vorhandenem stale Cache → stale.
-async fn cached_commodities(cache: &Cache, base_url: &str) -> Result<Vec<CommodityRef>, String> {
-    if let Some((fetched_at, payload)) = cache.route_meta_get(KEY_COMMODITIES).ok().flatten()
+/// SCMDB-Mining-Index: frisch aus dem Cache, sonst Live-Fetch (latest.json
+/// → mining_data-<version>.json, EIN latest-Fetch + EIN Daten-Fetch) +
+/// Upsert. Fetch-Fehler mit vorhandenem stale Cache → stale zurück.
+async fn cached_mining_index(cache: &Cache, base_url: &str) -> Result<MiningIndex, String> {
+    if let Some((fetched_at, payload)) = cache.route_meta_get(KEY_SCMDB_MINING).ok().flatten()
         && now_unix().saturating_sub(fetched_at) < TTL_SCWIKI_CRAFT.as_secs()
     {
         return serde_json::from_str(&payload)
             .map_err(|e| err_keyp("error.scwiki.bad_response", json!({ "msg": e.to_string() })));
     }
-    let client = scwiki_client_at(base_url)
-        .map_err(|e| err_keyp("error.scwiki.bad_response", json!({ "msg": e })))?;
-    match client.commodities().await {
-        Ok(list) => {
-            if let Ok(payload) = serde_json::to_string(&list)
-                && let Err(e) = cache.route_meta_set(KEY_COMMODITIES, now_unix(), &payload)
+    let client = ScmdbClient::new(base_url).map_err(|e| e.to_string())?;
+    match client.mining_index().await {
+        Ok(idx) => {
+            if let Ok(payload) = serde_json::to_string(&idx)
+                && let Err(e) = cache.route_meta_set(KEY_SCMDB_MINING, now_unix(), &payload)
             {
-                log::warn!("scwiki-craft: cache write {KEY_COMMODITIES}: {e}");
+                log::warn!("scmdb: cache write {KEY_SCMDB_MINING}: {e}");
             }
-            Ok(list)
+            Ok(idx)
         }
         Err(e) => {
-            if let Ok(Some((_, payload))) = cache.route_meta_get(KEY_COMMODITIES)
-                && let Ok(list) = serde_json::from_str::<Vec<CommodityRef>>(&payload)
+            if let Ok(Some((_, payload))) = cache.route_meta_get(KEY_SCMDB_MINING)
+                && let Ok(idx) = serde_json::from_str::<MiningIndex>(&payload)
             {
-                log::warn!("scwiki-craft: commodities live fehlgeschlagen ({e}) — stale Cache");
-                return Ok(list);
+                log::warn!("scmdb: live fehlgeschlagen ({e}) — stale Mining-Index");
+                return Ok(idx);
             }
-            Err(scwiki_error_key(&e))
-        }
-    }
-}
-
-/// Commodity-Snap-Punkte: frisch aus dem Cache, sonst Live-Fetch (Upsert).
-async fn cached_commodity_quality_at(
-    cache: &Cache,
-    base_url: &str,
-    uuid: &str,
-) -> Result<CommodityQuality, String> {
-    let key = format!("{KEY_COMMODITY_PREFIX}{uuid}");
-    if let Some((fetched_at, payload)) = cache.route_meta_get(&key).ok().flatten()
-        && now_unix().saturating_sub(fetched_at) < TTL_SCWIKI_CRAFT.as_secs()
-    {
-        return serde_json::from_str(&payload)
-            .map_err(|e| err_keyp("error.scwiki.bad_response", json!({ "msg": e.to_string() })));
-    }
-    let client = scwiki_client_at(base_url)
-        .map_err(|e| err_keyp("error.scwiki.bad_response", json!({ "msg": e })))?;
-    match client.commodity_quality(uuid).await {
-        Ok(cq) => {
-            if let Ok(payload) = serde_json::to_string(&cq)
-                && let Err(e) = cache.route_meta_set(&key, now_unix(), &payload)
-            {
-                log::warn!("scwiki-craft: cache write {key}: {e}");
-            }
-            Ok(cq)
-        }
-        Err(e) => {
-            if let Ok(Some((_, payload))) = cache.route_meta_get(&key)
-                && let Ok(cq) = serde_json::from_str::<CommodityQuality>(&payload)
-            {
-                log::warn!("scwiki-craft: commodity {uuid} live fehlgeschlagen ({e}) — stale");
-                return Ok(cq);
-            }
-            Err(scwiki_error_key(&e))
+            Err(err_keyp(
+                "error.scwiki.unreachable",
+                json!({ "msg": e.to_string() }),
+            ))
         }
     }
 }
@@ -556,7 +372,7 @@ pub fn scwiki_ready(cache: &Cache) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use scwiki_client::{DismantleReturn, Ingredient};
+    use scwiki_client::MineableElement;
 
     fn cache() -> Cache {
         Cache::open_in_memory().unwrap()
@@ -670,35 +486,27 @@ mod tests {
         assert!(scwiki_ready(&cache));
     }
 
-    // ---------- M8-R1-A: Quality-Snaps ----------
+    // ---------- M8-R2: SCMDB-Quality-Snaps ----------
 
-    fn commodity(uuid: &str, values: &[u32]) -> CommodityQuality {
-        CommodityQuality {
-            uuid: uuid.to_owned(),
-            name: "Iron".to_owned(),
-            quality_quantized_values: values.to_vec(),
-            occurrences: vec![values.to_vec()],
+    fn mineable(
+        name: &str,
+        material: Option<&str>,
+        bands: &[u32],
+    ) -> scwiki_client::MineableElement {
+        scwiki_client::MineableElement {
+            name: name.to_owned(),
+            material_name: material.map(str::to_owned),
+            quality_bands: bands.to_vec(),
         }
     }
 
-    fn seed_commodity(cache: &Cache, cq: &CommodityQuality, fresh: bool) {
+    fn seed_mining(cache: &Cache, els: &[MineableElement], fresh: bool) {
         let fetched_at = if fresh { now_unix() } else { 0 };
         cache
             .route_meta_set(
-                &format!("{KEY_COMMODITY_PREFIX}{}", cq.uuid),
+                KEY_SCMDB_MINING,
                 fetched_at,
-                &serde_json::to_string(cq).unwrap(),
-            )
-            .unwrap();
-    }
-
-    fn seed_commodities_list(cache: &Cache, list: &[CommodityRef], fresh: bool) {
-        let fetched_at = if fresh { now_unix() } else { 0 };
-        cache
-            .route_meta_set(
-                KEY_COMMODITIES,
-                fetched_at,
-                &serde_json::to_string(list).unwrap(),
+                &serde_json::to_string(&MiningIndex::build(els)).unwrap(),
             )
             .unwrap();
     }
@@ -707,361 +515,128 @@ mod tests {
         (uuid.to_owned(), name.map(str::to_owned))
     }
 
+    /// Frischer Cache → Live-Fetch unnötig; Spec-Beleg Taranite (Raw).
     #[tokio::test]
     async fn quality_snaps_read_fresh_cache_without_live_fetch() {
         let cache = cache();
-        seed_commodity(&cache, &commodity("uuid-iron", &[325, 521, 1000]), true);
-        let out = quality_snaps_inner(&cache, &[req("uuid-iron", Some("Iron"))], None, TEST_URL)
-            .await
-            .unwrap();
+        seed_mining(
+            &cache,
+            &[mineable(
+                "Taranite (Raw)",
+                Some("Taranite"),
+                &[310, 525, 646, 718, 853, 925, 957, 1000],
+            )],
+            true,
+        );
+        let out = quality_snaps_inner(
+            &cache,
+            &[req("uuid-taranite", Some("Taranite (Raw)"))],
+            TEST_URL,
+        )
+        .await
+        .unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].uuid, "uuid-iron");
-        assert_eq!(out[0].values, vec![325, 521, 1000]);
+        assert_eq!(out[0].uuid, "uuid-taranite");
+        assert_eq!(out[0].values, vec![310, 525, 646, 718, 853, 925, 957, 1000]);
     }
 
-    /// Unbekannte UUID (nur Live-Fetch möglich, der ins Leere läuft) →
-    /// leere Snap-Liste statt Fehler (Bereicherung degradiert).
+    /// Normalize-Matches: Case/Space egal, (Ore)-Mapping über materialName.
+    #[tokio::test]
+    async fn quality_snaps_match_material_name_form() {
+        let cache = cache();
+        seed_mining(
+            &cache,
+            &[mineable("Borase (Ore)", Some("Borase"), &[274, 526, 1000])],
+            true,
+        );
+        let out = quality_snaps_inner(
+            &cache,
+            &[
+                req("u1", Some("borase (ore)")),
+                req("u2", Some("BORASE")),
+                req("u3", Some("  Borase  ")),
+            ],
+            TEST_URL,
+        )
+        .await
+        .unwrap();
+        for snap in &out {
+            assert_eq!(snap.values, vec![274, 526, 1000], "{}", snap.uuid);
+        }
+    }
+
+    /// Kein Match → LEERE Liste (UI rastet auf 500-only, 0.5.88-Verhalten
+    /// „frei bei leer" zurückgenommen).
+    #[tokio::test]
+    async fn quality_snaps_empty_without_match() {
+        let cache = cache();
+        seed_mining(
+            &cache,
+            &[mineable("Hadanite", None, &[274, 526, 1000])],
+            true,
+        );
+        let out = quality_snaps_inner(
+            &cache,
+            &[req("u1", Some("Unobtainium")), req("u2", Some(""))],
+            TEST_URL,
+        )
+        .await
+        .unwrap();
+        assert!(out[0].values.is_empty());
+        assert!(out[1].values.is_empty(), "leerer Name → leer");
+    }
+
+    /// Fetch-Fehler (unreachbare SCMDB-URL) → alle Zeilen ohne Punkte
+    /// (Bereicherung degradiert, kein Hard-Fail).
     #[tokio::test]
     async fn quality_snaps_degrade_to_empty_on_fetch_error() {
-        let cache = cache(); // nichts geseedet → Live-Fetch nötig
-        let out = quality_snaps_inner(&cache, &[req("fehlt", None), req("", None)], None, TEST_URL)
-            .await
-            .unwrap();
+        let cache = cache();
+        let out = quality_snaps_inner(
+            &cache,
+            &[req("u1", Some("Taranite")), req("", None)],
+            TEST_URL,
+        )
+        .await
+        .unwrap();
         assert_eq!(out.len(), 1, "leere UUID wird übersprungen");
         assert!(out[0].values.is_empty());
     }
 
-    /// Stale Commodity-Cache rettet den Fetch-Fehler (Offline-Toleranz).
+    /// Stale Mining-Index rettet den Fetch-Fehler (Offline-Toleranz).
     #[tokio::test]
-    async fn quality_snaps_use_stale_cache_when_live_fails() {
+    async fn quality_snaps_use_stale_index_when_live_fails() {
         let cache = cache();
-        seed_commodity(&cache, &commodity("uuid-iron", &[346, 588]), false);
-        let out = quality_snaps_inner(&cache, &[req("uuid-iron", None)], None, TEST_URL)
-            .await
-            .unwrap();
-        assert_eq!(out[0].values, vec![346, 588]);
-    }
-
-    /// Direkter Treffer schlägt den Fallback: uuid-iron liefert eigene
-    /// Werte, selbst wenn Commodities-Liste + Blueprint einen (Ore)-Anker
-    /// mit ANDEREN Werten anbieten würden (t_1dd162e3).
-    #[tokio::test]
-    async fn direct_commodity_hit_beats_ore_fallback() {
-        let cache = cache();
-        seed_commodity(&cache, &commodity("uuid-iron", &[100]), true);
-        seed_commodities_list(
+        seed_mining(
             &cache,
-            &[CommodityRef {
-                uuid: "uuid-iron-ore".to_owned(),
-                name: "Iron (Ore)".to_owned(),
-            }],
-            true,
+            &[mineable(
+                "Agricium (Ore)",
+                Some("Agricium"),
+                &[346, 588, 1000],
+            )],
+            false,
         );
-        seed_commodity(&cache, &commodity("uuid-iron-ore", &[999]), true);
-        let out = quality_snaps_inner(&cache, &[req("uuid-iron", Some("Iron"))], None, TEST_URL)
+        let out = quality_snaps_inner(&cache, &[req("u1", Some("Agricium"))], TEST_URL)
             .await
             .unwrap();
-        assert_eq!(
-            out[0].values,
-            vec![100],
-            "kein Fallback bei direktem Treffer"
-        );
+        assert_eq!(out[0].values, vec![346, 588, 1000]);
     }
 
-    // ---------- t_1dd162e3: Snap-Fallback Raffinat → (Ore) ----------
-
-    /// LIVE-Beleg Omar (t_1dd162e3): Borase 33bff393 (Raffinat) hat 0
-    /// locations → 0 Werte; die Union liegt an „Borase (Ore)" 728a3d7e.
-    /// Probehafte Wiederholung mit Fixtures: Name-Mapping findet den
-    /// (Ore)-Commodity in der gecachten Liste und übernimmt seine Union.
-    const BORASE_UNION: [u32; 21] = [
-        264, 302, 359, 553, 584, 597, 632, 644, 676, 743, 756, 786, 864, 875, 892, 903, 916, 941,
-        959, 976, 1000,
-    ];
-
+    /// Carinite-Dup-Case: identische Bänder kollabieren, gemischte union.
     #[tokio::test]
-    async fn snap_fallback_resolves_ore_via_commodity_name_mapping() {
+    async fn quality_snaps_union_duplicate_keys() {
         let cache = cache();
-        // Raffinat-UUID bewusst NICHT geseedet → Live-Fetch (TEST_URL)
-        // scheitert → Werte leer → Fallback greift.
-        seed_commodities_list(
+        seed_mining(
             &cache,
             &[
-                CommodityRef {
-                    uuid: "33bff393-raffinat".to_owned(),
-                    name: "Borase".to_owned(),
-                },
-                CommodityRef {
-                    uuid: "uuid-ore-borase".to_owned(),
-                    name: "Borase (Ore)".to_owned(),
-                },
+                mineable("Carinite", None, &[273, 554, 1000]),
+                mineable("Carinite (Pure)", None, &[273, 647, 1000]),
             ],
             true,
         );
-        seed_commodity(&cache, &commodity("uuid-ore-borase", &BORASE_UNION), true);
-        let out = quality_snaps_inner(
-            &cache,
-            &[req("33bff393-raffinat", Some("Borase"))],
-            None,
-            TEST_URL,
-        )
-        .await
-        .unwrap();
-        assert_eq!(out[0].uuid, "33bff393-raffinat");
-        assert_eq!(
-            out[0].values,
-            BORASE_UNION.to_vec(),
-            "Snap auf Borase-(Ore)-Union gerastet"
-        );
-    }
-
-    /// LIVE-Beleg (t_8c0e6abc-Nachzug, 2026-11-19): Glacosite ist ein
-    /// Raffinat OHNE „(Ore)"-Gegenstück, trägt aber SELBST Locations +
-    /// quantized values (Commodity 960eda23: 18 locations, Union
-    /// [360, 567, 678, 724, 857, 916, 972, 1000]). Der Input-UUID-Fetch
-    /// 404't (resource_type_uuid aus dem Items-API-Namespace) → der
-    /// Exact-Name-Match in der Commodities-Liste greift VOR dem
-    /// (Ore)-Match und liefert das Raster.
-    #[tokio::test]
-    async fn snap_fallback_resolves_refined_via_exact_name_match() {
-        let cache = cache();
-        seed_commodities_list(
-            &cache,
-            &[CommodityRef {
-                uuid: "uuid-glacosite".to_owned(),
-                name: "Glacosite".to_owned(),
-            }],
-            true,
-        );
-        seed_commodity(&cache, &commodity("uuid-glacosite", &[360, 567, 678]), true);
-        let out = quality_snaps_inner(
-            &cache,
-            &[req("uuid-resource-type", Some("Glacosite"))],
-            None,
-            TEST_URL,
-        )
-        .await
-        .unwrap();
-        assert_eq!(
-            out[0].values,
-            vec![360, 567, 678],
-            "Exact-Name-Match liefert das Glacosite-Raster"
-        );
-    }
-
-    /// Kein Raten: Material ohne `(Ore)`-Gegenstück (Commodities-Liste
-    /// ohne Match, kein Blueprint) → leere Snap-Liste, kein Fake-Raster.
-    #[tokio::test]
-    async fn snap_fallback_stays_empty_without_ore_match() {
-        let cache = cache();
-        seed_commodities_list(
-            &cache,
-            &[CommodityRef {
-                uuid: "uuid-x".to_owned(),
-                name: "Something Else".to_owned(),
-            }],
-            true,
-        );
-        let out = quality_snaps_inner(
-            &cache,
-            &[req("uuid-raffinat", Some("Quxdust"))],
-            None,
-            TEST_URL,
-        )
-        .await
-        .unwrap();
-        assert!(out[0].values.is_empty());
-    }
-
-    /// (Ore)-Match vorhanden, aber ohne Werte (z. B. Ore_Jaclium, 0
-    /// locations) → KEIN Fake-Raster; ohne Blueprint-Anker bleibt es leer.
-    #[tokio::test]
-    async fn snap_fallback_does_not_fake_values_on_empty_ore() {
-        let cache = cache();
-        seed_commodities_list(
-            &cache,
-            &[CommodityRef {
-                uuid: "uuid-ore-empty".to_owned(),
-                name: "Jaclium (Ore)".to_owned(),
-            }],
-            true,
-        );
-        seed_commodity(&cache, &commodity("uuid-ore-empty", &[]), true);
-        let out = quality_snaps_inner(
-            &cache,
-            &[req("uuid-raffinat", Some("Jaclium"))],
-            None,
-            TEST_URL,
-        )
-        .await
-        .unwrap();
-        assert!(out[0].values.is_empty());
-    }
-
-    /// Sekundärer Anker: Name-Mapping ohne (Ore)-Eintrag, aber Blueprint
-    /// mit `ingredients[].commodity_uuid` (aus link geparsed — LIVE-Beleg
-    /// SW16BR1 „Buzzsaw": Borase-Ingredient link → 728a3d7e = „Borase
-    /// (Ore)") → dessen Union als Snap-Punkte.
-    #[tokio::test]
-    async fn snap_fallback_via_blueprint_ingredient_link() {
-        let cache = cache();
-        seed_commodities_list(
-            &cache,
-            &[CommodityRef {
-                uuid: "uuid-x".to_owned(),
-                name: "Something Else".to_owned(),
-            }],
-            true,
-        );
-        let bp = Blueprint {
-            uuid: "bp-1".to_owned(),
-            output_name: "Qux Device".to_owned(),
-            craft_time_seconds: None,
-            craft_time_label: None,
-            is_available_by_default: false,
-            game_version: None,
-            ingredients: vec![Ingredient {
-                name: "Quxdust".to_owned(),
-                kind: "resource".to_owned(),
-                quantity_scu: Some(0.36),
-                commodity_uuid: Some("uuid-ore-quxdust".to_owned()),
-            }],
-            dismantle_returns: Vec::new(),
-            tiers: Vec::new(),
-            summary_properties: Vec::new(),
-            aspects: Vec::new(),
-            unlocking_missions_grouped: Vec::new(),
-            web_url: None,
-        };
-        cache
-            .route_meta_set(
-                &format!("{KEY_BLUEPRINT_PREFIX}bp-1"),
-                now_unix(),
-                &serde_json::to_string(&bp).unwrap(),
-            )
+        let out = quality_snaps_inner(&cache, &[req("u1", Some("Carinite"))], TEST_URL)
+            .await
             .unwrap();
-        seed_commodity(&cache, &commodity("uuid-ore-quxdust", &[500, 1000]), true);
-        let out = quality_snaps_inner(
-            &cache,
-            &[req("uuid-raffinat", Some("Quxdust"))],
-            Some("bp-1"),
-            TEST_URL,
-        )
-        .await
-        .unwrap();
-        assert_eq!(out[0].values, vec![500, 1000]);
-    }
-
-    /// Tertiärer Anker: weder (Ore)-Eintrag noch Ingredient-Link, aber
-    /// `dismantle_returns[].resource_type_uuid` → dessen Werte (LIVE-
-    /// Beleg zeigt:UUIDs aufs Raffinat — dann degradiert das korrekt leer).
-    #[tokio::test]
-    async fn snap_fallback_via_blueprint_dismantle_return() {
-        let cache = cache();
-        seed_commodities_list(
-            &cache,
-            &[CommodityRef {
-                uuid: "uuid-x".to_owned(),
-                name: "Something Else".to_owned(),
-            }],
-            true,
-        );
-        let bp = Blueprint {
-            uuid: "bp-1".to_owned(),
-            output_name: "Qux Device".to_owned(),
-            craft_time_seconds: None,
-            craft_time_label: None,
-            is_available_by_default: false,
-            game_version: None,
-            ingredients: vec![Ingredient {
-                name: "Quxdust".to_owned(),
-                kind: "resource".to_owned(),
-                quantity_scu: Some(0.36),
-                commodity_uuid: None,
-            }],
-            dismantle_returns: vec![DismantleReturn {
-                name: "Quxdust".to_owned(),
-                quantity_scu: Some(0.2),
-                resource_type_uuid: Some("uuid-ore-quxdust".to_owned()),
-            }],
-            tiers: Vec::new(),
-            summary_properties: Vec::new(),
-            aspects: Vec::new(),
-            unlocking_missions_grouped: Vec::new(),
-            web_url: None,
-        };
-        cache
-            .route_meta_set(
-                &format!("{KEY_BLUEPRINT_PREFIX}bp-1"),
-                now_unix(),
-                &serde_json::to_string(&bp).unwrap(),
-            )
-            .unwrap();
-        seed_commodity(&cache, &commodity("uuid-ore-quxdust", &[500, 1000]), true);
-        let out = quality_snaps_inner(
-            &cache,
-            &[req("uuid-raffinat", Some("Quxdust"))],
-            Some("bp-1"),
-            TEST_URL,
-        )
-        .await
-        .unwrap();
-        assert_eq!(out[0].values, vec![500, 1000]);
-    }
-
-    /// Kein Raten II: Blueprint-Anker (dismantle_returns) zeigt aufs
-    /// RAFFINAT (Live-Befund) mit 0 Werten → leere Liste, kein Fake-Raster.
-    #[tokio::test]
-    async fn snap_fallback_does_not_fake_values_on_refined_dismantle_anchor() {
-        let cache = cache();
-        seed_commodities_list(
-            &cache,
-            &[CommodityRef {
-                uuid: "uuid-x".to_owned(),
-                name: "Something Else".to_owned(),
-            }],
-            true,
-        );
-        let bp = Blueprint {
-            uuid: "bp-1".to_owned(),
-            output_name: "Qux Device".to_owned(),
-            craft_time_seconds: None,
-            craft_time_label: None,
-            is_available_by_default: false,
-            game_version: None,
-            ingredients: vec![Ingredient {
-                name: "Quxdust".to_owned(),
-                kind: "resource".to_owned(),
-                quantity_scu: Some(0.36),
-                commodity_uuid: Some("uuid-raffinat".to_owned()), // = angefragte UUID
-            }],
-            dismantle_returns: vec![DismantleReturn {
-                name: "Quxdust".to_owned(),
-                quantity_scu: Some(0.2),
-                resource_type_uuid: Some("uuid-raffinat".to_owned()),
-            }],
-            tiers: Vec::new(),
-            summary_properties: Vec::new(),
-            aspects: Vec::new(),
-            unlocking_missions_grouped: Vec::new(),
-            web_url: None,
-        };
-        cache
-            .route_meta_set(
-                &format!("{KEY_BLUEPRINT_PREFIX}bp-1"),
-                now_unix(),
-                &serde_json::to_string(&bp).unwrap(),
-            )
-            .unwrap();
-        let out = quality_snaps_inner(
-            &cache,
-            &[req("uuid-raffinat", Some("Quxdust"))],
-            Some("bp-1"),
-            TEST_URL,
-        )
-        .await
-        .unwrap();
-        assert!(out[0].values.is_empty());
+        assert_eq!(out[0].values, vec![273, 554, 647, 1000]);
     }
 
     /// Testbare Kernroute von `scwiki_craft_detail` (ohne Tauri-State).

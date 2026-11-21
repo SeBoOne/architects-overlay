@@ -29,6 +29,11 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
+pub mod scmdb;
+pub use scmdb::{
+    MineableElement, MiningIndex, SCMDB_DEFAULT_BASE_URL, ScmdbClient, normalize_material,
+};
+
 /// SC-Wiki-API-Basis-URL (Research `docs/research/scwiki-modules.md`).
 pub const DEFAULT_BASE_URL: &str = "https://api.star-citizen.wiki/api";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -794,28 +799,6 @@ pub struct Ingredient {
     pub commodity_uuid: Option<String>,
 }
 
-/// Qualitäts-Snap-Punkte eines Commodities (M8-R1-A) — UNION über alle
-/// Vorkommen plus per-Vorkommen-Liste (Mining-Bonus-Datenstruktur).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CommodityQuality {
-    pub uuid: String,
-    pub name: String,
-    /// Sortierte, deduplizierte UNION aller `quality_quantized_values`.
-    pub quality_quantized_values: Vec<u32>,
-    /// Pro Vorkommen (locations[].resources[].materials[]): sortierte,
-    /// deduplizierte Werte — nur nicht-leere Einträge.
-    pub occurrences: Vec<Vec<u32>>,
-}
-
-/// Minimal-Referenz aus der paginierten Commodities-Liste
-/// (`GET /api/commodities`, t_1dd162e3) — Basis des Name-Mappings
-/// `<name>` → `<name> (Ore)` im Snap-Fallback (Raffinat → Erz).
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct CommodityRef {
-    pub uuid: String,
-    pub name: String,
-}
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DismantleReturn {
     pub name: String,
@@ -997,45 +980,6 @@ struct AmmunitionDto {
     range: Option<f64>,
     #[serde(default)]
     lifetime: Option<f64>,
-}
-
-/// Commodity-Detail-DTO (`/api/commodities/{uuid}`) — nur die Felder,
-/// die Snap-Punkte tragen; alles andere wird von Serde ignoriert.
-#[derive(Debug, Deserialize)]
-struct CommodityDto {
-    #[serde(default, deserialize_with = "null_to_string")]
-    uuid: String,
-    #[serde(default, deserialize_with = "null_to_string")]
-    name: String,
-    #[serde(default, deserialize_with = "null_to_vec")]
-    locations: Vec<CommodityLocationDto>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommodityLocationDto {
-    #[serde(default, deserialize_with = "null_to_vec")]
-    resources: Vec<CommodityResourceDto>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommodityResourceDto {
-    #[serde(default, deserialize_with = "null_to_vec")]
-    materials: Vec<CommodityMaterialDto>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommodityMaterialDto {
-    #[serde(default)]
-    quality_quantized_values: Option<Vec<Option<u32>>>,
-}
-
-/// Listen-DTO der Commodities-Liste — nur die Fallback-relevanten Felder.
-#[derive(Debug, Deserialize)]
-struct CommodityRefDto {
-    #[serde(default, deserialize_with = "null_to_string")]
-    uuid: String,
-    #[serde(default, deserialize_with = "null_to_string")]
-    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1471,88 +1415,6 @@ impl ScWikiClient {
         let dto: BlueprintDto = serde_json::from_value(env.data)
             .map_err(|e| ScWikiError::Json(format!("blueprints/{uuid}: {e}")))?;
         Ok(blueprint_from(dto))
-    }
-
-    /// Commodities-Liste (`GET /api/commodities`, paginiert, t_1dd162e3) —
-    /// nur `uuid` + `name` (Basis des Name-Mappings `<name> (Ore)` im
-    /// Snap-Fallback). Kein Server-Suchfilter (`filter[name_cont]` wird
-    /// ignoriert, LIVE-Beleg 2026-11-19: volle Liste, 206 Einträge / 7
-    /// Seiten) — daher EIN Vollabzug; leere Namen/UUIDs fliegen raus.
-    pub async fn commodities(&self) -> Result<Vec<CommodityRef>> {
-        let mut out = Vec::new();
-        let mut page: u32 = 1;
-        loop {
-            let query = vec![
-                ("page[size]", PAGE_SIZE.to_string()),
-                ("page[number]", page.to_string()),
-            ];
-            let env = self.get("/commodities", &query).await?;
-            let meta: PageMeta = serde_json::from_value(env.meta.clone())
-                .map_err(|e| ScWikiError::Json(format!("commodities meta: {e}")))?;
-            let items: Vec<CommodityRefDto> = serde_json::from_value(env.data)
-                .map_err(|e| ScWikiError::Json(format!("commodities: {e}")))?;
-            for it in items {
-                if it.uuid.trim().is_empty() || it.name.trim().is_empty() {
-                    continue;
-                }
-                out.push(CommodityRef {
-                    uuid: it.uuid,
-                    name: it.name,
-                });
-            }
-            if page >= meta.last_page {
-                break;
-            }
-            page += 1;
-            if page > MAX_PAGES {
-                return Err(ScWikiError::TooManyPages(MAX_PAGES));
-            }
-        }
-        Ok(out)
-    }
-
-    /// Qualitäts-Snap-Punkte eines Commodities
-    /// (`/api/commodities/{uuid}`, M8-R1-A).
-    /// LIVE-Beleg (Omar, 2026-11-19, Commodity-Endpoint — NICHT der
-    /// Blueprint): `locations[].resources[].materials[]
-    /// .quality_quantized_values`; die Werte variieren pro Vorkommen
-    /// (z. B. [346, 588] vs. [287, 575]). Wir liefern:
-    ///  * `quality_quantized_values` = sortierte UNION über alle Vorkommen
-    ///    (Einrastpunkte für die Material-Regler),
-    ///  * `occurrences` = die per-Vorkommen-Werte (jeweils sortiert,
-    ///    deduplizert) — saubere Datenstruktur für spätere Mining-
-    ///    Abstufungs-Nutzung (Wo-Tiefe), nicht in dieser Karte angezeigt.
-    pub async fn commodity_quality(&self, uuid: &str) -> Result<CommodityQuality> {
-        let uuid = uuid.trim();
-        if uuid.is_empty() {
-            return Err(ScWikiError::Json("commodity: uuid leer".into()));
-        }
-        let env = self.get(&format!("/commodities/{uuid}"), &[]).await?;
-        let dto: CommodityDto = serde_json::from_value(env.data)
-            .map_err(|e| ScWikiError::Json(format!("commodities/{uuid}: {e}")))?;
-        let mut occurrences: Vec<Vec<u32>> = Vec::new();
-        let mut union: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
-        for loc in &dto.locations {
-            for res in &loc.resources {
-                for mat in &res.materials {
-                    if let Some(qq) = &mat.quality_quantized_values {
-                        let mut vals: Vec<u32> = qq.iter().filter_map(|v| *v).collect();
-                        vals.sort_unstable();
-                        vals.dedup();
-                        union.extend(vals.iter().copied());
-                        if !vals.is_empty() {
-                            occurrences.push(vals);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(CommodityQuality {
-            uuid: dto.uuid,
-            name: dto.name,
-            quality_quantized_values: union.into_iter().collect(),
-            occurrences,
-        })
     }
 }
 

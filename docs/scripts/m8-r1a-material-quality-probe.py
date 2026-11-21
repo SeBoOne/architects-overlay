@@ -97,10 +97,12 @@ WRAP = r"""
     attribution: 'Data from celd.space / Strata Mining Tools'
   };
 
-  // Snap-Punkte wie am Commodity-Endpoint (UNION je Material, sortiert).
+  // M8-R2: SCMDB qualityBands je Material (rohe Bänder — die Union mit
+  // 500 macht die UI). Belege Omar live 2026-11-20.
   const SNAPS = {
-    'uuid-agricium': [346, 588, 1000],
-    'uuid-hadanite': [287, 575]
+    'uuid-agricium': [346, 588, 667, 796, 852, 943, 971, 1000],
+    'uuid-hadanite': [274, 526, 665, 762, 867, 916, 959, 1000],
+    'uuid-taranite': [310, 525, 646, 718, 853, 925, 957, 1000]
   };
 
   window.__SNAP_CALLS = [];
@@ -128,7 +130,7 @@ WRAP = r"""
         attribution: 'Data from star-citizen.wiki'
       };
     }
-    if (cmd === 'scwiki_quality_snaps') {
+    if (cmd === 'scmdb_quality_snaps') {
       window.__SNAP_CALLS.push(a);
       return (a.uuids || []).map((u) => ({ uuid: u, values: SNAPS[u] || [] }));
     }
@@ -137,6 +139,8 @@ WRAP = r"""
   window.craftDetailOpen = () => !!document.querySelector('.crafting .cd-title');
   window.sliderRows = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => ({
     range: r.querySelector('.cmq-range')?.value,
+    min: r.querySelector('.cmq-range')?.min,
+    max: r.querySelector('.cmq-range')?.max,
     val: r.querySelector('.cmq-val')?.textContent.trim(),
     valCls: r.querySelector('.cmq-val')?.className || '',
     snapBtn: r.querySelector('.cmq-snap')?.textContent.trim() || null,
@@ -388,8 +392,8 @@ async def main():
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
         check("5b Snap an: 300 → 346 gerastet", rows and rows[0]["val"] == "346" and rows[0]["snapOn"] is True, str(rows))
-        check("5c Snap-Titel zeigt Union (inkl. 500-Mitte)",
-              rows and "346, 500, 588, 1000" in (rows[0]["snapTitle"] or ""), str(rows and rows[0]["snapTitle"]))
+        check("5c Snap-Titel zeigt SCMDB-Bänder (inkl. 500-Mitte)",
+              rows and "346, 500, 588" in (rows[0]["snapTitle"] or ""), str(rows and rows[0]["snapTitle"]))
         await js("toggleSnapAt(0)")  # aus
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
@@ -410,13 +414,36 @@ async def main():
         check("5f2 Toggle an: 550 → 588 gerastet", rows and rows[0]["snapOn"] is True and rows[0]["val"] == "588", str(rows))
         await shot("m8-r1a-detail-snap.png")
 
-        # ---- Gate 5x: Material OHNE Quant-Werte bleibt frei (User-Befund
-        #      „Wert ändert sich nichts" — 500-only-ZwangsRaster ist weg) ----
+        # ---- Gate 5x (M8-R2): Taranite rastet AUF DEN SCMDB-BÄNDERN
+        #      (Live-Verify A03: Taranite (Raw) [310, 525, 646, 718, …]) ----
         await js("setMat(2, 777)")
         await asyncio.sleep(0.2)
         rows = await js("sliderRows()")
-        check("5x Taranite ohne Quant-Werte: frei regelbar (777 bleibt 777)",
-              rows and rows[2]["val"] == "777" and rows[2]["snapOn"] is False, str(rows and rows[2]))
+        check("5x Taranite rastet auf Bands (777 → 718, nächstes Band)",
+              rows and rows[2]["val"] == "718" and rows[2]["snapOn"] is True, str(rows and rows[2]))
+        check("5x2 Taranite: min=bands[0]=310 (hartes Clamp)",
+              rows and rows[2]["min"] == "310" and rows[2]["max"] == "1000", str(rows and rows[2]))
+
+        # ---- Gate 8 (M8-R2): hartes Clamp — min/max am Regler selbst ----
+        rows = await js("sliderRows()")
+        check("8a Agricium Snap-an: min=bands[0]=346, max=bands[-1]=1000",
+              rows and rows[0]["min"] == "346" and rows[0]["max"] == "1000", str(rows and rows[0]))
+        await js("toggleSnapAt(1)")  # Gate 2 hat Zeile 1 aus — wieder an
+        await asyncio.sleep(0.2)
+        rows = await js("sliderRows()")
+        check("8b Hadanite Snap-an: min=bands[0]=274",
+              rows and rows[1]["snapOn"] is True and rows[1]["min"] == "274" and rows[1]["max"] == "1000",
+              str(rows and rows[1]))
+        await js("toggleSnapAt(0)")
+        await asyncio.sleep(0.2)
+        rows = await js("sliderRows()")
+        check("8c Snap-aus: Grenzen zurück auf 0–1000",
+              rows and rows[0]["min"] == "0" and rows[0]["max"] == "1000", str(rows and rows[0]))
+        await js("toggleSnapAt(0)")
+        await asyncio.sleep(0.2)
+        rows = await js("sliderRows()")
+        check("8d Snap-an: unterste Grenze hart (min wieder 346)",
+              rows and rows[0]["min"] == "346" and rows[0]["snapOn"] is True, str(rows and rows[0]))
 
         # ---- Gate 6: Popup-Kompaktheit (t_e261c7f4-Update) ----
         # Seit der Stat-Block ab Start ALLE Modifier-Zeilen reserviert

@@ -4,7 +4,7 @@
 Stub liefert EXAKT die Antworten des echten Backends:
   - strata_craft_cost  = fixtures-live/craft-cost.a03-sniper-rifle.live.json
   - scwiki_craft_detail Blueprint = Live-Fetch /tmp/a03-live-bp.json (Rust-serialisiert)
-  - scwiki_quality_snaps = Snap-Kette WIE IM BACKEND (Input-UUID, sonst leere Werte)
+  - scmdb_quality_snaps = M8-R2-Quelle (SCMDB qualityBands; leer → 500-only)
 Erwartung laut Live-Screenshot (Omar): Iron/Taranite-Regler ja, Hadanite-Regler nein.
 Ziel: zeigen, ob der Regler für Hadanite im Frontend rendert und warum (nicht).
 """
@@ -23,7 +23,7 @@ STUB_BASE = (ROOT / "docs/scripts/smoke-stub.js").read_text()
 CRAFT = json.loads((ROOT / "crates/strata-client/tests/fixtures-live/craft-cost.a03-sniper-rifle.live.json").read_text())
 BP = json.loads(pathlib.Path("/tmp/a03-live-bp.json").read_text())
 
-# Snap-Kette wie Backend quality_snaps_inner (NUR Input-UUID-Stufe, Fallback
+# Snap-Quelle wie Backend quality_snaps_inner (SCMDB-Bänder oder leer →
 # emulieren wir separat): Input-UUID = Raffinat/Mineral/Item-UUIDs → 0/404.
 SNAPS: dict[str, list[int]] = {}
 
@@ -51,7 +51,7 @@ STUB = """
       blueprint: BP,
       attribution: 'Data from star-citizen.wiki'
     };
-    if (cmd === 'scwiki_quality_snaps') {
+    if (cmd === 'scmdb_quality_snaps') {
       window.__SNAP_CALLS.push(a);
       return (a.uuids || []).map((u) => ({ uuid: u, values: SNAPS[u] || [] }));
     }
