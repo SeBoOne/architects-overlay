@@ -200,13 +200,18 @@ WRAP = r"""
   }));
   window.qsCols = () => [...document.querySelectorAll('.crafting .qs .qs-col-l, .crafting .qs .qs-col-r')].map((x) => x.textContent.trim());
   window.setSlider = (v) => {
-    const rows = [...document.querySelectorAll('.crafting .cmq-range')];
-    if (!rows.length) return false;
-    for (const sl of rows) {
-      sl.value = String(v);
-      sl.dispatchEvent(new Event('input', { bubbles: true }));
+    // M8-R3: ECHTE Pointer-Events am Custom-Slider-Track (Snap aus → frei).
+    const tracks = [...document.querySelectorAll('.crafting .cmq-slider .cqs-track')];
+    if (!tracks.length) return false;
+    for (const tr of tracks) {
+      const r = tr.getBoundingClientRect();
+      const x = r.left + (v / 1000) * r.width;
+      const y = r.top + r.height / 2;
+      const opts = { clientX: x, clientY: y, bubbles: true, pointerId: 1 };
+      tr.dispatchEvent(new PointerEvent('pointerdown', opts));
+      tr.dispatchEvent(new PointerEvent('pointerup', opts));
     }
-    return rows.length;
+    return tracks.length;
   };
   // t_e261c7f4-Nachzug (0.5.84+): 500 ist Snap-Punkt für ALLE Materialien —
   // mit Snap an rastet setSlider(1000) auf 500 zurück (korrektes Verhalten:
@@ -259,7 +264,7 @@ WRAP = r"""
   };
   window.pressKey = (k) => window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
   window.sliderDebug = () => [...document.querySelectorAll('.crafting .cmq-slider')].map((r) => ({
-    v: r.querySelector('.cmq-range')?.value,
+    v: r.querySelector('.cqs-track')?.getAttribute('aria-valuenow'),
     snapOn: r.querySelector('.cmq-snap')?.classList.contains('is-on'),
     disabled: r.querySelector('.cmq-snap')?.disabled,
     ls: localStorage.getItem('craft.snap_default')
