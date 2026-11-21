@@ -214,6 +214,9 @@
 	});
 	// Detail
 	let detail = $state<CraftCostResponse | null>(null);
+	// M9-A: ID des Klick-Items (Besitz-Haken im Detail bezieht sich auf den
+	// Listeneintrag — die Craft-Response-ID kann abweichen).
+	let detailItemId = $state('');
 	let detailLoading = $state(false);
 	let detailError = $state('');
 	// M8-K5: SC-Wiki-Craft-Detail (Item-Kopf/Stats/Missionen) — null =
@@ -314,6 +317,39 @@
 
 	const ATTRIBUTION_FALLBACK = 'Data from celd.space / Strata Mining Tools';
 
+	// ---- M9-A (t_60af9ec1): Blueprint-Pool-Besitz (lokal persistiert) --------
+	// Haken „im Besitz" in Liste + Detail; Persistenz via Settings (config.toml)
+	// — restart-fest, client-lokal, kein Cloud-Zwang. Key = Strata-Item-ID.
+	let ownedIds = $state<Set<string>>(new Set());
+	async function loadOwned() {
+		try {
+			ownedIds = new Set(await invoke<string[]>('blueprint_owned_get'));
+		} catch {
+			// Persist-Fehler degradiert still — Filter/Haken arbeiten mit leerer Menge.
+			ownedIds = new Set();
+		}
+	}
+	async function toggleOwned(id: string) {
+		try {
+			const nowOwned = await invoke<boolean>('blueprint_owned_toggle', { id });
+			const next = new Set(ownedIds);
+			if (nowOwned) next.add(id);
+			else next.delete(id);
+			ownedIds = next; // Neues Set → $state-Invalidierung
+		} catch (e) {
+			console.warn('blueprint_owned_toggle failed', e);
+		}
+	}
+	// Verfügbarkeits-Filter neben den Kategorie-Filtern (Spec M9): drei
+	// Zustände im Kreis — alle → verfügbar (im Besitz) → nicht verfügbar.
+	let ownFilter = $state<'all' | 'owned' | 'not_owned'>('all');
+	const OWN_FILTER_ORDER = ['all', 'owned', 'not_owned'] as const;
+	function cycleOwnFilter() {
+		const idx = OWN_FILTER_ORDER.indexOf(ownFilter);
+		ownFilter = OWN_FILTER_ORDER[(idx + 1) % OWN_FILTER_ORDER.length];
+		shown = STEP; // Filterwechsel → Liste zurücksetzen (bestehendes Muster)
+	}
+
 	// ---- Load ----------------------------------------------------------------
 	async function loadStatus() {
 		checked = false;
@@ -324,7 +360,10 @@
 			error = trError(e);
 		}
 		checked = true;
-		if (status?.enabled && status?.key_set) void loadItems();
+		if (status?.enabled && status?.key_set) {
+			void loadItems();
+			void loadOwned();
+		}
 	}
 
 	async function loadItems() {
@@ -363,6 +402,9 @@
 			if (q && !itemMatches(i, q)) return false;
 			if (oberFilter !== 'all' && oberOf(i.category) !== oberFilter) return false;
 			if (subFilter !== 'all' && i.category !== subFilter) return false;
+			// M9-A: Verfügbarkeits-Filter (im Besitz / nicht im Besitz).
+			if (ownFilter === 'owned' && !ownedIds.has(i.id)) return false;
+			if (ownFilter === 'not_owned' && ownedIds.has(i.id)) return false;
 			return true;
 		});
 	});
@@ -393,11 +435,13 @@
 		void filter;
 		void oberFilter;
 		void subFilter;
+		void ownFilter;
 		shown = STEP;
 	});
 
 	// ---- Detail --------------------------------------------------------------
 	async function openDetail(item: Item) {
+		detailItemId = item.id;
 		detailLoading = true;
 		detailError = '';
 		detail = null;
@@ -449,6 +493,7 @@
 	}
 	function closeDetail() {
 		detail = null;
+		detailItemId = '';
 		scwiki = null;
 		scwikiError = false;
 		detailError = '';
@@ -761,6 +806,22 @@
 									placeholder={$t('craft.filter_sub')}
 								/>
 							{/if}
+							<!-- M9-A: Verfügbarkeits-Filter (Besitz) — 3-Zustands-Chip im
+							     Kreis alle → verfügbar → nicht verfügbar (Spec M9). -->
+							<button
+								type="button"
+								class="cchip cchip-own"
+								class:is-on={ownFilter !== 'all'}
+								class:is-own-not={ownFilter === 'not_owned'}
+								onclick={cycleOwnFilter}
+								title={$t('craft.own_filter_title')}
+							>
+								{ownFilter === 'owned'
+									? $t('craft.own_filter_owned')
+									: ownFilter === 'not_owned'
+										? $t('craft.own_filter_not_owned')
+										: $t('craft.own_filter_all')}
+							</button>
 						</div>
 					</div>
 				</div>
@@ -781,6 +842,19 @@
 										<span class="cbadge">{catName(i.category)}</span>
 									{/if}
 								</button>
+								<!-- M9-A: Besitz-Haken (Blueprint-Pool) — eigener Button,
+								     toggelt ohne Detail-Öffnung, lokal persistiert. -->
+								<button
+									type="button"
+									class="crow-own"
+									class:is-on={ownedIds.has(i.id)}
+									aria-pressed={ownedIds.has(i.id)}
+									title={ownedIds.has(i.id) ? $t('craft.own_on') : $t('craft.own_off')}
+									onclick={(e) => {
+										e.stopPropagation();
+										void toggleOwned(i.id);
+									}}>✓</button
+								>
 							</div>
 						{:else}
 							<div class="cnote">{$t('mining.empty')}</div>
@@ -811,43 +885,53 @@
 							aria-label={$t('common.back')}>←</button
 						>
 						<span class="cd-title">{detail.item.name}</span>
-						<!-- M9-B: Blueprint mit aktuellen Regler-Qualitäten an eine Liste hängen -->
-						<div class="cl-pick-wrap">
-							<button type="button" class="cl-add" onclick={toggleListPick}>
-								＋ {$t('lists.add_to_list')}
-							</button>
-							{#if listPickOpen}
-								<div class="cl-pick" role="menu">
-									{#each myLists as l (l.id)}
-										<button
-											type="button"
-											class="cl-pick-row"
-											role="menuitem"
-											onclick={() => void addToList(l.id)}
-										>
-											<span class="cl-pick-name">{l.name}</span>
-											<span class="cl-pick-n">{l.item_count}</span>
-										</button>
-									{:else}
-										<div class="cl-pick-hint">{$t('lists.empty')}</div>
-									{/each}
-									<div class="cl-pick-new">
-										<input
-											class="cl-pick-input"
-											type="text"
-											bind:value={newListName}
-											placeholder={$t('lists.new_list_ph')}
-											aria-label={$t('lists.new_list_ph')}
-											onkeydown={(e) => e.key === 'Enter' && void createAndAdd()}
-										/>
-										<button type="button" class="cl-pick-go" onclick={() => void createAndAdd()}>
-											{$t('lists.new_list')}
-										</button>
-									</div>
-									{#if listNote}<div class="cl-pick-note">{listNote}</div>{/if}
+				<!-- Union-Resolution (M9-B + M9-A): Blueprint-Picker mit aktuellen
+				     Regler-Qualitäten an eine Liste hängen + Besitz-Haken ganz rechts. -->
+					<div class="cl-pick-wrap">
+						<button type="button" class="cl-add" onclick={toggleListPick}>
+							＋ {$t('lists.add_to_list')}
+						</button>
+						{#if listPickOpen}
+							<div class="cl-pick" role="menu">
+								{#each myLists as l (l.id)}
+									<button
+										type="button"
+										class="cl-pick-row"
+										role="menuitem"
+										onclick={() => void addToList(l.id)}
+									>
+										<span class="cl-pick-name">{l.name}</span>
+										<span class="cl-pick-n">{l.item_count}</span>
+									</button>
+								{:else}
+									<div class="cl-pick-hint">{$t('lists.empty')}</div>
+								{/each}
+								<div class="cl-pick-new">
+									<input
+										class="cl-pick-input"
+										type="text"
+										bind:value={newListName}
+										placeholder={$t('lists.new_list_ph')}
+										aria-label={$t('lists.new_list_ph')}
+										onkeydown={(e) => e.key === 'Enter' && void createAndAdd()}
+									/>
+									<button type="button" class="cl-pick-go" onclick={() => void createAndAdd()}>
+										{$t('lists.new_list')}
+									</button>
 								</div>
-							{/if}
-						</div>
+								{#if listNote}<div class="cl-pick-note">{listNote}</div>{/if}
+							</div>
+						{/if}
+					</div>
+					<!-- M9-A: Besitz-Haken oben rechts im Detail (Spec M9). -->
+					<button
+						type="button"
+						class="cd-own"
+						class:is-on={ownedIds.has(detailItemId)}
+						aria-pressed={ownedIds.has(detailItemId)}
+						title={ownedIds.has(detailItemId) ? $t('craft.own_on') : $t('craft.own_off')}
+						onclick={() => void toggleOwned(detailItemId)}>✓</button
+					>
 					</div>
 					<div class="cd-sub">
 						{#if detail.item.category}<span class="cbadge">{catName(detail.item.category)}</span>{/if}
@@ -1374,6 +1458,49 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	/* M9-A: Besitz-Haken (Blueprint-Pool) — Liste + Detail oben rechts. */
+	.crow-own,
+	.cd-own {
+		flex: none;
+		background: transparent;
+		border: 1px solid var(--line, #2a2f3a);
+		color: inherit;
+		border-radius: 8px;
+		width: 26px;
+		height: 26px;
+		cursor: pointer;
+		font-size: 13px;
+		line-height: 1;
+		opacity: 0.55;
+	}
+	.crow-own:hover,
+	.cd-own:hover {
+		border-color: var(--acc, #e0a83e);
+		opacity: 1;
+	}
+	.crow-own.is-on,
+	.cd-own.is-on {
+		background: var(--acc, #e0a83e);
+		border-color: var(--acc, #e0a83e);
+		color: #14161a;
+		opacity: 1;
+		font-weight: 700;
+	}
+	/* Detail: Haken rechtsbündig — Titel bleibt flexibel, Button drückt nach rechts. */
+	.cd-own {
+		margin-left: auto;
+	}
+	/* Verfügbarkeits-Chip: negativ-Zustand (nicht verfügbar) etwas gedämpft. */
+	.cchip-own.is-own-not {
+		border-style: dashed;
+	}
+	.cchip-own.is-own-not.is-on {
+		background: transparent;
+		border: 1px dashed var(--acc, #e0a83e);
+		color: var(--acc, #e0a83e);
+		font-weight: 600;
 	}
 	.cd-sub {
 		display: flex;

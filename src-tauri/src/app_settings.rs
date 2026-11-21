@@ -630,6 +630,32 @@ pub fn settings_set_strata_enabled(
     )
 }
 
+/// M9-A (t_60af9ec1): Blueprint-Pool-Besitz — Item-IDs lesen (Liste der
+/// „im Besitz"-Markierten). Kein Snapshot-Feld: die Craft-View lädt die
+/// Liste einmal pro Mount und toggelt gezielt.
+#[tauri::command]
+pub fn blueprint_owned_get(state: tauri::State<SettingsState>) -> Vec<String> {
+    let s = state.inner.lock().expect("settings lock");
+    s.blueprint_owned().to_vec()
+}
+
+/// M9-A: Besitz-Haken umschalten. Persistiert sofort (kein Save-Button —
+/// gleiche Politik wie alle Settings-Setter). Rückgabe = neuer Zustand
+/// (true = jetzt markiert), damit die UI nicht raten muss.
+#[tauri::command]
+pub fn blueprint_owned_toggle(
+    state: tauri::State<SettingsState>,
+    id: String,
+) -> Result<bool, String> {
+    let mut s = state.inner.lock().expect("settings lock");
+    if id.trim().is_empty() {
+        return Err("blueprint_owned_toggle: id leer".into());
+    }
+    let now_owned = s.blueprint_owned_toggle(&id);
+    state.persist(&s);
+    Ok(now_owned)
+}
+
 /// PB (t_1c9bc240, B1): EINEN Mode-Hotkey setzen (nur die konfigurierbaren
 /// Slots — F1 Suche und F12 Einstellungen bleiben fest).
 /// Validierung: gültiger F-Key (F1–F12), keine Doppelbelegung (Settings-

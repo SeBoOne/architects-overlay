@@ -165,6 +165,8 @@ pub fn run() {
             strata::strata_items,
             strata::strata_craft_cost,
             app_settings::settings_set_strata_enabled,
+            app_settings::blueprint_owned_get,
+            app_settings::blueprint_owned_toggle,
             app_settings::settings_get,
             app_settings::settings_set_pins_default_opacity,
             app_settings::settings_set_pins_presets,
