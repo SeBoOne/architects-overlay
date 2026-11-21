@@ -198,13 +198,13 @@
 
 <style>
 	.cqs {
-		/* t_24961acd (User-P2) + M8-R4 (t_e8f4f57d): FESTE Balkenbreite — alle
-		   Reglerbalken einer Blueprint-Liste sind pixel-gleich, die 500-Mitte
-		   sitzt in jeder Zeile auf derselben x-Position. M8-R4: der Balken hat
-		   die Regler-Zeile für sich (Wert + Snap-Toggle daneben), der Effekt-
-		   text lebt in einer EIGENEN Zeile darunter (Crafting.svelte) — die
-		   feste Breite bleibt der Geometrie-Vertrag (±1px). */
-		flex: 0 0 19rem;
+		/* t_24961acd (User-P2) + M8-R4 (t_e8f4f57d): Der Balken nutzt die
+		   verfügbare Zeilenbreite VOLL aus (User-Korrektur 2026-11-21) — die
+		   feste 19rem-Breite war zu schmal. Alle Zeilen sind gleich aufgebaut
+		   (Balken + Wert + Toggle; Effekttext lebt in einer EIGENEN Zeile
+		   darunter, Crafting.svelte) → die Tracks bleiben trotzdem pixel-gleich
+		   und die 500-Mitte auf derselben x-Position (Geometrie-Vertrag ±1px). */
+		flex: 1;
 		min-width: 0;
 		display: flex;
 		align-items: center;

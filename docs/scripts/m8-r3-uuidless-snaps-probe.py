@@ -366,8 +366,8 @@ async def main():
               max(widths) - min(widths) <= 1.0, str(widths))
         check("C4 500-Mitte auf derselben x-Position (±1px)",
               max(cxs) - min(cxs) <= 1.0, str(cxs))
-        check("C5 Balkenbreite plausibel (feste Breite ~19rem; Changes in EIGENER Zeile)",
-              all(280 <= w <= 330 for w in widths), str(widths))
+        check("C5 Balken nutzen die Zeilenbreite VOLL (t_e8f4f57d-Korrektur: flex:1 statt 19rem — breit UND identisch)",
+              all(w > 400 for w in widths) and max(widths) - min(widths) <= 1.0, str(widths))
         await shot("m8-r3-uuidless-equal-tracks.png")
 
         # Zeile mit GEÄNDERTEN Changes (850) erneut messen — Gleichheit hält.
