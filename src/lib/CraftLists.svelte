@@ -587,6 +587,16 @@
 		min-height: 0;
 		flex: 1;
 		color: var(--fg, #d7dde5);
+		/* M9-H (t_7709c7f2, Punkt 6): eigener Scroll + Padding — wie .mlists. */
+		overflow-y: auto;
+		padding: 2px 10px 12px 2px;
+	}
+	.clists::-webkit-scrollbar {
+		width: 8px;
+	}
+	.clists::-webkit-scrollbar-thumb {
+		background: color-mix(in srgb, var(--accent, #4aa3ff) 35%, transparent);
+		border-radius: 4px;
 	}
 	.cl-bar {
 		display: flex;

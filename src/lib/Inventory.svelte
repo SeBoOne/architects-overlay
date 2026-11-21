@@ -109,6 +109,20 @@ function keyActivate(e: KeyboardEvent) {
 	let locSuggest = $state<string[]>([]);
 	let locEntities = $state<SearchHit[]>([]);
 
+	// M9-H (t_7709c7f2, Punkt 4): EINE Autocomplete-Liste für den Standort —
+	// bestehende Inventar-Standorte (Freitext-Depots) und SC-Location-Entities
+	// in derselben Custom-Liste. Das natives <datalist>-Dropdown (das „Doppel“)
+	// verdeckte die SC-Locations; Freitext bleibt implizit — wird kein
+	// Vorschlag gewählt, bleibt fLocationId null (Freitext-Depot).
+	let locMatches = $derived.by(() => {
+		const q = fLocation.trim().toLowerCase();
+		if (!q) return [];
+		return locSuggest
+			.filter((loc) => loc.toLowerCase().includes(q) && loc.toLowerCase() !== q)
+			.slice(0, 6);
+	});
+	const locCount = $derived(locMatches.length + locEntities.length);
+
 	// ---- Laden ---------------------------------------------------------------
 	async function reload() {
 		try {
@@ -477,6 +491,14 @@ function keyActivate(e: KeyboardEvent) {
 		}
 	}
 
+	function chooseSavedLoc(loc: string) {
+		fLocation = loc;
+		// Gespeicherte Depot-Namen sind Freitext-Standorte — keine Entity.
+		fLocationId = null;
+		locEntities = [];
+		locIdx = 0;
+	}
+
 	function chooseLocation(h: SearchHit) {
 		fLocation = h.name;
 		// String-Id unangetastet durchreichen (Wiki-Ids > 2^53 runden als
@@ -579,12 +601,17 @@ function keyActivate(e: KeyboardEvent) {
 			}
 			if (t === locInputEl || (t instanceof HTMLElement && t.classList.contains('if-pick') && inPick)) {
 				if (e.key === 'ArrowDown' && t === locInputEl) {
-					locIdx = Math.min(locIdx + 1, Math.max(locEntities.length - 1, 0));
+					// M9-H Punkt 4: ↑↓ wandern über die VEREINHEITLICHTE Liste
+					// (gespeicherte Depot-Orte + SC-Location-Entities).
+					locIdx = Math.min(locIdx + 1, Math.max(locCount - 1, 0));
 					e.preventDefault();
 					return;
 				}
-				if (e.key === 'Enter' && t === locInputEl && locEntities[locIdx]) {
-					chooseLocation(locEntities[locIdx]);
+				if (e.key === 'Enter' && t === locInputEl && locCount > 0) {
+					if (locIdx < locMatches.length) chooseSavedLoc(locMatches[locIdx]);
+					else if (locEntities[locIdx - locMatches.length]) {
+						chooseLocation(locEntities[locIdx - locMatches.length]);
+					}
 					e.preventDefault();
 					return;
 				}
@@ -727,18 +754,29 @@ function keyActivate(e: KeyboardEvent) {
 						placeholder={$t('inventory.ph_eg_location')}
 						bind:value={fLocation}
 						oninput={onLocInput}
-						list="inv-locs"
 						bind:this={locInputEl}
 					/>
-					<datalist id="inv-locs">
-						{#each locSuggest as loc}
-							<option value={loc}></option>
-						{/each}
-					</datalist>
-					{#if locEntities.length}
-						<div class="if-picks" role="listbox" aria-label={$t('inventory.location_entities')}>
-							{#each locEntities.slice(0, 6) as h, li}
-								<button type="button" class="if-pick" class:is-on={(fLocationId !== null && h.id === fLocationId) || li === locIdx} onclick={() => chooseLocation(h)}>
+					{#if locMatches.length || locEntities.length}
+						<!-- M9-H Punkt 4: EINE Vorschlagsliste — gespeicherte Depot-Orte
+						     (Freitext, k = „·") und SC-Location-Entities (k = „l"). -->
+						<div class="if-picks" role="listbox" aria-label={$t('inventory.location')}>
+							{#each locMatches as loc, i (loc)}
+								<button
+									type="button"
+									class="if-pick"
+									class:is-on={locIdx === i}
+									onclick={() => chooseSavedLoc(loc)}
+								>
+									<span class="k">·</span>{loc}<small>{$t('inventory.saved_loc')}</small>
+								</button>
+							{/each}
+							{#each locEntities.slice(0, 6) as h, j (h.id)}
+								<button
+									type="button"
+									class="if-pick"
+									class:is-on={(fLocationId !== null && h.id === fLocationId) || locIdx === locMatches.length + j}
+									onclick={() => chooseLocation(h)}
+								>
 									<span class="k">l</span>{h.name}{#if h.subtitle}<small>{h.subtitle}</small>{/if}
 								</button>
 							{/each}

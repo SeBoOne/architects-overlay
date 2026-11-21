@@ -453,6 +453,7 @@
     "inventory.no_match_filter": "Keine Positionen passen zu „{filter}“.",
     "inventory.no_positions_location": "Keine Positionen an diesem Standort.",
     "inventory.no_positions_material": "Keine Positionen für dieses Material.",
+    "inventory.saved_loc": "Gespeicherter Depot-Ort",
     "inventory.no_purchase_price": "kein Kaufpreis",
     "inventory.open_location": "Standort {name} öffnen",
     "inventory.open_location_detail": "Standort-Detail öffnen",
