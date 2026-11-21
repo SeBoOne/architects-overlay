@@ -240,16 +240,29 @@ fn sync_linked_mining(conn: &mut Connection, source_id: u64) -> rusqlite::Result
         }
         // done-Stand neu schreiben: nur Materialien, die es noch gibt,
         // done auf die (ggf. geschrumpfte) Sollmenge geklemmt.
+        // M9-G R1-Fix (Review-Befund 1): der GEKLAMMTE Wert wird auch in die
+        // Quell-Liste zurückgeschrieben — sonst divergieren verknüpfte
+        // Ansichten (Mining done=25 geklemmt, Craft done=100 alt) für denselben
+        // Zustand. Invariante: done ≤ Soll gilt in BEIDEN Listen.
         for (material, unit, dq) in done {
             if let Some((_, _, qty, _, _)) = agg
                 .iter()
                 .find(|(am, au, aq, _, _)| *am == material && *au == unit && *aq > 0.0)
             {
+                let clamped = dq.min(*qty);
                 conn.execute(
                     "INSERT INTO list_mat_done (list_id, material, unit, done_qty) \
                      VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![m, material, unit, dq.min(*qty)],
+                    rusqlite::params![m, material, unit, clamped],
                 )?;
+                if clamped < dq {
+                    conn.execute(
+                        "INSERT INTO list_mat_done (list_id, material, unit, done_qty) \
+                         VALUES (?1, ?2, ?3, ?4) \
+                         ON CONFLICT(list_id, material, unit) DO UPDATE SET done_qty = ?4",
+                        rusqlite::params![source_id as i64, material, unit, clamped],
+                    )?;
+                }
             }
         }
     }
@@ -653,7 +666,48 @@ impl Cache {
                    AND material = ?3 AND unit = ?4",
                 rusqlite::params![quality as i64, list_id as i64, material.trim(), unit.trim()],
             )?;
-            Ok((changed > 0, (old.max(quality as i64)) as u32))
+            // M9-G R1-Fix (Review-Befunde 2+3): Liste kind + Quelle lesen.
+            let (kind, source): (String, Option<i64>) = conn
+                .query_row(
+                    "SELECT kind, source_list_id FROM lists WHERE id = ?1",
+                    [list_id as i64],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .unwrap_or_default();
+            // Fix 3: Anhebung über eine VERKNÜPFTE Mining-Liste hebt die
+            // CRAFT-Quelle an (Single Source of Truth) — sonst wirft der
+            // nächste Craft-Sync die Anhebung weg (500→300), während die
+            // Q500-Reservierung bleibt. M9-E-Regel „höher ist immer besser"
+            // bleibt damit dauerhaft.
+            let raised_src = if kind == "mining" {
+                match source {
+                    Some(src) => {
+                        let changed2 = conn.execute(
+                            "UPDATE list_item_mats SET quality = ?1 \
+                             WHERE quality < ?1 \
+                               AND item_row IN (SELECT id FROM list_items WHERE list_id = ?2) \
+                               AND material = ?3 AND unit = ?4",
+                            rusqlite::params![quality as i64, src, material.trim(), unit.trim()],
+                        )?;
+                        changed2 > 0
+                    }
+                    None => false,
+                }
+            } else {
+                false
+            };
+            // Fix 2: Qualitäts-Anhebung ändert das Material-Bild der Quell-
+            // Liste → Spiegel sofort aktualisieren (Craft-Liste direkt,
+            // verknüpfte Mining-Liste über ihre Quelle).
+            let sync_src: i64 = if kind == "craft" {
+                list_id as i64
+            } else {
+                source.unwrap_or(-1)
+            };
+            if sync_src > 0 {
+                sync_linked_mining(conn, sync_src as u64)?;
+            }
+            Ok((changed > 0 || raised_src, (old.max(quality as i64)) as u32))
         })?;
         let entry = self
             .inventory_list()?
@@ -970,6 +1024,224 @@ mod tests {
             .unwrap();
         let cd = c.list_detail(craft).unwrap();
         assert_eq!(cd.aggregated[0].done_qty, 0.0);
+    }
+
+    // M9-G R1 (Review-Befund 1): done-Klemmung beim Spiegeln darf die
+    // Quell-Liste nicht auf dem alten (höheren) Stand lassen — beide
+    // Ansichten desselben Materials müssen identisch sein.
+    #[test]
+    fn m9g_done_clamp_writes_back_to_craft_source() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        let item = c
+            .list_add_item(
+                craft,
+                bp("a", "A", 1.0, vec![("Taranite", "SCU", 50.0, 300)]),
+            )
+            .unwrap();
+
+        // done 100 > Soll 50: Durchschlag setzt BEIDE auf 100.
+        c.list_set_done(mining, "Taranite", "SCU", Some(100.0))
+            .unwrap();
+        assert_eq!(c.list_detail(craft).unwrap().aggregated[0].done_qty, 100.0);
+
+        // Mengen-Schrumpfung: Soll 25. Beide Seiten müssen auf 25 geklemmt
+        // werden — nicht Mining 25 / Craft 100.
+        c.list_set_copies(item, 0.5).unwrap();
+        let md = c.list_detail(mining).unwrap().aggregated[0].clone();
+        let cd = c.list_detail(craft).unwrap().aggregated[0].clone();
+        assert_eq!(md.quantity, 25.0);
+        assert_eq!(cd.quantity, 25.0);
+        assert_eq!(md.done_qty, 25.0, "Mining-Seite geklemmt");
+        assert_eq!(cd.done_qty, 25.0, "Craft-Seite ebenfalls geklemmt");
+    }
+
+    // M9-G R1 (Review-Befund 2): Qualitäts-Anhebung der CRAFT-Liste über
+    // inventory_add_for_list spiegelt sich sofort in der verknüpften
+    // Mining-Liste.
+    #[test]
+    fn m9g_craft_quality_raise_syncs_to_linked_mining() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        c.list_add_item(
+            craft,
+            bp("a", "A", 1.0, vec![("Taranite", "SCU", 50.0, 300)]),
+        )
+        .unwrap();
+        let inv = |q: u32| NewInventoryEntry {
+            entity_kind: None,
+            entity_id: None,
+            name: "Taranite".into(),
+            quality: q,
+            location_id: None,
+            location_name: "Levski".into(),
+            quantity: 50.0,
+            price: None,
+        };
+
+        // Craft-Qualität 300 → 500 über die Craft-Liste.
+        c.inventory_add_for_list(inv(500), craft, "Taranite", "SCU")
+            .unwrap();
+        assert_eq!(c.list_detail(craft).unwrap().aggregated[0].min_quality, 500);
+        assert_eq!(
+            c.list_detail(mining).unwrap().aggregated[0].min_quality,
+            500,
+            "Spiegel folgt der Qualitäts-Anhebung"
+        );
+    }
+
+    // M9-G R1 (Review-Befund 3): Qualitäts-Anhebung über die VERKNÜPFTE
+    // Mining-Liste hebt die Craft-Quelle mit an — der nächste Craft-Sync
+    // darf sie nicht auf die alte Aggregation zurücksetzen.
+    #[test]
+    fn m9g_mining_quality_raise_survives_next_craft_sync() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        let item = c
+            .list_add_item(
+                craft,
+                bp("a", "A", 1.0, vec![("Taranite", "SCU", 50.0, 300)]),
+            )
+            .unwrap();
+        let inv = |q: u32| NewInventoryEntry {
+            entity_kind: None,
+            entity_id: None,
+            name: "Taranite".into(),
+            quality: q,
+            location_id: None,
+            location_name: "Levski".into(),
+            quantity: 50.0,
+            price: None,
+        };
+
+        // Anhebung 300 → 500 über die Mining-Liste (submitAddInv-Flow).
+        let r = c
+            .inventory_add_for_list(inv(500), mining, "Taranite", "SCU")
+            .unwrap();
+        assert!(r.requirement_raised);
+        assert_eq!(r.requirement, 500);
+        assert_eq!(
+            c.list_detail(craft).unwrap().aggregated[0].min_quality,
+            500,
+            "Craft-Quelle wurde mit angehoben"
+        );
+
+        // Nächster Craft-Trigger: Anforderung bleibt 500, Reservierung (Q500)
+        // bleibt konsistent.
+        c.list_set_copies(item, 2.0).unwrap();
+        let md = c.list_detail(mining).unwrap().aggregated[0].clone();
+        let cd = c.list_detail(craft).unwrap().aggregated[0].clone();
+        assert_eq!(md.quantity, 100.0);
+        assert_eq!(cd.quantity, 100.0);
+        assert_eq!(md.min_quality, 500);
+        assert_eq!(cd.min_quality, 500);
+    }
+
+    /// M9-G R1-Fix (Review-Befund 1): Nach done > Soll + Mengen-Schrumpfung
+    /// zeigen beide verknüpften Ansichten denselben (geklammerten) Stand.
+    #[test]
+    fn m9g_done_clamp_propagates_back_to_craft_source() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        let a = c
+            .list_add_item(
+                craft,
+                bp("b", "B", 1.0, vec![("Taranite", "SCU", 50.0, 300)]),
+            )
+            .unwrap();
+        // done=100 > Soll 50 — Durchschlag setzt Craft auf 100.
+        c.list_set_done(mining, "Taranite", "SCU", Some(100.0))
+            .unwrap();
+        assert_eq!(c.list_detail(craft).unwrap().aggregated[0].done_qty, 100.0);
+        // Mengen-Schrumpfung: Soll 25 → Mining GEKLAMMT auf 25 …
+        c.list_set_copies(a, 0.5).unwrap();
+        let md = c.list_detail(mining).unwrap();
+        assert_eq!(md.aggregated[0].quantity, 25.0);
+        assert_eq!(md.aggregated[0].done_qty, 25.0);
+        // … und Craft bekommt denselben geklemmten Wert (kein Divergieren).
+        let cd = c.list_detail(craft).unwrap();
+        assert_eq!(cd.aggregated[0].quantity, 25.0);
+        assert_eq!(cd.aggregated[0].done_qty, 25.0);
+    }
+
+    /// M9-G R1-Fix (Review-Befund 2): Qualitäts-Anhebung an der CRAFT-Liste
+    /// (M9-E-Flow) spiegelt sich sofort in die verknüpfte Mining-Liste.
+    #[test]
+    fn m9g_craft_quality_raise_syncs_into_linked_mining() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        c.list_add_item(
+            craft,
+            bp("b", "B", 1.0, vec![("Taranite", "SCU", 50.0, 300)]),
+        )
+        .unwrap();
+        let entry = NewInventoryEntry {
+            entity_kind: None,
+            entity_id: None,
+            name: "Taranite".into(),
+            quality: 500,
+            location_id: None,
+            location_name: "Levski".into(),
+            quantity: 25.0,
+            price: None,
+        };
+        c.inventory_add_for_list(entry, craft, "Taranite", "SCU")
+            .unwrap();
+        // Craft-Anforderung 500, verknüpfte Mining-Liste FOLGT (nicht 300).
+        assert_eq!(c.list_detail(craft).unwrap().aggregated[0].min_quality, 500);
+        assert_eq!(
+            c.list_detail(mining).unwrap().aggregated[0].min_quality,
+            500
+        );
+    }
+
+    /// M9-G R1-Fix (Review-Befund 3): Qualitäts-Anhebung über die VERKNÜPFTE
+    /// Mining-Liste hebt die Craft-Quelle an und überlebt den nächsten
+    /// Craft-Sync (Reservierung Q500 bleibt, Anforderung fällt nicht zurück).
+    #[test]
+    fn m9g_mining_quality_raise_survives_craft_sync() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        let mining = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        let a = c
+            .list_add_item(
+                craft,
+                bp("b", "B", 1.0, vec![("Taranite", "SCU", 50.0, 300)]),
+            )
+            .unwrap();
+        let entry = NewInventoryEntry {
+            entity_kind: None,
+            entity_id: None,
+            name: "Taranite".into(),
+            quality: 500,
+            location_id: None,
+            location_name: "Levski".into(),
+            quantity: 25.0,
+            price: None,
+        };
+        let r = c
+            .inventory_add_for_list(entry, mining, "Taranite", "SCU")
+            .unwrap();
+        assert!(r.requirement_raised);
+        assert_eq!(r.requirement, 500);
+        // Nächster Craft-Trigger (Sync-Neuaufbau): Anforderung bleibt 500.
+        c.list_set_copies(a, 2.0).unwrap();
+        let cd = c.list_detail(craft).unwrap();
+        assert_eq!(cd.aggregated[0].min_quality, 500);
+        let md = c.list_detail(mining).unwrap();
+        assert_eq!(md.aggregated[0].min_quality, 500);
+        // Reservierung existiert weiterhin.
+        assert!(
+            c.inventory_list()
+                .unwrap()
+                .iter()
+                .all(|e| e.reservations.iter().any(|res| res.list_id == Some(craft)))
+        );
     }
 
     #[test]
