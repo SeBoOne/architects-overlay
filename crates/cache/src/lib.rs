@@ -19,6 +19,7 @@
 //! [`sync::spawn_sync`] provides the background refetch loop (tokio).
 
 pub mod inventory;
+pub mod lists;
 pub mod modul_compat;
 pub mod sync;
 
@@ -381,6 +382,44 @@ CREATE TABLE IF NOT EXISTS inventory (
   created_at    INTEGER NOT NULL,
   updated_at    INTEGER NOT NULL
 );
+-- M9-B (t_36778bc3): generische Listen-Engine — benannte Listen von
+-- Blueprints (kind='craft') bzw. Materialien (kind='mining', M9-C). Ein
+-- Craft-Eintrag speichert einen Blueprint-Snapshot: die Materialliste inkl.
+-- der beim Hinzufügen eingestellten Qualitätsregler-Werte (Default 500).
+-- Abhak-Stand liegt pro aggregiertem Material (Liste+Material+Einheit) in
+-- list_mat_done — ganz (done=Soll) oder teilweise (freier Wert). Lokal-first
+-- wie inventory: KEIN Sync, KEIN API-Zugriff.
+CREATE TABLE IF NOT EXISTS lists (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind       TEXT    NOT NULL, -- 'craft' | 'mining'
+  name       TEXT    NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS list_items (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  list_id    INTEGER NOT NULL, -- -> lists.id
+  item_id    TEXT    NOT NULL, -- Strata item id (Dedupe-Schlüssel je Liste)
+  item_name  TEXT    NOT NULL,
+  craft_time INTEGER NOT NULL DEFAULT 0, -- Sekunden (Anzeige-Snapshot)
+  copies     REAL    NOT NULL DEFAULT 1, -- wie oft gecraftet wird
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS list_item_mats (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_row INTEGER NOT NULL, -- -> list_items.id
+  material TEXT    NOT NULL,
+  ore_id   TEXT,             -- Strata oreId (Mining-Sprung), null-fähig
+  unit     TEXT    NOT NULL, -- 'SCU' | 'gems' | 'items'
+  quantity REAL    NOT NULL,
+  quality  INTEGER NOT NULL DEFAULT 500 -- übernommener Regler-Wert 0-1000
+);
+CREATE TABLE IF NOT EXISTS list_mat_done (
+  list_id  INTEGER NOT NULL, -- -> lists.id
+  material TEXT    NOT NULL,
+  unit     TEXT    NOT NULL,
+  done_qty REAL    NOT NULL DEFAULT 0,
+  PRIMARY KEY (list_id, material, unit)
+);
 -- Handelsrouten (v6, Karte t_128b7547): JSON-Metadatensätze hinter einem
 -- Frischemarkierer — Terminal-Flags (Autoload/Cargodeck/Boden/Kette) und
 -- Ware-Flags (illegal/sellable/buyable) aus UEX, plus der Routen-Sweep-
@@ -659,7 +698,11 @@ fn migrate_columns(conn: &Connection) -> Result<()> {
 ///   `modul_compat`-Modul). `meta`-Keys `modul_compat:version` (Game-Version
 ///   des Datensatzes) + `modul_compat:synced_at` (Epoch). Rein additiv —
 ///   `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten betroffen.
-pub const SCHEMA_VERSION: i64 = 12;
+/// * v13 — M9-B (t_36778bc3): neue additive Tabellen `lists`, `list_items`,
+///   `list_item_mats` und `list_mat_done` (generische Listen-Engine —
+///   Crafting-/Mining-Listen, siehe `lists`-Modul). Rein additiv —
+///   `CREATE TABLE IF NOT EXISTS`, keine Bestandsdaten betroffen.
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// Column migrations for the v1 → v2 bump. `CREATE TABLE IF NOT EXISTS` never
 /// alters an existing table, so older caches need the ALTERs here.

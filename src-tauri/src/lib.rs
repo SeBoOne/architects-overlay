@@ -36,6 +36,9 @@ mod info;
 mod inventory;
 #[cfg(desktop)]
 mod ipc_socket;
+/// Generische Listen-Engine (M9-B, t_36778bc3) — Crafting-/Mining-Listen.
+#[cfg(desktop)]
+mod lists;
 /// T1 (t_530e5f59): lokale (Community-)Sprachdateien + `locale_import`/
 /// `locale_list`-Commands. Mod-agnostisch nutzbar, aber desktop-only wie die
 /// übrigen UI-Commands (mobile-Bundle baut sie nicht).
@@ -140,6 +143,15 @@ pub fn run() {
             inventory::inventory_add,
             inventory::inventory_update,
             inventory::inventory_delete,
+            lists::lists_list,
+            lists::list_create,
+            lists::list_rename,
+            lists::list_delete,
+            lists::list_add_item,
+            lists::list_remove_item,
+            lists::list_set_copies,
+            lists::list_set_done,
+            lists::list_detail,
             routes::get_routes,
             routes::get_route_locations,
             routes::vehicles_scu,
