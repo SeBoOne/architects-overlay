@@ -230,10 +230,12 @@ impl Cache {
                 "SELECT inventory.id, inventory.entity_kind, inventory.entity_id, inventory.name, \
                  inventory.quality, inventory.location_id, inventory.location_name, \
                  inventory.quantity, inventory.price, inventory.created_at, inventory.updated_at, \
-                 r.list_id AS reserved_list_id, l.name AS reserved_list_name \
+                 COALESCE(s.id, l.id) AS reserved_list_id, \
+                 COALESCE(s.name, l.name) AS reserved_list_name \
                  FROM inventory \
                  LEFT JOIN list_reservations r ON r.inventory_id = inventory.id \
                  LEFT JOIN lists l ON l.id = r.list_id \
+                 LEFT JOIN lists s ON s.id = l.source_list_id \
                  ORDER BY inventory.location_name COLLATE NOCASE ASC, inventory.name COLLATE NOCASE ASC, \
                      inventory.quality DESC, inventory.id ASC"
             )?;

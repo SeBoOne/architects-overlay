@@ -315,7 +315,14 @@
 		error = '';
 		bridgeBusy = true;
 		try {
-			const id = await invoke<number>('list_create', { kind: 'mining', name: detail.name });
+			// M9-D R1 (Reviewer): persistente Verknüpfung — die Mining-Liste
+			// trägt die erzeugende Crafting-Liste (source_list_id); Inventar-
+			// Reservierungs-Hinweise zeigen dann auf die Crafting-Liste.
+			const id = await invoke<number>('list_create', {
+				kind: 'mining',
+				name: detail.name,
+				sourceListId: detail.id
+			});
 			for (const item of items) {
 				await invoke('list_add_item', { listId: id, item });
 			}

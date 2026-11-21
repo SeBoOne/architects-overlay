@@ -87,6 +87,10 @@ pub struct ListSummary {
     pub name: String,
     pub created_at: u64,
     pub item_count: u64,
+    /// M9-D (t_36f3966c): erzeugende Liste (Brücke), NULL = standalone.
+    pub source_list_id: Option<u64>,
+    /// Name der erzeugenden Liste (aufgelöst beim Lesen).
+    pub source_list_name: Option<String>,
 }
 
 /// Aggregierte Material-Zeile einer Liste (die Abhak-Ebene).
@@ -169,8 +173,10 @@ impl Cache {
         self.with(|conn| {
             let mut stmt = conn.prepare(
                 "SELECT l.id, l.kind, l.name, l.created_at, \
-                        (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS items \
-                 FROM lists l WHERE l.kind = ?1 ORDER BY l.created_at DESC, l.id DESC",
+                        (SELECT COUNT(*) FROM list_items i WHERE i.list_id = l.id) AS items, \
+                        l.source_list_id, s.name AS source_list_name \
+                 FROM lists l LEFT JOIN lists s ON s.id = l.source_list_id \
+                 WHERE l.kind = ?1 ORDER BY l.created_at DESC, l.id DESC",
             )?;
             let rows = stmt.query_map([kind], |r| {
                 Ok(ListSummary {
@@ -179,20 +185,46 @@ impl Cache {
                     name: r.get("name")?,
                     created_at: r.get::<_, i64>("created_at")? as u64,
                     item_count: r.get::<_, i64>("items")? as u64,
+                    source_list_id: r.get::<_, Option<i64>>("source_list_id")?.map(|v| v as u64),
+                    source_list_name: r.get("source_list_name")?,
                 })
             })?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
         })
     }
 
-    /// Neue Liste, liefert ihre id.
-    pub fn list_create(&self, kind: &str, name: &str) -> Result<u64> {
+    /// Neue Liste, liefert ihre id. `source_list_id` (M9-D, t_36f3966c)
+    /// verknüpft eine Brücken-erzeugte Liste persistent mit ihrer erzeugenden
+    /// Liste (Mining-Liste → Crafting-Liste) — die Inventar-Reservierungs-
+    /// Hinweise und Badges zeigen dann die ERZEUGENDE Liste. Fehlende
+    /// Source-Liste fliegt; beim Löschen der Source löst sich der Link.
+    pub fn list_create(&self, kind: &str, name: &str, source_list_id: Option<u64>) -> Result<u64> {
         validate_kind(kind)?;
         validate_name(name)?;
-        self.with(|conn| {
+        if let Some(src) = source_list_id {
+            let exists: i64 = self.with(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM lists WHERE id = ?1",
+                    [src as i64],
+                    |r| r.get(0),
+                )
+            })?;
+            if exists == 0 {
+                return Err(CacheError::Query(i18n_err::err_keyp(
+                    "lists.err_missing",
+                    serde_json::json!({ "id": src }),
+                )));
+            }
+        }
+        self.with(move |conn| {
             conn.execute(
-                "INSERT INTO lists (kind, name, created_at) VALUES (?1, ?2, ?3)",
-                rusqlite::params![kind, name.trim(), super::now_unix() as i64],
+                "INSERT INTO lists (kind, name, created_at, source_list_id) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![
+                    kind,
+                    name.trim(),
+                    super::now_unix() as i64,
+                    source_list_id.map(|v| v as i64)
+                ],
             )?;
             Ok(conn.last_insert_rowid() as u64)
         })
@@ -216,9 +248,15 @@ impl Cache {
         Ok(())
     }
 
-    /// Liste inkl. Einträge, Snapshots und Abhak-Stand löschen.
+    /// Liste inkl. Einträge, Snapshots und Abhak-Stand löschen. Brücken-Links
+    /// auf diese Liste (M9-D) lösen sich mit (source_list_id → NULL) — die
+    /// verlinkten Listen bleiben bestehen (dann standalone).
     pub fn list_delete(&self, id: u64) -> Result<()> {
         self.with(|conn| {
+            conn.execute(
+                "UPDATE lists SET source_list_id = NULL WHERE source_list_id = ?1",
+                [id as i64],
+            )?;
             conn.execute(
                 "DELETE FROM list_item_mats WHERE item_row IN \
                  (SELECT id FROM list_items WHERE list_id = ?1)",
@@ -599,10 +637,10 @@ mod tests {
     fn crud_roundtrip() {
         let c = Cache::open_in_memory().unwrap();
         assert!(c.lists_list("craft").unwrap().is_empty());
-        assert!(c.list_create("nope", "x").is_err());
-        assert!(c.list_create("craft", "  ").is_err());
+        assert!(c.list_create("nope", "x", None).is_err());
+        assert!(c.list_create("craft", "  ", None).is_err());
 
-        let id = c.list_create("craft", "FPS-Set").unwrap();
+        let id = c.list_create("craft", "FPS-Set", None).unwrap();
         let lists = c.lists_list("craft").unwrap();
         assert_eq!(lists.len(), 1);
         assert_eq!(lists[0].name, "FPS-Set");
@@ -645,7 +683,7 @@ mod tests {
     #[test]
     fn aggregation_sums_quantities_and_maxes_quality() {
         let c = Cache::open_in_memory().unwrap();
-        let id = c.list_create("craft", "Set").unwrap();
+        let id = c.list_create("craft", "Set", None).unwrap();
         // Zwei Blueprints, gemeinsames Material Hadanite (gems), unterschiedliche
         // Qualitäten → MAX gewinnt; verschiedene Einheiten bleiben getrennt.
         c.list_add_item(
@@ -700,7 +738,7 @@ mod tests {
     #[test]
     fn done_tracking_ganz_teilweise_reset() {
         let c = Cache::open_in_memory().unwrap();
-        let id = c.list_create("craft", "Set").unwrap();
+        let id = c.list_create("craft", "Set", None).unwrap();
         c.list_add_item(
             id,
             bp("a", "A", 1.0, vec![("Hadanite", "gems", 300.0, 500)]),
@@ -737,7 +775,7 @@ mod tests {
 
         // Löschen der Liste räumt den done-Stand weg (kein Wiederauftauchen).
         c.list_delete(id).unwrap();
-        let id2 = c.list_create("craft", "Set").unwrap();
+        let id2 = c.list_create("craft", "Set", None).unwrap();
         c.list_add_item(
             id2,
             bp("a", "A", 1.0, vec![("Hadanite", "gems", 300.0, 500)]),
@@ -749,7 +787,7 @@ mod tests {
     #[test]
     fn validation_rejects_bad_payloads() {
         let c = Cache::open_in_memory().unwrap();
-        let id = c.list_create("craft", "Set").unwrap();
+        let id = c.list_create("craft", "Set", None).unwrap();
         // leere mats
         assert!(c.list_add_item(id, bp("x", "X", 1.0, vec![])).is_err());
         // Qualität > 1000
@@ -777,7 +815,7 @@ mod tests {
     #[test]
     fn inventory_add_for_list_reserves_and_raises_requirement() {
         let c = Cache::open_in_memory().unwrap();
-        let id = c.list_create("craft", "Set").unwrap();
+        let id = c.list_create("craft", "Set", None).unwrap();
         c.list_add_item(
             id,
             bp(
@@ -899,7 +937,7 @@ mod tests {
         assert!(invs.iter().all(|e| e.reserved_list_id.is_none()));
 
         // Position löschen entfernt den Verweis (hier: nach Neuaufbau).
-        let id2 = c.list_create("craft", "Set2").unwrap();
+        let id2 = c.list_create("craft", "Set2", None).unwrap();
         c.list_add_item(
             id2,
             bp("a", "A", 1.0, vec![("Hadanite", "gems", 300.0, 500)]),
@@ -918,6 +956,99 @@ mod tests {
     }
 
     #[test]
+    fn bridge_link_persists_and_cleans_up_on_source_delete() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "FPS-Set", None).unwrap();
+        // Brücke: Mining-Liste mit persistenter Verknüpfung auf die Craft-Liste.
+        let mining = c.list_create("mining", "FPS-Set", Some(craft)).unwrap();
+        let summaries = c.lists_list("mining").unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].source_list_id, Some(craft));
+        assert_eq!(summaries[0].source_list_name, Some("FPS-Set".into()));
+        // Standalone-Liste: keine Verknüpfung.
+        let solo = c.lists_list("craft").unwrap();
+        assert_eq!(solo[0].source_list_id, None);
+        assert_eq!(solo[0].source_list_name, None);
+        // Fehlende Source-Liste fliegt (kein Phantom-Link).
+        assert!(c.list_create("mining", "x", Some(999_999)).is_err());
+        // Löschen der Source löst den Link (verlinkte Liste bleibt, standalone).
+        c.list_delete(craft).unwrap();
+        let summaries = c.lists_list("mining").unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, mining);
+        assert_eq!(summaries[0].source_list_id, None);
+        assert_eq!(summaries[0].source_list_name, None);
+    }
+
+    #[test]
+    fn inventory_reservation_hint_points_to_source_craft_list() {
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "FPS-Set", None).unwrap();
+        let mining = c
+            .list_create("mining", "FPS-Set (Mining)", Some(craft))
+            .unwrap();
+        c.list_add_item(
+            mining,
+            bp(
+                "a",
+                "Hadanite",
+                300.0,
+                vec![("Hadanite", "gems", 300.0, 500)],
+            ),
+        )
+        .unwrap();
+        // Reservierung über die MINING-Liste — der Hinweis zeigt die ERZEUGENDE
+        // Crafting-Liste (User-Spec: „immer auf die Craftingliste verweisen").
+        let entry = NewInventoryEntry {
+            entity_kind: None,
+            entity_id: None,
+            name: "Hadanite".into(),
+            quality: 500,
+            location_id: None,
+            location_name: "Levski".into(),
+            quantity: 300.0,
+            price: None,
+        };
+        let r = c
+            .inventory_add_for_list(entry, mining, "Hadanite", "gems")
+            .unwrap();
+        assert_eq!(r.entry.reserved_list_id, Some(craft));
+        assert_eq!(r.entry.reserved_list_name, Some("FPS-Set".into()));
+        // Reservierung an einer standalone (nicht verlinkten) Liste bleibt
+        // unverändert bei der Liste selbst (M9-E-Verhalten).
+        let solo = c.list_create("mining", "Solo", None).unwrap();
+        c.list_add_item(
+            solo,
+            bp(
+                "b",
+                "Quantainium",
+                10.0,
+                vec![("Quantainium", "gems", 10.0, 400)],
+            ),
+        )
+        .unwrap();
+        let r2 = c
+            .inventory_add_for_list(
+                NewInventoryEntry {
+                    entity_kind: None,
+                    entity_id: None,
+                    name: "Quantainium".into(),
+                    quality: 400,
+                    location_id: None,
+                    location_name: "Levski".into(),
+                    quantity: 10.0,
+                    price: None,
+                },
+                solo,
+                "Quantainium",
+                "gems",
+            )
+            .unwrap();
+        assert_eq!(r2.entry.reserved_list_id, Some(solo));
+        assert_eq!(r2.entry.reserved_list_name, Some("Solo".into()));
+    }
+
+    #[test]
     fn lists_survive_reopen() {
         let dir = std::env::temp_dir().join(format!(
             "arch-lists-test-{}-{}",
@@ -929,7 +1060,7 @@ mod tests {
         ));
         let path = dir.join("cache.sqlite3");
         let db = Cache::open(&path).unwrap();
-        let id = db.list_create("craft", "Restart-Test").unwrap();
+        let id = db.list_create("craft", "Restart-Test", None).unwrap();
         db.list_add_item(
             id,
             bp("a", "A", 1.0, vec![("Hadanite", "gems", 300.0, 700)]),
