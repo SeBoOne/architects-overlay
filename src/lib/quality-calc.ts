@@ -25,11 +25,17 @@
 //
 //   Aspekt-Qualität = mengengewichtetes Mittel der Materialqualitäten
 //                     (Gewicht = quantity_scu; Materials ohne SCU-Gewicht
-//                     zählen 1.0 — simple Mittelung),
-//   Gesamt-Qualität = min über die Aspekt-Qualitäten
-//                     (der schwächste Aspekt bestimmt das Ende).
+//                     zählen 1.0 — simple Mittelung).
 //
-// Beide Regeln sind eine Interpretation (kein offizieller Beleg); falls
+// M8-R4 (t_e8f4f57d): Die ASPEKT-Qualitäten bleiben die Basis für die
+// Effekt-/Modifier-Berechnung. Die GESAMT-Qualität ist NICHT mehr min über
+// die Aspekte (User-Befund: falsches Modell) — sie ist der EINFACHE
+// MITTELWERT der eingestellten Qualitäten über ALLE Kosten-Zeilen
+// (unberührte Regler zählen mit ihrem Default 500). Die Ableitung lebt in
+// Crafting.svelte (`combined`), weil sie die Kosten-Zeilen (nicht die
+// Aspekte) benötigt; `combinedQuality` ist entsprechend entfernt.
+//
+// Die Regel ist eine Interpretation (kein offizieller Beleg); falls
 // Live-Daten/Wiki dagegen sprechen, hier anpassen und Begründung notieren.
 
 export type QualityRange = { min: number; max: number };
@@ -180,12 +186,6 @@ export function statChanges(
 	});
 }
 
-/** Ist die Ziel-Qualität für ein Material erreichbar (min_quality)? */
-export function qualityReachable(target: number, minQuality: number | null | undefined): boolean {
-	if (minQuality === null || minQuality === undefined) return true; // keine Grenze
-	return target >= minQuality;
-}
-
 // ---------- M8-R1-A: Individuelle Material-Regler + Kombination ----------
 
 /** Namens-Schlüssel für Material-Matching (trim + lowercase, wie Rust
@@ -238,18 +238,21 @@ export function aspectQuality(
 }
 
 /**
- * Gesamt-Qualität = min über die Aspekt-Qualitäten (schwächster Aspekt
- * bestimmt; s. Header). Kein berechenbarer Aspekt → null.
+ * M8-R4 (t_e8f4f57d): Gesamt-Qualität = EINFACHER MITTELWERT der Regler-
+ * Werte ALLER Kosten-Zeilen (unberührte Regler zählen mit ihrem Default —
+ * die Aufrufer-Seite reicht genau die angezeigten Werte durch). Nicht mehr
+ * min über die Aspekte (User-Befund: falsches Modell). null bei leerer
+ * Liste; nicht-endliche Einträge fallen raus.
  */
-export function combinedQuality(
-	aspects: Aspect[],
-	materialQuality: Map<string, number>
-): number | null {
-	const qs = (aspects ?? [])
-		.map((a) => aspectQuality(a, materialQuality))
-		.filter((q): q is number => q !== null);
-	if (qs.length === 0) return null;
-	return Math.min(...qs);
+export function meanQuality(qualities: (number | null | undefined)[]): number | null {
+	let sum = 0;
+	let n = 0;
+	for (const q of qualities ?? []) {
+		if (q === null || q === undefined || !Number.isFinite(q)) continue;
+		sum += q;
+		n++;
+	}
+	return n > 0 ? sum / n : null;
 }
 
 /**

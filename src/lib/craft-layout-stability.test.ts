@@ -83,11 +83,49 @@ test('4. QualityStats: Stat-Zeilen-Werte einzeilig (nowrap + ellipsis), keine H�
 	assert.ok(def.includes('white-space: nowrap'), 'qs-prop-def: nowrap');
 });
 
-test('5. Effektlabels an der Regler-Zeile: feste Zeile, einzeilig mit Ellipsis', () => {
+test('5. M8-R4: Effektzeile EIGENE Zeile unter der Regler-Zeile — voll ausgeschrieben, mehrzeilig', () => {
+	// .cmq-changes ist NICHT mehr Teil der Regler-Zeile (kein Kind von .cmq-slider).
+	assert.ok(
+		!/<span class="cmq-changes">/.test(crafting),
+		'cmq-changes muss ein eigenes Block-Element sein (kein span in der Regler-Zeile)'
+	);
 	const changes = cssBlock(crafting, '.cmq-changes');
-	assert.ok(changes.includes('overflow: hidden'), 'cmq-changes: overflow hidden');
-	assert.ok(changes.includes('white-space: nowrap'), 'cmq-changes: nowrap');
-	assert.ok(changes.includes('max-width'), 'cmq-changes: Breite gekappt (kein Wachstum)');
-	const change = cssBlock(crafting, '.cmq-change');
-	assert.ok(change.includes('text-overflow: ellipsis'), 'cmq-change: ellipsis');
+	assert.ok(changes.includes('flex-wrap'), 'cmq-changes: mehrzeilig erlaubt');
+	assert.ok(!changes.includes('text-overflow: ellipsis'), 'cmq-changes: KEIN Ellipsis-Cut');
+	assert.ok(!changes.includes('white-space: nowrap'), 'cmq-changes: kein Nowrap-Clamp');
+	assert.ok(!changes.includes('max-width'), 'cmq-changes: Breite nicht gekappt');
+	// Regler-Zeile trägt nur Balken + Wert + Toggle.
+	const sliderRow = crafting.slice(crafting.indexOf('class="cmq-slider"'));
+	const rowEnd = sliderRow.indexOf('</div>');
+	assert.ok(sliderRow.includes('CraftQualitySlider'));
+	assert.ok(sliderRow.includes('cmq-val'));
+	assert.ok(sliderRow.includes('cmq-snap'));
+	assert.ok(sliderRow.slice(0, rowEnd).includes('CraftQualitySlider'));
+	assert.ok(
+		!sliderRow.slice(0, rowEnd).includes('cmq-changes'),
+		'Effekttext gehört NICHT in die Regler-Zeile'
+	);
+});
+
+test('6. M8-R4: minQuality-Anzeige + Grünt/Rot-Logik komplett entfernt (tote Referenzen)', () => {
+	assert.ok(!/class="cmq"/.test(crafting), 'minQuality-Badge .cmq muss weg sein');
+	assert.ok(!/min_quality/.test(scriptSrc), 'i18n min_quality darf nicht mehr referenziert sein');
+	assert.ok(!/rowMeets/.test(scriptSrc), 'rowMeets muss weg sein');
+	assert.ok(!/requiredQuality/.test(scriptSrc), 'requiredQuality muss weg sein');
+	assert.ok(!/is-ok/.test(crafting), 'kein Grün/Rot mehr an Material-/Reglerwerten');
+	assert.ok(
+		!/cp-result|cp-note|cp-legend|planner_title|planner_note/.test(crafting),
+		'Planner-Extras weg (cp-head bleibt: Missions-Blöcke nutzen die Klasse)'
+	);
+	assert.ok(!/q_ok|q_fail|required_quality/.test(scriptSrc), '✓/✗-Legende + required-Zeile weg');
+	assert.ok(/cmat-legend/.test(crafting), 'Einheiten-Legende hängt am Materiallisten-Kopf');
+});
+
+test('7. M8-R4: Gesamt-Qualität = MITTELWERT über alle Kosten-Zeilen (nicht min)', () => {
+	const idx = scriptSrc.indexOf('const combined = $derived.by');
+	const body = scriptSrc.slice(idx, scriptSrc.indexOf('\n	});', idx));
+	assert.ok(body.includes('meanQuality'), 'combined muss über meanQuality mitteln');
+	assert.ok(body.includes('detail.costs'), 'combined muss über detail.costs mitteln');
+	assert.ok(body.includes('rowQuality'), 'combined muss die Reglerwerte (rowQuality) mitteln');
+	assert.ok(!body.includes('Math.min'), 'kein min über Aspekte mehr');
 });

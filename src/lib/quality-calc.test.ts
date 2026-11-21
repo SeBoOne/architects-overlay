@@ -10,9 +10,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
 	interpolateModifier,
+	meanQuality,
 	modifierPercent,
 	statChanges,
-	qualityReachable,
 	scaledStat,
 	type Aspect,
 	type AspectModifier,
@@ -164,19 +164,11 @@ test('statChanges: unbekannte Keys hängen hinter summary_properties', () => {
 	);
 });
 
-test('qualityReachable: null/undefined = keine Grenze, sonst Vergleich', () => {
-	assert.equal(qualityReachable(500, null), true);
-	assert.equal(qualityReachable(500, undefined), true);
-	assert.equal(qualityReachable(500, 400), true);
-	assert.equal(qualityReachable(400, 500), false);
-	assert.equal(qualityReachable(500, 500), true);
-});
 
 // ---------- M8-R1-A: individuelle Regler + Kombination ----------
 
 import {
 	aspectQuality,
-	combinedQuality,
 	materialKey,
 	nearestSnap,
 	statChangesPerAspect,
@@ -234,19 +226,6 @@ test('aspectQuality: mengengewichtetes Mittel der gematchten Materialien', () =>
 	assert.equal(aspectQuality(aspects[0], new Map()), null);
 });
 
-test('combinedQuality: min über die Aspekt-Qualitäten', () => {
-	const aspects: Aspect[] = [
-		{ key: 'A', name: 'A', input: { name: 'Iron', quantity_scu: 1 }, modifiers: [integrity] },
-		{ key: 'B', name: 'B', input: { name: 'Titanium', quantity_scu: 1 }, modifiers: [impact] }
-	];
-	const mq = new Map([
-		['iron', 700],
-		['titanium', 300]
-	]);
-	assert.equal(combinedQuality(aspects, mq), 300);
-	// Nichts berechenbar → null
-	assert.equal(combinedQuality(aspects, new Map()), null);
-});
 
 test('statChangesPerAspect: jede Aspekt-Qualität einzeln interpoliert, Faktor-Produkt', () => {
 	// Zwei Aspekte auf dieselbe Eigenschaft (weapon_damage) mit
@@ -335,4 +314,15 @@ test('statChanges/statChangesPerAspect: Qualität 0 liefert Zeilen (0 ≠ „nic
 	assert.equal(ch.length, 1);
 	assert.equal(ch[0].property_key, 'weapon_damage');
 	assert.equal(ch[0].pct, -10);
+});
+
+// ---------- M8-R4 (t_e8f4f57d): Gesamt-Qualität = MITTELWERT ----------
+test('meanQuality: Mittelwert über die Kosten-Zeilen (200/800 → 500, nicht min 200)', () => {
+	assert.equal(meanQuality([200, 800]), 500);
+	assert.equal(meanQuality([200, 800, 500]), 500);
+	assert.equal(meanQuality([0, 1000]), 500); // 0 ist gültige Qualität
+	// Unberührte Zeilen reichen ihren Default (500) durch — Beispiel 4 Zeilen:
+	assert.equal(meanQuality([500, 500, 500, 500]), 500);
+	assert.equal(meanQuality([]), null);
+	assert.equal(meanQuality([null, undefined, 400]), 400);
 });

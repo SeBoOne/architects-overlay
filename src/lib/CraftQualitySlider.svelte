@@ -198,14 +198,12 @@
 
 <style>
 	.cqs {
-		/* t_24961acd (User-P2): FESTE Balkenbreite — alle Reglerbalken einer
-		   Blueprint-Liste sind pixel-gleich, die 500-Mitte sitzt in jeder
-		   Zeile auf derselben x-Position. Vorher flex:1 → der Track zog sich
-		   je nach cmq-changes-Breite unterschiedlich lang. Die Changes-
-		   Labels rücken in den Rest der Zeile (Ellipsis, siehe t_e261c7f4).
-		   Breite MESSEND gewählt (Probe t_24961acd, Panel-Row 570px):
-		   26rem kollabiert den Changes-Raum auf ~28px — bei 19rem bleiben
-		   ~130px für die Labels lesbar und der Balken bleibt gleich. */
+		/* t_24961acd (User-P2) + M8-R4 (t_e8f4f57d): FESTE Balkenbreite — alle
+		   Reglerbalken einer Blueprint-Liste sind pixel-gleich, die 500-Mitte
+		   sitzt in jeder Zeile auf derselben x-Position. M8-R4: der Balken hat
+		   die Regler-Zeile für sich (Wert + Snap-Toggle daneben), der Effekt-
+		   text lebt in einer EIGENEN Zeile darunter (Crafting.svelte) — die
+		   feste Breite bleibt der Geometrie-Vertrag (±1px). */
 		flex: 0 0 19rem;
 		min-width: 0;
 		display: flex;
