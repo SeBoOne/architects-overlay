@@ -16,7 +16,6 @@
 	// Typeahead startet LEER mit gefilterter Gesamtliste.
 	import { t, tr } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
-	import { materialKey } from './quality-calc';
 	import { planBestPlaces, type PlacesPlan, type PlaceLocRow } from './mining-places.ts';
 
 	type Ore = {
@@ -318,7 +317,9 @@
 			]);
 			const bandsByMaterial: Record<string, number[]> = {};
 			for (let i = 0; i < withOre.length; i++) {
-				const key = materialKey(withOre[i].material);
+				// Key-Matching mit mining-places.ts: raw `${material}:${unit}`
+				// (quality-calc materialKey = lowercase/Nur-Name konvergiert nie).
+				const key = `${withOre[i].material}:${withOre[i].unit}`;
 				if (snaps[i]?.values?.length) bandsByMaterial[key] = [...snaps[i].values];
 			}
 			const rowsByOre: Record<string, PlaceLocRow[]> = {};

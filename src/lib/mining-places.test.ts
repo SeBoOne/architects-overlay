@@ -129,3 +129,29 @@ test('Tie-Break: gleiche Abdeckung → höhere Tier-Summe zuerst', () => {
 	const plan = planBestPlaces(mats, rowsByOre, {}, 1);
 	assert.equal(plan.places[0].locationId, 'L2');
 });
+
+// Regression (Review R1): Realistische Materialnamen mit Parenthesen/Kast.
+// MiningLists.svelte baut den Band-Key als raw `${material}:${unit}` —
+// ein Test mit einfachen Namen konvergierte nur zufällig mit dem
+// Raw-Namens-Fallback und maskierte die Key-Inkompatibilität.
+test('Band-Key realistischer Name "Taranite (Raw)": raw `${material}:${unit}`-Form deckt mit', () => {
+	const material = 'Taranite (Raw)';
+	const bands = { 'Taranite (Raw):SCU': [310, 525, 646, 718, 853, 925, 957, 1000] };
+	const mats = [mat(material, 'tar', 900)];
+	const rowsByOre = {
+		tar: [row('L-LOW', 'Armer Ort', 3), row('L-HIGH', 'Reicher Ort', 6)]
+	};
+	// Band-Filter aktiv: Tier 3 → 718 < 900 ✗; nur Tier 6 → 1000 ≥ 900 ✓.
+	const plan = planBestPlaces(mats, rowsByOre, bands, 1);
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].locationId, 'L-HIGH');
+});
+
+test('Band-Key realistischer Name: falscher Key (lowercase-only) darf NICHT decken', () => {
+	// Wenn der Key nicht konvergiert (bands=[]), zählt nur die Tier-Schwelle —
+	// das war der Review-Defekt: Tier-3-Ort deckte Q900 zu Unrecht.
+	const mats = [mat('Taranite (Raw)', 'tar', 900)];
+	const rowsByOre = { tar: [row('L-LOW', 'Armer Ort', 3)] };
+	const plan = planBestPlaces(mats, rowsByOre, {}, 1);
+	assert.equal(plan.places.length, 1, 'ohne Bänder deckt Tier-Schwelle — Beweis der Maske');
+});
