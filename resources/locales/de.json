@@ -1313,6 +1313,15 @@
     "update.reason_deb_apt": ".deb-Installationen aktualisieren sich per apt — die App führt keine root-Aktionen aus.",
     "update.reason_no_appimage": "Kein laufendes AppImage gefunden",
     "update.reason_rate_limit": "Rate-Limit (429) — später erneut prüfen",
-    "update.reason_rate_limit_retry": "Rate-Limit (429) — später erneut versuchen"
+    "update.reason_rate_limit_retry": "Rate-Limit (429) — später erneut versuchen",
+    "lists.to_inventory": "Ins Inventar aufnehmen",
+    "lists.inv_title": "Inventar-Position erfassen — reserviert für „{list}“",
+    "lists.inv_qty": "Menge",
+    "lists.inv_add": "Reservieren",
+    "lists.reserved_note": "Position erfasst: {name} Q{q} · {loc} — reserviert für „{list}“.",
+    "lists.req_raised": "Anforderung auf Q{q} angehoben.",
+    "lists.err_add_inventory": "Inventar-Position konnte nicht erfasst werden",
+    "inventory.reserved_badge": "reserviert für {list}",
+    "inventory.quality": "Qualität"
   }
 }

@@ -47,6 +47,11 @@ pub struct InventoryEntry {
     pub quantity: f64,
     /// Optional purchase price in aUEC.
     pub price: Option<f64>,
+    /// M9-E (t_aae8d4c9): Liste, für die diese Position reserviert ist
+    /// (Verweis aus `list_reservations`) — `None` = normale Position.
+    #[serde(serialize_with = "ser_opt_id_as_string")]
+    pub reserved_list_id: Option<u64>,
+    pub reserved_list_name: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -103,6 +108,8 @@ fn row_to_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryEntry> {
     let entity_id: Option<i64> = r.get("entity_id")?;
     let location_id: Option<i64> = r.get("location_id")?;
     let price: Option<f64> = r.get("price")?;
+    let reserved_list_id: Option<i64> = r.get("reserved_list_id")?;
+    let reserved_list_name: Option<String> = r.get("reserved_list_name")?;
     Ok(InventoryEntry {
         id: r.get::<_, i64>("id")? as u64,
         entity_kind,
@@ -113,13 +120,12 @@ fn row_to_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<InventoryEntry> {
         location_name: r.get("location_name")?,
         quantity: r.get("quantity")?,
         price,
+        reserved_list_id: reserved_list_id.map(|v| v as u64),
+        reserved_list_name,
         created_at: r.get::<_, i64>("created_at")? as u64,
         updated_at: r.get::<_, i64>("updated_at")? as u64,
     })
 }
-
-const COLS: &str = "id, entity_kind, entity_id, name, quality, location_id, location_name, \
-                    quantity, price, created_at, updated_at";
 
 /// Sanity for an incoming payload: quality must be within 0–1000 (the card's
 /// mandatory field), name and location must carry text.
@@ -201,8 +207,14 @@ impl Cache {
 
     /// Delete one position. `Err` when the id does not exist.
     pub fn inventory_delete(&self, id: u64) -> Result<()> {
-        let changed = self
-            .with(move |conn| conn.execute("DELETE FROM inventory WHERE id = ?1", [id as i64]))?;
+        let changed = self.with(move |conn| {
+            // M9-E: Reservierungs-Verweis mitlöschen (kein FK — sauber selbst).
+            conn.execute(
+                "DELETE FROM list_reservations WHERE inventory_id = ?1",
+                [id as i64],
+            )?;
+            conn.execute("DELETE FROM inventory WHERE id = ?1", [id as i64])
+        })?;
         if changed == 0 {
             return Err(CacheError::Query(format!("Position {id} existiert nicht")));
         }
@@ -214,11 +226,17 @@ impl Cache {
     /// order (Standort → Item → Qualität).
     pub fn inventory_list(&self) -> Result<Vec<InventoryEntry>> {
         self.with(|conn| {
-            let mut stmt = conn.prepare(&format!(
-                "SELECT {COLS} FROM inventory \
-                     ORDER BY location_name COLLATE NOCASE ASC, name COLLATE NOCASE ASC, \
-                     quality DESC, id ASC"
-            ))?;
+            let mut stmt = conn.prepare(
+                "SELECT inventory.id, inventory.entity_kind, inventory.entity_id, inventory.name, \
+                 inventory.quality, inventory.location_id, inventory.location_name, \
+                 inventory.quantity, inventory.price, inventory.created_at, inventory.updated_at, \
+                 r.list_id AS reserved_list_id, l.name AS reserved_list_name \
+                 FROM inventory \
+                 LEFT JOIN list_reservations r ON r.inventory_id = inventory.id \
+                 LEFT JOIN lists l ON l.id = r.list_id \
+                 ORDER BY inventory.location_name COLLATE NOCASE ASC, inventory.name COLLATE NOCASE ASC, \
+                     inventory.quality DESC, inventory.id ASC"
+            )?;
             let rows = stmt.query_map([], row_to_entry)?;
             rows.collect::<rusqlite::Result<Vec<_>>>()
         })
