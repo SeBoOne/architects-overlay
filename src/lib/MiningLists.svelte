@@ -14,7 +14,7 @@
 	//
 	// Formular-Konvention (Sebo): Chips/Buttons statt natives <select>,
 	// Typeahead startet LEER mit gefilterter Gesamtliste.
-	import { t, tr } from './i18n';
+	import { t, tr, trError } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
 	import { planBestPlaces, type PlacesPlan, type PlaceLocRow, type PlaceMode } from './mining-places.ts';
 import ListPicker from './ListPicker.svelte';
@@ -122,6 +122,8 @@ import ListPicker from './ListPicker.svelte';
 	let invQty = $state('');
 	let invNote = $state('');
 	let invError = $state('');
+	// M9-N: Hinweis nach „Liste abschließen“.
+	let completeNote = $state('');
 	let invLocs = $state<string[]>([]);
 	let invLocEl = $state<HTMLInputElement | null>(null);
 	// Verknüpfte Liste? (Brücken-Kind — nur diese reservieren, Spec Punkt 5)
@@ -325,6 +327,19 @@ import ListPicker from './ListPicker.svelte';
 			await loadLists();
 		} catch (e) {
 			error = String(e);
+		}
+	}
+	// M9-N: Liste abschließen — reservierte Mengen aus dem Inventar entnehmen.
+	async function completeList() {
+		if (activeId === null) return;
+		error = '';
+		try {
+			await invoke('list_complete', { listId: activeId });
+			completeNote = $t('lists.completed');
+			await loadLists();
+			await openList(activeId);
+		} catch (e) {
+			error = trError(e);
 		}
 	}
 	async function removeItem(row: number) {
@@ -556,12 +571,23 @@ import ListPicker from './ListPicker.svelte';
 						renameMode = true;
 					}}>{$t('lists.rename')}</button
 				>
+				<!-- M9-N: Liste abschließen — reservierte Mengen konsumieren. -->
+				<button
+					type="button"
+					class="ml-mini"
+					onclick={() => void completeList()}
+					title={$t('lists.complete_title')}
+				>{$t('lists.complete')}</button
+				>
 				<button type="button" class="ml-mini is-danger" onclick={() => void deleteList()}>
 					{$t('lists.delete')}
 				</button>
 			{/if}
 		</div>
 
+		{#if completeNote}
+			<div class="ml-inv-note">{completeNote}</div>
+		{/if}
 		<!-- Eintrag hinzufügen: Material (Typeahead) + Menge + Einheit + Qualität -->
 		<!-- M9-G: verknüpfte Listen sind abhängig — Material/Mengen kommen aus
 		     der Crafting-Liste und werden dort gepflegt (read-only hier). -->

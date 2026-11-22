@@ -413,6 +413,83 @@ impl Cache {
         })
     }
 
+    /// M9-N (t_928d5896): Liste abschließen — der Listen-Level-„Abschließen“-
+    /// Action. Nimmt alle reservierten Mengen der Liste AUS DEM INVENTAR:
+    /// für jede Reservierung (`reservations WHERE list_id`) wird die Menge
+    /// von der Inventar-Position abgezogen (defensiv auf 0 geklemmt — sollte
+    /// nie unterschritten sein, aber Klemmen statt unter Null fallen),
+    /// danach verschwinden die Listen-Reservierungen (wie `list_delete`).
+    /// Freie Zwecke (`list_id` NULL) und `purpose`-Notizen auf denselben
+    /// Positionen bleiben unangetastet — konsumiert wird NUR die Listen-
+    /// Reservierung. Zum Schluss gilt die Liste als abgearbeitet: jedes
+    /// aggregierte Material (Soll = SUM(quantity × copies) über die
+    /// Snapshot-Zeilen) bekommt `done_qty` = volle Bedarfsmenge.
+    pub fn list_complete(&self, id: u64) -> Result<()> {
+        let exists: i64 = self.with(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM lists WHERE id = ?1",
+                [id as i64],
+                |r| r.get(0),
+            )
+        })?;
+        if exists == 0 {
+            return Err(CacheError::Query(i18n_err::err_keyp(
+                "lists.err_missing",
+                serde_json::json!({ "id": id }),
+            )));
+        }
+        self.with(move |conn| {
+            // 1) Konsumieren: je Reservierung die Menge von der Position
+            //    abziehen. Mehrere Reservierungen auf einer Position ziehen
+            //    mehrfach ab (SUM über die Loop-Iterationen).
+            let rows: Vec<(i64, f64)> = {
+                let mut stmt = conn.prepare(
+                    "SELECT inventory_id, qty FROM reservations \
+                     WHERE list_id = ?1 ORDER BY id",
+                )?;
+                let mapped = stmt.query_map([id as i64], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+                })?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (inv_id, qty) in rows {
+                conn.execute(
+                    "UPDATE inventory SET quantity = MAX(quantity - ?1, 0.0), \
+                     updated_at = ?2 WHERE id = ?3",
+                    rusqlite::params![qty, super::now_unix() as i64, inv_id],
+                )?;
+            }
+            // 2) Reservierungen der Liste lösen (Restbestand bleibt).
+            conn.execute("DELETE FROM reservations WHERE list_id = ?1", [id as i64])?;
+            // 3) done = volle Bedarfsmenge je (Material, Einheit) — dieselbe
+            //    Aggregation wie `list_detail` (SUM(quantity × copies)).
+            let mut stmt = conn.prepare(
+                "SELECT mim.material, mim.unit, SUM(mim.quantity * li.copies) \
+                 FROM list_item_mats mim JOIN list_items li ON li.id = mim.item_row \
+                 WHERE li.list_id = ?1 GROUP BY mim.material, mim.unit",
+            )?;
+            let mapped = stmt.query_map([id as i64], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, f64>(2)?,
+                ))
+            })?;
+            let reqs = mapped.collect::<rusqlite::Result<Vec<_>>>()?;
+            drop(stmt);
+            for (material, unit, req) in reqs {
+                let req = req.max(0.0);
+                conn.execute(
+                    "INSERT INTO list_mat_done (list_id, material, unit, done_qty) \
+                     VALUES (?1, ?2, ?3, ?4) \
+                     ON CONFLICT(list_id, material, unit) DO UPDATE SET done_qty = ?4",
+                    rusqlite::params![id as i64, material, unit, req],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     /// Blueprint-Eintrag (mit Material-Snapshot) an eine Liste hängen.
     /// Duplikat-Schutz: derselbe item_id hängt NICHT doppelt an einer Liste.
     pub fn list_add_item(&self, list_id: u64, new: NewListItem) -> Result<u64> {
@@ -947,6 +1024,7 @@ impl Cache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::reservations::NewReservation;
 
     fn bp(id: &str, name: &str, copies: f64, mats: Vec<(&str, &str, f64, u32)>) -> NewListItem {
         NewListItem {
@@ -1895,5 +1973,211 @@ mod tests {
         let m = agg_of(&d, "Hadanite");
         assert_eq!(m.progress, 50.0, "done 100 + reserved 300 von 800");
         assert!(!m.reached);
+    }
+
+    // M9-N (t_928d5896): Listen-Abschluss konsumiert Reservierungen.
+
+    #[test]
+    fn list_delete_removes_reservations_but_keeps_inventory() {
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("craft", "Set", None).unwrap();
+        c.list_add_item(
+            id,
+            bp("a", "A", 1.0, vec![("Hadanite", "gems", 300.0, 500)]),
+        )
+        .unwrap();
+        let r = c
+            .inventory_add_for_list(
+                NewInventoryEntry {
+                    entity_kind: None,
+                    entity_id: None,
+                    name: "Hadanite".into(),
+                    quality: 500,
+                    location_id: None,
+                    location_name: "Levski".into(),
+                    quantity: 300.0,
+                    price: None,
+                },
+                id,
+                "Hadanite",
+                "gems",
+            )
+            .unwrap();
+        assert_eq!(r.entry.reservations[0].qty, 300.0);
+
+        // P4a-Beleg: list_delete löscht die Reservierungen MIT, aber die
+        // Inventar-Positionen bleiben (Menge unangetastet).
+        c.list_delete(id).unwrap();
+        let invs = c.inventory_list().unwrap();
+        assert_eq!(invs.len(), 1);
+        assert_eq!(invs[0].quantity, 300.0);
+        assert!(invs[0].reservations.is_empty());
+    }
+
+    #[test]
+    fn list_complete_consumes_reservations_and_completes_list() {
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("craft", "Set", None).unwrap();
+        c.list_add_item(
+            id,
+            bp(
+                "a",
+                "A",
+                1.0,
+                vec![
+                    ("Hadanite", "gems", 300.0, 500),
+                    ("Quantum Core", "items", 2.0, 500),
+                ],
+            ),
+        )
+        .unwrap();
+        // Zwei Reservierungen: Hadanite über inventory_add_for_list (300),
+        // Quantum Core über reservation_add auf einer vorhandenen Position.
+        let had = c
+            .inventory_add_for_list(
+                NewInventoryEntry {
+                    entity_kind: None,
+                    entity_id: None,
+                    name: "Hadanite".into(),
+                    quality: 500,
+                    location_id: None,
+                    location_name: "Levski".into(),
+                    quantity: 350.0,
+                    price: None,
+                },
+                id,
+                "Hadanite",
+                "gems",
+            )
+            .unwrap();
+        let qc = c
+            .inventory_add(NewInventoryEntry {
+                entity_kind: None,
+                entity_id: None,
+                name: "Quantum Core".into(),
+                quality: 500,
+                location_id: None,
+                location_name: "Levski".into(),
+                quantity: 10.0,
+                price: None,
+            })
+            .unwrap();
+        let qc_res = c
+            .reservation_add(NewReservation {
+                inventory_id: qc,
+                list_id: Some(id),
+                purpose: String::new(),
+                qty: 2.0,
+                note: String::new(),
+            })
+            .unwrap();
+        assert!(qc_res > 0);
+
+        // Freizweck-Reservierung auf derselben Hadanite-Position MUSS beim
+        // Abschluss überleben (nur die Listen-Reservierung wird konsumiert).
+        let free = c
+            .reservation_add(NewReservation {
+                inventory_id: had.entry.id,
+                list_id: None,
+                purpose: "Verkauf".into(),
+                qty: 20.0,
+                note: String::new(),
+            })
+            .unwrap();
+        assert!(free > 0);
+
+        // Teilabhak-Stand davor — Abschluss überschreibt ihn auf Soll.
+        c.list_set_done(id, "Hadanite", "gems", Some(50.0)).unwrap();
+
+        c.list_complete(id).unwrap();
+
+        let invs = c.inventory_list().unwrap();
+        let had_entry = invs.iter().find(|e| e.name == "Hadanite").unwrap();
+        let qc_entry = invs.iter().find(|e| e.name == "Quantum Core").unwrap();
+        // 350 − 300 (Listen-Reservierung) = 50; die Freizweck-Reservierung
+        // (20) bleibt stehen und hat NICHT konsumiert.
+        assert_eq!(had_entry.quantity, 50.0);
+        assert_eq!(qc_entry.quantity, 8.0);
+
+        let by_inv = |name: &str| {
+            invs.iter()
+                .find(|e| e.name == name)
+                .unwrap()
+                .reservations
+                .clone()
+        };
+        // Freizweck bleibt, Listen-Reservierungen sind weg.
+        let had_res = by_inv("Hadanite");
+        let free_res = had_res.iter().find(|r| r.list_id.is_none()).unwrap();
+        assert_eq!(free_res.id, free);
+        assert_eq!(free_res.qty, 20.0);
+        assert!(had_res.iter().all(|r| r.list_id != Some(id)));
+        assert!(by_inv("Quantum Core").is_empty());
+
+        // done = volle Bedarfsmenge je aggregiertem Material.
+        let d = c.list_detail(id).unwrap();
+        let had_agg = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Hadanite")
+            .unwrap();
+        let qc_agg = d
+            .aggregated
+            .iter()
+            .find(|m| m.material == "Quantum Core")
+            .unwrap();
+        assert_eq!(had_agg.done_qty, 300.0);
+        assert_eq!(had_agg.quantity, 300.0);
+        assert_eq!(qc_agg.done_qty, 2.0);
+        assert_eq!(qc_agg.quantity, 2.0);
+        assert_eq!(had_agg.reserved_qty, 0.0);
+    }
+
+    #[test]
+    fn list_complete_clamps_negative_and_errors_on_missing() {
+        let c = Cache::open_in_memory().unwrap();
+        // Nicht existierende Liste fliegt.
+        assert!(c.list_complete(999_999).is_err());
+
+        // Defensiv-Klemmung: Positionsmenge < reservierte Menge darf die
+        // Menge nicht unter 0 fallen lassen (direkt über die DB erzeugt —
+        // die API würde das nie zulassen).
+        let id = c.list_create("mining", "Klein", None).unwrap();
+        c.list_add_item(id, bp("a", "A", 1.0, vec![("Taranite", "SCU", 5.0, 500)]))
+            .unwrap();
+        let inv = c
+            .inventory_add(NewInventoryEntry {
+                entity_kind: None,
+                entity_id: None,
+                name: "Taranite".into(),
+                quality: 500,
+                location_id: None,
+                location_name: "Levski".into(),
+                quantity: 5.0,
+                price: None,
+            })
+            .unwrap();
+        c.reservation_add(NewReservation {
+            inventory_id: inv,
+            list_id: Some(id),
+            purpose: String::new(),
+            qty: 5.0,
+            note: String::new(),
+        })
+        .unwrap();
+        // Position künstlich schrumpfen lassen (Menge 5 → 3) — die API
+        // würde das verweigern (err_qty_floor), deshalb direkt auf der DB.
+        c.with(|conn| {
+            conn.execute(
+                "UPDATE inventory SET quantity = 3.0 WHERE id = ?1",
+                [inv as i64],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        c.list_complete(id).unwrap();
+        let invs = c.inventory_list().unwrap();
+        assert_eq!(invs[0].quantity, 0.0);
+        assert!(invs[0].reservations.is_empty());
     }
 }
