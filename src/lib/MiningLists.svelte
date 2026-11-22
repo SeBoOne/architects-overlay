@@ -16,7 +16,8 @@
 	// Typeahead startet LEER mit gefilterter Gesamtliste.
 	import { t, tr } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
-	import { planBestPlaces, type PlacesPlan, type PlaceLocRow } from './mining-places.ts';
+	import { planBestPlaces, type PlacesPlan, type PlaceLocRow, type PlaceMode } from './mining-places.ts';
+import ListPicker from './ListPicker.svelte';
 
 	type Ore = {
 		id: string;
@@ -75,13 +76,11 @@
 
 	let {
 		ores = [],
-		tierDefault = 4,
 		// M9-D (t_36f3966c): Liste aus der Craft→Mining-Brücke — beim Eintreten
 		// direkt öffnen (einmal pro Sprung-Ziel, M8-K3-Fix-Muster).
 		openListId = null
 	}: {
 		ores?: Ore[];
-		tierDefault?: number;
 		openListId?: number | null;
 	} = $props();
 
@@ -218,8 +217,9 @@
 	let addQty = $state('100');
 	let addUnit = $state<'SCU' | 'gems' | 'items'>('SCU');
 	let addQuality = $state('');
-	// Beste Orte
-	let tierThreshold = $state(0); // 0 = ungesetzt → aus tierDefault initialisieren
+	// Beste Orte — M9-K (P10): statt der T1–T6-Tier-Schwelle zwei
+	// Optimierungs-Modi; Qualitäts-Bänder filtern immer (siehe mining-places.ts).
+	let planMode = $state<PlaceMode>('fewest');
 	let plan = $state<PlacesPlan | null>(null);
 	let planLoading = $state(false);
 
@@ -464,10 +464,14 @@
 						}))
 				);
 			}
-			plan = planBestPlaces(mats, rowsByOre, bandsByMaterial, tierThreshold, (m) => {
+			// M9-K P10: Tier-Schwelle nicht mehr per UI wählbar — Qualitäts-Bänder
+		// (SCMDB) sind der Filter. Als Fallback (Material ohne Bänder, „kein
+		// Raten" M8-R2) bleibt der frühere Default-Schwelle (4, M7-Welle-2
+		// Settings-Default) als interne Konstante.
+		plan = planBestPlaces(mats, rowsByOre, bandsByMaterial, 4, (m) => {
 				const row = agg.find((a) => rowKey(a) === rowKey(m));
 				return row ? pct(row) >= 100 : false;
-			});
+			}, planMode);
 		} catch (e) {
 			error = String(e);
 		}
@@ -477,33 +481,23 @@
 	const groupName = (g: string) => tr(`mining.group_${g}`);
 	const tierLabel = (tier: number) => tr(`mining.tier_${Math.min(6, Math.max(1, tier))}`);
 
-	// Tier-Schwelle einmalig aus dem Status-Default vorbelegen (Settings:
-	// strata_default_tier_threshold, M7-Welle-2).
-	$effect(() => {
-		if (tierThreshold === 0 && tierDefault > 0) tierThreshold = tierDefault;
-	});
-
 	void loadLists();
 </script>
 
 <div class="mlists" role="region" aria-label={$t('mining.tab_lists')}>
-	<!-- Listen-Auswahl (Chips) + Neu-Anlage -->
+	<!-- M9-K (P11): Listen-Umschalter als Custom-Dropdown statt Chips. -->
 	<div class="ml-bar">
-		<div class="ml-chips">
-			{#each lists as l (l.id)}
-				<button
-					type="button"
-					class="ml-chip"
-					class:is-on={activeId === l.id}
-					onclick={() => void openList(l.id)}
-					title={l.source_list_name
-						? $t('lists.source_badge', { name: l.source_list_name })
-						: l.name}>{l.name} <span class="ml-count">{l.item_count}</span></button
-				>
-			{:else}
-				<span class="ml-hint">{$t('lists.empty')}</span>
-			{/each}
-		</div>
+		<ListPicker
+			items={lists.map((l) => ({
+				id: l.id,
+				name: l.name,
+				item_count: l.item_count,
+				source_name: l.source_list_name
+			}))}
+			{activeId}
+			onopen={(id) => void openList(id)}
+			emptyHint={$t('lists.empty')}
+		/>
 		<div class="ml-new">
 			<input
 				class="ml-input"
@@ -778,16 +772,26 @@
 		<!-- Beste Orte: möglichst wenige Orte, Qualitäts-Bänder als Filter -->
 		<div class="ml-places-head">
 			<span class="ml-agg-head">{$t('mining.lists_places_title')}</span>
-			<span class="ml-tier" role="group" aria-label={$t('mining.tier')}>
-				{#each [1, 2, 3, 4, 5, 6] as tv (tv)}
-					<button
-						type="button"
-						class="ml-mini"
-						class:is-on={tierThreshold === tv}
-						onclick={() => (tierThreshold = tv)}
-						title={tierLabel(tv)}>{tv}</button
-					>
-				{/each}
+			<!-- M9-K (P10): Optimierungs-Modus statt T1–T6-Tier-Auswahl. -->
+			<span class="ml-modes" role="group" aria-label={$t('mining.place_mode')}>
+				<button
+					type="button"
+					class="ml-mini"
+					class:is-on={planMode === 'fewest'}
+					onclick={() => (planMode = 'fewest')}
+					title={$t('mining.place_mode_fewest')}
+				>
+					{$t('mining.place_mode_fewest')}
+				</button>
+				<button
+					type="button"
+					class="ml-mini"
+					class:is-on={planMode === 'concentration'}
+					onclick={() => (planMode = 'concentration')}
+					title={$t('mining.place_mode_concentration')}
+				>
+					{$t('mining.place_mode_concentration')}
+				</button>
 			</span>
 			<button
 				type="button"
@@ -897,33 +901,8 @@
 		align-items: flex-start;
 		flex-wrap: wrap;
 	}
-	.ml-chips {
-		display: flex;
-		gap: 6px;
-		flex-wrap: wrap;
-		flex: 1;
-		min-width: 0;
-	}
-	.ml-chip {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 999px;
-		color: inherit;
-		padding: 4px 12px;
-		font: inherit;
-		font-size: 12px;
-		cursor: pointer;
-	}
-	.ml-chip.is-on {
-		background: var(--accent, #4aa3ff);
-		border-color: transparent;
-		color: #0b0f14;
-		font-weight: 600;
-	}
-	.ml-count {
-		opacity: 0.65;
-		font-size: 11px;
-	}
+	/* M9-K (P11): Chips-Zeile durch ListPicker-Dropdown ersetzt — Chips-CSS
+	   entfernt. ml-count wird im Orte-Bereich nicht mehr verwendet. */
 	.ml-new,
 	.ml-add,
 	.ml-agg-actions,
@@ -1174,10 +1153,12 @@
 		width: 74px;
 		padding: 3px 8px;
 	}
-	/* Beste Orte */
-	.ml-tier {
+	/* Beste Orte — M9-K (P10): Modus-Toggle statt Tier-Auswahl. */
+	.ml-modes {
 		display: flex;
 		gap: 3px;
+		align-items: center;
+		flex-wrap: wrap;
 	}
 	.ml-place {
 		background: rgba(255, 255, 255, 0.04);

@@ -809,8 +809,6 @@ function keyActivate(e: KeyboardEvent) {
 					<div class="if-chosen">{$t('inventory.material_label')}<b>{fName || '—'}</b>
 						{#if fEntityKind}
 							<span class="src">({fEntityKind === 'item' ? $t('inventory.item_entity') : $t('inventory.commodity_entity')} #{fEntityId})</span>
-						{:else if fName}
-							<span class="src">{$t('inventory.free_text')}</span>
 						{/if}
 					</div>
 				</section>
@@ -911,7 +909,7 @@ function keyActivate(e: KeyboardEvent) {
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div class="main">
 							<div class="loc">{r.location_name}{#if r.location_id !== null}<span class="src">{$t('inventory.dot_location')}</span>{/if}</div>
-							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
+							<div class="sub">{#if r.entity_kind === 'item'}{$t('shop.item')}{:else if r.entity_kind === 'commodity'}{$t('common.commodity')}{/if}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 						</div>
 						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
 							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
@@ -1018,7 +1016,7 @@ function keyActivate(e: KeyboardEvent) {
 										<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 										<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openLocation(r.location_name)}>
 											<div class="loc">{r.location_name}</div>
-											<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
+											<div class="sub">{#if r.entity_kind === 'item'}{$t('shop.item')}{:else if r.entity_kind === 'commodity'}{$t('common.commodity')}{/if}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 										</div>
 										<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
 							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
@@ -1057,7 +1055,7 @@ function keyActivate(e: KeyboardEvent) {
 							<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 							<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 								<div class="loc">{r.name}</div>
-								<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
+								<div class="sub">{#if r.entity_kind === 'item'}{$t('shop.item')}{:else if r.entity_kind === 'commodity'}{$t('common.commodity')}{/if}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 							</div>
 							<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
 							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>
@@ -1073,7 +1071,7 @@ function keyActivate(e: KeyboardEvent) {
 						<span class="q q-{qTier(r.quality)}">Q{r.quality}</span>
 						<div role="button" tabindex="0" onkeydown={keyActivate} class="main" onclick={() => openItem(r.name)}>
 							<div class="loc">{r.name} <small>{r.location_name}</small></div>
-							<div class="sub">{r.entity_kind === null ? $t('inventory.free_text') : r.entity_kind === 'item' ? $t('shop.item') : $t('common.commodity')}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
+							<div class="sub">{#if r.entity_kind === 'item'}{$t('shop.item')}{:else if r.entity_kind === 'commodity'}{$t('common.commodity')}{/if}{#if r.price} {$t('inventory.purchase_price', { price: fmtPrice(r.price) })}{/if}{#each r.reservations as res (res.id)}<button type="button" class="resv" onclick={(ev) => (ev.stopPropagation(), removeReservation(res.id))} title={$t('inventory.reservation_removed')}>{resLabel(res)} ✕</button>{/each}</div>
 						</div>
 						<div class="qty">{fmtQty(r.quantity)} <small>{r.entity_kind === 'item' ? $t('inventory.units_pc') : 'SCU'}</small>
 							{#if reservedQty(r) > 0}<div class="qty-sub">{fmtQty(reservedQty(r))} {$t('inventory.reserved_short')} · {fmtQty(freeQty(r))} {$t('inventory.free_short')}</div>{/if}</div>

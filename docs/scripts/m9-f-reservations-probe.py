@@ -222,7 +222,11 @@ WRAP = r"""
 
   // Crafting-Listen-Helfer
   window.craftLists = () => !!q('.clists');
-  window.craftChips = () => qa('.clists .cl-chip').map((c) => c.textContent.trim());
+  // M9-K (t_db9b234f, P11): Chips durch ListPicker-Dropdown ersetzt.
+  window.craftChips = () => {
+    const label = q('.clists .lp-btn .lp-label')?.textContent.trim();
+    return label ? [label] : [];
+  };
   window.setListName = (v) => {
     const i = q('.clists .cl-input');
     if (!i) return false;
@@ -438,8 +442,10 @@ async def main():
             await window.__TAURI_INTERNALS__.invoke('list_add_item', { listId: window.__LIST.lists[0].id,
               item: { item_id: 'r1', item_name: 'Rifle', craft_time: 60, copies: 1,
                       mats: [{ material: 'Gold', ore_id: null, unit: 'SCU', quantity: 50, quality: 500 }] } });
-            const chips = [...document.querySelectorAll('.clists .cl-chip')];
-            chips[0]?.click();
+            // M9-K (P11): Liste über das ListPicker-Dropdown öffnen.
+            document.querySelector('.clists .lp-btn')?.click();
+            await new Promise((r) => setTimeout(r, 300));
+            document.querySelector('.clists .lp-pop .lp-row')?.click();
             return true;
           })()
         """)

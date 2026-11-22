@@ -206,9 +206,12 @@ WRAP = r"""
     i.value = 'Refresh'; i.dispatchEvent(new Event('input', { bubbles: true }));
     [...document.querySelectorAll('.mining .ml-btn')].find((x) => !x.disabled)?.click();
     await new Promise((r) => setTimeout(r, 500));
-    const chip = [...document.querySelectorAll('.mining .ml-chip')].find((c) => c.textContent.includes('Linked'));
-    if (!chip) return false;
-    chip.click();
+    // M9-K (P11): Liste über das ListPicker-Dropdown wählen.
+    document.querySelector('.mining .lp-btn')?.click();
+    await new Promise((r) => setTimeout(r, 300));
+    const row = [...document.querySelectorAll('.mining .lp-pop .lp-row')].find((c) => c.textContent.includes('Linked'));
+    if (!row) return false;
+    row.click();
     await new Promise((r) => setTimeout(r, 500));
     return true;
   };

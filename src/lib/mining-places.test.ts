@@ -155,3 +155,47 @@ test('Band-Key realistischer Name: falscher Key (lowercase-only) darf NICHT deck
 	const plan = planBestPlaces(mats, rowsByOre, {}, 1);
 	assert.equal(plan.places.length, 1, 'ohne Bänder deckt Tier-Schwelle — Beweis der Maske');
 });
+
+// ---------- M9-K (t_db9b234f, P10): Concentration-Modus ----------
+
+test('concentration: je Material der ORT mit höchster Tier-Stufe, gemeinsame Orte zusammengefasst', () => {
+	const mats = [mat('A', 'a'), mat('B', 'b')];
+	const rowsByOre = {
+		a: [row('L1', 'Ort 1', 2), row('L2', 'Ort 2', 5)],
+		b: [row('L1', 'Ort 1', 3), row('L3', 'Ort 3', 6)]
+	};
+	const plan = planBestPlaces(mats, rowsByOre, {}, 1, undefined, 'concentration');
+	// A → L2 (T5), B → L3 (T6): die T-High-Orte je Material, nicht Set-Cover.
+	assert.deepEqual(plan.places.map((p) => p.locationId).sort(), ['L2', 'L3']);
+	const l2 = plan.places.find((p) => p.locationId === 'L2')!;
+	assert.equal(l2.tier, 5);
+	assert.deepEqual(l2.covered.map((c) => c.material), ['A']);
+});
+
+test('concentration: gleicher Top-Ort für mehrere Materialien → ein Pick mit allen covered', () => {
+	const mats = [mat('A', 'a'), mat('B', 'b')];
+	const rowsByOre = {
+		a: [row('L1', 'Ort 1', 6)],
+		b: [row('L1', 'Ort 1', 6)]
+	};
+	const plan = planBestPlaces(mats, rowsByOre, {}, 1, undefined, 'concentration');
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].covered.length, 2);
+});
+
+test('concentration: Qualitäts-Bänder filtern auch hier — unqualifizierter Top-Tier-Ort wird nicht gewählt', () => {
+	const bands = { Taranite: [310, 525, 646, 718, 853, 925, 957, 1000] };
+	const mats = [mat('Taranite', 'tar', 900)];
+	const rowsByOre = { tar: [row('L-LOW', 'Armer Ort', 3), row('L-HIGH', 'Reicher Ort', 6)] };
+	const plan = planBestPlaces(mats, rowsByOre, bands, 1, undefined, 'concentration');
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].locationId, 'L-HIGH');
+});
+
+test('concentration: erledigte Materialien und ortlose bleiben ausgenommen', () => {
+	const mats = [mat('A', 'a'), mat('B', 'b'), mat('X', null, 0, 'items')];
+	const rowsByOre = { a: [row('L1', 'Ort 1', 4)] };
+	const plan = planBestPlaces(mats, rowsByOre, {}, 1, (m) => m.material === 'A', 'concentration');
+	assert.equal(plan.places.length, 0);
+	assert.deepEqual(plan.uncovered.map((u) => u.material).sort(), ['B', 'X']);
+});
