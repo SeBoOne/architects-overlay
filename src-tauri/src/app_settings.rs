@@ -204,10 +204,7 @@ impl SettingsSnapshot {
             pins_default_opacity: s.pins_default_opacity(),
             pins_presets: s.pins_presets(),
             strata_enabled: s.strata_enabled(),
-            game_log_dir: s
-                .game_log_dir()
-                .unwrap_or_default()
-                .to_owned(),
+            game_log_dir: s.game_log_dir().unwrap_or_default().to_owned(),
         }
     }
 }

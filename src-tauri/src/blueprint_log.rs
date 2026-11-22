@@ -16,6 +16,7 @@
 
 use std::collections::BTreeSet;
 use std::io::{Seek, SeekFrom};
+use std::path::Path;
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -90,9 +91,7 @@ fn collect_log_files(dir: &std::path::Path) -> Vec<PathBuf> {
         let mut entries: Vec<PathBuf> = rd
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| {
-                p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("log"))
-            })
+            .filter(|p| p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("log")))
             .collect();
         entries.sort();
         files.extend(entries);
@@ -140,12 +139,63 @@ async fn strata_items_lookup(
     settings: &settings::Settings,
 ) -> Result<Vec<(String, String)>, String> {
     let c = crate::strata::client_for(strata, settings)?;
-    let items = c.items().await.map_err(|e| crate::strata::strata_error(&e))?;
+    let items = c
+        .items()
+        .await
+        .map_err(|e| crate::strata::strata_error(&e))?;
     Ok(items
         .items
         .iter()
         .map(|it| (it.name.to_lowercase(), it.id.clone()))
         .collect())
+}
+
+/// Ein Match-Pass: Log-Namen gegen die Lookup-Tabelle (lc-Name → id).
+/// Rückgabe: (gematchte Paare (Name, id), Unmatched).
+fn match_pass(
+    names: &BTreeSet<String>,
+    lookup: &[(String, String)],
+) -> (Vec<(String, String)>, Vec<String>) {
+    let mut matched: Vec<(String, String)> = Vec::new();
+    let mut unmatched: Vec<String> = Vec::new();
+    for name in names {
+        let ln = name.to_lowercase();
+        match lookup.iter().find(|(n, _)| *n == ln) {
+            Some((_, id)) => matched.push((name.clone(), id.clone())),
+            None => unmatched.push(name.clone()),
+        }
+    }
+    (matched, unmatched)
+}
+
+/// M9-Q3 (Sebo): modifizierte Lokalisierung — Log-Namen, die nicht direkt
+/// matchen, über die Nutzer-`global.ini` (value→key) + die ORIGINALE
+/// `global.ini` aus der Data.p4k (key→englischer Wert) zurückübersetzen.
+/// Rückgabe: (gematchte Paare, Unmatched) — bereits zwei Pässe gefahren.
+async fn match_with_translation(
+    names: &BTreeSet<String>,
+    lookup: &[(String, String)],
+    live_dir: &Path,
+    app: &tauri::AppHandle,
+) -> (Vec<(String, String)>, Vec<String>) {
+    let (mut matched, unmatched) = match_pass(names, lookup);
+    if unmatched.is_empty() {
+        return (matched, unmatched);
+    }
+    let Some(map) = crate::blueprint_loc::build_translation_map(app, live_dir) else {
+        return (matched, unmatched);
+    };
+    let translated: BTreeSet<String> = unmatched
+        .iter()
+        .map(|n| {
+            map.get(&n.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| n.clone())
+        })
+        .collect();
+    let (m2, u2) = match_pass(&translated, lookup);
+    matched.extend(m2);
+    (matched, u2)
 }
 
 /// Backfill: alle Spiel-Logs parsen, Namen gegen den Strata-Katalog matchen
@@ -154,29 +204,22 @@ async fn strata_items_lookup(
 pub async fn blueprint_owned_sync_logs(
     strata: tauri::State<'_, StrataState>,
     settings: tauri::State<'_, SettingsState>,
+    app: tauri::AppHandle,
 ) -> Result<BlueprintSyncReport, String> {
     let snapshot = crate::strata::snapshot_of(&settings);
     let dir = effective_dir(&snapshot);
     let files = collect_log_files(&dir);
     let names = names_from_files(&files);
     let lookup = strata_items_lookup(&strata, &snapshot).await?;
+    let (pairs, unmatched) = match_with_translation(&names, &lookup, &dir, &app).await;
     let mut added_ids: Vec<String> = Vec::new();
-    let mut matched = 0usize;
-    let mut unmatched: Vec<String> = Vec::new();
     {
         let mut s = settings.inner.lock().expect("settings lock");
         let owned: std::collections::HashSet<String> =
             s.blueprint_owned().iter().cloned().collect();
-        for name in &names {
-            let ln = name.to_lowercase();
-            match lookup.iter().find(|(n, _)| *n == ln) {
-                Some((_, id)) => {
-                    matched += 1;
-                    if !owned.contains(id) {
-                        added_ids.push(id.clone());
-                    }
-                }
-                None => unmatched.push(name.clone()),
+        for (_, id) in &pairs {
+            if !owned.contains(id) {
+                added_ids.push(id.clone());
             }
         }
         if !added_ids.is_empty() {
@@ -186,11 +229,12 @@ pub async fn blueprint_owned_sync_logs(
             crate::app_settings::persist_settings(&s);
         }
     }
+    let mut unmatched = unmatched;
     unmatched.truncate(25);
     Ok(BlueprintSyncReport {
         files: files.len(),
         names: names.len(),
-        matched,
+        matched: pairs.len(),
         added: added_ids.len(),
         unmatched,
     })
@@ -278,16 +322,18 @@ pub fn start_blueprint_log_tail(app: tauri::AppHandle) {
             let mut added_ids: Vec<String> = Vec::new();
             let mut matched_names: Vec<String> = Vec::new();
             {
+                let owned: std::collections::HashSet<String> = {
+                    let s = settings_state.inner.lock().expect("settings lock");
+                    s.blueprint_owned().iter().cloned().collect()
+                };
+                // M9-Q3: auch hier den Übersetzungs-Pass (modifizierte
+                // Lokalisierung) fahren — erst direkt, dann via global.ini.
+                let (pairs, _unmatched) = match_with_translation(&names, &lookup, &dir, &app).await;
                 let mut s = settings_state.inner.lock().expect("settings lock");
-                let owned: std::collections::HashSet<String> =
-                    s.blueprint_owned().iter().cloned().collect();
-                for name in &names {
-                    let ln = name.to_lowercase();
-                    if let Some((_, id)) = lookup.iter().find(|(n, _)| *n == ln) {
-                        if !owned.contains(id) {
-                            added_ids.push(id.clone());
-                            matched_names.push(name.clone());
-                        }
+                for (name, id) in &pairs {
+                    if !owned.contains(id) {
+                        added_ids.push(id.clone());
+                        matched_names.push(name.clone());
                     }
                 }
                 if !added_ids.is_empty() {

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 #[cfg(desktop)]
 mod app_settings;
+mod blueprint_loc;
 mod blueprint_log;
 #[cfg(desktop)]
 mod connector;
