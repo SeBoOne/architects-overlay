@@ -160,3 +160,18 @@ pub fn reservation_delete(state: State<'_, TradeState>, id: FlexId) -> Result<()
         .reservation_delete(id.0)
         .map_err(|e| err_wrap("reservations.err_delete", e.to_string()))
 }
+
+/// M9-I (t_e7f0b3a6): Reservierung bearbeiten — Menge je Quelle ändern
+/// (Löschen läuft über `reservation_delete`). Der harte Listen-Cap wird
+/// serverseitig in `cache::reservations` durchgesetzt.
+#[tauri::command]
+pub fn reservation_update(
+    state: State<'_, TradeState>,
+    id: FlexId,
+    qty: f64,
+) -> Result<(), String> {
+    state
+        .cache
+        .reservation_update(id.0, qty)
+        .map_err(|e| err_wrap("reservations.err_update", e.to_string()))
+}
