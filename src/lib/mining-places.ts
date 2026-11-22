@@ -83,13 +83,24 @@ export function locationQualifies(
  (2) höchste Summe der Tier-Stufen (bessere Konzentrations-Lage zuerst).
  * Vollständig erledigte Materialien (done >= quantity) werden per
  * `isDone`-Prädikat ausgeschlossen (nicht mitgraben).
+ *
+ * M9-K (t_db9b234f, P10): `mode` wählt den Optimierungs-Modus pro Liste:
+ * - 'fewest' (Default): Set-Cover-Greedy wie oben.
+ * - 'concentration': je Material EIN Ort — der mit der höchsten
+ *   erreichbaren Konzentrations-Stufe (tier) unter den qualifizierenden
+ *   Orten (Tie: concentration, dann Name). Gleiche Orts-Treffer mehrerer
+ *   Materialien werden zu einem Ort zusammengefasst. Qualitäts-Bänder
+ *   filtern in BEIDEN Modi (immer Orte, die die Qualitätsansprüche erfüllen).
  */
+export type PlaceMode = 'fewest' | 'concentration';
+
 export function planBestPlaces(
 	mats: PlaceMat[],
 	rowsByOre: Record<string, PlaceLocRow[]>,
 	bandsByMaterial: Record<string, number[]>,
 	tierThreshold: number,
-	isDone?: (m: PlaceMat) => boolean
+	isDone?: (m: PlaceMat) => boolean,
+	mode: PlaceMode = 'fewest'
 ): PlacesPlan {
 	// Kandidaten: ortbare, nicht erledigte Materialien mit mindestens einem
 	// qualifizierenden Ort.
@@ -120,6 +131,49 @@ export function planBestPlaces(
 
 	const places: PlacePick[] = [];
 	const placed = new Set<string>(); // materialKey der abgedeckten
+	// M9-K P10: Konzentrations-Modus — je Material der qualifizierende Ort mit
+	// der höchsten Tier-Stufe (Tie: concentration, dann Name); gleiche Orte
+	// mehrerer Materialien werden zu einem Pick zusammengefasst.
+	if (mode === 'concentration') {
+		const byLoc = new Map<string, PlacePick>();
+		for (const c of cands) {
+			let best: PlaceLocRow | null = null;
+			for (const r of c.locs.values()) {
+				if (
+					!best ||
+					r.tier > best.tier ||
+					(r.tier === best.tier &&
+						(r.concentration > best.concentration ||
+							(r.concentration === best.concentration &&
+								r.location.localeCompare(best.location) < 0)))
+				) {
+					best = r;
+				}
+			}
+			if (!best) continue; // kann nicht passieren (qualified.length > 0)
+			placed.add(materialKey(c.mat));
+			let pick = byLoc.get(best.locationId);
+			if (!pick) {
+				pick = {
+					locationId: best.locationId,
+					location: best.location,
+					system: best.system,
+					group: best.group,
+					tier: best.tier,
+					covered: []
+				};
+				byLoc.set(best.locationId, pick);
+			}
+			pick.covered.push({
+				material: c.mat.material,
+				unit: c.mat.unit,
+				quantity: c.mat.quantity,
+				min_quality: c.mat.min_quality,
+				tier: best.tier
+			});
+		}
+		places.push(...[...byLoc.values()]);
+	} else {
 	// Rest-Materialmenge > 0 als Abbruch-Anker:
 	while (cands.some((c) => !placed.has(materialKey(c.mat)))) {
 		let best: { loc: PlaceLocRow; gain: number; tierSum: number } | null = null;
@@ -174,6 +228,7 @@ export function planBestPlaces(
 			}
 		}
 		places.push(pick);
+	}
 	}
 
 	const uncovered = noLoc

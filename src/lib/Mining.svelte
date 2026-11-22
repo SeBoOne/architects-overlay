@@ -635,8 +635,9 @@
 		</div>
 		{#if view === 'lists'}
 			<!-- M9-C: Listen-Tab — Mining-Listen (gleiche Engine, kind='mining')
-			     + Beste-Orte-Optimierung (Set-Cover, Qualitäts-Bänder) -->
-			<MiningLists ores={ores} tierDefault={status?.tier_default ?? 4} openListId={jumpListId} />
+			     + Beste-Orte-Optimierung (Set-Cover, Qualitäts-Bänder; M9-K P10:
+			     Optimierungs-Modi statt Tier-Schwelle) -->
+			<MiningLists ores={ores} openListId={jumpListId} />
 		{:else}
 		<div class="mcols">
 			<!-- Linke Spalte: Erz-/Ort-Suche -->

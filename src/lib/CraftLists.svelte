@@ -15,6 +15,8 @@
 	import { invoke } from '@tauri-apps/api/core';
 	// M9-D (t_36f3966c): Craft→Mining-Brücke — Aggregation → Mining-Listen-Einträge.
 	import { bridgeItems } from './list-bridge.ts';
+	// M9-K (t_db9b234f, P11): Listen-Umschalter als Custom-Dropdown statt Chips.
+	import ListPicker from './ListPicker.svelte';
 
 	type ListSummary = {
 		id: number;
@@ -418,21 +420,19 @@
 </script>
 
 <div class="clists" role="region" aria-label={$t('craft.tab_lists')}>
-	<!-- Listen-Auswahl (Chips) + Neu-Anlage -->
+	<!-- M9-K (P11): Listen-Umschalter als Custom-Dropdown statt Chips. -->
 	<div class="cl-bar">
-		<div class="cl-chips">
-			{#each lists as l (l.id)}
-				<button
-					type="button"
-					class="cl-chip"
-					class:is-on={activeId === l.id}
-					onclick={() => void openList(l.id)}
-					title={l.name}>{l.name} <span class="cl-count">{l.item_count}</span></button
-				>
-			{:else}
-				<span class="cl-hint">{$t('lists.empty')}</span>
-			{/each}
-		</div>
+		<ListPicker
+			items={lists.map((l) => ({
+				id: l.id,
+				name: l.name,
+				item_count: l.item_count,
+				source_name: null
+			}))}
+			{activeId}
+			onopen={(id) => void openList(id)}
+			emptyHint={$t('lists.empty')}
+		/>
 		<div class="cl-new">
 			<input
 				class="cl-input"
@@ -742,33 +742,8 @@
 		align-items: flex-start;
 		flex-wrap: wrap;
 	}
-	.cl-chips {
-		display: flex;
-		gap: 6px;
-		flex-wrap: wrap;
-		flex: 1;
-		min-width: 0;
-	}
-	.cl-chip {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 999px;
-		color: inherit;
-		padding: 4px 12px;
-		font: inherit;
-		font-size: 12px;
-		cursor: pointer;
-	}
-	.cl-chip.is-on {
-		background: var(--accent, #4aa3ff);
-		border-color: transparent;
-		color: #0b0f14;
-		font-weight: 600;
-	}
-	.cl-count {
-		opacity: 0.65;
-		font-size: 11px;
-	}
+	/* M9-K (P11): Chips-Zeile durch ListPicker-Dropdown ersetzt — Chips-CSS
+	   entfernt. */
 	.cl-new {
 		display: flex;
 		gap: 6px;

@@ -204,13 +204,25 @@ WRAP = r"""
   };
   const q = (s) => document.querySelector(s);
   window.listRegion = () => !!q('.mining .mlists');
+  // M9-K (t_db9b234f, P11): Chips durch ListPicker-Dropdown ersetzt —
+  // selectChip öffnet das Popover und wählt die Zeile; chips() liest die
+  // Popover-Zeilen (und liefert [Label], wenn zu).
   window.selectChip = (name) => {
-    const b = [...document.querySelectorAll('.mining .ml-chip')].find((c) => c.textContent.trim().startsWith(name));
-    if (!b) return false;
-    b.click();
-    return true;
+    const btn = document.querySelector('.mining .lp-btn');
+    if (!btn) return false;
+    btn.click();
+    return new Promise((resolve) => setTimeout(() => {
+      const row = [...document.querySelectorAll('.mining .lp-pop .lp-row')]
+        .find((c) => c.textContent.trim().startsWith(name));
+      if (!row) { resolve(false); return; }
+      row.click();
+      resolve(true);
+    }, 250));
   };
-  window.chips = () => [...document.querySelectorAll('.mining .ml-chip')].map((c) => c.textContent.trim());
+  window.chips = () => {
+    const label = document.querySelector('.mining .lp-btn .lp-label')?.textContent.trim();
+    return label ? [label] : [];
+  };
   window.setListName = (v) => {
     const i = q('.mining .ml-new .ml-input');
     if (!i) return false;
@@ -408,7 +420,11 @@ async def main():
         await js("setListName('Solo-Run')")
         await asyncio.sleep(0.2)
         await js("clickNewList()")
-        await wait_for("chips().length === 2", 8)
+        # M9-K (P11): Dropdown listet ALLE Listen — Anzahl im Popover prüfen.
+        await js("document.querySelector('.mining .lp-btn')?.click()")
+        await wait_for("document.querySelectorAll('.mining .lp-pop .lp-row').length === 2", 8)
+        await js("document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 0, clientY: document.querySelector('.mining').getBoundingClientRect().top + 400 }))")
+        await asyncio.sleep(0.3)
         await js("selectChip('Solo')")
         await asyncio.sleep(0.3)
         check("2a Add-Formular sichtbar (standalone)", await js("addFormVisible()") is True)
