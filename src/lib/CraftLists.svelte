@@ -50,6 +50,10 @@
 		// M9-F (t_bb97da62): aus dem Inventar reserviert (mengengewichtete Ø-Q).
 		reserved_qty: number;
 		reserved_avg_quality: number | null;
+		// M9-M (t_74833eb0): Fortschritt + „Ziel erreicht“ aus dem Backend
+		// (list_detail) — EINE Quelle der Wahrheit für beide Listen + Spiegel.
+		progress: number;
+		reached: boolean;
 	};
 	// M9-F: Inventar-Zeile als Reservierungs-Quelle (Mirror inventory_list).
 	type InvRow = {
@@ -375,8 +379,9 @@
 	}
 
 	const rowKey = (m: { material: string; unit: string }) => `${m.material}:${m.unit}`;
-	const pct = (m: AggMat) =>
-		m.quantity > 0 ? Math.min(100, Math.round((m.done_qty / m.quantity) * 100)) : 0;
+	// M9-M (t_74833eb0): Fortschritt kommt als Backend-Metrik (progress in
+	// AggMat, done + reserved gegen den Bedarf) — nicht mehr done/quantity.
+	const pct = (m: AggMat) => (m.quantity > 0 ? m.progress : 0);
 
 	// ---- Laden / CRUD --------------------------------------------------------
 	async function loadLists() {
@@ -721,7 +726,7 @@
 							{/if}
 							</div>
 							<div class="cl-bar-track" role="progressbar" aria-valuenow={p} aria-valuemin="0" aria-valuemax="100">
-							<div class="cl-bar-fill" class:is-done={p >= 100} style={`width:${p}%`}></div>
+							<div class="cl-bar-fill" class:is-done={m.reached} style={`width:${p}%`}></div>
 							</div>
 							<div class="cl-agg-actions">
 							<button type="button" class="cl-mini" onclick={() => openReserve(m)} disabled={reserveBusy}>

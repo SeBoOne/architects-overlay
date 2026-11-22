@@ -58,6 +58,13 @@ import ListPicker from './ListPicker.svelte';
 		quantity: number;
 		min_quality: number;
 		done_qty: number;
+		// M9-F (t_bb97da62): aus dem Inventar reservierte Menge + Ø-Qualität.
+		reserved_qty: number;
+		reserved_avg_quality: number | null;
+		// M9-M (t_74833eb0): Fortschritt + „Ziel erreicht“ aus dem Backend
+		// (list_detail) — EINE Quelle der Wahrheit für beide Listen + Spiegel.
+		progress: number;
+		reached: boolean;
 	};
 	type ListDetail = {
 		id: number;
@@ -232,8 +239,9 @@ import ListPicker from './ListPicker.svelte';
 	const fmtQty = (q: number) =>
 		Number.isInteger(q) ? String(q) : String(Math.round(q * 100) / 100);
 	const rowKey = (m: { material: string; unit: string }) => `${m.material}:${m.unit}`;
-	const pct = (m: AggMat) =>
-		m.quantity > 0 ? Math.min(100, Math.round((m.done_qty / m.quantity) * 100)) : 0;
+	// M9-M (t_74833eb0): Fortschritt kommt als Backend-Metrik (progress in
+	// AggMat, done + reserved gegen den Bedarf) — nicht mehr done/quantity.
+	const pct = (m: AggMat) => (m.quantity > 0 ? m.progress : 0);
 
 	// Typeahead: Start LEER → Gesamtliste, Filter case-insensitiv Name/Slug.
 	const addMatches = $derived.by(() => {
@@ -408,7 +416,9 @@ import ListPicker from './ListPicker.svelte';
 		error = '';
 		try {
 			// Aggregation → ortbare Materialien (ore_id aus dem Eintrags-Snapshot).
-			const agg = detail.aggregated.filter((m) => pct(m) < 100);
+			// M9-M: noch offene Materialien = „Ziel erreicht“ (reached) ist
+			// false — ein done-Stand ohne Inventar-Bezug bleibt offen (P3).
+			const agg = detail.aggregated.filter((m) => !m.reached);
 			const oreIdOf = new Map<string, string | null>();
 			for (const it of detail.items)
 				for (const mm of it.mats) oreIdOf.set(`${mm.material}:${mm.unit}`, mm.ore_id);
@@ -470,7 +480,7 @@ import ListPicker from './ListPicker.svelte';
 		// Settings-Default) als interne Konstante.
 		plan = planBestPlaces(mats, rowsByOre, bandsByMaterial, 4, (m) => {
 				const row = agg.find((a) => rowKey(a) === rowKey(m));
-				return row ? pct(row) >= 100 : false;
+				return row ? row.reached : false;
 			}, planMode);
 		} catch (e) {
 			error = String(e);
@@ -679,6 +689,11 @@ import ListPicker from './ListPicker.svelte';
 								>
 							</span>
 							<span class="ml-q" title={$t('lists.quality_req')}>Q ≥ {m.min_quality}</span>
+							{#if m.reserved_qty > 0}
+								<span class="ml-resv" title={$t('lists.reserve_title')}>
+									{$t('lists.reserved_chip', { q: fmtQty(m.reserved_qty), qq: m.reserved_avg_quality ?? '—' })}
+								</span>
+							{/if}
 						</div>
 						<div
 							class="ml-bar-track"
@@ -687,7 +702,7 @@ import ListPicker from './ListPicker.svelte';
 							aria-valuemin="0"
 							aria-valuemax="100"
 						>
-							<div class="ml-bar-fill" class:is-done={p >= 100} style={`width:${p}%`}></div>
+							<div class="ml-bar-fill" class:is-done={m.reached} style={`width:${p}%`}></div>
 						</div>
 						<div class="ml-agg-actions">
 							<button type="button" class="ml-mini" onclick={() => doneAllInv(m)} disabled={p >= 100}>
@@ -1132,6 +1147,11 @@ import ListPicker from './ListPicker.svelte';
 	}
 	.ml-q {
 		opacity: 0.6;
+		font-size: 11px;
+		white-space: nowrap;
+	}
+	.ml-resv {
+		color: #e0a83e;
 		font-size: 11px;
 		white-space: nowrap;
 	}
