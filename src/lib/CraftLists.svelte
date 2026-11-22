@@ -197,6 +197,8 @@
 	let reserveResIds = $state<Record<string, string[]>>({});
 	let reserveBusy = $state(false);
 	let reserveError = $state('');
+	// M9-N: Hinweis nach „Liste abschließen“.
+	let completeNote = $state('');
 	async function openReserve(m: AggMat) {
 		reserveFor = m;
 		reserveSel = {};
@@ -450,6 +452,19 @@
 			error = String(e);
 		}
 	}
+	// M9-N: Liste abschließen — reservierte Mengen aus dem Inventar entnehmen.
+	async function completeList() {
+		if (activeId === null) return;
+		error = '';
+		try {
+			await invoke('list_complete', { listId: activeId });
+			completeNote = $t('lists.completed');
+			await loadLists();
+			await openList(activeId);
+		} catch (e) {
+			error = trError(e);
+		}
+	}
 	async function removeItem(row: number) {
 		error = '';
 		try {
@@ -623,6 +638,14 @@
 					title={$t('lists.reserve_all_title')}
 				>{$t('lists.reserve_all')}</button
 				>
+				<!-- M9-N: Liste abschließen — reservierte Mengen konsumieren. -->
+				<button
+					type="button"
+					class="cl-mini"
+					onclick={() => void completeList()}
+					title={$t('lists.complete_title')}
+				>{$t('lists.complete')}</button
+				>
 				<button type="button" class="cl-mini is-danger" onclick={() => void deleteList()}>
 					{$t('lists.delete')}
 				</button>
@@ -631,6 +654,9 @@
 
 		{#if bridgeNote}
 			<div class="cl-inv-note">{bridgeNote}</div>
+		{/if}
+		{#if completeNote}
+			<div class="cl-inv-note">{completeNote}</div>
 		{/if}
 		{#if reserveNote}
 			<div class="cl-inv-note">{reserveNote}</div>

@@ -147,6 +147,7 @@ pub fn run() {
             lists::list_create,
             lists::list_rename,
             lists::list_delete,
+            lists::list_complete,
             lists::list_add_item,
             lists::list_remove_item,
             lists::list_set_copies,
