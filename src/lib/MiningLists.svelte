@@ -16,7 +16,13 @@
 	// Typeahead startet LEER mit gefilterter Gesamtliste.
 	import { t, tr, trError } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
-	import { planBestPlaces, type PlacesPlan, type PlaceLocRow, type PlaceMode } from './mining-places.ts';
+	import {
+		planBestPlaces,
+		normalizeOreName,
+		type PlacesPlan,
+		type PlaceLocRow,
+		type PlaceMode
+	} from './mining-places.ts';
 import ListPicker from './ListPicker.svelte';
 
 	type Ore = {
@@ -444,6 +450,31 @@ import ListPicker from './ListPicker.svelte';
 				min_quality: m.min_quality,
 				oreId: oreIdOf.get(rowKey(m)) ?? null
 			}));
+			// M9-O (t_a39041f8, Ursache A): ore_id NULL (Craft-Cost-Snapshot trug
+			// keine ore_id) → Namens-Match über den Strata-Ores-Katalog
+			// (`strata_ores`, cache-first). Normalize: lowercase + Suffix-Strip
+			// „ (Raw)"/„ (Ore)"; NUR exakte Treffer (sonst falsche Orte).
+			// Fehlschlag (Katalog nicht ladbar / kein Treffer) → bleibt uncovered.
+			if (mats.some((m) => !m.oreId)) {
+				try {
+					const ores = (await invoke<{ ores: { id: string; name: string; slug: string }[] }>(
+						'strata_ores'
+					)).ores;
+					const idByNorm = new Map<string, string>();
+					for (const o of ores ?? []) {
+						for (const n of [o.name, o.slug]) {
+							if (n) idByNorm.set(normalizeOreName(n), o.id);
+						}
+					}
+					for (const m of mats) {
+						if (m.oreId) continue;
+						const hit = idByNorm.get(normalizeOreName(m.material));
+						if (hit) m.oreId = hit;
+					}
+				} catch {
+					// Ores-Katalog nicht verfügbar → ohne ore_id bleibt uncovered.
+				}
+			}
 			const withOre = mats.filter((m) => m.oreId);
 			if (!withOre.length) {
 				plan = { places: [], uncovered: mats };
@@ -861,6 +892,15 @@ import ListPicker from './ListPicker.svelte';
 											>{fmtQty(c.quantity)} {unitName(c.unit)}</span
 										>
 										<span class="ml-place-tier" title={tierLabel(c.tier)}>T{c.tier}</span>
+										<!-- M9-O (t_a39041f8): Qualitäts-Fallback → deutlicher Warn-Hinweis. -->
+										{#if c.maxQuality !== undefined}
+											<span
+												class="ml-place-warn"
+												title={$t('mining.place_below_quality', { q: c.maxQuality })}
+											>
+												{$t('mining.place_below_quality', { q: c.maxQuality })}
+											</span>
+										{/if}
 									</span>
 								{/each}
 							</div>
@@ -1273,6 +1313,11 @@ import ListPicker from './ListPicker.svelte';
 		color: var(--accent, #4aa3ff);
 		font-size: 10px;
 		font-weight: 700;
+	}
+	/* M9-O (t_a39041f8): Warn-Hinweis an Qualitäts-Fallback-Materialien. */
+	.ml-place-warn {
+		color: #ffb454;
+		font-size: 11px;
 	}
 	.ml-uncovered {
 		display: flex;

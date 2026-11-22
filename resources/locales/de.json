@@ -654,6 +654,7 @@
     "mining.place_mode": "Optimierung",
     "mining.place_mode_fewest": "möglichst wenige Orte",
     "mining.place_mode_concentration": "höchste Konzentration",
+    "mining.place_below_quality": "Ort erreicht ggf. nicht die geforderte Qualität (max. {q}).",
     "mining.lists_qty_ph": "Menge",
     "mining.lists_quality_ph": "Qualität (opt.)",
     "mining.lists_uncovered": "Verbleibend — kein passender Ort",

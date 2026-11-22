@@ -39,13 +39,25 @@ export type PlaceLocRow = {
 };
 
 /// Ein gewählter Ort mit den dort abgedeckten Materialien.
+export type PlaceCovered = {
+	material: string;
+	unit: string;
+	quantity: number;
+	min_quality: number;
+	tier: number;
+	/// M9-O (t_a39041f8): max erreichbare Qualität laut Bändern — nur gesetzt,
+	/// wenn der Ort als Qualitäts-Fallback gewählt wurde (KEIN Ort erfüllt
+	/// min_quality). Die View zeigt dafür den Warn-Hinweis place_below_quality.
+	maxQuality?: number;
+};
+
 export type PlacePick = {
 	locationId: string;
 	location: string;
 	system: string | null;
 	group: string;
 	tier: number;
-	covered: { material: string; unit: string; quantity: number; min_quality: number; tier: number }[];
+	covered: PlaceCovered[];
 };
 
 export type PlacesPlan = {
@@ -62,6 +74,14 @@ export function maxQualityForTier(bands: number[], tier: number): number | null 
 	const t = Math.min(6, Math.max(1, Math.round(tier)));
 	const idx = Math.max(1, Math.round((t / 6) * bands.length));
 	return bands[idx - 1];
+}
+
+/// M9-O (t_a39041f8, Ursache A): Name für ore_id-Namens-Match normalisieren —
+/// lowercase, Suffix „ (Raw)"/„ (Ore)" weg, Whitespace getrimmt. „Glacosite"
+/// matcht so den Strata-Katalognamen „Glacosite (Raw)". NUR für EXAKTEN
+/// Gleichstand nach Normalisierung (kein fuzzy/includes — sonst falsche Erze).
+export function normalizeOreName(s: string): string {
+	return s.toLowerCase().replace(/\s*\((raw|ore)\)\s*/g, '').trim();
 }
 
 /// Zählt ein Ort der Stufe `tier` für ein Material mit Mindest-Qualität?
@@ -131,6 +151,10 @@ export function planBestPlaces(
 	type Cand = {
 		mat: PlaceMat;
 		locs: Map<string, PlaceLocRow>;
+		/// M9-O: gesetzt → Material ging als Qualitäts-Fallback in den Plan
+		/// (kein Ort erfüllt min_quality); Wert = max erreichbare Qualität
+		/// am Fallback-Ort.
+		belowQuality?: number;
 	};
 	const materialKey = (m: { material: string; unit: string }) => `${m.material}:${m.unit}`;
 	const done = isDone ?? (() => false);
@@ -144,10 +168,29 @@ export function planBestPlaces(
 		}
 		const bands = bandsByMaterial[materialKey(m)] ?? bandsByMaterial[m.material] ?? [];
 		const qualified = (locRows[m.oreId] ?? []).filter((r) =>
-			locationQualifies(r.tier, bands, m.min_quality, tierThreshold)
+		const rows = rowsByOre[m.oreId] ?? [];
+		const qualified = rows.filter((r) =>			locationQualifies(r.tier, bands, m.min_quality, tierThreshold)
 		);
 		if (!qualified.length) {
-			noLoc.push(m);
+			// M9-O (t_a39041f8, Feedback P5): qualifiziert KEIN Ort die
+			// min_quality (Band-Filter oder Tier-Schwelle schneidet alle ab),
+			// aber der Erz hat Orte → bester verfügbarer Ort statt uncovered:
+			// max erreichbare Qualität (Bänder) DESC, dann Tier DESC, dann Name.
+			// Der covered-Eintrag trägt maxQuality → View warnt deutlich.
+			if (!rows.length) {
+				noLoc.push(m);
+				continue;
+			}
+			const best = [...rows].sort((a, b) => {
+				const qa = maxQualityForTier(bands, a.tier) ?? -1;
+				const qb = maxQualityForTier(bands, b.tier) ?? -1;
+				return qb - qa || b.tier - a.tier || a.location.localeCompare(b.location);
+			})[0];
+			cands.push({
+				mat: m,
+				locs: new Map([[best.locationId, best]]),
+				belowQuality: maxQualityForTier(bands, best.tier) ?? undefined
+			});
 			continue;
 		}
 		cands.push({ mat: m, locs: new Map(qualified.map((r) => [r.locationId, r])) });
@@ -193,7 +236,8 @@ export function planBestPlaces(
 				unit: c.mat.unit,
 				quantity: c.mat.quantity,
 				min_quality: c.mat.min_quality,
-				tier: best.tier
+				tier: best.tier,
+				maxQuality: c.belowQuality
 			});
 		}
 		places.push(...[...byLoc.values()]);
@@ -247,7 +291,8 @@ export function planBestPlaces(
 					unit: c.mat.unit,
 					quantity: c.mat.quantity,
 					min_quality: c.mat.min_quality,
-					tier: r.tier
+					tier: r.tier,
+					maxQuality: c.belowQuality
 				});
 			}
 		}

@@ -7,6 +7,7 @@ import {
 	isExcludedLocation,
 	locationQualifies,
 	maxQualityForTier,
+	normalizeOreName,
 	planBestPlaces,
 	type PlaceLocRow,
 	type PlaceMat
@@ -99,15 +100,16 @@ test('Qualitäts-Band-Filter: Ort zählt nur, wenn sein Band die Mindest-Qualit�
 	assert.equal(plan.places[0].locationId, 'L-HIGH');
 });
 
-test('ohne ore_id (items) oder ohne qualifizierenden Ort → uncovered', () => {
+test('ohne ore_id (items) → uncovered; mit ore_id aber kein qualifizierender Ort → Qualitäts-Fallback mit maxQuality-Warnung (M9-O)', () => {
 	const mats = [mat('Titanium', null, 0, 'items'), mat('Seltenes', 'x', 950)];
 	const bands = { Seltenes: [400, 800] };
 	const plan = planBestPlaces(mats, { x: [row('L1', 'Ort', 6)] }, bands, 1);
-	assert.equal(plan.places.length, 0);
-	assert.deepEqual(
-		plan.uncovered.map((u) => u.material).sort(),
-		['Seltenes', 'Titanium']
-	);
+	// Titanium (kein ore_id) bleibt uncovered…
+	assert.deepEqual(plan.uncovered.map((u) => u.material), ['Titanium']);
+	// …Seltenes bekommt den besten verfügbaren Ort als Fallback (max. 800 < 950).
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].locationId, 'L1');
+	assert.equal(plan.places[0].covered[0].maxQuality, 800);
 });
 
 test('erledigte Materialien (done) werden nicht mehr mitgeplant', () => {
@@ -251,4 +253,76 @@ test('planBestPlaces (concentration): Battagliaintro wird nie als Top-Ort gewäh
 	const plan = planBestPlaces(mats, rowsByOre, {}, 1, undefined, 'concentration');
 	assert.equal(plan.places.length, 1);
 	assert.equal(plan.places[0].locationId, 'L1');
+// ---------- M9-O (t_a39041f8, Feedback P5) ----------
+
+test('normalizeOreName: „Glacosite" matcht „Glacosite (Raw)"/„glacosite"-Slug, kein fuzzy-Teiltreffer', () => {
+	assert.equal(normalizeOreName('Glacosite'), normalizeOreName('Glacosite (Raw)'));
+	assert.equal(normalizeOreName('Riccite'), normalizeOreName('Riccite (Ore)'));
+	assert.equal(normalizeOreName('  Taranite  '), 'taranite');
+	// Kein includes-Matching: „Taran" darf „Taranite" NICHT matchen.
+	assert.notEqual(normalizeOreName('Taran'), normalizeOreName('Taranite'));
 });
+
+test('M9-O Riccite: min_quality > max aller Tier-Bänder → Fallback-Ort mit maxQuality statt uncovered', () => {
+	// Realer Fall: Bänder [325..1000], Orte nur Tier 2 (maxQ 671) und Tier 4
+	// (maxQ 870 < min_quality 965) → bisher ALLE uncovered.
+	const bands = { Riccite: [325, 525, 671, 743, 870, 942, 965, 1000] };
+	const mats = [mat('Riccite', 'riccite_ore', 965)];
+	const rowsByOre = {
+		riccite_ore: [row('L-T2', 'Tier-2-Ort', 2), row('L-T4', 'Tier-4-Ort', 4)]
+	};
+	const plan = planBestPlaces(mats, rowsByOre, bands, 4);
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].locationId, 'L-T4');
+	assert.equal(plan.places[0].covered[0].maxQuality, 870);
+	assert.equal(plan.uncovered.length, 0);
+});
+
+test('M9-O Fallback-Bestwahl: maxQuality DESC, dann Tier DESC (maxQ ist monotone in Tier), dann Name', () => {
+	const bands = { X: [100, 500] }; // maxQ: T2/T3/T4 alle → bands[0]=100 (round-Map)
+	const mats = [mat('X', 'x', 950)];
+	const rowsByOre = {
+		x: [row('L-A', 'Ort A', 2), row('L-B', 'Ort B', 4), row('L-C', 'Ort C', 3)]
+	};
+	const plan = planBestPlaces(mats, rowsByOre, bands, 1);
+	// maxQ gleich → höhere Tier gewinnt (L-B, T4); maxQuality-Marker gesetzt.
+	assert.equal(plan.places[0].locationId, 'L-B');
+	assert.equal(plan.places[0].tier, 4);
+	assert.equal(plan.places[0].covered[0].maxQuality, 100);
+});
+
+test('M9-O Fallback-Bestwahl: gleiche maxQuality+Tier → Name-Ascending', () => {
+	const bands = { X: [100, 500] };
+	const mats = [mat('X', 'x', 950)];
+	const rowsByOre = {
+		x: [row('L-B', 'Ort B', 4), row('L-A', 'Ort A', 4)]
+	};
+	const plan = planBestPlaces(mats, rowsByOre, bands, 1);
+	assert.equal(plan.places[0].locationId, 'L-A');
+});
+
+test('M9-O: oreId gesetzt, aber Erz hat GAR KEINE Orte → weiterhin uncovered', () => {
+	const mats = [mat('Verwaist', 'ghost_ore', 0)];
+	const plan = planBestPlaces(mats, { ghost_ore: [] }, {}, 1);
+	assert.equal(plan.places.length, 0);
+	assert.deepEqual(plan.uncovered.map((u) => u.material), ['Verwaist']);
+});
+
+test('M9-O: Fallback-Material teilt sich den Ort mit normalen Materialien (fewest)', () => {
+	const bands = { Rar: [200, 400] };
+	const mats = [mat('Normal', 'n'), mat('Rar', 'r', 900)];
+	const rowsByOre = {
+		n: [row('L1', 'Ort 1', 4)],
+		r: [row('L1', 'Ort 1', 4), row('L2', 'Ort 2', 4)]
+	};
+	// Rar: maxQ(T4)=200 (round(4/6*2)=1 → bands[0]) < 900 → Fallback auf L1
+	// (Tie maxQ/Tier → Name); L1 deckt zusätzlich Normal → EIN Ort mit beiden,
+	// Rar mit maxQuality-Marker.
+	const plan = planBestPlaces(mats, rowsByOre, bands, 1);
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].locationId, 'L1');
+	assert.equal(plan.places[0].covered.length, 2);
+	const rar = plan.places[0].covered.find((c) => c.material === 'Rar')!;
+	assert.equal(rar.maxQuality, 200);
+	const normal = plan.places[0].covered.find((c) => c.material === 'Normal')!;
+	assert.equal(normal.maxQuality, undefined);});

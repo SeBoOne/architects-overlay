@@ -654,6 +654,7 @@
     "mining.place_mode": "Optimization",
     "mining.place_mode_fewest": "fewest places possible",
     "mining.place_mode_concentration": "highest concentration",
+    "mining.place_below_quality": "Location may not reach the required quality (max. {q}).",
     "mining.lists_qty_ph": "Quantity",
     "mining.lists_quality_ph": "Quality (opt.)",
     "mining.lists_uncovered": "Remaining — no qualifying place",
