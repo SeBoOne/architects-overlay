@@ -48,6 +48,8 @@
 	import { onDestroy, untrack } from 'svelte';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { t, tr, trError, currentLang } from './i18n';
+	// M9-R1: gemeinsame Reiter-Komponente (Segmented Control, überall gleich)
+	import Tabs from './Tabs.svelte';
 	import {
 		labelOf,
 		formatValue,
@@ -1940,31 +1942,19 @@
 		     Screen frisch ($effect load(true) auf Screen-Änderung, kein
 		     Poll-Cache). Flow ohne tabs = bisheriges Verhalten unverändert. -->
 		{#if cockpit}
-			<div class="ftabs" role="tablist">
-				{#each cockpitTabs as t (t.id)}
-					<button
-						type="button"
-						role="tab"
-						aria-selected={activeTabId === t.id}
-						class="chip"
-						class:is-on={activeTabId === t.id}
-						onclick={() => tabGo(t)}
-					>{labelOf(t.label, lang)}</button>
-				{/each}
-			</div>
+			<!-- M9-R1: gemeinsame Reiter-Komponente (Segmented Control) -->
+			<Tabs
+				items={cockpitTabs.map((t) => ({ id: t.id, label: labelOf(t.label, lang) }))}
+				active={activeTabId}
+				onSelect={(id) => { const t = cockpitTabs.find((x) => x.id === id); if (t) tabGo(t); }}
+			/>
 		{:else if !flow.open}
-			<div class="ftabs" role="tablist">
-				{#each flow.screens as s (s.id)}
-					<button
-						type="button"
-						role="tab"
-						aria-selected={s.id === shown.id}
-						class="chip"
-						class:is-on={s.id === shown.id}
-						onclick={() => go(s.id)}
-					>{labelOf(s.title, lang)}</button>
-				{/each}
-			</div>
+			<!-- M9-R1: gemeinsame Reiter-Komponente (Segmented Control) -->
+			<Tabs
+				items={flow.screens.map((s) => ({ id: s.id, label: labelOf(s.title, lang) }))}
+				active={shown.id}
+				onSelect={go}
+			/>
 		{/if}
 
 		<div class="fbody">
@@ -2638,7 +2628,7 @@
 	.fac:hover { border-color: var(--accent); }
 
 	/* Legacy-Flows ohne open-Block: Reiter in globaler Chip-Optik (Req. 10) */
-	.ftabs { display: flex; gap: 4px; flex-wrap: wrap; }
+	/* Tab-Zeile = gemeinsame Tabs.svelte (M9-R1); kein .ftabs-Stil mehr. */
 
 	/* Detailzeilen (ohne Kopier-Buttons) */
 	.fdetail { margin: 0; display: flex; flex-direction: column; }

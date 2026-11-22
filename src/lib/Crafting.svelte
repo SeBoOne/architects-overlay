@@ -42,6 +42,8 @@
 	import CraftQualitySlider from './CraftQualitySlider.svelte';
 	// M9-B (t_36778bc3): Listen-Tab + "Zur Liste hinzufügen" im Detail.
 	import CraftLists from './CraftLists.svelte';
+	// M9-R1: gemeinsame Reiter-Komponente (Segmented Control, überall gleich)
+	import Tabs from './Tabs.svelte';
 	import {
 		aspectQuality,
 		materialKey,
@@ -730,24 +732,15 @@
 <div class="crafting" role="region" aria-label={$t('nav.crafting')}>
 	{#if checked && status?.enabled && status?.key_set}
 		<!-- M9-B: Tab-Zeile Craft ↔ Listen (Listen-Engine, t_36778bc3) -->
-		<div class="ctabs" role="tablist">
-			<button
-				type="button"
-				class="ctab"
-				class:is-on={tab === 'craft'}
-				role="tab"
-				aria-selected={tab === 'craft'}
-				onclick={() => (tab = 'craft')}>{$t('craft.tab_craft')}</button
-			>
-			<button
-				type="button"
-				class="ctab"
-				class:is-on={tab === 'lists'}
-				role="tab"
-				aria-selected={tab === 'lists'}
-				onclick={() => (tab = 'lists')}>{$t('craft.tab_lists')}</button
-			>
-		</div>
+		<!-- M9-R1: gemeinsame Reiter-Komponente (Segmented Control) statt eigener .ctab-Optik -->
+		<Tabs
+			items={[
+				{ id: 'craft', label: $t('craft.tab_craft') },
+				{ id: 'lists', label: $t('craft.tab_lists') }
+			]}
+			active={tab}
+			onSelect={(id) => (tab = id as 'craft' | 'lists')}
+		/>
 	{/if}
 	{#if !checked}
 		<div class="cnote">{$t('mining.loading')}</div>
@@ -1143,30 +1136,7 @@
 
 <style>
 	/* Muster: Mining.svelte (Overlay-Stil, Variablen des Shells) */
-	/* M9-B: Tab-Zeile Craft ↔ Listen + Listen-Popover im Detail. */
-	.ctabs {
-		display: flex;
-		gap: 6px;
-		margin-bottom: 10px;
-		flex: 0 0 auto;
-	}
-	/* M9-Politur: Reiter-Stil wie Mining .mtab (flacher Reiter, keine Button-Pill) */
-	.ctab {
-		flex: 1;
-		padding: 6px 10px;
-		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-		background: transparent;
-		color: var(--fgdim, #9aa3b2);
-		text-transform: uppercase;
-		font-size: 11px;
-		letter-spacing: 0.08em;
-		cursor: pointer;
-	}
-	.ctab.is-on {
-		background: color-mix(in srgb, var(--accent) 22%, transparent);
-		color: var(--fg, #e8ecf3);
-		border-color: var(--accent);
-	}
+	/* M9-B: Listen-Popover im Detail. Tab-Zeile = gemeinsame Tabs.svelte (M9-R1). */
 	.cl-pick-wrap {
 		position: relative;
 		margin-left: auto;

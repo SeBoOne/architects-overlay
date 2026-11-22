@@ -14,6 +14,8 @@
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { t, tr, trError, currentLang } from './i18n';
 	import FlowRenderer from './FlowRenderer.svelte';
+	// M9-R1: gemeinsame Reiter-Komponente (Segmented Control, überall gleich)
+	import Tabs from './Tabs.svelte';
 	import {
 		labelOf,
 		formatValue,
@@ -596,14 +598,13 @@
 		     Punkt 8: „Zurück zur Liste“-Chip neben dem Reiter — zusätzlicher
 		     Weg neben der Esc-Kaskade (Esc Flow→Landliste→Modus bleibt). -->
 		{#if tabFlow}
-			<div class="connector-tabs" role="tablist" aria-label={title}>
-				<button
-					type="button"
-					role="tab"
-					aria-selected={true}
-					class="chip is-on"
-					onclick={() => selectFlow(tabFlow.id)}
-				>{labelOf(tabFlow.title, lang)}</button>
+			<!-- M9-R1: gemeinsame Reiter-Komponente (Segmented Control) + Zurück-Button daneben -->
+			<div class="connector-tabs">
+				<Tabs
+					items={[{ id: tabFlow.id, label: labelOf(tabFlow.title, lang) }]}
+					active={tabFlow.id}
+					onSelect={() => selectFlow(tabFlow.id)}
+				/>
 				<button
 					type="button"
 					class="chip chip-back"
@@ -613,20 +614,12 @@
 		{/if}
 	{:else if views.length > 1}
 		<!-- Fallback (Manifests ohne flows, z. B. AAWA später): views als Tabs. -->
-		<div class="connector-tabs" role="tablist" aria-label={title}>
-			{#each views as v (v.id)}
-				<button
-					type="button"
-					role="tab"
-					aria-selected={v.id === viewId}
-					class="chip"
-					class:is-on={v.id === viewId}
-					onclick={() => selectView(v.id)}
-				>
-					{labelOf(v.title, lang)}
-				</button>
-			{/each}
-		</div>
+		<!-- M9-R1: gemeinsame Reiter-Komponente (Segmented Control) -->
+		<Tabs
+			items={views.map((v) => ({ id: v.id, label: labelOf(v.title, lang) }))}
+			active={viewId}
+			onSelect={selectView}
+		/>
 	{/if}
 
 	{#if !hasFlows && view && view.type !== 'form' && (view.params ?? []).length > 0}

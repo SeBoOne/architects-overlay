@@ -43,6 +43,8 @@ function keyActivate(e: KeyboardEvent) {
 	// Zustände: idle · typing · loading · error · offline · market
 	import { getCurrentWindow } from '@tauri-apps/api/window';
 import { appCompact as calcAppCompact, hintMore as calcHintMore } from '../lib/window-breakpoints';
+// M9-R1: gemeinsame Reiter-Komponente (Segmented Control, überall gleich)
+import Tabs from '../lib/Tabs.svelte';
 	import { invoke, isTauri } from '@tauri-apps/api/core';
 	import { listen } from '@tauri-apps/api/event';
 	// TW (t_f178b084): Info-Popup — Laufzeit-Version aus tauri packageInfo
@@ -7023,17 +7025,21 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			     Der Tab-State selbst leakt nicht; die Tablist hing am falschen
 			     Zustand. Jetzt am abgeleiteten Mode (routes = kein Marktplatz-Reiter). -->
 			{#if !offerDetail && mode === 'market'}
-				<div class="mtabs" role="tablist">
-					<button type="button" role="tab" aria-selected={mTab === 'offers'} class="chip" class:is-on={mTab === 'offers'} onclick={() => (mTab = 'offers')}>{$t('market.tab_offers')}</button>
-					<!-- t_350c4300 B1: kein „Handelsrouten"-Tab im Marktplatz — Routen
-					     sind nur noch über das Navigationsband (Rail) bzw. den
-					     Mode-Hotkey für Routen (Default F3, konfigurierbar)
-					     erreichbar (setMode('routes') → mTab='routes' bleibt der
-					     interne Mechanismus). -->
-					<button type="button" role="tab" aria-selected={mTab === 'shop'} class="chip" class:is-on={mTab === 'shop'} onclick={() => (mTab = 'shop')}>{$t('market.tab_shop')}</button>
-					<!-- M3b (t_893761f1): Trades-Reiter — Deals + Chat im Overlay. -->
-					<button type="button" role="tab" aria-selected={mTab === 'trades'} class="chip" class:is-on={mTab === 'trades'} onclick={() => (mTab = 'trades')}>{$t('market.tab_trades')}</button>
-				</div>
+				<!-- M9-R1: gemeinsame Reiter-Komponente (Segmented Control) -->
+				<Tabs
+					items={[
+						{ id: 'offers', label: $t('market.tab_offers') },
+						{ id: 'shop', label: $t('market.tab_shop') },
+						{ id: 'trades', label: $t('market.tab_trades') }
+					]}
+					active={mTab}
+					onSelect={(id) => (mTab = id as 'offers' | 'shop' | 'trades')}
+				/>
+				<!-- t_350c4300 B1: kein „Handelsrouten“-Tab im Marktplatz — Routen
+				     sind nur noch über das Navigationsband (Rail) bzw. den
+				     Mode-Hotkey für Routen (Default F3, konfigurierbar)
+				     erreichbar (setMode('routes') → mTab='routes' bleibt der
+				     interne Mechanismus). -->
 			{/if}
 			{#if offerDetail}
 					<div class="mdetail">

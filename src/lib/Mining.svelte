@@ -38,6 +38,8 @@
 	// M7-F4 (t_c3367dfb): Rarity-Rampe an EINEM Ort (rarity.ts) — Mode-Badges
 	// und Pin-Chips/Ort-Kacheln teilen sich dieselbe Skala (Konsistenz P2).
 	import { RARITIES, RARITY_COLORS, rarityColor, type Rarity } from './rarity';
+	// M9-R1: gemeinsame Reiter-Komponente (Segmented Control, überall gleich)
+	import Tabs from './Tabs.svelte';
 	import { sigCollectRows, sigToggleEntry, type ScanSignatureEntry } from './scan-signature';
 	import { PINS_CHANGED_EVENT, type PinEntry, type PinsState } from './pins';
 	// M9-C (t_dc01f34b): Listen-Tab im Mining-Modus (eigener Reiter,
@@ -627,32 +629,16 @@
 		<!-- M9-H (t_7709c7f2, Punkt 1): Tab-Zeile IMMER sichtbar — auch im
 		     Listen-Reiter gibt es den Rückweg zu Erze/Orte (Konsistenz mit
 		     dem Crafting-Modus, dessen .ctabs über beiden Tabs hängt). -->
-		<div class="mtabs" role="tablist">
-			<button
-				type="button"
-				class="mtab"
-				class:is-on={view === 'ores'}
-				role="tab"
-				aria-selected={view === 'ores'}
-				onclick={() => (view = 'ores')}>{$t('mining.tab_ores')}</button
-			>
-			<button
-				type="button"
-				class="mtab"
-				class:is-on={view === 'locations'}
-				role="tab"
-				aria-selected={view === 'locations'}
-				onclick={() => (view = 'locations')}>{$t('mining.tab_locations')}</button
-			>
-			<button
-				type="button"
-				class="mtab"
-				class:is-on={(view as string) === 'lists'}
-				role="tab"
-				aria-selected={(view as string) === 'lists'}
-				onclick={() => (view = 'lists')}>{$t('mining.tab_lists')}</button
-			>
-		</div>
+		<!-- M9-R1: gemeinsame Reiter-Komponente (Segmented Control) statt eigener .mtab-Optik -->
+		<Tabs
+			items={[
+				{ id: 'ores', label: $t('mining.tab_ores') },
+				{ id: 'locations', label: $t('mining.tab_locations') },
+				{ id: 'lists', label: $t('mining.tab_lists') }
+			]}
+			active={view}
+			onSelect={(id) => (view = id as 'ores' | 'locations' | 'lists')}
+		/>
 		{#if view === 'lists'}
 			<!-- M9-C: Listen-Tab — Mining-Listen (gleiche Engine, kind='mining')
 			     + Beste-Orte-Optimierung (Set-Cover, Qualitäts-Bänder; M9-K P10:
@@ -1059,26 +1045,7 @@
 		background: color-mix(in srgb, var(--accent) 35%, transparent);
 		border-radius: 4px;
 	}
-	.mtabs {
-		display: flex;
-		gap: 6px;
-	}
-	.mtab {
-		flex: 1;
-		padding: 6px 10px;
-		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-		background: transparent;
-		color: var(--fgdim, #9aa3b2);
-		text-transform: uppercase;
-		font-size: 11px;
-		letter-spacing: 0.08em;
-		cursor: pointer;
-	}
-	.mtab.is-on {
-		background: color-mix(in srgb, var(--accent) 22%, transparent);
-		color: var(--fg, #e8ecf3);
-		border-color: var(--accent);
-	}
+	/* Tab-Zeile = gemeinsame Tabs.svelte (M9-R1); kein eigener .mtab-Stil mehr. */
 	.mfrow {
 		display: flex;
 		flex-direction: column;
