@@ -217,21 +217,6 @@
 	let reserveError = $state('');
 	// M9-N: Hinweis nach „Liste abschließen“.
 	let completeNote = $state('');
-	async function openReserve(m: AggMat) {
-		reserveFor = m;
-		reserveSel = {};
-		reserveEdit = false;
-		reserveResIds = {};
-		reserveError = '';
-		reserveRows = [];
-		try {
-			const all = await invoke<InvRow[]>('inventory_list');
-			const rows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
-			reserveRows = rows;
-		} catch (e) {
-			reserveError = trError(e);
-		}
-	}
 	/// Quellen-Zeilen lesen + Ist-Stand je Quelle vorausfüllen (für DIESE
 	/// Liste reservierte Menge). Von openManage UND nach dem ✕-Löschen
 	/// genutzt — das Panel bleibt offen und zeigt den frischen Stand.
