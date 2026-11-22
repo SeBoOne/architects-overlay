@@ -103,3 +103,12 @@ Qualitäts-Mix: Durchschnitt über reservierte Positionen (gewichtet nach Menge)
 - Modus-Taste für die Listen-Ansicht (F2? F3? — belegt-Prüfung nötig).
 - Menge-Einheiten: SCU/gems/items-Mischlisten (Einheiten-Regel beachten).
 - Inventar-Datenmodell: wie hängt es am bestehenden Hangar/Inventar-Modus?
+
+## Welle 3 (Reservierungs-Verwaltung, 2026-11-21 — Punkte 6/7/9/10/11)
+
+Punkte 1–5, 8 sind mit Welle 1+2 (0.5.102) abgedeckt. Entschiedene Defaults (User bestätigt, 2026-11-21):
+
+- **P7 „Alles reservieren":** pro Liste (ein Button über der Liste); Ø-Qualität wird pro Material mengengewichtet gegen die jeweilige Anforderung geprüft. Re-Click = komplette Neuberechnung: alte Reservierungen der Liste werden ersetzt, besseres/neues Material wird aufgenommen.
+- **P6 Cap:** Reservierungen werden beim nächsten Listen-Öffnen/Reservieren automatisch auf den Listenbedarf geklemmt (nach Mengen-Schrumpfung). Bearbeiten/Löschen je Qualitätsstufe aus der Liste heraus, gleiche Maske wie beim Reservieren (vorgefüllt).
+- **P11 Dropdown:** Chips-Zeile komplett ersetzt — eine Zeile mit Custom-Dropdown (DOM-Popover, KEIN natives `<select>`, Fokus-Duell) zeigt die aktive Liste, Klick öffnet alle. Beide Modi.
+
