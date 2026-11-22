@@ -5,19 +5,20 @@
 // `ore-locations`-Daten (M7-Backend): wiederholt den Ort wählen, der die
 // meisten noch offenen Materialien abdeckt.
 //
-// Qualitäts-Bänder (SCMDB qualityBands, M8-R2-Snap-Daten) als Filter:
-// „Ort liefert die geforderte Qualität?" — die Strata-API hat KEINE Spawn-
-// Qualität (MINING-MODE-PLAN „Quality-800-Falle"), also wird die
-// Concentration-Tier-Skala (1–6) der Ortszeile über die SCMDB-Bänder des
-// Materials auf eine erreichbare Qualität abgebildet:
+// Qualitätsregel (M9-O R2, t_a39041f8 — Sebos Domänen-Korrektur): die Strata-
+// Tier-Stufen (1–6) sind KONZENTRATION am Ort, NICHT Qualität. Erreichbare
+// Qualität richtet sich nach dem PRIMARY-Status des Materials am Ort:
 //
-//   maxQuality(tier) = bands[max(1, round(tier / 6 * bands.length))] - 1
+//   PRIMARY  (rank === 1 bzw. rankPct === 100 je Ort-Zeile, Live-Beleg
+//            fixtures-live/ore-locations.gold_ore.live.json) → 501–1000
+//            erreichbar → erfüllt jede min_quality ≤ 1000.
+//   SEKUNDÄR → bis zur 4. Band-Grenze des Materials (SCMDB qualityBands,
+//            bands[3]) — die unteren vier Band-Grenzen, kein 1000er.
 //
-// (proportional, monotone Abbildung: Tier 1 → niedrigstes Band, Tier 6
-// „Pure" → oberstes Band = 1000). Kein Band-Datenbestand für das Material
-// (leere Liste, M8-R2-Vertrag „kein Raten") → der Band-Filter greift NICHT,
-// nur die Tier-Schwelle. Material ohne ore_id (Nicht-Erz, `items`) ist ortlos
-// → bleibt offen.
+// Kein Band-Datenbestand für das Material (leere Liste, M8-R2-Vertrag „kein
+// Raten") → der Sekundär-Filter greift NICHT, nur die Konzentrations-Schwelle
+// (tierThreshold). Material ohne ore_id (Nicht-Erz, `items`) ist ortlos →
+// bleibt offen.
 
 /// Aggregierte Material-Zeile (aus `list_detail`, AggMat) + ore_id.
 export type PlaceMat = {
@@ -36,16 +37,32 @@ export type PlaceLocRow = {
 	group: string; // space | surface | cave | exploration
 	tier: number;
 	concentration: number;
+	/// M9-O R2: Wettbewerbs-Rang in der Gruppe (1 = best) + Anteil der Proben
+	/// (0–100) — PRIMARY-Bestimmung (Sebos Regel).
+	rank: number;
+	rankPct: number;
 };
 
 /// Ein gewählter Ort mit den dort abgedeckten Materialien.
+export type PlaceCovered = {
+	material: string;
+	unit: string;
+	quantity: number;
+	min_quality: number;
+	tier: number;
+	/// M9-O (t_a39041f8): max erreichbare Qualität — nur gesetzt, wenn der Ort
+	/// als Qualitäts-Fallback gewählt wurde (KEIN Ort erfüllt min_quality).
+	/// Die View zeigt dafür den Warn-Hinweis place_below_quality.
+	maxQuality?: number;
+};
+
 export type PlacePick = {
 	locationId: string;
 	location: string;
 	system: string | null;
 	group: string;
 	tier: number;
-	covered: { material: string; unit: string; quantity: number; min_quality: number; tier: number }[];
+	covered: PlaceCovered[];
 };
 
 export type PlacesPlan = {
@@ -54,27 +71,46 @@ export type PlacesPlan = {
 	uncovered: { material: string; unit: string; quantity: number; min_quality: number }[];
 };
 
-/// Maximale erreichbare Qualität eines Materials an einem Ort der
-/// Concentration-Stufe `tier` (1–6) — proportional über die Band-Grenzen.
-/// Ohne Bänder (leer) → null (Filter nicht anwendbar).
-export function maxQualityForTier(bands: number[], tier: number): number | null {
-	if (!bands.length) return null;
-	const t = Math.min(6, Math.max(1, Math.round(tier)));
-	const idx = Math.max(1, Math.round((t / 6) * bands.length));
-	return bands[idx - 1];
+/// M9-O R2: Ist das Material an diesem Ort PRIMARY (Hauptmaterial)?
+/// Live-Beleg (gold_ore.live.json): rank 1 ⟺ rankPct 100 je Gruppenzeile.
+export function isPrimary(row: Pick<PlaceLocRow, 'rank' | 'rankPct'>): boolean {
+	return row.rank === 1 || row.rankPct === 100;
 }
 
-/// Zählt ein Ort der Stufe `tier` für ein Material mit Mindest-Qualität?
-/// Band-Filter nur, wenn Bänder vorhanden („kein Raten", M8-R2-Präzedenz).
+/// M9-O R2: Max erreichbare Qualität am Ort — PRIMARY → 1000 (501–1000
+/// machbar), SEKUNDÄR → 4. Band-Grenze (bands[3]). Ohne Bänder → null
+/// (Filter nicht anwendbar, kein Raten).
+export function maxQualityForLoc(
+	row: Pick<PlaceLocRow, 'rank' | 'rankPct'>,
+	bands: number[]
+): number | null {
+	if (isPrimary(row)) return 1000;
+	return bands.length >= 4 ? bands[3] : null;
+}
+
+/// M9-O (t_a39041f8, Ursache A): Name für ore_id-Namens-Match normalisieren —
+/// lowercase, Suffix „ (Raw)"/„ (Ore)" weg, Whitespace getrimmt. „Glacosite"
+/// matcht so den Strata-Katalognamen „Glacosite (Raw)". NUR für EXAKTEN
+/// Gleichstand nach Normalisierung (kein fuzzy/includes — sonst falsche Erze).
+export function normalizeOreName(s: string): string {
+	return s.toLowerCase().replace(/\s*\((raw|ore)\)\s*/g, '').trim();
+}
+
+/// Zählt ein Ort für ein Material mit Mindest-Qualität? (M9-O R2, Sebos
+/// Regel): PRIMARY erfüllt jede min_quality (501–1000), SEKUNDÄR nur bis
+/// bands[3]; ohne Bänder gilt der Sekundär-Filter nicht (kein Raten).
+/// Die Konzentrations-Schwelle (tier) greift weiterhin vor dem Qualitätsfilter.
 export function locationQualifies(
-	tier: number,
+	row: Pick<PlaceLocRow, 'tier' | 'rank' | 'rankPct'>,
 	bands: number[],
 	minQuality: number,
 	tierThreshold: number
 ): boolean {
-	if (Math.round(tier) < tierThreshold) return false;
-	const maxQ = maxQualityForTier(bands, tier);
-	return maxQ === null || maxQ >= minQuality;
+	if (Math.round(row.tier) < tierThreshold) return false;
+	if (isPrimary(row)) return true;
+	if (!bands.length) return true;
+	const cap = bands.length >= 4 ? bands[3] : null;
+	return cap === null || minQuality <= cap;
 }
 
 /**
@@ -89,8 +125,8 @@ export function locationQualifies(
  * - 'concentration': je Material EIN Ort — der mit der höchsten
  *   erreichbaren Konzentrations-Stufe (tier) unter den qualifizierenden
  *   Orten (Tie: concentration, dann Name). Gleiche Orts-Treffer mehrerer
- *   Materialien werden zu einem Ort zusammengefasst. Qualitäts-Bänder
- *   filtern in BEIDEN Modi (immer Orte, die die Qualitätsansprüche erfüllen).
+ *   Materialien werden zu einem Ort zusammengefasst. Der Qualitätsfilter
+ *   (PRIMARY/SEKUNDÄR + Bänder) greift in BEIDEN Modi.
  */
 export type PlaceMode = 'fewest' | 'concentration';
 
@@ -131,6 +167,10 @@ export function planBestPlaces(
 	type Cand = {
 		mat: PlaceMat;
 		locs: Map<string, PlaceLocRow>;
+		/// M9-O: gesetzt → Material ging als Qualitäts-Fallback in den Plan
+		/// (kein Ort erfüllt min_quality); Wert = max erreichbare Qualität
+		/// am Fallback-Ort.
+		belowQuality?: number;
 	};
 	const materialKey = (m: { material: string; unit: string }) => `${m.material}:${m.unit}`;
 	const done = isDone ?? (() => false);
@@ -143,11 +183,31 @@ export function planBestPlaces(
 			continue;
 		}
 		const bands = bandsByMaterial[materialKey(m)] ?? bandsByMaterial[m.material] ?? [];
-		const qualified = (locRows[m.oreId] ?? []).filter((r) =>
-			locationQualifies(r.tier, bands, m.min_quality, tierThreshold)
+		const rows = locRows[m.oreId] ?? [];
+		const qualified = rows.filter((r) =>
+			locationQualifies(r, bands, m.min_quality, tierThreshold)
 		);
 		if (!qualified.length) {
-			noLoc.push(m);
+			// M9-O (t_a39041f8, Feedback P5): qualifiziert KEIN Ort die
+			// min_quality (Primär-/Sekundär-Filter oder Tier-Schwelle schneidet
+			// alle ab), aber der Erz hat Orte → bester verfügbarer Ort statt
+			// uncovered: max erreichbare Qualität (Sebos Regel) DESC, dann Tier
+			// DESC, dann Name. Der covered-Eintrag trägt maxQuality → View
+			// warnt deutlich.
+			if (!rows.length) {
+				noLoc.push(m);
+				continue;
+			}
+			const best = [...rows].sort((a, b) => {
+				const qa = maxQualityForLoc(a, bands) ?? -1;
+				const qb = maxQualityForLoc(b, bands) ?? -1;
+				return qb - qa || b.tier - a.tier || a.location.localeCompare(b.location);
+			})[0];
+			cands.push({
+				mat: m,
+				locs: new Map([[best.locationId, best]]),
+				belowQuality: maxQualityForLoc(best, bands) ?? undefined
+			});
 			continue;
 		}
 		cands.push({ mat: m, locs: new Map(qualified.map((r) => [r.locationId, r])) });
@@ -193,7 +253,8 @@ export function planBestPlaces(
 				unit: c.mat.unit,
 				quantity: c.mat.quantity,
 				min_quality: c.mat.min_quality,
-				tier: best.tier
+				tier: best.tier,
+				maxQuality: c.belowQuality
 			});
 		}
 		places.push(...[...byLoc.values()]);
@@ -247,7 +308,8 @@ export function planBestPlaces(
 					unit: c.mat.unit,
 					quantity: c.mat.quantity,
 					min_quality: c.mat.min_quality,
-					tier: r.tier
+					tier: r.tier,
+					maxQuality: c.belowQuality
 				});
 			}
 		}
