@@ -11,7 +11,7 @@
 	//
 	// Formular-Konvention (Sebo): Chips/Buttons statt natives <select>
 	// (Fokusduell-Bug im Spotlight-Webview). Esc übernimmt der Eltern-Modus.
-	import { t } from './i18n';
+	import { t, trError } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
 	// M9-D (t_36f3966c): Craft→Mining-Brücke — Aggregation → Mining-Listen-Einträge.
 	import { bridgeItems } from './list-bridge.ts';
@@ -176,28 +176,79 @@
 			invNoteRaised = res.requirement_raised;
 			invRaisedQ = res.requirement;
 		} catch (e) {
-			invError = String(e);
+			invError = trError(e);
 		}
 	}
 
 	// M9-F (t_bb97da62) — Aus Inventar reservieren: Quellen-Zeilen des
 	// Materials (alle Qualitäten/Standorte, freie Mengen), Auswahl per
 	// Chips (KEIN natives <select>), partielle Mengen erlaubt.
+	// M9-I (t_e7f0b3a6) — Bearbeiten aus der Liste: dieselbe Maske im
+	// Edit-Modus, vorgefüllt mit dem Ist-Stand (je Quelle Menge), Löschen
+	// je Quelle per ✕ (reservation_delete), Mengen-Änderung via
+	// reservation_update. Der harte Listen-Cap wird serverseitig erzwungen.
 	let reserveFor = $state<AggMat | null>(null);
 	let reserveRows = $state<InvRow[]>([]);
 	let reserveSel = $state<Record<string, string>>({}); // id → qty-Text
+	let reserveEdit = $state(false);
+	// M9-I: je Inventar-Zeile die Reservierungs-Ids DIESER Liste (edit).
+	let reserveResIds = $state<Record<string, string[]>>({});
 	let reserveBusy = $state(false);
 	let reserveError = $state('');
 	async function openReserve(m: AggMat) {
 		reserveFor = m;
 		reserveSel = {};
+		reserveEdit = false;
+		reserveResIds = {};
 		reserveError = '';
 		reserveRows = [];
 		try {
 			const all = await invoke<InvRow[]>('inventory_list');
 			reserveRows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
 		} catch (e) {
-			reserveError = String(e);
+			reserveError = trError(e);
+		}
+	}
+	/// M9-I: Bearbeiten — Maske mit dem Ist-Stand vorgefüllt (je Quelle die
+	/// Menge, die für DIESE Liste reserviert ist).
+	async function openEditReserve(m: AggMat) {
+		reserveFor = m;
+		reserveEdit = true;
+		reserveSel = {};
+		reserveResIds = {};
+		reserveError = '';
+		reserveRows = [];
+		try {
+			const all = await invoke<InvRow[]>('inventory_list');
+			reserveRows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
+			for (const r of reserveRows) {
+				const own = r.reservations.filter((x) => x.list_id === String(activeId));
+				if (own.length) {
+					reserveResIds[r.id] = own.map((x) => x.id);
+					reserveSel[r.id] = String(Math.round(own.reduce((s, x) => s + x.qty, 0) * 100) / 100);
+				}
+			}
+		} catch (e) {
+			reserveError = trError(e);
+		}
+	}
+	/// M9-I: Quelle aus der Liste löschen (alle Reservierungen der Quelle
+	/// für diese Liste) — die Maske bleibt offen und zeigt den Stand; das
+	/// Detail (Chip hinter der Maske) wird live nachgezogen (list_detail
+	/// klemmt serverseitig und liefert die frische Aggregation).
+	async function removeResRow(r: InvRow) {
+		const ids = reserveResIds[r.id] ?? [];
+		if (!ids.length) return;
+		reserveBusy = true;
+		reserveError = '';
+		try {
+			for (const id of ids) await invoke('reservation_delete', { id });
+			if (activeId !== null) detail = await invoke<ListDetail>('list_detail', { listId: activeId });
+			if (reserveFor) await openEditReserve(reserveFor);
+		} catch (e) {
+			reserveError = trError(e);
+		} finally {
+			reserveBusy = false;
 		}
 	}
 	const freeQty = (r: InvRow) =>
@@ -205,6 +256,52 @@
 	async function submitReserve() {
 		if (reserveFor === null || activeId === null || reserveBusy) return;
 		const m = reserveFor;
+		// M9-I: Edit-Modus — je Quelle: leere Eingabe/0 = löschen, Wert =
+		// reservation_update (nicht für DIESE Liste reservierte Quellen
+		// bleiben der additive Pick-Flow).
+		if (reserveEdit) {
+			reserveBusy = true;
+			reserveError = '';
+			try {
+				let total = 0;
+				for (const r of reserveRows) {
+					const raw = reserveSel[r.id];
+					const ids = reserveResIds[r.id] ?? [];
+					if (ids.length) {
+						const q = raw === undefined ? NaN : Number(String(raw).replace(',', '.'));
+						if (!(q > 0)) {
+							for (const id of ids) await invoke('reservation_delete', { id });
+						} else {
+							await invoke('reservation_update', { id: ids[0], qty: q });
+							for (const id of ids.slice(1)) await invoke('reservation_delete', { id });
+							total += q;
+						}
+					} else if (raw !== undefined) {
+						const q = Number(String(raw).replace(',', '.'));
+						if (q > 0) {
+							await invoke('reservation_add', {
+								'new': {
+									inventory_id: r.id,
+									list_id: String(activeId),
+									purpose: '',
+									qty: q,
+									note: m.material
+								}
+							});
+							total += q;
+						}
+					}
+				}
+				await openList(activeId);
+				reserveNote = $t('lists.reserved_note2', { q: total, name: m.material, list: detail?.name ?? '' });
+				reserveFor = null;
+			} catch (e) {
+				reserveError = trError(e);
+			} finally {
+				reserveBusy = false;
+			}
+			return;
+		}
 		const picks = Object.entries(reserveSel)
 			.map(([id, raw]) => ({ id, qty: Number(raw.replace(',', '.')) }))
 			.filter((p) => p.qty > 0);
@@ -232,7 +329,7 @@
 			reserveNote = $t('lists.reserved_note2', { q: total, name: m.material, list: detail?.name ?? '' });
 			reserveFor = null;
 		} catch (e) {
-			reserveError = String(e);
+			reserveError = trError(e);
 		} finally {
 			reserveBusy = false;
 		}
@@ -595,9 +692,20 @@
 							<button type="button" class="cl-mini" onclick={() => openReserve(m)} disabled={reserveBusy}>
 								{$t('lists.reserve_btn')}
 							</button>
+							{#if m.reserved_qty > 0}
+								<button type="button" class="cl-mini" onclick={() => openEditReserve(m)} disabled={reserveBusy}>
+									{$t('lists.edit_reserve_btn')}
+								</button>
+							{/if}
 							{#if reserveFor && reserveFor.material === m.material && reserveFor.unit === m.unit}
 								<div class="cl-inv-form">
-									<div class="cl-inv-title">{$t('lists.reserve_title')}</div>
+									<div class="cl-inv-title">
+										{#if reserveEdit}
+											{$t('lists.edit_reserve_title', { req: fmtQty(m.quantity), res: fmtQty(m.reserved_qty) })}
+										{:else}
+											{$t('lists.reserve_title')}
+										{/if}
+									</div>
 									{#if reserveError}<div class="cl-err">{reserveError}</div>{/if}
 									{#if !reserveRows.length}
 										<div class="cl-hint">{$t('inventory.no_positions_material')}</div>
@@ -605,6 +713,7 @@
 										<div class="cl-reserve-rows">
 											{#each reserveRows as r (r.id)}
 												{@const free = freeQty(r)}
+												{@const own = reserveEdit ? (reserveResIds[r.id]?.length ?? 0) : 0}
 												<div class="cl-res-row">
 													<button
 														type="button"
@@ -623,12 +732,21 @@
 															aria-label={$t('lists.reserve_src_ph')}
 															onkeydown={(e) => e.key === 'Enter' && void submitReserve()}
 														/>
+														{#if own}
+															<button
+																type="button"
+																class="cl-res-del"
+																onclick={() => void removeResRow(r)}
+																title={$t('common.delete')}
+																aria-label={$t('common.delete')}
+															>✕</button>
 														{/if}
+													{/if}
 												</div>
 											{/each}
 										</div>
 										<button type="button" class="cl-btn" onclick={() => void submitReserve()} disabled={reserveBusy}>
-											{$t('lists.inv_add')}
+											{#if reserveEdit}{$t('common.save')}{:else}{$t('lists.inv_add')}{/if}
 										</button>
 										<button type="button" class="cl-mini" onclick={() => (reserveFor = null)}>
 											{$t('common.cancel')}
@@ -1037,5 +1155,20 @@
 	.cl-res-qty {
 		width: 70px;
 		padding: 3px 8px;
+	}
+	/* M9-I: Quelle je Qualitätsstufe aus der Reservierung löschen. */
+	.cl-res-del {
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(255, 255, 255, 0.05);
+		border-radius: 6px;
+		color: inherit;
+		font: inherit;
+		font-size: 11px;
+		padding: 3px 8px;
+		cursor: pointer;
+	}
+	.cl-res-del:hover {
+		color: #ff7a7a;
+		border-color: rgba(255, 122, 122, 0.5);
 	}
 </style>

@@ -19,6 +19,10 @@
 //! schreibt hier.
 
 use super::inventory::{InventoryEntry, NewInventoryEntry};
+use super::reservations::{
+    clamp_list_material_reservations, clamp_list_reservations, list_material_requirement,
+    list_material_reserved,
+};
 use super::{Cache, CacheError, Result};
 use rusqlite::{Connection, OptionalExtension};
 
@@ -600,6 +604,10 @@ impl Cache {
     /// immer besser"). Eine niedrigere Qualität ändert NICHTS an der
     /// Anforderung (sie ist eine Mindest-Qualität).
     ///
+    /// M9-I (t_e7f0b3a6): Die angelegte Reservierung wird auf den freien
+    /// Restlistenbedarf geklemmt (Harter Cap) — übersteht sie keinen Rest,
+    /// bleibt die Position ohne Reservierungs-Verweis im Inventar.
+    ///
     /// Reservierung und Anforderungs-Anpassung laufen in einem Rutsch auf
     /// derselben Verbindung; die Inventar-Zeile selbst entsteht vorher (dort
     /// sitzt die Validierung) — schlägt der Reservierungs-Teil fehl, bleibt
@@ -635,19 +643,27 @@ impl Cache {
         let inv_id = self.inventory_add(entry)?;
         let (raised, requirement) = self.with(move |conn| {
             // M9-F: Reservierung über das neue Inventar-first-Primitiv —
-            // die volle Menge der neuen Position, Zweck = die Liste,
-            // Material in der note (wie bei der v16-Übernahme).
-            conn.execute(
-                "INSERT INTO reservations (inventory_id, list_id, purpose, qty, note, created_at) \
-                 VALUES (?1, ?2, '', ?3, ?4, ?5)",
-                rusqlite::params![
-                    inv_id as i64,
-                    list_id as i64,
-                    qty,
-                    mat,
-                    super::now_unix() as i64
-                ],
-            )?;
+            // Zweck = die Liste, Material in der note (wie bei der
+            // v16-Übernahme). M9-I (t_e7f0b3a6): HARTER CAP — die Reservierung
+            // wird auf den freien Restlistenbedarf geklemmt; bleibt keiner,
+            // entsteht eine ganz normale Inventar-Position ohne Verweis.
+            clamp_list_material_reservations(conn, list_id as i64, &mat)?;
+            let req = list_material_requirement(conn, list_id as i64, &mat)?;
+            let res_sum = list_material_reserved(conn, list_id as i64, &mat)?;
+            let res_qty = (qty.min((req - res_sum).max(0.0)) * 1e6).round() / 1e6;
+            if res_qty > 1e-9 {
+                conn.execute(
+                    "INSERT INTO reservations (inventory_id, list_id, purpose, qty, note, created_at) \
+                     VALUES (?1, ?2, '', ?3, ?4, ?5)",
+                    rusqlite::params![
+                        inv_id as i64,
+                        list_id as i64,
+                        res_qty,
+                        mat,
+                        super::now_unix() as i64
+                    ],
+                )?;
+            }
             // Bisherige Anforderung (MAX über die Snapshot-Zeilen).
             let old: i64 = conn
                 .query_row(
@@ -728,6 +744,11 @@ impl Cache {
 
     /// Volle Liste: Kopf + Einträge (mit Snapshots) + Material-Aggregation.
     pub fn list_detail(&self, id: u64) -> Result<ListDetail> {
+        // M9-I (t_e7f0b3a6), Welle-3 P6: Listen-Öffnen klemmt bestehende
+        // Reservierungen hart auf den Listenbedarf — Mengen-Schrumpfungen
+        // (copies/Entfernen) werden hier nachgezogen (User-Beschluss,
+        // docs/LISTEN-MODE-PLAN.md Welle 3).
+        self.with(|conn| clamp_list_reservations(conn, id as i64))?;
         let head: Option<(String, String, i64)> = self.with(|conn| {
             conn.query_row(
                 "SELECT kind, name, created_at FROM lists WHERE id = ?1",
@@ -1515,12 +1536,33 @@ mod tests {
             800
         );
 
-        // Alle drei Positionen tauchen reserviert im Inventar auf.
+        // M9-I: Harter Cap — Bedarf 300 (Menge, unabhängig von der Qualität):
+        // erste Position reserviert 250, zweite nur den Rest (50), dritte
+        // bleibt ohne Reservierung.
         let invs = c.inventory_list().unwrap();
         assert_eq!(invs.len(), 3);
-        assert!(invs.iter().all(|e| e.reservations.len() == 1
-            && e.reservations[0].list_id == Some(id)
-            && e.reservations[0].list_name == Some("Set".into())));
+        let by_q = |q: u32| invs.iter().find(|e| e.quality == q).unwrap();
+        let r700 = &by_q(700).reservations;
+        assert_eq!(r700.len(), 1);
+        assert_eq!(r700[0].list_id, Some(id));
+        assert_eq!(r700[0].list_name.as_deref(), Some("Set"));
+        assert_eq!(r700[0].qty, 250.0);
+        assert_eq!(by_q(600).reservations[0].qty, 50.0);
+        assert!(
+            by_q(900).reservations.is_empty(),
+            "Cap aufgebraucht — keine Reservierung"
+        );
+        // Aggregation zeigt die geklemmte Summe (exakt der Bedarf).
+        assert_eq!(
+            c.list_detail(id)
+                .unwrap()
+                .aggregated
+                .iter()
+                .find(|m| m.material == "Hadanite")
+                .unwrap()
+                .reserved_qty,
+            300.0
+        );
 
         // Validierung: leeres Material / fehlende Liste legt KEINE Position an.
         assert!(
