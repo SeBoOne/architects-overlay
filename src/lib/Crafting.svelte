@@ -1150,21 +1150,22 @@
 		margin-bottom: 10px;
 		flex: 0 0 auto;
 	}
+	/* M9-Politur: Reiter-Stil wie Mining .mtab (flacher Reiter, keine Button-Pill) */
 	.ctab {
-		background: rgba(255, 255, 255, 0.05);
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 999px;
-		color: inherit;
-		padding: 4px 14px;
-		font: inherit;
-		font-size: 12px;
+		flex: 1;
+		padding: 6px 10px;
+		border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+		background: transparent;
+		color: var(--fgdim, #9aa3b2);
+		text-transform: uppercase;
+		font-size: 11px;
+		letter-spacing: 0.08em;
 		cursor: pointer;
 	}
 	.ctab.is-on {
-		background: var(--accent, #4aa3ff);
-		border-color: transparent;
-		color: #0b0f14;
-		font-weight: 600;
+		background: color-mix(in srgb, var(--accent) 22%, transparent);
+		color: var(--fg, #e8ecf3);
+		border-color: var(--accent);
 	}
 	.cl-pick-wrap {
 		position: relative;
