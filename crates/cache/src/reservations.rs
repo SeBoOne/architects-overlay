@@ -486,10 +486,274 @@ impl Cache {
     }
 }
 
+/// M9-J (t_14cc5d4e) — Ergebnis-Zeile je Listen-Material von
+/// `list_reserve_all`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ReserveAllMat {
+    pub material: String,
+    pub unit: String,
+    /// Bedarf = Sollmenge − abgehakt (done).
+    pub required: f64,
+    /// Diesem Lauf neu reservierte Menge.
+    pub reserved: f64,
+    /// Mengengewichtete Ø-Qualität der neuen Mischung.
+    pub avg_quality: Option<u32>,
+    /// Bedarf vollständig abgedeckt.
+    pub fully_covered: bool,
+}
+
+/// Ergebnis von `list_reserve_all`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ReserveAllResult {
+    pub list_id: u64,
+    pub mats: Vec<ReserveAllMat>,
+    /// Anzahl neu angelegter Reservierungs-Zeilen.
+    pub created: u64,
+    /// Anzahl ersetzter (gelöschter) Alt-Reservierungen der Liste.
+    pub replaced: u64,
+}
+
+const EPS: f64 = 1e-9;
+
+/// Pure Greedy-Auswahl best→worst (M9-J): reserviert aus den Kandidaten
+/// `(freie Menge, Qualität)` bis `required` abgedeckt ist. Die mengen-
+/// gewichtete Ø-Qualität der Mischung darf `min_quality` NIE unterschreiten:
+/// Zeilen unterhalb der Anforderung werden nur in dem Umfang aufgenommen,
+/// der die Ø-Qualität hält (`Ø ≥ Anforderung`), sonst übersprungen. Summe
+/// der Picks ≤ required (Cap). Per Material unabhängig — ein Material
+/// blockiert kein anderes.
+///
+/// Rückgabe: Picks `(Zeilen-Index, Menge)` in best→worst-Reihenfolge
+/// (Index in die EINGABE-Reihenfolge, bei Gleichstand stabil).
+pub fn greedy_reserve_mix(
+    required: f64,
+    min_quality: u32,
+    rows: &[(f64, u32)],
+) -> Vec<(usize, f64)> {
+    let mut picks: Vec<(usize, f64)> = Vec::new();
+    if !(required.is_finite() && required > EPS) {
+        return picks;
+    }
+    // best → worst; bei Gleichstand stabil (Reihenfolge der Eingabe).
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by(|&a, &b| rows[b].1.cmp(&rows[a].1));
+    let mut acc_qty = 0.0f64;
+    let mut acc_wq = 0.0f64;
+    for &i in &order {
+        let (free, quality) = rows[i];
+        if acc_qty >= required - EPS {
+            break;
+        }
+        if !(free.is_finite() && free > EPS) {
+            continue;
+        }
+        let want = required - acc_qty;
+        let mut take = free.min(want);
+        if (quality as f64) < min_quality as f64 && acc_qty + take > EPS {
+            // Ø-Check: (acc_wq + take·q) / (acc_qty + take) ≥ min_quality.
+            // Maximal zulässige Zusatzmenge aus dieser (schlechteren) Quelle:
+            let denom = min_quality as f64 - quality as f64;
+            let x_max = (acc_wq - min_quality as f64 * acc_qty) / denom;
+            take = take.min(x_max.max(0.0));
+            if take <= EPS {
+                // Diese Quelle (und alle folgenden — nur schlechter) darf
+                // die Ø-Qualität nicht halten → abbrechen.
+                break;
+            }
+        }
+        acc_qty += take;
+        acc_wq += take * quality as f64;
+        picks.push((i, take));
+    }
+    picks
+}
+
+fn row_free(conn: &rusqlite::Connection, inventory_id: i64) -> rusqlite::Result<f64> {
+    conn.query_row(
+        "SELECT i.quantity - COALESCE((SELECT SUM(res.qty) FROM reservations res \
+         WHERE res.inventory_id = i.id), 0) FROM inventory i WHERE i.id = ?1",
+        [inventory_id],
+        |r| r.get::<_, f64>(0),
+    )
+}
+
+impl Cache {
+    /// M9-J (t_14cc5d4e): „Alles reservieren“ für eine Liste. Reserviert mit
+    /// einem Lauf für ALLE Materialien der Liste aus dem freien Inventar
+    /// (Greedy best→worst, Ø-Qualitätsregel je Material, Cap Summe ≤ Bedarf).
+    ///
+    /// Idempotenter Re-Click: komplette Neuberechnung — alle bestehenden
+    /// Reservierungen dieser Liste (`list_id`) werden gelöscht und neu
+    /// gesetzt; manuell nachgeänder Mengen werden überschrieben, zwischen-
+    /// zeitlich besseres/mehr Material wird aufgenommen. Materialien sind
+    /// unabhängig voneinander (ein Material blockiert kein anderes).
+    pub fn list_reserve_all(&self, list_id: u64) -> Result<ReserveAllResult> {
+        // Liste existiert?
+        let exists: Option<i64> = self.with(|conn| {
+            conn.query_row("SELECT 1 FROM lists WHERE id = ?1", [list_id as i64], |r| {
+                r.get(0)
+            })
+            .optional()
+        })?;
+        if exists.is_none() {
+            return Err(CacheError::Query(i18n_err::err_keyp(
+                "lists.err_missing",
+                serde_json::json!({ "id": list_id }),
+            )));
+        }
+
+        // Bedarf je (Material, Unit) + Anforderung (MAX) — dieselbe Aggrega-
+        // tion wie `list_detail`, inkl. Abzug des Abhak-Stands (done).
+        let mats: Vec<(String, String, f64, u32)> = self.with(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT mim.material, mim.unit, SUM(mim.quantity * li.copies), MAX(mim.quality) \
+                 FROM list_items li JOIN list_item_mats mim ON mim.item_row = li.id \
+                 WHERE li.list_id = ?1 \
+                 GROUP BY mim.material, mim.unit ORDER BY LOWER(mim.material) ASC",
+            )?;
+            let rows = stmt.query_map([list_id as i64], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, f64>(2)?,
+                    r.get::<_, i64>(3)? as u32,
+                ))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        })?;
+
+        // done-Stand lesen (Bedarf-Abzug). Die freien Kandidaten werden erst
+        // NACH dem Löschen der Alt-Reservierungen gelesen (unten in derselben
+        // Sperre) — sonst würden die eigenen Alt-Reservierungen den Bestand
+        // fälschlich blockieren.
+        let done_map: std::collections::HashMap<(String, String), f64> = self.with(|conn| {
+            let mut stmt =
+                conn.prepare("SELECT list_id, material, unit, done_qty FROM list_mat_done")?;
+            let mut rows = stmt.query([])?;
+            let mut map = std::collections::HashMap::new();
+            while let Some(r) = rows.next()? {
+                let lid: i64 = r.get(0)?;
+                if lid == list_id as i64 {
+                    map.insert(
+                        (r.get::<_, String>(1)?, r.get::<_, String>(2)?),
+                        r.get::<_, f64>(3)?,
+                    );
+                }
+            }
+            Ok(map)
+        })?;
+
+        // Alt-Reservierungen der Liste zuerst lesen (Zähler) und löschen,
+        // dann pro Material Greedy — alles in EINER Sperre (atomar).
+        let mut result = ReserveAllResult {
+            list_id,
+            mats: Vec::new(),
+            created: 0,
+            replaced: 0,
+        };
+        self.with(move |conn| -> rusqlite::Result<ReserveAllResult> {
+            result.replaced = conn.query_row(
+                "SELECT COUNT(*) FROM reservations WHERE list_id = ?1",
+                [list_id as i64],
+                |r| r.get::<_, i64>(0),
+            )? as u64;
+            conn.execute(
+                "DELETE FROM reservations WHERE list_id = ?1",
+                [list_id as i64],
+            )?;
+            // Freier Bestand NACH dem Löschen der Alt-Reservierungen (die
+            // Liste hat ihren Bestand damit wieder freigegeben); Reservierun-
+            // gen FREMDER Zwecke zählen weiter ab.
+            let mut inventory: Vec<(i64, String, f64, i64)> = Vec::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT i.id, i.name, i.quantity, i.quality, \
+                            COALESCE((SELECT SUM(res.qty) FROM reservations res \
+                                      WHERE res.inventory_id = i.id), 0) AS reserved \
+                     FROM inventory i WHERE i.quantity > 0 ORDER BY i.id ASC",
+                )?;
+                let rows = stmt.query_map([], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, f64>(2)?,
+                        r.get::<_, i64>(3)?,
+                        r.get::<_, f64>(4)?,
+                    ))
+                })?;
+                for r in rows {
+                    let (id, name, qty, quality, reserved) = r?;
+                    let free = (qty - reserved).max(0.0);
+                    if free > EPS {
+                        inventory.push((id, name.to_lowercase(), free, quality));
+                    }
+                }
+            }
+            for (material, unit, quantity, min_quality) in &mats {
+                let done = done_map
+                    .get(&(material.clone(), unit.clone()))
+                    .copied()
+                    .unwrap_or(0.0);
+                let required = (quantity - done).max(0.0);
+                // Kandidaten: Inventar-Positionen mit diesem Material-Namen
+                // (Match wie in list_detail/list_reservation_quality — groß/
+                // klein egal). Freie Menge JETZT — die gelöschten Alt-Reser-
+                // vierungen der Liste haben die Position ggf. wieder frei-
+                // gegeben; Reservierungen FREMDER Zwecke zählen weiter ab.
+                let mut cand_rows: Vec<(f64, u32)> = Vec::new();
+                let mut cand_ids: Vec<i64> = Vec::new();
+                for &(id, ref name, _, quality) in inventory.iter() {
+                    if name == &material.to_lowercase() {
+                        cand_ids.push(id);
+                        cand_rows.push((row_free(conn, id).unwrap_or(0.0), quality as u32));
+                    }
+                }
+                let picks = greedy_reserve_mix(required, *min_quality, &cand_rows);
+                for &(row, qty) in &picks {
+                    conn.execute(
+                        "INSERT INTO reservations \
+                         (inventory_id, list_id, purpose, qty, note, created_at) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        rusqlite::params![
+                            cand_ids[row],
+                            list_id as i64,
+                            "", // Zweck = die Liste
+                            qty,
+                            material.trim(),
+                            super::now_unix() as i64
+                        ],
+                    )?;
+                    result.created += 1;
+                }
+                let reserved: f64 = picks.iter().map(|&(_, q)| q).sum();
+                let wq: f64 = picks
+                    .iter()
+                    .map(|&(row, q)| q * cand_rows[row].1 as f64)
+                    .sum();
+                let avg = if reserved > EPS {
+                    Some((wq / reserved).round() as u32)
+                } else {
+                    None
+                };
+                result.mats.push(ReserveAllMat {
+                    material: material.clone(),
+                    unit: unit.clone(),
+                    required,
+                    reserved,
+                    avg_quality: avg,
+                    fully_covered: required > EPS && reserved >= required - EPS,
+                });
+            }
+            Ok(result)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::inventory::NewInventoryEntry;
+    use crate::lists::{NewListItem, NewListItemMat};
 
     fn inv(name: &str, quality: u32, qty: f64) -> NewInventoryEntry {
         NewInventoryEntry {
@@ -502,6 +766,218 @@ mod tests {
             quantity: qty,
             price: None,
         }
+    }
+
+    // ---------- M9-J (t_14cc5d4e): list_reserve_all / greedy_reserve_mix ----------
+
+    #[test]
+    fn greedy_best_to_worst_with_cap() {
+        // best→worst, Cap auf Bedarf
+        let picks = greedy_reserve_mix(10.0, 0, &[(4.0, 900), (10.0, 500), (10.0, 300)]);
+        assert_eq!(picks.len(), 2);
+        assert_eq!(picks[0], (0, 4.0));
+        assert_eq!(picks[1], (1, 6.0));
+        let total: f64 = picks.iter().map(|&(_, q)| q).sum();
+        assert!(total <= 10.0 + 1e-9);
+        // Bedarf 0 → nichts
+        assert!(greedy_reserve_mix(0.0, 500, &[(10.0, 900)]).is_empty());
+        // Partielle Aufnahme mitten in der Quelle
+        let picks = greedy_reserve_mix(5.0, 0, &[(2.5, 800), (9.0, 600)]);
+        assert_eq!(picks.len(), 2);
+        assert_eq!(picks[1], (1, 2.5));
+    }
+
+    #[test]
+    fn greedy_avg_quality_blocks_low_quality_material() {
+        // Nur schlechtere Qualität vorhanden → Material bleibt UNRESERVIERT
+        assert!(greedy_reserve_mix(10.0, 600, &[(10.0, 500)]).is_empty());
+        // Mischung, die Ø hält: 5×900 + 5×500 → Ø 700 ≥ 600 → voll
+        let picks = greedy_reserve_mix(10.0, 600, &[(5.0, 900), (10.0, 500)]);
+        let total: f64 = picks.iter().map(|&(_, q)| q).sum();
+        assert!((total - 10.0).abs() < 1e-9);
+        // Ø auf die zulässige Mischung BEGRENZT: 2×900 + x×500 mit
+        // (1800 + 500x)/(2+x) ≥ 600 → x ≤ 6 → nur 8 statt Bedarf 10
+        let picks = greedy_reserve_mix(10.0, 600, &[(2.0, 900), (20.0, 500)]);
+        let total: f64 = picks.iter().map(|&(_, q)| q).sum();
+        assert!((total - 8.0).abs() < 1e-9, "got {total}");
+        // Ø-Check exakt: gewichtet
+        let wsum: f64 = picks
+            .iter()
+            .map(|&(i, q)| q * if i == 0 { 900.0 } else { 500.0 })
+            .sum();
+        assert!((wsum / total - 600.0).abs() < 1e-9);
+        // Blockiert komplett: Best-Qualität == Anforderung, danach nichts
+        // mehr zulässig (x_max = 0) → abbrechen, nur die 3 reserviert.
+        let picks = greedy_reserve_mix(5.0, 700, &[(3.0, 700), (10.0, 600)]);
+        let total: f64 = picks.iter().map(|&(_, q)| q).sum();
+        assert!((total - 3.0).abs() < 1e-9, "got {total}");
+        // Best-Qualität UNTER der Anforderung → gar nichts
+        assert!(greedy_reserve_mix(5.0, 700, &[(3.0, 650), (10.0, 400)]).is_empty());
+    }
+
+    #[test]
+    fn list_reserve_all_greedy_avg_and_idempotent_reclick() {
+        let c = Cache::open_in_memory().unwrap();
+        let l = c.list_create("craft", "Rasierer-Set", None).unwrap();
+        c.list_add_item(
+            l,
+            NewListItem {
+                item_id: "bp1".into(),
+                item_name: "Wall".into(),
+                craft_time: 0,
+                copies: 1.0,
+                mats: vec![
+                    NewListItemMat {
+                        material: "Gold".into(),
+                        ore_id: None,
+                        unit: "SCU".into(),
+                        quantity: 10.0,
+                        quality: 600,
+                    },
+                    NewListItemMat {
+                        material: "Silver".into(),
+                        ore_id: None,
+                        unit: "SCU".into(),
+                        quantity: 5.0,
+                        quality: 400,
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        // Inventar: Gold in 3 Qualitäten, Silver nur zu schlecht.
+        let g900 = c.inventory_add(inv("Gold", 900, 4.0)).unwrap();
+        let g500 = c.inventory_add(inv("Gold", 500, 10.0)).unwrap();
+        let g300 = c.inventory_add(inv("Gold", 300, 10.0)).unwrap();
+        let s200 = c.inventory_add(inv("Silver", 200, 20.0)).unwrap();
+        let _ = (g900, g500, g300, s200);
+
+        let r = c.list_reserve_all(l).unwrap();
+        assert_eq!(r.mats.len(), 2);
+        // Gold: 4×Q900 + 6×Q500 → Ø 660 ≥ 600, voll abgedeckt.
+        let gold = r.mats.iter().find(|m| m.material == "Gold").unwrap();
+        assert_eq!(gold.reserved, 10.0);
+        assert_eq!(gold.avg_quality, Some(660));
+        assert!(gold.fully_covered);
+        // Silver: nur Q200 < Anforderung 400 → unreserviert.
+        let silver = r.mats.iter().find(|m| m.material == "Silver").unwrap();
+        assert_eq!(silver.reserved, 0.0);
+        assert_eq!(silver.avg_quality, None);
+        assert!(!silver.fully_covered);
+        assert_eq!(r.created, 2);
+        // Zeilen: Gold900 = 4, Gold500 = 6.
+        let res = c.reservations_for_list(l).unwrap();
+        assert_eq!(res.len(), 2);
+        assert!(res.iter().all(|x| x.list_id == Some(l)));
+
+        // Idempotenter Re-Click: gleiche Mischung, Alt-Reservierungen ersetzt.
+        let r2 = c.list_reserve_all(l).unwrap();
+        assert_eq!(r2.created, 2);
+        assert_eq!(r2.replaced, 2);
+        let res2 = c.reservations_for_list(l).unwrap();
+        assert_eq!(res2.len(), 2);
+        let (sum, avg) = c.list_reservation_quality(l, "Gold").unwrap();
+        assert_eq!(sum, 10.0);
+        assert_eq!(avg, Some(660));
+
+        // Inventar-Zuwachs (besseres Material) → Re-Click nimmt es auf.
+        let g1000 = c.inventory_add(inv("Gold", 1000, 10.0)).unwrap();
+        let _ = g1000;
+        let r3 = c.list_reserve_all(l).unwrap();
+        let gold3 = r3.mats.iter().find(|m| m.material == "Gold").unwrap();
+        assert_eq!(gold3.reserved, 10.0);
+        assert_eq!(gold3.avg_quality, Some(1000));
+        assert_eq!(r3.replaced, 2);
+
+        // Manuell geänderte Mengen werden von der Neuberechnung ÜBERSCHRIEBEN.
+        // (M9-I-Cap: erst die Listen-Reservierungen freigeben, sonst lehnt
+        // reservation_add korrekt ab — die Liste ist schon 10/10 reserviert.)
+        for old in c.reservations_for_list(l).unwrap() {
+            c.reservation_delete(old.id).unwrap();
+        }
+        let manual = c
+            .reservation_add(NewReservation {
+                inventory_id: c
+                    .inventory_list()
+                    .unwrap()
+                    .iter()
+                    .find(|e| e.name == "Gold" && e.quality == 300)
+                    .unwrap()
+                    .id,
+                list_id: Some(l),
+                purpose: String::new(),
+                qty: 9.0,
+                note: "Gold".into(),
+            })
+            .unwrap();
+        let _ = manual;
+        let r4 = c.list_reserve_all(l).unwrap();
+        let gold4 = r4.mats.iter().find(|m| m.material == "Gold").unwrap();
+        assert_eq!(gold4.reserved, 10.0);
+        assert_eq!(gold4.avg_quality, Some(1000));
+        // Q300-Position wieder frei (manuelle Reservierung weg).
+        let free300 = c
+            .inventory_free_qty(
+                c.inventory_list()
+                    .unwrap()
+                    .iter()
+                    .find(|e| e.name == "Gold" && e.quality == 300)
+                    .unwrap()
+                    .id,
+            )
+            .unwrap();
+        assert_eq!(free300, 10.0);
+
+        // Cap: Abhaken reduziert den Bedarf; Summe ≤ Listenbedarf.
+        c.list_set_done(l, "Gold", "SCU", Some(4.0)).unwrap();
+        let r5 = c.list_reserve_all(l).unwrap();
+        let gold5 = r5.mats.iter().find(|m| m.material == "Gold").unwrap();
+        assert_eq!(gold5.required, 6.0);
+        assert_eq!(gold5.reserved, 6.0);
+        assert_eq!(gold5.avg_quality, Some(1000));
+        // Liste existiert nicht → Err.
+        assert!(c.list_reserve_all(999_999).is_err());
+    }
+
+    #[test]
+    fn list_reserve_all_respects_foreign_purpose_reservations() {
+        let c = Cache::open_in_memory().unwrap();
+        let l = c.list_create("craft", "L1", None).unwrap();
+        c.list_add_item(
+            l,
+            NewListItem {
+                item_id: "bp1".into(),
+                item_name: "Wall".into(),
+                craft_time: 0,
+                copies: 1.0,
+                mats: vec![NewListItemMat {
+                    material: "Gold".into(),
+                    ore_id: None,
+                    unit: "SCU".into(),
+                    quantity: 10.0,
+                    quality: 0,
+                }],
+            },
+        )
+        .unwrap();
+        let g = c.inventory_add(inv("Gold", 800, 10.0)).unwrap();
+        // Fremder Zweck blockiert 7 → der Liste bleiben nur 3.
+        c.reservation_add(NewReservation {
+            inventory_id: g,
+            list_id: None,
+            purpose: "Verkauf".into(),
+            qty: 7.0,
+            note: String::new(),
+        })
+        .unwrap();
+        let r = c.list_reserve_all(l).unwrap();
+        assert_eq!(r.mats[0].required, 10.0);
+        assert_eq!(r.mats[0].reserved, 3.0);
+        assert!(!r.mats[0].fully_covered);
+        // Re-Click: gleiche Mischung (kein Selbst-Überbuchen).
+        let r2 = c.list_reserve_all(l).unwrap();
+        assert_eq!(r2.mats[0].reserved, 3.0);
+        assert_eq!(r2.replaced, 1);
     }
 
     #[test]

@@ -156,6 +156,7 @@ pub fn run() {
             lists::reservation_add,
             lists::reservation_delete,
             lists::reservation_update,
+            lists::lists_reserve_all,
             routes::get_routes,
             routes::get_route_locations,
             routes::vehicles_scu,
