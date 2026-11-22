@@ -55,6 +55,16 @@ pub fn list_delete(state: State<'_, TradeState>, list_id: u64) -> Result<(), Str
         .map_err(|e| err_wrap("lists.err_delete", e.to_string()))
 }
 
+/// M9-N: Liste abschließen — reservierte Mengen werden aus dem Inventar
+/// entnommen, die Listen-Reservierungen gelöst und done auf Soll gesetzt.
+#[tauri::command]
+pub fn list_complete(state: State<'_, TradeState>, list_id: u64) -> Result<(), String> {
+    state
+        .cache
+        .list_complete(list_id)
+        .map_err(|e| err_wrap("lists.err_complete", e.to_string()))
+}
+
 /// Blueprint-Eintrag (mit Material-Snapshot inkl. Regler-Qualitäten) anhängen.
 #[tauri::command]
 pub fn list_add_item(
