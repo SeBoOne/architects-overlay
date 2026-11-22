@@ -1391,7 +1391,11 @@
 		color: var(--fg, #e8ecf3);
 	}
 	.ltile-sig {
-		font: 600 1.6em/1 var(--font-mono, monospace); /* skaliert mit */
+		/* M9-R6b: Signatur skaliert AUF DER KARTEN-BASIS (1.6em), NICHT auf
+		   der Kachel-Fontgröße — der Container trägt 3.4em (Kürzel), 1.6em
+		   davon wäre 5.4em der Basis = 54px Signatur → sprengte die Kachel.
+		   1.6 / 3.4 ≈ 0.47em (relativ zum Container) = 1.6em der Basis. */
+		font: 600 0.47em/1 var(--font-mono, monospace);
 		color: var(--fgdim, #9aa3b2);
 	}
 	/* Legende */
