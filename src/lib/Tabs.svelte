@@ -2,9 +2,12 @@
 	// Globale Reiter-Komponente (M9-R1, einheitliche Reiter-Optik):
 	// EINE Quelle für ALLE Tab-Zeilen im Overlay (Mining, Crafting, Flow,
 	// Connector, Market) — Segmented-Control-Stil: zusammenhängender Block,
-	// aktiver Reiter = gefüllte Akzent-Fläche. Kein Button-Look mehr.
-	// M9-R2: Formensprache „Mini-Bevel" — Container mit --bevel-lg-Schräge
-	// (Echo der Shellbox), Reiter pur eckig mit Button-Bevel (global).
+	// aktiver Reiter = gefüllte Akzentfläche. Kein Button-Look mehr.
+	// M9-R3: Container-Bevel per DOPPEL-CLIP — die Schräge der Shellbox
+	// (oben-links + unten-rechts) wird auf dem Container gespiegelt, der
+	// Rahmen bleibt dabei INTAKT (äußere Fläche = Rahmenfarbe, innere
+	// Fläche = Füllung; die Diagonale zeichnet sich als parallele Kante).
+	// Die Reiter selbst sind pur eckig (M9-R3: Rahmen bleiben heil).
 	type TabItem = { id: string; label: string };
 	let {
 		items,
@@ -20,31 +23,45 @@
 </script>
 
 <div class="segtabs" role="tablist" aria-label={ariaLabel}>
-	{#each items as it (it.id)}
-		<button
-			type="button"
-			class="segtab"
-			class:is-on={active === it.id}
-			role="tab"
-			aria-selected={active === it.id}
-			onclick={() => onSelect(it.id)}>{it.label}</button
-		>
-	{/each}
+	<div class="segtabs-in">
+		{#each items as it (it.id)}
+			<button
+				type="button"
+				class="segtab"
+				class:is-on={active === it.id}
+				role="tab"
+				aria-selected={active === it.id}
+				onclick={() => onSelect(it.id)}>{it.label}</button
+			>
+		{/each}
+	</div>
 </div>
 
 <style>
 	/* Segmented Control: zusammenhängender Block, aktiver Reiter gefüllt.
 	   Farben NUR aus Shell-Variablen (kein hartes Grau/Akzent). */
 	.segtabs {
-		display: flex;
-		gap: 0;
+		display: block;
 		flex: 0 0 auto;
-		background: color-mix(in srgb, var(--fg, #e8ecf3) 7%, transparent);
-		border: 1px solid color-mix(in srgb, var(--fg, #e8ecf3) 12%, transparent);
-		padding: 2px;
 		width: fit-content;
 		max-width: 100%;
-		/* M9-R2: Container-Bevel — dieselbe Schrägenrichtung wie die Shellbox */
+		/* Äußere Fläche = Rahmenfarbe (Doppel-Clip, M9-R3) */
+		background: color-mix(in srgb, var(--fg, #e8ecf3) 14%, transparent);
+		padding: 1px;
+		clip-path: polygon(
+			var(--bevel-lg, 5px) 0,
+			100% 0,
+			100% calc(100% - var(--bevel-lg, 5px)),
+			calc(100% - var(--bevel-lg, 5px)) 100%,
+			0 100%,
+			0 var(--bevel-lg, 5px)
+		);
+	}
+	.segtabs-in {
+		display: flex;
+		gap: 0;
+		background: color-mix(in srgb, var(--fg, #e8ecf3) 7%, transparent);
+		padding: 2px;
 		clip-path: polygon(
 			var(--bevel-lg, 5px) 0,
 			100% 0,

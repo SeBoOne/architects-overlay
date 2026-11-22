@@ -1237,6 +1237,8 @@
 		flex-direction: column;
 		min-height: 0;
 		flex: 1;
+		/* M9-R3: gleicher Außenabstand wie .mining — Reiter kleben nicht mehr am Rand */
+		padding: 8px 4px 0 2px;
 		color: var(--fg, #d7dde5);
 	}
 	.ccols {

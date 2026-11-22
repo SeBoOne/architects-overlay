@@ -202,20 +202,12 @@ html[data-window="app-window"] .shell {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* M9-R2 (Sebo): Mini-Bevel — GLOBALE Formensprache für alle interaktiven
-   Elemente. Dieselbe Schrägenrichtung wie die Shellbox (16px oben-links +
-   unten-rechts), in Miniatur (--bevel 3px). Ecken pur eckig (--radius: 0,
-   M9-R2 Sweep); Daten-Badges und Zeilen bleiben exakt eckig ohne Bevel. */
-button {
-  clip-path: polygon(
-    var(--bevel) 0,
-    100% 0,
-    100% calc(100% - var(--bevel)),
-    calc(100% - var(--bevel)) 100%,
-    0 100%,
-    0 var(--bevel)
-  );
-}
+/* M9-R3 (Sebo-Feedback): Bevel NUR auf Container-Ebene — der globale
+   Button-Bevel (M9-R2) schnitt die Border-Ecken diagonal ab und las
+   kleine Chips/Buttons „ohne Rand" aussehen. Buttons sind jetzt pur
+   eckig (Rahmen intakt, wie Daten-Badges/Zeilen); die Schrägen-Sprache
+   der Shellbox lebt auf Container-Ebene weiter (Tabs.svelte Doppel-Clip,
+   Pins, Shellbox). */
 
 /* --------------------------- Palette-Rahmen ------------------------------ */
 /* K2 (t_5fe8eb4c): width FIXED and identical for BOTH windows — content never
