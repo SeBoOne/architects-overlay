@@ -7,7 +7,9 @@ Gates:
   2. Liste anlegen (kind=mining) → Chip erscheint (Listen-Engine, M9-B).
   3. Material über Typeahead hinzufügen (Menge/Einheit/Qualität) →
      list_add_item mit copies=Menge; Eintragszeile + Aggregation.
-  4. Abhaken ganz/teilweise/Reset (gleiche Engine wie Crafting).
+  4. M9-P Button-Consolidierung (t_fb405e8d): EIN Button pro Material-Zeile
+     („Add to inventory“) öffnet die Inventar-Maske (Qty = offener Rest
+     voreingetragen); Done/Partial/Reset entfallen, kein list_set_done.
   5. Beste Orte: Compute → scmdb_quality_snaps (SCMDB-Bänder) +
      strata_ore_locations (Stubs) → Greedy-Set-Cover rendert wenige Orte
      mit abgedeckten Materialien + uncovered-Rest; Qualitäts-Band-Filter
@@ -97,7 +99,15 @@ WRAP = r"""
       const k = d.material + ':' + d.unit;
       if (map.has(k)) map.get(k).done_qty = d.done_qty;
     }
-    return [...map.values()].sort((a, b) => a.material.localeCompare(b.material));
+    // M9-M/M9-P-Backend-Parität: progress/reached + reserved (Stub hat kein
+    // Reservierungs-Set — standalone Mining-Listen reservieren nicht).
+    return [...map.values()].map((e) => ({
+      ...e,
+      reserved_qty: 0, reserved_avg_quality: null,
+      progress: e.quantity > 0
+        ? Math.min(100, Math.round((e.done_qty / e.quantity) * 10000) / 100) : 0,
+      reached: false
+    })).sort((a, b) => a.material.localeCompare(b.material));
   }
   function detailOf(listId) {
     const l = DB.lists.find((x) => x.id === listId);
@@ -186,7 +196,9 @@ WRAP = r"""
     return true;
   };
   window.clickNewList = () => { const b = [...document.querySelectorAll('.mining .ml-btn')].find((x) => !x.disabled); b?.click(); return !!b; };
-  window.chips = () => [...document.querySelectorAll('.mining .ml-chip')].map((c) => c.textContent.trim());
+  // M9-K (P11): Chips sind ein ListPicker-Dropdown — die Liste erscheint im
+  // lp-Button (Label) bzw. als lp-row im Popover.
+  window.chips = () => [...document.querySelectorAll('.mining .lp-label')].map((c) => c.textContent.trim());
   window.setAdd = (mat, qty, quality) => {
     const inputs = [...document.querySelectorAll('.mining .ml-add .ml-input')];
     if (inputs.length < 3) return false;
@@ -211,21 +223,30 @@ WRAP = r"""
   };
   window.itemRows = () => [...document.querySelectorAll('.mining .ml-item')].map((r) => r.textContent.trim());
   window.aggRows = () => [...document.querySelectorAll('.mining .ml-agg-row')].map((r) => r.textContent.trim());
-  window.doneAllAt = (idx) => {
+  // M9-P (t_fb405e8d): EIN Button pro aggregierter Zeile (Add to inventory).
+  window.actionBtnCount = () => document.querySelectorAll('.mining .ml-agg-actions > .ml-mini').length;
+  window.openInvAt = (idx) => {
     const rows = document.querySelectorAll('.mining .ml-agg-row');
-    const b = rows[idx]?.querySelector('.ml-agg-actions .ml-mini');
-    if (!b) return false;
-    b.click();
+    const b = rows[idx]?.querySelector('.ml-agg-actions > .ml-mini');
+    if (!b) return false; b.click(); return true;
+  };
+  window.invFormVisible = () => !!q('.mining .ml-inv-form');
+  window.invQtyValue = () => {
+    const ins = [...document.querySelectorAll('.mining .ml-inv-form input')];
+    return ins.length >= 3 ? ins[2].value : null;
+  };
+  window.invSet = (loc, q, qty) => {
+    const ins = [...document.querySelectorAll('.mining .ml-inv-form input')];
+    if (ins.length < 3) return false;
+    const [l, qq, n] = ins;
+    l.value = loc; l.dispatchEvent(new Event('input', { bubbles: true }));
+    qq.value = q; qq.dispatchEvent(new Event('input', { bubbles: true }));
+    if (qty != null) { n.value = qty; n.dispatchEvent(new Event('input', { bubbles: true })); }
     return true;
   };
-  window.setPartialAt = (idx, v) => {
-    const rows = document.querySelectorAll('.mining .ml-agg-row');
-    const i = rows[idx]?.querySelector('.ml-partial');
-    if (!i) return false;
-    i.value = v;
-    i.dispatchEvent(new Event('input', { bubbles: true }));
-    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    return true;
+  window.invSubmit = () => {
+    const b = q('.mining .ml-inv-form .ml-btn');
+    if (!b) return false; b.click(); return true;
   };
   window.computePlaces = () => {
     const b = [...document.querySelectorAll('.mining .ml-places-head .ml-btn')].find((x) => !x.disabled);
@@ -238,7 +259,11 @@ WRAP = r"""
     mats: [...p.querySelectorAll('.ml-place-mat')].map((m) => m.textContent.trim())
   }));
   window.uncovered = () => [...document.querySelectorAll('.mining .ml-uncovered .ml-place-mat')].map((m) => m.textContent.trim());
-  window.tierChipsOn = () => [...document.querySelectorAll('.mining .ml-tier .ml-mini')].findIndex((b) => b.classList.contains('is-on'));
+  // M9-K (P10): Optimierungs-Modi statt Tier-Chips.
+  window.fewestModeOn = () => {
+    const b = [...document.querySelectorAll('.mining .ml-modes .ml-mini')].find((x) => x.classList.contains('is-on'));
+    return !!b && /fewest|wenigste/i.test(b.textContent);
+  };
   window.callsOf = (cmd) => window.__CALLS.filter((c) => c.cmd === cmd);
 })();
 """
@@ -390,27 +415,34 @@ async def main():
         await wait_for("itemRows().length === 2", 8)
         await shot("m9c-entries.png")
 
-        # ---- Gate 4: Abhaken ganz/teilweise/Reset ----
-        await js("setPartialAt(0, '150')")
-        await asyncio.sleep(0.4)
+        # ---- Gate 4: M9-P Button-Consolidierung (t_fb405e8d) ----
+        # EIN Button pro Material-Zeile („Add to inventory") — Done/Partial/
+        # Reset entfallen, der Status ergibt sich aus done+reserved (M9-M).
+        # Formular öffnen: Qty = offener Rest voreingetragen (P9: kein
+        # Qty-Feld mehr in der Zeile), bestätigen → inventory_add
+        # (standalone Liste, KEINE Reservierung, KEIN list_set_done).
+        check("4a Genau EIN Action-Button pro Zeile", await js("actionBtnCount()") == 2, str(await js("actionBtnCount()")))
+        check("4b Add to inventory öffnet das Formular", await js("openInvAt(0)") is True)
+        await wait_for("invFormVisible()", 5)
+        prefill = await js("invQtyValue()")
+        check("4c Qty voreingetragen = offener Rest (250)", prefill == "250", str(prefill))
+        await js("invSet('Depot', '500', '150')")
+        await asyncio.sleep(0.2)
+        await js("invSubmit()")
+        await asyncio.sleep(0.5)
         agg = await js("aggRows()")
-        check("4a Teilweise 150/250", agg and "150/250" in agg[0], str(agg))
-        await js("doneAllAt(0)")
-        await asyncio.sleep(0.4)
-        agg = await js("aggRows()")
-        check("4b Ganz 250/250", agg and "250/250" in agg[0], str(agg))
-        # Reset (gesamte Reihe auf 0) — Hadanite bleibt damit im Places-Plan.
-        await js("setPartialAt(0, '0')")
-        await asyncio.sleep(0.4)
-        agg = await js("aggRows()")
-        check("4c Reset → 0/250", agg and "0/250" in agg[0], str(agg))
+        check("4d Teil-Add: Zeile bleibt 0/250 (kein list_set_done)",
+              agg and "0/250" in agg[0], str(agg))
+        add_calls = await js("callsOf('inventory_add')")
         done_calls = await js("callsOf('list_set_done')")
-        check("4d list_set_done über die IPC-Grenze", len(done_calls) >= 3, str(len(done_calls)))
-        await shot("m9c-done.png")
+        check("4e inventory_add gerufen, list_set_done entfallen",
+              add_calls != [] and done_calls == [], f"add={add_calls} done={done_calls}")
+        await shot("m9c-manage.png")
 
         # ---- Gate 5: Beste Orte (Set-Cover + Band-Filter) ----
-        check("5a Tier-Chips vorhanden, Default = Settings-Tier 4", await js("tierChipsOn()") == 3,
-              str(await js("tierChipsOn()")))
+        # M9-K (P10): Optimierungs-Modi statt Tier-Chips — 'fewest' aktiv.
+        check("5a Modus-Buttons vorhanden, 'fewest' aktiv", await js("fewestModeOn()") is True,
+              str(await js("fewestModeOn()")))
         check("5b Compute-Button", await js("computePlaces()") is True)
         await wait_for("placeRows().length > 0", 10)
         places = await js("placeRows()")

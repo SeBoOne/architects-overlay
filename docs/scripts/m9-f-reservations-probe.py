@@ -9,7 +9,8 @@ Gates:
      entfernt die Reservierung (reservation_delete).
   3. Crafting-Listen: Aggregierte Zeile zeigt „reserviert X · Ø Q“
      (mengengewichtet) aus list_detail.reserved_qty/reserved_avg_quality.
-  4. Aus Inventar reservieren: „Aus Inventar reservieren“ öffnet den
+  4. Aus Inventar reservieren: „Verwalten" (M9-P: EIN Button pro Zeile)
+     öffnet das kombinierte Panel mit dem Quellen-Picker
      Quellen-Picker (alle Qualitäten/Standorte, freie Mengen), Auswahl
      reserviert aus freiem Bestand (reservation_add mit list_id).
   5. „Inventar öffnen“-Button in der Crafting-Liste → Inventar-Modus mit
@@ -237,7 +238,8 @@ WRAP = r"""
   window.aggTexts = () => qa('.clists .cl-agg-row').map((e) => e.textContent.replace(/\s+/g, ' ').trim());
   window.resvChips = () => qa('.clists .cl-resv').map((e) => e.textContent.trim());
   window.clickReserveBtn = () => {
-    const b = [...qa('.clists .cl-agg-actions .cl-mini')].find((x) => x.textContent.includes('Inventar reservieren') || x.textContent.includes('Reserve from inventory') || x.textContent.includes('reservieren'));
+    // M9-P (t_fb405e8d): EIN Button pro Zeile — das kombinierte Panel.
+    const b = [...qa('.clists .cl-agg-actions .cl-mini')].find((x) => x.textContent.includes('Manage') || x.textContent.includes('Verwalten'));
     b?.click();
     return !!b;
   };
@@ -255,7 +257,9 @@ WRAP = r"""
     return true;
   };
   window.resPickSubmit = () => {
-    const b = [...qa('.clists .cl-inv-form .cl-btn')].find((x) => x.textContent.includes('Reserve'));
+    // M9-P: Panel hat mehrere cl-btn (Alles reservieren, Reserve, Speichern) —
+    // exakt den Speichern-Button treffen.
+    const b = [...qa('.clists .cl-inv-form .cl-btn')].find((x) => x.textContent.trim() === 'Save' || x.textContent.trim() === 'Speichern');
     b?.click();
     return !!b;
   };

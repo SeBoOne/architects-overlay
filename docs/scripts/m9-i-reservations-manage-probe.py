@@ -3,8 +3,8 @@
 
 Gates:
   1. Material-Zeile mit Reservierungen zeigt „reserviert X · Ø Q" CHIP +
-     „Edit reservations"-Aktion (nur dort, wo reserved_qty > 0).
-  2. Edit öffnet die bekannte Reservierungs-Maske VORGEFÜLLT (je Quelle
+     M9-P: EINE „Verwalten"-Aktion pro Zeile (konsolidiertes Panel).
+  2. Verwalten öffnet das kombinierte Panel VORGEFÜLLT (je Quelle
      Menge + Q/Ort), Titel zeigt Bedarf/reserviert.
   3. Mengen-Änderung je Quelle → reservation_update (id + qty); Chip folgt.
   4. Löschen je Quelle (✕) → reservation_delete; Quellen-Zeile fällt in der
@@ -250,13 +250,9 @@ WRAP = r"""
   window.clickNewList = () => { const b = [...qa('.clists .cl-btn')][0]; b?.click(); return !!b; };
   window.aggTexts = () => qa('.clists .cl-agg-row').map((e) => e.textContent.replace(/\s+/g, ' ').trim());
   window.resvChips = () => qa('.clists .cl-resv').map((e) => e.textContent.trim());
-  window.clickEditReserveBtn = () => {
-    const b = [...qa('.clists .cl-agg-actions .cl-mini')].find((x) => x.textContent.includes('Edit reservations') || x.textContent.includes('Reservierung bearbeiten'));
-    b?.click();
-    return !!b;
-  };
-  window.clickReserveBtn = () => {
-    const b = [...qa('.clists .cl-agg-actions .cl-mini')].find((x) => x.textContent.includes('Reserve from inventory') || x.textContent.includes('Aus Inventar reservieren'));
+  window.clickManageBtn = () => {
+    // M9-P: EIN Button pro Zeile — das kombinierte Panel (Verwalten).
+    const b = [...qa('.clists .cl-agg-actions .cl-mini')].find((x) => x.textContent.includes('Manage') || x.textContent.includes('Verwalten'));
     b?.click();
     return !!b;
   };
@@ -283,11 +279,29 @@ WRAP = r"""
   };
   window.resMaskError = () => q('.clists .cl-inv-form .cl-err')?.textContent.trim() ?? null;
   window.resSubmit = () => {
-    const b = [...qa('.clists .cl-inv-form .cl-btn')].find((x) => x.textContent.includes('Reserve') || x.textContent.includes('Save') || x.textContent.includes('Speichern'));
+    // M9-P: Panel hat mehrere cl-btn (Alles reservieren, Reserve, Speichern) —
+    // exakt den Speichern-Button treffen.
+    const b = [...qa('.clists .cl-inv-form .cl-btn')].find((x) => x.textContent.trim() === 'Save' || x.textContent.trim() === 'Speichern');
     b?.click();
     return !!b;
   };
   window.resCancel = () => { const b = [...qa('.clists .cl-inv-form .cl-mini')].find((x) => x.textContent.includes('Cancel') || x.textContent.includes('Abbrechen')); b?.click(); return !!b; };
+  window.actionBtnCount = () => qa('.clists .cl-agg-actions .cl-mini').length;
+  // M9-K (P11): Chips → ListPicker-Dropdown. Eine Zeile picken = Liste öffnen
+  // (ersetzt die alten .cl-chip-Klicks).
+  window.pickList = (idx) => {
+    q('.clists .lp-btn')?.click();
+    // Listenwechsel rendert asynchron — 2× RAF, bevor die Zeile geklickt
+    // wird (Gate-6a-Fix: sonst geht der Klick auf die alte Zeile ins Leere
+    // und list_set_copies/list_detail laufen gegen den alten Stand).
+    return new Promise((res) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const rows = qa('.clists .lp-row');
+        rows[idx]?.click();
+        res(!!rows[idx]);
+      }));
+    });
+  };
   window.callsOf = (cmd) => window.__CALLS.filter((c) => c.cmd === cmd);
 })();
 """
@@ -401,9 +415,8 @@ async def main():
             await window.__TAURI_INTERNALS__.invoke('list_add_item', { listId: window.__LIST.lists[0].id,
               item: { item_id: 'r1', item_name: 'Rifle', craft_time: 60, copies: 1,
                       mats: [{ material: 'Gold', ore_id: null, unit: 'SCU', quantity: 10, quality: 500 }] } });
-            const chips = [...document.querySelectorAll('.clists .cl-chip')];
-            chips[0]?.click();
-            return true;
+            const ok = window.pickList ? window.pickList(0) : false;
+            return ok;
           })()
         """)
         await wait_for("aggTexts().length === 1", 8)
@@ -417,17 +430,15 @@ async def main():
           (async () => {
             await window.__TAURI_INTERNALS__.invoke('reservation_add', {
               'new': { inventory_id: '1', list_id: '1', purpose: '', qty: 4, note: 'Gold' } });
-            const chips = [...document.querySelectorAll('.clists .cl-chip')];
-            chips[0]?.click();
-            return true;
+            return window.pickList ? window.pickList(0) : false;
           })()
         """)
         await wait_for("resvChips().length === 1", 8)
         aggs = await js("aggTexts()")
         check("1a Chip zeigt reserviert 4 · Ø Q900 (Ist-Stand)",
               aggs and any("reserved 4" in a and "Q900" in a for a in aggs), str(aggs))
-        check("1b Bearbeiten-Aktion vorhanden (reserved_qty > 0)",
-              await js("clickEditReserveBtn()") is True)
+        check("1b Manage-Aktion vorhanden (M9-P: EIN Button pro Zeile)",
+              await js("clickManageBtn()") is True)
         await shot("m9i-edit-action.png")
 
         # ---- Gate 2: Maske vorgefüllt ----
@@ -456,7 +467,7 @@ async def main():
         check("3c Chip folgt: reserved 2", aggs and any("reserved 2" in a for a in aggs), str(aggs))
 
         # ---- Gate 4: Löschen je Quelle ----
-        check("4a Bearbeiten erneut öffnet die Maske", await js("clickEditReserveBtn()") is True)
+        check("4a Verwalten erneut öffnet das Panel", await js("clickManageBtn()") is True)
         await wait_for("resQtyInputs().length === 1", 8)
         check("4b Ist-Stand vorgefüllt (2)", await js("resQtyInputs()") == ["2"], str(await js("resQtyInputs()")))
         check("4c ✕ löscht die Quelle", await js("clickResDel(0)") is True)
@@ -472,12 +483,12 @@ async def main():
         await wait_for("!resMaskTitle()", 5)
         aggs = await js("aggTexts()")
         check("4f Chip weg (reserviert 0)", aggs and not await js("resvChips()"), str(aggs))
-        # Bearbeiten-Aktion verschwindet ohne Reservierung
-        check("4g Bearbeiten-Aktion nur bei Reservierungen",
-              not await js("clickEditReserveBtn()"), "button should be gone")
+        # M9-P: Die Action-Zeile hat GENAU EINEN Button (konsolidiertes Panel).
+        check("4g M9-P: genau EIN Action-Button pro Zeile",
+              await js("actionBtnCount()") == 1, str(await js("actionBtnCount()")))
 
         # ---- Gate 5: Harter Cap beim Reservieren ----
-        check("5a Reserve-Button öffnet den Picker", await js("clickReserveBtn()") is True)
+        check("5a Manage-Button öffnet den Picker", await js("clickManageBtn()") is True)
         await wait_for("resPickRows().length === 2", 8)
         await js("pickRow(0)")
         await asyncio.sleep(0.2)
@@ -505,9 +516,7 @@ async def main():
         await js("""
           (async () => {
             await window.__TAURI_INTERNALS__.invoke('list_set_copies', { itemRow: window.__LIST.items[0].id, copies: 0.5 });
-            const chips = [...document.querySelectorAll('.clists .cl-chip')];
-            chips[0]?.click();
-            return true;
+            return window.pickList ? window.pickList(0) : false;
           })()
         """)
         await wait_for("aggTexts().join('').includes('0/25')", 8)

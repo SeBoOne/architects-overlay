@@ -5,13 +5,15 @@ Gates:
   1. Standalone Mining-Liste: Add-Formular + Mengen-Stepper sichtbar (kein Lock).
   2. Verknüpfte Mining-Liste (source_list_id): KEIN Add-Formular, keine
      Stepper/Entfernen-Buttons, Hinweis „linked_readonly“ mit dem Namen der
-     Crafting-Liste — Material/Mengen read-only, Abhaken bleibt möglich.
+     Crafting-Liste — Material/Mengen read-only (M9-P: Abhaken entfällt,
+     Status = done+reserved).
   3. Craft→Mining-Sync: Mengen-Änderung an der Crafting-Liste (list_set_copies)
      spiegelt sich automatisch in der verknüpften Mining-Liste (Aggregation).
   4. Craft→Mining-Sync: Entfernen eines Craft-Eintrags nimmt das Material aus
      der verknüpften Mining-Liste (inkl. done-Stand).
-  5. Mining→Craft: Abhaken (ganz) in der verknüpften Liste schlägt auf die
-     Crafting-Liste durch (list_set_done propagiert).
+  5. Mining→Craft: Inventar-Add über die verknüpfte Mining-Liste reserviert
+     (M9-P: kein list_set_done mehr) — die Reservierung zählt LISTENFAMILIEN-
+     WEIT und schlägt auf die Crafting-Liste durch (list_detail M9-P).
   6. Unverknüpfte Listen: Reservierung entfällt — Inventory-Flow nutzt
      inventory_add (kein listId-Argument) für standalone Listen (Spec Punkt 5,
      seit M9-F implementiert — hier als IPC-Beleg).
@@ -99,16 +101,34 @@ WRAP = r"""
     const l = DB.lists.find((x) => x.id === listId);
     if (!l) throw new Error('lists.err_missing');
     const dm = doneOf(listId);
+    // M9-P (t_fb405e8d): Reservierungen zählen LISTENFAMILIENWEIT (Rust:
+    // list_detail reserved_map über self + Kinder + Quelle).
+    const fam = familyIds(listId);
     return {
       id: l.id, kind: l.kind, name: l.name, created_at: l.created_at,
       items: DB.items.filter((i) => i.list_id === listId).map((i) => ({
         ...i, mats: DB.mats.filter((mm) => mm.item_row === i.id)
       })),
-      aggregated: aggOf(listId).map((a) => ({
-        ...a, done_qty: dm.get(a.material + ':' + a.unit) || 0,
-        reserved_qty: 0, reserved_avg_quality: null
-      }))
+      aggregated: aggOf(listId).map((a) => {
+        const rs = DB.res.filter((r) => fam.includes(r.list_id)
+          && r.material.toLowerCase() === a.material.toLowerCase());
+        const rq = rs.reduce((s, r) => s + r.qty, 0);
+        // M9-M: Fortschritt = (done + reserved) / Bedarf, zentral in list_detail.
+        const dq = dm.get(a.material + ':' + a.unit) || 0;
+        const prog = a.quantity > 0 ? Math.min(100.0, (100.0 * (dq + rq)) / a.quantity) : 0.0;
+        return { ...a, done_qty: dq,
+                 reserved_qty: rq, reserved_avg_quality: rq > 0 ? 500 : null,
+                 progress: Math.round(prog * 1e6) / 1e6, reached: dq + rq >= a.quantity && a.quantity > 0 };
+      })
     };
+  }
+  function familyIds(id) {
+    const out = new Set([id]);
+    for (const l of DB.lists) {
+      if (l.source_list_id === id) out.add(l.id);
+      if (l.id === id && l.source_list_id != null) out.add(l.source_list_id);
+    }
+    return [...out];
   }
 
   // Seed: Craft-Liste 1 (2× Hadanite Q500) + verknüpfte Mining-Liste 2.
@@ -185,6 +205,14 @@ WRAP = r"""
     if (cmd === 'list_detail') return detailOf(a.listId);
     if (cmd === 'inventory_add_for_list') {
       window.__CALLS.push({ cmd: '__RESERVED__', args: a });
+      // Rust-Mirror (M9-E/M9-I): Reservierung wird auf den freien RESTBEDARF
+      // der eigenen Liste geklemmt (harter Cap).
+      const req = aggOf(a.listId).filter((x) => x.material.toLowerCase() === String(a.material).toLowerCase())
+        .reduce((s, x) => s + x.quantity, 0);
+      const own = DB.res.filter((r) => r.list_id === a.listId
+        && r.material.toLowerCase() === String(a.material).toLowerCase()).reduce((s, r) => s + r.qty, 0);
+      const q = Math.max(0, Math.min(a.entry.quantity, req - own));
+      if (q > 0) DB.res.push({ list_id: a.listId, material: a.material, qty: q });
       return { entry: { name: a.entry.name, quality: a.entry.quality, location_name: a.entry.location_name } };
     }
     if (cmd === 'inventory_add') {
@@ -254,19 +282,6 @@ WRAP = r"""
   window.stepButtons = () => document.querySelectorAll('.mining .ml-item .ml-step').length;
   window.removeButtons = () => [...document.querySelectorAll('.mining .ml-item .ml-mini')].length;
   window.lockHint = () => q('.mining .ml-hint')?.textContent.trim() ?? null;
-  window.doneAllAt = (idx) => {
-    const rows = document.querySelectorAll('.mining .ml-agg-row');
-    const b = rows[idx]?.querySelector('.ml-agg-actions .ml-mini');
-    if (!b) return false; b.click(); return true;
-  };
-  window.setPartialAt = (idx, v) => {
-    const rows = document.querySelectorAll('.mining .ml-agg-row');
-    const i = rows[idx]?.querySelector('.ml-partial');
-    if (!i) return false;
-    i.value = v; i.dispatchEvent(new Event('input', { bubbles: true }));
-    i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    return true;
-  };
   window.invOpenAt = (idx) => {
     const rows = document.querySelectorAll('.mining .ml-agg-row');
     const bs = [...(rows[idx]?.querySelectorAll('.ml-agg-actions button') || [])];
@@ -467,9 +482,11 @@ async def main():
         check("4b Spiegel erneut 200 nach Wiedereintrag", rows and "0/200" in rows[0], str(rows))
         await shot("m9g-synced.png")
 
-        # ---- Gate 5: Mining-Abhaken schlägt auf Craft durch ----
-        # UI-Pfad: „To inventory" mit Vorbefüllung (Rest) → submit reserviert
-        # UND setzt den Abhak-Stand (submitAddInv → list_set_done).
+        # ---- Gate 5: Mining-Reservierung schlägt auf Craft durch ----
+        # M9-P (P7): UI-Pfad ist NUR „Add to inventory" mit Vorbefüllung
+        # (Rest) → submit reserviert (inventory_add_for_list, Cap auf den
+        # Restbedarf); `list_set_done` wird NICHT mehr gerufen — der
+        # Fortschritt zählt die Reservierung (M9-M: done + reserved).
         await js("invOpenAt(0)")
         await wait_for("invFormVisible()", 5)
         await js("invSet('Depot', '500', null)")
@@ -478,11 +495,16 @@ async def main():
         await asyncio.sleep(0.5)
         craft = await js("inv('list_detail', { listId: 1 })") or {"aggregated": []}
         had = [m for m in craft["aggregated"] if m["material"] == "Hadanite"][0]
-        check("5a Craft done = 200 (Durchschlag über UI-Flow)", had["done_qty"] == 200.0, str(had))
+        check("5a Reservierung 200 zählt als Fortschritt (M9-P: kein set_done)",
+              had["reserved_qty"] == 200.0 and had["done_qty"] == 0.0
+              and had["progress"] == 100.0, str(had))
+        done_calls = await js("callsOf('list_set_done')")
+        check("5a2 Kein list_set_done mehr über den UI-Flow", done_calls == [], str(done_calls))
         reserved = await js("callsOf('inventory_add_for_list')")
         check("5b Verknüpfte Liste: Reservierung (inventory_add_for_list)",
               reserved != [] and reserved[0]["args"]["listId"] == 2, str(reserved))
-        # Teilweise: IPC-Pfad (UI-Pfad für Teil-Abhaken = gleicher Flow).
+        # Backend-Pfad (IPC) bleibt: list_set_done existiert weiterhin für
+        # Migrations-Fälle — Status via done+reserved (M9-M).
         await js("inv('list_set_done', { listId: 2, material: 'Hadanite', unit: 'gems', doneQty: 70 })")
         await asyncio.sleep(0.2)
         craft = await js("inv('list_detail', { listId: 1 })") or {"aggregated": []}

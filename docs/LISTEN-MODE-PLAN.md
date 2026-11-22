@@ -112,3 +112,30 @@ Punkte 1–5, 8 sind mit Welle 1+2 (0.5.102) abgedeckt. Entschiedene Defaults (U
 - **P6 Cap:** Reservierungen werden beim nächsten Listen-Öffnen/Reservieren automatisch auf den Listenbedarf geklemmt (nach Mengen-Schrumpfung). Bearbeiten/Löschen je Qualitätsstufe aus der Liste heraus, gleiche Maske wie beim Reservieren (vorgefüllt).
 - **P11 Dropdown:** Chips-Zeile komplett ersetzt — eine Zeile mit Custom-Dropdown (DOM-Popover, KEIN natives `<select>`, Fokus-Duell) zeigt die aktive Liste, Klick öffnet alle. Beide Modi.
 
+## Welle 4 (Button-Consolidierung, 2026-11-22 — Feedback-Punkte 7/8/9, M9-P)
+
+**Kern:** Pro Material-Zeile in BEIDEN Listen genau EIN Button; das Formular dahinter
+hat seine eigenen Qty-Felder. Done/Partial/Reset-Buttons entfallen — der Status ergibt
+sich aus der M9-M-Fortschritts-Logik (done + reserved/Bedarf).
+
+- **P7 Mining-Listen:** nur „Add to Inventory" bleibt. Formular (Ort + Qualität + Qty
+  = offener Rest voreingetragen) → bestätigen → `inventory_add_for_list` (verknüpfte
+  Listen) bzw. `inventory_add` (standalone). Die Reservierung wird SERVERSEITIG auf
+  den Restbedarf geklemmt (harter M9-I-Cap) — das Mining-UI-Flow ruft seit M9-P KEIN
+  `list_set_done` mehr (sonst doppelte Zählung gegen M9-M). 10 SCU hinzugefügt,
+  7 benötigt → 10 ins Inventar, 7 reserviert, Ziel Done; nur 4 → 4 reserviert, Teil.
+- **P8 Crafting-Listen:** EIN Button („Verwalten") öffnet ein kombiniertes Panel:
+  (a) „Alles reservieren" (M9-J-Greedy, Re-Click = Neuberechnung), (b) Menge ins
+  Inventar aufnehmen (auto-reserviert bis zum Restbedarf), (c) Quellen-Picker mit
+  Ist-Stand vorgefüllt — neue Quellen = reservation_add, vorhandene =
+  reservation_update/✕=reservation_delete (M9-I, Cap serverseitig).
+- **P9 Qty-Feld in der Zeile entfällt:** das Partial-Input der aggregierten Zeile ist
+  weg; die Vorbefüllung des Formulars rechnet Bedarf − done − reserved
+  (`list-actions.ts`, node-getestet).
+- **Listenfamilien-Sync (Backend, M9-P):** Reservierungen zählen in `list_detail`
+  LISTENFAMILIENWEIT (Liste + verknüpfte Mining-Kinder + Craft-Quelle) — der
+  Mining→Craft-Durchschlag (Welle 2, Punkt 2) bleibt erhalten, obwohl kein
+  `list_set_done` mehr fließt. Cap/Klemmung bleibt je Liste selbst.
+- Geteilte Formular-Logik: `src/lib/list-actions.ts` (`openRest`, `reserveCap`) +
+  `list-actions.test.ts`; Probes m9-c/f/g/i auf die konsolidierte UI umgestellt.
+
