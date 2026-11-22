@@ -1010,7 +1010,7 @@ import ListPicker from './ListPicker.svelte';
 		width: 8px;
 	}
 	.mlists::-webkit-scrollbar-thumb {
-		background: color-mix(in srgb, var(--accent, #4aa3ff) 35%, transparent);
+		background: color-mix(in srgb, var(--line, #2a2f3a) 90%, transparent);
 		border-radius: 0;
 	}
 	/* M9-H Punkt 5: Inventar-Maske (Port aus CraftLists .cl-inv-*). */

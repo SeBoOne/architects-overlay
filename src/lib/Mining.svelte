@@ -1048,7 +1048,7 @@
 	}
 	.mdetail::-webkit-scrollbar-thumb,
 	.mlist::-webkit-scrollbar-thumb {
-		background: color-mix(in srgb, var(--accent) 35%, transparent);
+		background: color-mix(in srgb, var(--line, #2a2f3a) 90%, transparent);
 		border-radius: 0;
 	}
 	/* Tab-Zeile = gemeinsame Tabs.svelte (M9-R1); kein eigener .mtab-Stil mehr. */
