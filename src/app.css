@@ -1392,6 +1392,9 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   flex: 1;
 }
 
+/* M9-R4 (Sebo): Keine extra Hintergrund-Ebene mehr — die Leisten sitzen
+   DIREKT auf dem Shell-Hintergrund. Nur die Hairline unten trennt sie vom
+   Inhalt; Reiter/Chips bringen ihre eigene Fläche mit. */
 .mbar,
 .mbar2 {
   display: flex;
@@ -1399,7 +1402,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   gap: 6px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--lineb);
-  background: var(--panel3);
+  background: transparent;
   flex-wrap: wrap;
 }
 

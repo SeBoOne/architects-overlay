@@ -7127,9 +7127,25 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 					<!-- PT (t_7fdc1317): Sub-Reiter innerhalb der Handelsrouten —
 					     „Routen" (bestehende Matrix) und „Trade Log" (eigene
 					     Commodity-Trades + Tagesgewinn). -->
+					<!-- M9-R4: Sub-Reiter Routen ↔ Trade Log = gemeinsame Tabs.svelte
+					     (Segmented Control) statt Chips — ein Reiter-Stil im ganzen Overlay. -->
 					<div class="mbar2">
-						<button type="button" role="tab" aria-selected={rTab === 'matrix'} class="chip" class:is-on={rTab === 'matrix'} onclick={() => (rTab = 'matrix')}>{$t('market.tab_routes')}</button>
-						<button type="button" role="tab" aria-selected={rTab === 'tracking'} class="chip" class:is-on={rTab === 'tracking'} onclick={() => { rTab = 'tracking'; rDetail = null; if (!trkLoaded) void loadTrk(false); }}>{$t('market.tab_trade_log')}</button>
+						<Tabs
+							items={[
+								{ id: 'matrix', label: $t('market.tab_routes') },
+								{ id: 'tracking', label: $t('market.tab_trade_log') }
+							]}
+							active={rTab}
+							onSelect={(id) => {
+								if (id === 'tracking') {
+									rTab = 'tracking';
+									rDetail = null;
+									if (!trkLoaded) void loadTrk(false);
+								} else {
+									rTab = 'matrix';
+								}
+							}}
+						/>
 					</div>
 					{#if rTab === 'tracking'}
 						<div class="mbar">
