@@ -238,6 +238,29 @@
 		}
 	}
 	let reserveNote = $state('');
+	let reserveAllBusy = $state(false);
+
+	// M9-J (t_14cc5d4e): „Alles reservieren" — Backend-Greedy best→worst über
+	// alle Materialien der Liste (Ø-Qualitätsregel je Material, Cap Summe ≤
+	// Bedarf). Re-Click = komplette Neuberechnung: Alt-Reservierungen der
+	// Liste werden ersetzt, besseres/neues Inventar wird aufgenommen.
+	async function reserveAll() {
+		if (activeId === null || reserveAllBusy) return;
+		reserveAllBusy = true;
+		reserveError = '';
+		reserveNote = '';
+		try {
+			const r = await invoke<{ created: number }>('lists_reserve_all', {
+				listId: activeId
+			});
+			await openList(activeId);
+			reserveNote = $t('lists.reserve_all_note', { n: r.created });
+		} catch (e) {
+			reserveError = String(e);
+		} finally {
+			reserveAllBusy = false;
+		}
+	}
 
 	const UNIT_COLORS: Record<string, string> = {
 		SCU: '#e0a83e',
@@ -494,6 +517,15 @@
 					title={$t('lists.open_inventory')}
 				>{$t('lists.open_inventory')}</button
 				>
+				<!-- M9-J: Alles reservieren — Greedy über alle Materialien. -->
+				<button
+					type="button"
+					class="cl-mini"
+					onclick={() => void reserveAll()}
+					disabled={reserveAllBusy || !detail.aggregated.some((m) => m.quantity > 0)}
+					title={$t('lists.reserve_all_title')}
+				>{$t('lists.reserve_all')}</button
+				>
 				<button type="button" class="cl-mini is-danger" onclick={() => void deleteList()}>
 					{$t('lists.delete')}
 				</button>
@@ -505,6 +537,9 @@
 		{/if}
 		{#if reserveNote}
 			<div class="cl-inv-note">{reserveNote}</div>
+		{/if}
+		{#if reserveError}
+			<div class="cl-err">{reserveError}</div>
 		{/if}
 
 		<!-- Einträge: Blueprint + copies + Entfernen -->

@@ -10,7 +10,7 @@ use crate::inventory::FlexId;
 use crate::trade::TradeState;
 use cache::inventory::NewInventoryEntry;
 use cache::lists::{ListDetail, ListSummary, NewListItem, ReservedAdd};
-use cache::reservations::{NewReservation, Reservation};
+use cache::reservations::{NewReservation, Reservation, ReserveAllResult};
 use tauri::State;
 
 /// Alle Listen eines Modus (`craft` | `mining`).
@@ -159,4 +159,18 @@ pub fn reservation_delete(state: State<'_, TradeState>, id: FlexId) -> Result<()
         .cache
         .reservation_delete(id.0)
         .map_err(|e| err_wrap("reservations.err_delete", e.to_string()))
+}
+
+/// M9-J (t_14cc5d4e): „Alles reservieren“ für eine Liste — Greedy best→worst
+/// über alle Materialien, Ø-Qualitätsregel je Material, Cap Summe ≤ Bedarf.
+/// Re-Click = komplette Neuberechnung (Alt-Reservierungen der Liste ersetzt).
+#[tauri::command]
+pub fn lists_reserve_all(
+    state: State<'_, TradeState>,
+    list_id: FlexId,
+) -> Result<ReserveAllResult, String> {
+    state
+        .cache
+        .list_reserve_all(list_id.0)
+        .map_err(|e| err_wrap("reservations.err_reserve_all", e.to_string()))
 }
