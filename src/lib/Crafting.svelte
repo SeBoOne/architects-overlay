@@ -151,15 +151,12 @@
 		onOpenOre = null, // M8-K3 (t_a8088d06): Bedarfserz → Mining-Sprung
 		// M9-D (t_36f3966c): Brücken-Anlegen → Mining-Modus mit neuer Liste.
 		onOpenMiningList = null,
-		// M9-F (t_bb97da62): Inventar-Eingabemaske aus der Crafting-Liste öffnen.
-		onOpenInventory = null,
 		hidden = false // M8-K3: keep-alive während des Mining-Sprungs (Tastatur stumm)
 	}: {
 		onexit: () => void;
 		filter?: string;
 		onOpenOre?: ((oreId: string) => void) | null;
 		onOpenMiningList?: ((listId: number) => void) | null;
-		onOpenInventory?: (() => void) | null;
 		hidden?: boolean;
 	} = $props();
 
@@ -256,9 +253,16 @@
 			/* kein Persistenz-Zwang */
 		}
 	}
-	// Load-More (516 Items — bestehendes Muster: stückweise rendern)
+	// Load-More (516 Items — bestehendes Muster: stückweise rendern).
+	// M9-P3 (Sebo): Auto-Load statt „80 weitere anzeigen“-Button — beim
+	// Scrollen ans Listenende werden die nächsten Einträge geladen.
 	let shown = $state(80);
 	const STEP = 80;
+	const LOAD_AHEAD = 240; // px vor dem Ende nachladen
+	function onListScroll(e: Event) {
+		const el = e.currentTarget as HTMLElement;
+		if (el.scrollTop + el.clientHeight >= el.scrollHeight - LOAD_AHEAD) shown += STEP;
+	}
 
 	// ---- M9-B (t_36778bc3): Tabs + "Zur Liste hinzufügen" --------------------
 	// Tab-Wechsel Craft ↔ Listen (Listen-Engine-View; M9-Plan Welle 1 B —
@@ -768,7 +772,7 @@
 	{:else}
 		{#if tab === 'lists'}
 			<!-- M9-B: Listen-Tab — CRUD + Aggregation + Abhaken (CraftLists) -->
-			<CraftLists onOpenOre={openOre} onOpenMiningList={onOpenMiningList} onOpenInventory={onOpenInventory} />
+			<CraftLists onOpenOre={openOre} onOpenMiningList={onOpenMiningList} />
 		{:else}
 		<div class="ccols">
 			<!-- Linke Spalte: Kategorie-Chips + Item-Liste -->
@@ -827,7 +831,7 @@
 				{#if loading}
 					<div class="cnote">{$t('mining.loading')}</div>
 				{:else}
-					<div class="clist" role="listbox" aria-label={$t('nav.crafting')}>
+					<div class="clist" role="listbox" aria-label={$t('nav.crafting')} onscroll={onListScroll}>
 						{#each filteredItems.slice(0, shown) as i (i.id)}
 							<div class="crow" role="option" aria-selected="false" tabindex="0">
 								<button
@@ -859,11 +863,6 @@
 							<div class="cnote">{$t('mining.empty')}</div>
 						{/each}
 					</div>
-					{#if filteredItems.length > shown}
-						<button type="button" class="cmore" onclick={() => (shown += STEP)}>
-							{$t('craft.load_more', { n: String(Math.min(STEP, filteredItems.length - shown)) })}
-						</button>
-					{/if}
 					<div class="ccount">{$t('craft.count', { n: String(filteredItems.length) })}</div>
 				{/if}
 			</div>
@@ -1357,12 +1356,22 @@
 		font-weight: 600;
 	}
 
-	/* Item-Liste: kompakte Zeilen */
+	/* Item-Liste: kompakte Zeilen. M9-P3 (Sebo): eigener Scrollbar-Stil +
+	   rechts Abstand — der native Scrollbar lag ÜBER dem Besitz-Haken und
+	   frass dessen rechten Rand. */
 	.clist {
 		display: flex;
 		flex-direction: column;
 		min-height: 0;
 		overflow-y: auto;
+		padding-right: 4px;
+	}
+	.clist::-webkit-scrollbar {
+		width: 8px;
+	}
+	.clist::-webkit-scrollbar-thumb {
+		background: color-mix(in srgb, var(--acc, #4aa3ff) 35%, transparent);
+		border-radius: 0;
 	}
 	.crow {
 		display: flex;
@@ -1399,19 +1408,6 @@
 		border: 1px solid var(--line, #2a2f3a);
 		opacity: 0.8;
 		white-space: nowrap;
-	}
-	.cmore {
-		margin-top: 8px;
-		border: 1px solid var(--line, #2a2f3a);
-		background: transparent;
-		color: inherit;
-		border-radius: 0;
-		padding: 6px 12px;
-		font-size: 12px;
-		cursor: pointer;
-	}
-	.cmore:hover {
-		border-color: var(--acc, #e0a83e);
 	}
 	.ccount {
 		margin-top: 6px;

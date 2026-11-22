@@ -145,6 +145,10 @@ import ListPicker from './ListPicker.svelte';
 		addInvFor = m;
 		invNote = '';
 		invError = '';
+		// M9-P1: Location-Autocomplete-Zustand verfallen lassen.
+		invLocId = null;
+		locEntities = [];
+		locIdx = 0;
 		// Vorschläge: Anforderung als Qualität, offener Rest als Menge.
 		invQ = String(m.min_quality);
 		invQty = String(openRest(m));
@@ -156,6 +160,86 @@ import ListPicker from './ListPicker.svelte';
 			invLocs = await invoke<string[]>('inventory_locations');
 		} catch {
 			invLocs = [];
+		}
+	}
+
+	// M9-P1 (Sebo): Location-Autocomplete wie im Inventar-Modus — EINE
+	// Vorschlagsliste (gespeicherte Depot-Orte + SC-Location-Entities aus
+	// `search`, filter 'location') statt natives <datalist> mit nur
+	// gelagerten Orten. Freitext bleibt implizit: kein Vorschlag gewählt →
+	// location_id null (eigenes Depot, wie im Inventar-Formular).
+	type SearchHit = { id: string; name: string; kind: string; subtitle: string; code: string | null };
+	let locEntities = $state<SearchHit[]>([]);
+	let locIdx = $state(0);
+	let locTimer: ReturnType<typeof setTimeout> | null = null;
+	let invLocId = $state<string | null>(null);
+	const locMatches = $derived.by(() => {
+		const q = invLoc.trim().toLowerCase();
+		if (!q) return [];
+		return invLocs
+			.filter((l) => l.toLowerCase().includes(q) && l.toLowerCase() !== q)
+			.slice(0, 6);
+	});
+	const locCount = $derived(locMatches.length + locEntities.length);
+	function onLocInput() {
+		invLocId = null; // Freitext, bis ein Entity-Vorschlag gewählt wird
+		locIdx = 0;
+		const q = invLoc.trim();
+		if (!q) {
+			locEntities = [];
+			return;
+		}
+		if (locTimer) clearTimeout(locTimer);
+		locTimer = setTimeout(() => void runLocSearch(q), 180);
+	}
+	async function runLocSearch(q: string) {
+		try {
+			const resp = await invoke<{ groups: { kind: string; hits: SearchHit[] }[] }>('search', {
+				query: q,
+				filters: ['location']
+			});
+			locEntities = resp.groups.flatMap((g) => g.hits).filter((h) => h.kind === 'location');
+		} catch {
+			locEntities = [];
+		}
+	}
+	function chooseSavedLoc(loc: string) {
+		invLoc = loc;
+		// Gespeicherte Depot-Namen sind Freitext-Standorte — keine Entity.
+		invLocId = null;
+		locEntities = [];
+		locIdx = 0;
+	}
+	function chooseLocation(h: SearchHit) {
+		invLoc = h.name;
+		invLocId = h.id;
+		locEntities = [];
+		locIdx = 0;
+	}
+	function onLocKeydown(e: KeyboardEvent) {
+		// M9-P1: ↑↓ wandern über die vereinheitlichte Liste (wie Inventar),
+		// Enter wählt den markierten Vorschlag — ohne Vorschläge submit.
+		if (e.key === 'ArrowDown') {
+			locIdx = Math.min(locIdx + 1, Math.max(locCount - 1, 0));
+			e.preventDefault();
+			return;
+		}
+		if (e.key === 'ArrowUp') {
+			locIdx = Math.max(locIdx - 1, 0);
+			e.preventDefault();
+			return;
+		}
+		if (e.key === 'Enter') {
+			if (locCount > 0) {
+				if (locIdx < locMatches.length) chooseSavedLoc(locMatches[locIdx]);
+				else if (locEntities[locIdx - locMatches.length]) {
+					chooseLocation(locEntities[locIdx - locMatches.length]);
+				}
+				e.preventDefault();
+				return;
+			}
+			void submitAddInv();
+			e.preventDefault();
 		}
 	}
 	async function submitAddInv() {
@@ -182,7 +266,7 @@ import ListPicker from './ListPicker.svelte';
 			entity_id: null,
 			name: m.material,
 			quality: q,
-			location_id: null,
+			location_id: invLocId,
 			location_name: loc,
 			quantity: qty,
 			price: null
@@ -758,14 +842,39 @@ import ListPicker from './ListPicker.svelte';
 											class="ml-input"
 											type="text"
 											bind:value={invLoc}
-											list="ml-inv-locs"
 											placeholder={$t('inventory.location')}
 											aria-label={$t('inventory.location')}
-											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+											oninput={onLocInput}
+											onkeydown={onLocKeydown}
 										/>
-										<datalist id="ml-inv-locs">
-											{#each invLocs as loc}<option value={loc}></option>{/each}
-										</datalist>
+										<!-- M9-P1: EINE Vorschlagsliste — gespeicherte Depot-Orte
+										     (Freitext) + SC-Location-Entities, wie Inventar-Modus. -->
+										{#if locMatches.length || locEntities.length}
+											<div class="ml-suggest" role="listbox" aria-label={$t('inventory.location')}>
+												{#each locMatches as loc, i (loc)}
+													<button
+														type="button"
+														class="ml-suggest-row"
+														class:is-on={locIdx === i}
+														onclick={() => chooseSavedLoc(loc)}
+													>
+														<span class="ml-suggest-name">{loc}</span>
+														<span class="ml-suggest-sub">{$t('inventory.saved_loc')}</span>
+													</button>
+												{/each}
+												{#each locEntities.slice(0, 6) as h, j (h.id)}
+													<button
+														type="button"
+														class="ml-suggest-row"
+														class:is-on={invLocId !== null && h.id === invLocId || locIdx === locMatches.length + j}
+														onclick={() => chooseLocation(h)}
+													>
+														<span class="ml-suggest-name">{h.name}</span>
+														{#if h.subtitle}<span class="ml-suggest-sub">{h.subtitle}</span>{/if}
+													</button>
+												{/each}
+											</div>
+										{/if}
 										<input
 											class="ml-input ml-inv-q"
 											type="text"
@@ -1076,7 +1185,8 @@ import ListPicker from './ListPicker.svelte';
 	.ml-suggest-row:last-child {
 		border-bottom: none;
 	}
-	.ml-suggest-row:hover {
+	.ml-suggest-row:hover,
+	.ml-suggest-row.is-on {
 		background: rgba(255, 255, 255, 0.06);
 	}
 	.ml-suggest-sub {

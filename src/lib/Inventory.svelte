@@ -45,17 +45,7 @@ function keyActivate(e: KeyboardEvent) {
 
 	type SortMode = 'loc' | 'qty' | 'quality';
 
-	let { onexit, filter = $bindable(''), addTick = 0 }: { onexit: () => void; filter?: string; addTick?: number } = $props();
-
-	// M9-F (t_bb97da62): Inventar-Eingabemaske aus der Crafting-Liste öffnen —
-	// addTick-Impuls (0 = Initial, >0 = Öffnen-Anfrage).
-	let lastTick = $state(0);
-	$effect(() => {
-		if (addTick > lastTick) {
-			lastTick = addTick;
-			openAdd();
-		}
-	});
+	let { onexit, filter = $bindable('') }: { onexit: () => void; filter?: string } = $props();
 
 	// ---- State ---------------------------------------------------------------
 	let rows = $state<InvEntry[]>([]);

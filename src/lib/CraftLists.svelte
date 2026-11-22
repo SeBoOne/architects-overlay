@@ -82,13 +82,10 @@
 		// M9-D (t_36f3966c): nach dem Brücken-Anlegen zum Mining-Modus springen
 		// und die neue Liste öffnen (M8-K3-Muster: Callback des Parents, kein
 		// Modi-Kopplungs-Hardcode in der Komponente).
-		onOpenMiningList = null,
-		// M9-F (t_bb97da62): Inventar-Eingabemaske aus der Crafting-Liste öffnen.
-		onOpenInventory = null
+		onOpenMiningList = null
 		}: {
 			onOpenOre?: ((oreId: string) => void) | null;
 			onOpenMiningList?: ((listId: number) => void) | null;
-			onOpenInventory?: (() => void) | null;
 		} = $props();
 
 	// ---- State ---------------------------------------------------------------
@@ -314,29 +311,6 @@
 		}
 	}
 	let reserveNote = $state('');
-	let reserveAllBusy = $state(false);
-
-	// M9-J (t_14cc5d4e): „Alles reservieren" — Backend-Greedy best→worst über
-	// alle Materialien der Liste (Ø-Qualitätsregel je Material, Cap Summe ≤
-	// Bedarf). Re-Click = komplette Neuberechnung: Alt-Reservierungen der
-	// Liste werden ersetzt, besseres/neues Inventar wird aufgenommen.
-	async function reserveAll() {
-		if (activeId === null || reserveAllBusy) return;
-		reserveAllBusy = true;
-		reserveError = '';
-		reserveNote = '';
-		try {
-			const r = await invoke<{ created: number }>('lists_reserve_all', {
-				listId: activeId
-			});
-			await openList(activeId);
-			reserveNote = $t('lists.reserve_all_note', { n: r.created });
-		} catch (e) {
-			reserveError = String(e);
-		} finally {
-			reserveAllBusy = false;
-		}
-	}
 
 	const UNIT_COLORS: Record<string, string> = {
 		SCU: '#e0a83e',
@@ -577,23 +551,6 @@
 					title={$t('lists.bridge_title')}
 				>{$t('lists.bridge')}</button
 				>
-				<!-- M9-F: Inventar-Eingabemaske aus der Crafting-Liste öffnen. -->
-				<button
-					type="button"
-					class="cl-mini"
-					onclick={() => onOpenInventory?.()}
-					title={$t('lists.open_inventory')}
-				>{$t('lists.open_inventory')}</button
-				>
-				<!-- M9-J: Alles reservieren — Greedy über alle Materialien. -->
-				<button
-					type="button"
-					class="cl-mini"
-					onclick={() => void reserveAll()}
-					disabled={reserveAllBusy || !detail.aggregated.some((m) => m.quantity > 0)}
-					title={$t('lists.reserve_all_title')}
-				>{$t('lists.reserve_all')}</button
-				>
 				<!-- M9-N: Liste abschließen — reservierte Mengen konsumieren. -->
 				<button
 					type="button"
@@ -720,19 +677,6 @@
 										{$t('lists.manage_title', { req: fmtQty(m.quantity), res: fmtQty(m.reserved_qty) })}
 									</div>
 									{#if reserveError}<div class="cl-err">{reserveError}</div>{/if}
-									<!-- Auto: Bedarf reservieren (M9-J-Greedy, Re-Click =
-									     Neuberechnung; Cap Summe ≤ Bedarf serverseitig). -->
-									<div class="cl-manage-auto">
-										<button
-											type="button"
-											class="cl-btn"
-											onclick={() => void reserveAll()}
-											disabled={reserveAllBusy}
-										>
-											{$t('lists.reserve_all')}
-										</button>
-										<span class="cl-hint">{$t('lists.reserve_all_title')}</span>
-									</div>
 									<!-- (a) Ins Inventar aufnehmen — inventory_add_for_list
 									     reserviert SERVERSEITIG automatisch bis zum
 									     Restbedarf (harter M9-I-Cap). -->
@@ -770,12 +714,15 @@
 											aria-label={$t('lists.inv_qty')}
 											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
 										/>
+										<!-- M9-P2 (Sebo): Man addet hier erst das Material —
+										     „Add & Reserve" statt „Reservieren" (Reserve-
+										     Begriff unten, im Ist-Reservierungs-Bereich). -->
 										<button type="button" class="cl-btn" onclick={() => void submitAddInv()}>
-											{$t('lists.inv_add')}
+											{$t('lists.inv_add_reserve')}
 										</button>
-									</div>
-									<!-- (b+c) Aus dem Inventar reservieren + bestehende
-									     Reservierungen bearbeiten (M9-I): Ist-Stand ist
+										</div>
+										<!-- (b+c) Aus dem Inventar reservieren + bestehende
+										Reservierungen bearbeiten (M9-I): Ist-Stand ist
 									     vorausgefüllt, ✕ löscht die Quelle, leere Eingabe/0
 									     löscht beim Speichern. -->
 									<div class="cl-manage-sec">{$t('lists.reserve_title')}</div>
@@ -1058,12 +1005,6 @@
 		flex-wrap: wrap;
 	}
 	/* M9-P (P8): kombiniertes Material-Panel. */
-	.cl-manage-auto {
-		display: flex;
-		gap: 6px;
-		align-items: center;
-		flex-wrap: wrap;
-	}
 	.cl-manage-sec {
 		font-size: 11px;
 		text-transform: uppercase;
