@@ -24,6 +24,9 @@
 		type PlaceMode
 	} from './mining-places.ts';
 import ListPicker from './ListPicker.svelte';
+	// M9-P (t_fb405e8d, P7+P9): offener Restbedarf + Auto-Reserve-Cap —
+	// geteilte Formular-Logik (node-getestet, list-actions.test.ts).
+	import { openRest } from './list-actions.ts';
 
 	type Ore = {
 		id: string;
@@ -118,11 +121,12 @@ import ListPicker from './ListPicker.svelte';
 	let newName = $state('');
 	let renameMode = $state(false);
 	let renameVal = $state('');
-	let partial = $state<Record<string, string>>({});
 
-	// M9-H (t_7709c7f2, Punkt 5): „Als erledigt" öffnet die Inventar-Maske
-	// mit dem fehlenden Restbetrag voreingetragen (nur Qualität + Lagerort
-	// werden abgefragt); Teil-Eintrag → Teilmenge voreingetragen. Reserviert
+	// M9-P (t_fb405e8d, P7+P9): EIN Button pro Material-Zeile — „Add to
+	// Inventory" öffnet die Inventar-Maske mit dem offenen Restbedarf
+	// (Bedarf − done − reserved, M9-M) voreingetragen; Qualität + Lagerort
+	// werden abgefragt. Done/Partial/Reset entfallen — der Status ergibt
+	// sich aus der Fortschritts-Logik (done+reserved/Bedarf). Reserviert
 	// wird NUR für verknüpfte Listen (source_list_id, Craft→Mining-Brücke
 	// M9-D) — standalone Mining-Listen landen ohne Reservierungs-Verweis.
 	let addInvFor = $state<AggMat | null>(null);
@@ -137,27 +141,15 @@ import ListPicker from './ListPicker.svelte';
 	let invLocEl = $state<HTMLInputElement | null>(null);
 	// Verknüpfte Liste? (Brücken-Kind — nur diese reservieren, Spec Punkt 5)
 	const activeLinked = $derived(lists.find((l) => l.id === activeId)?.source_list_id != null);
-	const remaining = (m: AggMat) => Math.max(0, Math.round((m.quantity - m.done_qty) * 100) / 100);
-	function openAddInv(m: AggMat, qty: number) {
+	function openAddInv(m: AggMat) {
 		addInvFor = m;
 		invNote = '';
 		invError = '';
-		// Vorschläge: Anforderung als Qualität, offene Menge als Menge.
+		// Vorschläge: Anforderung als Qualität, offener Rest als Menge.
 		invQ = String(m.min_quality);
-		invQty = String(qty);
+		invQty = String(openRest(m));
 		void loadInvLocs();
 		setTimeout(() => invLocEl?.focus(), 0);
-	}
-	/// „Als erledigt": Restbetrag voreingetragen.
-	function doneAllInv(m: AggMat) {
-		openAddInv(m, remaining(m));
-	}
-	/// Teil-Eintrag: eingegebene Teilmenge voreingetragen (ungültige Eingabe
-	/// → Restbetrag, damit die Maske nie mit 0/leer startet).
-	function donePartialInv(m: AggMat) {
-		const raw = (partial[rowKey(m)] ?? '').replace(',', '.').trim();
-		const v = Number(raw);
-		openAddInv(m, raw && Number.isFinite(v) && v > 0 ? v : remaining(m));
 	}
 	async function loadInvLocs() {
 		try {
@@ -196,10 +188,12 @@ import ListPicker from './ListPicker.svelte';
 			price: null
 		};
 		try {
-			// Fortschritt der Liste mitführen: Menge addieren, auf Soll klemmen.
-			const newDone = Math.min(m.quantity, m.done_qty + qty);
 			// NUR verknüpfte Listen reservieren (Spec Punkt 5) — standalone
 			// Listen bekommen eine normale Inventar-Position ohne Verweis.
+			// M9-P (P7): `inventory_add_for_list` reserviert SERVERSEITIG
+			// automatisch bis zum Restbedarf (harter M9-I-Cap) — kein
+			// `list_set_done` hier, sonst würde done die Reservierung
+			// doppelt zählen (M9-M: Fortschritt = done + reserved).
 			const addedName = activeLinked
 				? (
 						await invoke<{ entry: { name: string; quality: number; location_name: string } }>(
@@ -208,12 +202,6 @@ import ListPicker from './ListPicker.svelte';
 						)
 					).entry.name
 				: (await invoke<{ name: string }>('inventory_add', { entry })).name;
-			await invoke('list_set_done', {
-				listId: activeId,
-				material: m.material,
-				unit: m.unit,
-				doneQty: newDone
-			});
 			// Erst reloaden (openList räumt Eingaben/Formular auf), dann den
 			// Erfolgshinweis setzen, damit er stehen bleibt.
 			await openList(activeId);
@@ -412,25 +400,9 @@ import ListPicker from './ListPicker.svelte';
 		}
 	}
 
-	// ---- Abhaken (identisch CraftLists) --------------------------------------
-	async function setDone(m: AggMat, done: number | null) {
-		if (activeId === null) return;
-		error = '';
-		try {
-			await invoke('list_set_done', {
-				listId: activeId,
-				material: m.material,
-				unit: m.unit,
-				doneQty: done
-			});
-			delete partial[rowKey(m)];
-			await openList(activeId);
-		} catch (e) {
-			error = String(e);
-		}
-	}
-	// (doneAll/donePartial ersetzt durch doneAllInv/donePartialInv — M9-H
-	// Punkt 5: Abhaken läuft jetzt über die Inventar-Maske mit Vorbefüllung.)
+	// ---- Abhaken entfällt (M9-P, P7): Der Status ergibt sich aus der
+	// Fortschritts-Logik (done + reserved/Bedarf, M9-M zentral im
+	// Backend `list_detail`) — Buttons und `list_set_done`-Aufrufe weg.
 
 	// ---- Beste Orte (Set-Cover + Qualitäts-Bänder) ----------------------------
 	async function computePlaces() {
@@ -769,30 +741,11 @@ import ListPicker from './ListPicker.svelte';
 							<div class="ml-bar-fill" class:is-done={m.reached} style={`width:${p}%`}></div>
 						</div>
 						<div class="ml-agg-actions">
-							<button type="button" class="ml-mini" onclick={() => doneAllInv(m)} disabled={p >= 100}>
-								{$t('lists.done_all')}
-							</button>
-							<input
-								class="ml-input ml-partial"
-								type="text"
-								inputmode="decimal"
-								bind:value={partial[rowKey(m)]}
-								placeholder={$t('lists.done_partial_ph')}
-								aria-label={$t('lists.done_partial')}
-								onkeydown={(e) => e.key === 'Enter' && donePartialInv(m)}
-							/>
-							<button
-								type="button"
-								class="ml-mini"
-								onclick={() => donePartialInv(m)}
-								disabled={p >= 100}>{$t('lists.done_partial')}</button
-							>
-							{#if m.done_qty > 0}
-								<button type="button" class="ml-mini" onclick={() => void setDone(m, null)}>
-									{$t('lists.reset')}
-								</button>
-							{/if}
-							<button type="button" class="ml-mini" onclick={() => openAddInv(m, remaining(m))}>
+							<!-- M9-P (P7): EIN Button pro Material-Zeile — Done/Partial/
+							     Reset entfallen, der Status ergibt sich aus done +
+							     reserved/Bedarf (M9-M). Das Formular reserviert
+							     serverseitig automatisch bis zum Restbedarf. -->
+							<button type="button" class="ml-mini" onclick={() => openAddInv(m)}>
 								{$t('lists.to_inventory')}
 							</button>
 							{#if addInvFor && addInvFor.material === m.material && addInvFor.unit === m.unit}
@@ -827,7 +780,7 @@ import ListPicker from './ListPicker.svelte';
 											type="text"
 											inputmode="decimal"
 											bind:value={invQty}
-											placeholder={$t('lists.done_partial_ph')}
+											placeholder={$t('lists.inv_qty')}
 											aria-label={$t('lists.inv_qty')}
 											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
 										/>
@@ -1241,10 +1194,6 @@ import ListPicker from './ListPicker.svelte';
 	}
 	.ml-bar-fill.is-done {
 		background: #6fdc8c;
-	}
-	.ml-partial {
-		width: 74px;
-		padding: 3px 8px;
 	}
 	/* Beste Orte — M9-K (P10): Modus-Toggle statt Tier-Auswahl. */
 	.ml-modes {

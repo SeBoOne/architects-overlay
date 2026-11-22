@@ -913,6 +913,12 @@ impl Cache {
             // M9-F (t_bb97da62): aus dem Inventar reservierte Mengen + mengen-
             // gewichtete Ø-Qualität je Material (Reservierungen dieser Liste,
             // gematcht über den Inventar-Namen — groß/klein egal).
+            // M9-P (t_fb405e8d, P7): Reservierungen zählen LISTENFAMILIENWEIT —
+            // eine Reservierung der verknüpften Mining-Liste schlägt auf die
+            // erzeugende Crafting-Liste durch und umgekehrt (Welle-2 Punkt 2:
+            // Mining→Craft-Sync; der UI-Flow ruft seit M9-P kein
+            // `list_set_done` mehr, der Fortschritt lebt NUR noch in den
+            // Reservierungen). Cap/Klemmung bleibt je Liste selbst.
             let mut reserved_map: std::collections::HashMap<String, (f64, Option<u32>)> =
                 std::collections::HashMap::new();
             {
@@ -920,7 +926,14 @@ impl Cache {
                     "SELECT LOWER(i.name) AS m, SUM(res.qty), \
                             SUM(res.qty * i.quality) / SUM(res.qty) \
                      FROM reservations res JOIN inventory i ON i.id = res.inventory_id \
-                     WHERE res.list_id = ?1 GROUP BY LOWER(i.name)",
+                     WHERE res.list_id IN ( \
+                         SELECT id FROM lists WHERE id = ?1 \
+                         UNION \
+                         SELECT id FROM lists WHERE source_list_id = ?1 \
+                         UNION \
+                         SELECT source_list_id FROM lists WHERE id = ?1 \
+                           AND source_list_id IS NOT NULL) \
+                     GROUP BY LOWER(i.name)",
                 )?;
                 let mut rows = stmt.query([id as i64])?;
                 while let Some(r) = rows.next()? {
@@ -2179,5 +2192,72 @@ mod tests {
         let invs = c.inventory_list().unwrap();
         assert_eq!(invs[0].quantity, 0.0);
         assert!(invs[0].reservations.is_empty());
+    }
+
+    // M9-P (t_fb405e8d, P7): Reservierungen zählen LISTENFAMILIENWEIT — der
+    // Mining-UI-Flow setzt seit M9-P kein `list_set_done` mehr (Fortschritt
+    // lebt NUR in den Reservierungen); Welle-2 Punkt 2 verlangt trotzdem den
+    // Mining→Craft-Durchschlag.
+    #[test]
+    fn m9p_reservation_of_linked_mining_counts_for_craft_source() {
+        // Craft-Liste (Bedarf 800) → verknüpfte Mining-Liste; Reservierung
+        // über die MINING-Liste zählt für die CRAFT-Quelle (und umgekehrt).
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        c.list_add_item(
+            craft,
+            bp("a", "A", 1.0, vec![("Hadanite", "gems", 800.0, 500)]),
+        )
+        .unwrap();
+        let mine = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        c.list_add_item(
+            mine,
+            bp("b", "Hadanite", 800.0, vec![("Hadanite", "gems", 1.0, 500)]),
+        )
+        .unwrap();
+        // 300 über die Mining-Liste reserviert (M9-P-Flow: nur add + auto-reserve).
+        c.inventory_add_for_list(m9m_inv(300.0, "Hadanite"), mine, "Hadanite", "gems")
+            .unwrap();
+        let d_craft = c.list_detail(craft).unwrap();
+        let mc = agg_of(&d_craft, "Hadanite");
+        assert_eq!(mc.reserved_qty, 300.0, "Durchschlag Mining→Craft");
+        assert_eq!(mc.progress, 37.5);
+        assert!(!mc.reached);
+        let d_mine = c.list_detail(mine).unwrap();
+        let mm = agg_of(&d_mine, "Hadanite");
+        assert_eq!(mm.reserved_qty, 300.0, "eigene Reservierung zählt weiter");
+        // Volle Abdeckung über die Mining-Liste → auch die Craft-Quelle erreicht.
+        c.inventory_add_for_list(m9m_inv(500.0, "Hadanite"), mine, "Hadanite", "gems")
+            .unwrap();
+        let d_craft = c.list_detail(craft).unwrap();
+        let mc = agg_of(&d_craft, "Hadanite");
+        assert_eq!(mc.reserved_qty, 800.0);
+        assert_eq!(mc.progress, 100.0);
+        assert!(mc.reached);
+    }
+
+    #[test]
+    fn m9p_reservation_of_craft_source_counts_for_linked_mining() {
+        // Gegenrichtung: Reservierung über die CRAFT-Liste (M9-F-Flow) zählt
+        // für die verknüpfte Mining-Liste (Spiegel zeigt denselben Stand).
+        let c = Cache::open_in_memory().unwrap();
+        let craft = c.list_create("craft", "Craft", None).unwrap();
+        c.list_add_item(
+            craft,
+            bp("a", "A", 1.0, vec![("Taranite", "SCU", 500.0, 500)]),
+        )
+        .unwrap();
+        let mine = c.list_create("mining", "Mine", Some(craft)).unwrap();
+        c.list_add_item(
+            mine,
+            bp("b", "Taranite", 500.0, vec![("Taranite", "SCU", 1.0, 500)]),
+        )
+        .unwrap();
+        c.inventory_add_for_list(m9m_inv(200.0, "Taranite"), craft, "Taranite", "SCU")
+            .unwrap();
+        let d_mine = c.list_detail(mine).unwrap();
+        let mm = agg_of(&d_mine, "Taranite");
+        assert_eq!(mm.reserved_qty, 200.0, "Durchschlag Craft→Mining");
+        assert_eq!(mm.progress, 40.0);
     }
 }

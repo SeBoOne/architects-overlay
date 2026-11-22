@@ -15,6 +15,9 @@
 	import { invoke } from '@tauri-apps/api/core';
 	// M9-D (t_36f3966c): Craft→Mining-Brücke — Aggregation → Mining-Listen-Einträge.
 	import { bridgeItems } from './list-bridge.ts';
+	// M9-P (t_fb405e8d, P8): offener Restbedarf — geteilte Formular-Logik
+	// (node-getestet, list-actions.test.ts).
+	import { openRest } from './list-actions.ts';
 	// M9-K (t_db9b234f, P11): Listen-Umschalter als Custom-Dropdown statt Chips.
 	import ListPicker from './ListPicker.svelte';
 
@@ -96,14 +99,18 @@
 	let newName = $state('');
 	let renameMode = $state(false);
 	let renameVal = $state('');
-	// Teilweise-Abhak-Eingabe je aggregierter Zeile (material:unit → Text).
-	let partial = $state<Record<string, string>>({});
 
-	// M9-E (t_aae8d4c9) — Inventar-Anbindung: „Material hinzufügen“ pro
-	// aggregierter Zeile. Ort + Qualität werden hier abgefragt, die Position
-	// landet reserviert für DIESE Liste im Inventar; eine höhere Qualität
-	// hebt die Anforderung an (Antwort aus inventory_add_for_list).
-	let addInvFor = $state<AggMat | null>(null);
+	// M9-P (t_fb405e8d, P8): EIN Button pro Material-Zeile — das kombinierte
+	// Formular enthält (a) Menge ins Inventar aufnehmen (auto-reserviert bis
+	// zum Restbedarf, M9-I-Cap serverseitig), (b) aus dem freien Inventar
+	// reservieren (M9-F-Picker) und (c) bestehende Reservierungen bearbeiten
+	// (M9-I, reservation_update/reservation_delete). Done/Partial/Reset
+	// entfallen — der Status ergibt sich aus done + reserved/Bedarf (M9-M).
+
+	// (a) Ins Inventar aufnehmen — Ort + Qualität werden hier abgefragt, die
+	// Position landet reserviert für DIESE Liste im Inventar; eine höhere
+	// Qualität hebt die Anforderung an (Antwort aus inventory_add_for_list).
+	let manageFor = $state<AggMat | null>(null);
 	let invLoc = $state('');
 	let invQ = $state('');
 	let invQty = $state('');
@@ -113,15 +120,22 @@
 	let invError = $state('');
 	let invLocs = $state<string[]>([]);
 	let invLocEl = $state<HTMLInputElement | null>(null);
-	const remaining = (m: AggMat) => Math.max(0, Math.round((m.quantity - m.done_qty) * 100) / 100);
-	function openAddInv(m: AggMat) {
-		addInvFor = m;
+	function openManage(m: AggMat) {
+		manageFor = m;
 		invNote = '';
 		invError = '';
-		// Vorschläge: Anforderung als Qualität, offene Menge als Menge.
+		reserveNote = '';
+		reserveError = '';
+		// (a) Vorschläge: Anforderung als Qualität, offener Rest als Menge.
 		invQ = String(m.min_quality);
-		invQty = String(remaining(m));
+		invQty = String(openRest(m));
+		// (b+c) Quellen-Zeilen mit dem Ist-Stand vorgefüllt: je Inventar-Zeile
+		// die für DIESE Liste reservierte Menge (Bearbeiten), neue Quellen
+		// bleiben additive Picks (M9-F-Flow, submitReserve deckt beides ab).
+		reserveSel = {};
+		reserveResIds = {};
 		void loadInvLocs();
+		void loadReserveRows(m);
 		setTimeout(() => invLocEl?.focus(), 0);
 	}
 	async function loadInvLocs() {
@@ -132,8 +146,8 @@
 		}
 	}
 	async function submitAddInv() {
-		if (addInvFor === null || activeId === null) return;
-		const m = addInvFor;
+		if (manageFor === null || activeId === null) return;
+		const m = manageFor;
 		const loc = invLoc.trim();
 		const q = Number(invQ);
 		const qty = Number(invQty.replace(',', '.'));
@@ -189,14 +203,14 @@
 	// M9-F (t_bb97da62) — Aus Inventar reservieren: Quellen-Zeilen des
 	// Materials (alle Qualitäten/Standorte, freie Mengen), Auswahl per
 	// Chips (KEIN natives <select>), partielle Mengen erlaubt.
-	// M9-I (t_e7f0b3a6) — Bearbeiten aus der Liste: dieselbe Maske im
-	// Edit-Modus, vorgefüllt mit dem Ist-Stand (je Quelle Menge), Löschen
+	// M9-I (t_e7f0b3a6) — Bearbeiten aus der Liste: dieselbe Maske,
+	// vorgefüllt mit dem Ist-Stand (je Quelle Menge), Löschen
 	// je Quelle per ✕ (reservation_delete), Mengen-Änderung via
 	// reservation_update. Der harte Listen-Cap wird serverseitig erzwungen.
-	let reserveFor = $state<AggMat | null>(null);
+	// M9-P (P8): Beides in EINEM Panel — Zeilen zeigen den Ist-Stand
+	// vorgefüllt (Bearbeiten), neue Quellen bleiben additive Picks.
 	let reserveRows = $state<InvRow[]>([]);
 	let reserveSel = $state<Record<string, string>>({}); // id → qty-Text
-	let reserveEdit = $state(false);
 	// M9-I: je Inventar-Zeile die Reservierungs-Ids DIESER Liste (edit).
 	let reserveResIds = $state<Record<string, string[]>>({});
 	let reserveBusy = $state(false);
@@ -212,28 +226,30 @@
 		reserveRows = [];
 		try {
 			const all = await invoke<InvRow[]>('inventory_list');
-			reserveRows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
+			const rows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
+			reserveRows = rows;
 		} catch (e) {
 			reserveError = trError(e);
 		}
 	}
-	/// M9-I: Bearbeiten — Maske mit dem Ist-Stand vorgefüllt (je Quelle die
-	/// Menge, die für DIESE Liste reserviert ist).
-	async function openEditReserve(m: AggMat) {
-		reserveFor = m;
-		reserveEdit = true;
+	/// Quellen-Zeilen lesen + Ist-Stand je Quelle vorausfüllen (für DIESE
+	/// Liste reservierte Menge). Von openManage UND nach dem ✕-Löschen
+	/// genutzt — das Panel bleibt offen und zeigt den frischen Stand.
+	async function loadReserveRows(m: AggMat) {
 		reserveSel = {};
 		reserveResIds = {};
 		reserveError = '';
-		reserveRows = [];
 		try {
 			const all = await invoke<InvRow[]>('inventory_list');
-			reserveRows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
-			for (const r of reserveRows) {
-				const own = r.reservations.filter((x) => x.list_id === String(activeId));
-				if (own.length) {
-					reserveResIds[r.id] = own.map((x) => x.id);
-					reserveSel[r.id] = String(Math.round(own.reduce((s, x) => s + x.qty, 0) * 100) / 100);
+			const rows = all.filter((r) => r.name.toLowerCase() === m.material.toLowerCase());
+			reserveRows = rows;
+			if (activeId !== null) {
+				for (const r of rows) {
+					const own = r.reservations.filter((x) => x.list_id === String(activeId));
+					if (own.length) {
+						reserveResIds[r.id] = own.map((x) => x.id);
+						reserveSel[r.id] = String(Math.round(own.reduce((s, x) => s + x.qty, 0) * 100) / 100);
+					}
 				}
 			}
 		} catch (e) {
@@ -252,7 +268,11 @@
 		try {
 			for (const id of ids) await invoke('reservation_delete', { id });
 			if (activeId !== null) detail = await invoke<ListDetail>('list_detail', { listId: activeId });
-			if (reserveFor) await openEditReserve(reserveFor);
+			if (manageFor) {
+				delete reserveResIds[r.id];
+				delete reserveSel[r.id];
+				await loadReserveRows(manageFor);
+			}
 		} catch (e) {
 			reserveError = trError(e);
 		} finally {
@@ -261,81 +281,47 @@
 	}
 	const freeQty = (r: InvRow) =>
 		Math.max(0, r.quantity - r.reservations.reduce((s, x) => s + x.qty, 0));
+	// M9-P (P8): EIN Submit fürs kombinierte Panel — je Quelle: vorhandene
+	// Reservierung (leere Eingabe/0 = löschen, Wert = reservation_update),
+	// neue Picks bleiben reservation_add. Der Cap wird serverseitig
+	// erzwungen (reservations.err_list_cap).
 	async function submitReserve() {
-		if (reserveFor === null || activeId === null || reserveBusy) return;
-		const m = reserveFor;
-		// M9-I: Edit-Modus — je Quelle: leere Eingabe/0 = löschen, Wert =
-		// reservation_update (nicht für DIESE Liste reservierte Quellen
-		// bleiben der additive Pick-Flow).
-		if (reserveEdit) {
-			reserveBusy = true;
-			reserveError = '';
-			try {
-				let total = 0;
-				for (const r of reserveRows) {
-					const raw = reserveSel[r.id];
-					const ids = reserveResIds[r.id] ?? [];
-					if (ids.length) {
-						const q = raw === undefined ? NaN : Number(String(raw).replace(',', '.'));
-						if (!(q > 0)) {
-							for (const id of ids) await invoke('reservation_delete', { id });
-						} else {
-							await invoke('reservation_update', { id: ids[0], qty: q });
-							for (const id of ids.slice(1)) await invoke('reservation_delete', { id });
-							total += q;
-						}
-					} else if (raw !== undefined) {
-						const q = Number(String(raw).replace(',', '.'));
-						if (q > 0) {
-							await invoke('reservation_add', {
-								'new': {
-									inventory_id: r.id,
-									list_id: String(activeId),
-									purpose: '',
-									qty: q,
-									note: m.material
-								}
-							});
-							total += q;
-						}
-					}
-				}
-				await openList(activeId);
-				reserveNote = $t('lists.reserved_note2', { q: total, name: m.material, list: detail?.name ?? '' });
-				reserveFor = null;
-			} catch (e) {
-				reserveError = trError(e);
-			} finally {
-				reserveBusy = false;
-			}
-			return;
-		}
-		const picks = Object.entries(reserveSel)
-			.map(([id, raw]) => ({ id, qty: Number(raw.replace(',', '.')) }))
-			.filter((p) => p.qty > 0);
-		if (!picks.length) {
-			reserveError = $t('inventory.err_purpose');
-			return;
-		}
+		if (manageFor === null || activeId === null || reserveBusy) return;
+		const m = manageFor;
 		reserveBusy = true;
 		reserveError = '';
 		try {
 			let total = 0;
-			for (const p of picks) {
-				await invoke('reservation_add', {
-					'new': {
-						inventory_id: p.id,
-						list_id: String(activeId),
-						purpose: '',
-						qty: p.qty,
-						note: m.material
+			for (const r of reserveRows) {
+				const raw = reserveSel[r.id];
+				const ids = reserveResIds[r.id] ?? [];
+				if (ids.length) {
+					const q = raw === undefined ? NaN : Number(String(raw).replace(',', '.'));
+					if (!(q > 0)) {
+						for (const id of ids) await invoke('reservation_delete', { id });
+					} else {
+						await invoke('reservation_update', { id: ids[0], qty: q });
+						for (const id of ids.slice(1)) await invoke('reservation_delete', { id });
+						total += q;
 					}
-				});
-				total += p.qty;
+				} else if (raw !== undefined) {
+					const q = Number(String(raw).replace(',', '.'));
+					if (q > 0) {
+						await invoke('reservation_add', {
+							'new': {
+								inventory_id: r.id,
+								list_id: String(activeId),
+								purpose: '',
+								qty: q,
+								note: m.material
+							}
+						});
+						total += q;
+					}
+				}
 			}
 			await openList(activeId);
 			reserveNote = $t('lists.reserved_note2', { q: total, name: m.material, list: detail?.name ?? '' });
-			reserveFor = null;
 		} catch (e) {
 			reserveError = trError(e);
 		} finally {
@@ -404,11 +390,14 @@
 		// M9-E: Hinweis/Formular der vorherigen Liste verfallen lassen.
 		invNote = '';
 		invError = '';
-		addInvFor = null;
-		// M9-F: Reservierungs-Hinweis/Picker ebenso verfallen lassen.
+		// M9-F: Reservierungs-Hinweis ebenso verfallen lassen.
 		reserveNote = '';
 		reserveError = '';
-		reserveFor = null;
+		// M9-P: das kombinierte Panel ebenso verfallen lassen.
+		manageFor = null;
+		reserveSel = {};
+		reserveResIds = {};
+		reserveRows = [];
 		// M9-D: Brücken-Hinweis ebenso verfallen lassen.
 		bridgeNote = '';
 		try {
@@ -491,32 +480,9 @@
 		}
 	}
 
-	// ---- Abhaken -------------------------------------------------------------
-	async function setDone(m: AggMat, done: number | null) {
-		if (activeId === null) return;
-		error = '';
-		try {
-			await invoke('list_set_done', {
-				listId: activeId,
-				material: m.material,
-				unit: m.unit,
-				doneQty: done
-			});
-			delete partial[rowKey(m)];
-			await openList(activeId);
-		} catch (e) {
-			error = String(e);
-		}
-	}
-	function doneAll(m: AggMat) {
-		void setDone(m, m.quantity);
-	}
-	function donePartial(m: AggMat) {
-		const raw = (partial[rowKey(m)] ?? '').replace(',', '.').trim();
-		const v = Number(raw);
-		if (!raw || !Number.isFinite(v) || v < 0) return;
-		void setDone(m, v);
-	}
+	// ---- Abhaken entfällt (M9-P, P8): Der Status ergibt sich aus der
+	// Fortschritts-Logik (done + reserved/Bedarf, M9-M zentral im
+	// Backend `list_detail`) — Buttons und `list_set_done`-Aufrufe weg.
 	function openOre(id: string | null) {
 		if (id) onOpenOre?.(id);
 	}
@@ -755,31 +721,86 @@
 							<div class="cl-bar-fill" class:is-done={m.reached} style={`width:${p}%`}></div>
 							</div>
 							<div class="cl-agg-actions">
-							<button type="button" class="cl-mini" onclick={() => openReserve(m)} disabled={reserveBusy}>
-								{$t('lists.reserve_btn')}
+							<!-- M9-P (P8): EIN Button pro Material-Zeile — Done/Partial/
+							     Reset entfallen, der Status ergibt sich aus done +
+							     reserved/Bedarf (M9-M). Das Panel bündelt: Bedarf
+							     reservieren (M9-J), ins Inventar aufnehmen (auto-
+							     reserviert, M9-I-Cap) + Reservierungen bearbeiten. -->
+							<button type="button" class="cl-mini" onclick={() => openManage(m)}>
+								{$t('lists.manage_btn')}
 							</button>
-							{#if m.reserved_qty > 0}
-								<button type="button" class="cl-mini" onclick={() => openEditReserve(m)} disabled={reserveBusy}>
-									{$t('lists.edit_reserve_btn')}
-								</button>
-							{/if}
-							{#if reserveFor && reserveFor.material === m.material && reserveFor.unit === m.unit}
+							{#if manageFor && manageFor.material === m.material && manageFor.unit === m.unit}
 								<div class="cl-inv-form">
 									<div class="cl-inv-title">
-										{#if reserveEdit}
-											{$t('lists.edit_reserve_title', { req: fmtQty(m.quantity), res: fmtQty(m.reserved_qty) })}
-										{:else}
-											{$t('lists.reserve_title')}
-										{/if}
+										{$t('lists.manage_title', { req: fmtQty(m.quantity), res: fmtQty(m.reserved_qty) })}
 									</div>
 									{#if reserveError}<div class="cl-err">{reserveError}</div>{/if}
+									<!-- Auto: Bedarf reservieren (M9-J-Greedy, Re-Click =
+									     Neuberechnung; Cap Summe ≤ Bedarf serverseitig). -->
+									<div class="cl-manage-auto">
+										<button
+											type="button"
+											class="cl-btn"
+											onclick={() => void reserveAll()}
+											disabled={reserveAllBusy}
+										>
+											{$t('lists.reserve_all')}
+										</button>
+										<span class="cl-hint">{$t('lists.reserve_all_title')}</span>
+									</div>
+									<!-- (a) Ins Inventar aufnehmen — inventory_add_for_list
+									     reserviert SERVERSEITIG automatisch bis zum
+									     Restbedarf (harter M9-I-Cap). -->
+									<div class="cl-manage-sec">{$t('lists.inv_title', { list: detail.name })}</div>
+									{#if invError}<div class="cl-err">{invError}</div>{/if}
+									<div class="cl-inv-fields">
+										<input
+											bind:this={invLocEl}
+											class="cl-input"
+											type="text"
+											bind:value={invLoc}
+											list="cl-inv-locs"
+											placeholder={$t('inventory.location')}
+											aria-label={$t('inventory.location')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<datalist id="cl-inv-locs">
+											{#each invLocs as loc}<option value={loc}></option>{/each}
+										</datalist>
+										<input
+											class="cl-input cl-inv-q"
+											type="text"
+											inputmode="numeric"
+											bind:value={invQ}
+											placeholder={$t('inventory.quality')}
+											aria-label={$t('inventory.quality')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<input
+											class="cl-input cl-inv-q"
+											type="text"
+											inputmode="decimal"
+											bind:value={invQty}
+											placeholder={$t('lists.inv_qty')}
+											aria-label={$t('lists.inv_qty')}
+											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+										/>
+										<button type="button" class="cl-btn" onclick={() => void submitAddInv()}>
+											{$t('lists.inv_add')}
+										</button>
+									</div>
+									<!-- (b+c) Aus dem Inventar reservieren + bestehende
+									     Reservierungen bearbeiten (M9-I): Ist-Stand ist
+									     vorausgefüllt, ✕ löscht die Quelle, leere Eingabe/0
+									     löscht beim Speichern. -->
+									<div class="cl-manage-sec">{$t('lists.reserve_title')}</div>
 									{#if !reserveRows.length}
 										<div class="cl-hint">{$t('inventory.no_positions_material')}</div>
 									{:else}
 										<div class="cl-reserve-rows">
 											{#each reserveRows as r (r.id)}
 												{@const free = freeQty(r)}
-												{@const own = reserveEdit ? (reserveResIds[r.id]?.length ?? 0) : 0}
+												{@const own = reserveResIds[r.id]?.length ?? 0}
 												<div class="cl-res-row">
 													<button
 														type="button"
@@ -812,85 +833,14 @@
 											{/each}
 										</div>
 										<button type="button" class="cl-btn" onclick={() => void submitReserve()} disabled={reserveBusy}>
-											{#if reserveEdit}{$t('common.save')}{:else}{$t('lists.inv_add')}{/if}
+											{$t('common.save')}
 										</button>
-										<button type="button" class="cl-mini" onclick={() => (reserveFor = null)}>
-											{$t('common.cancel')}
+										{/if}
+										<button type="button" class="cl-mini" onclick={() => (manageFor = null)}>
+										{$t('common.cancel')}
 										</button>
-									{/if}
-								</div>
-							{/if}
-							<button type="button" class="cl-mini" onclick={() => doneAll(m)} disabled={p >= 100}>
-								{$t('lists.done_all')}
-							</button>
-							<input
-								class="cl-input cl-partial"
-								type="text"
-								inputmode="decimal"
-								bind:value={partial[rowKey(m)]}
-								placeholder={$t('lists.done_partial_ph')}
-								aria-label={$t('lists.done_partial')}
-								onkeydown={(e) => e.key === 'Enter' && donePartial(m)}
-							/>
-							<button
-								type="button"
-								class="cl-mini"
-								onclick={() => donePartial(m)}
-								disabled={p >= 100}>{$t('lists.done_partial')}</button
-							>
-							{#if m.done_qty > 0}
-								<button type="button" class="cl-mini" onclick={() => void setDone(m, null)}>
-									{$t('lists.reset')}
-								</button>
-							{/if}
-								<button type="button" class="cl-mini" onclick={() => openAddInv(m)}>
-									{$t('lists.to_inventory')}
-								</button>
-							{#if addInvFor && addInvFor.material === m.material && addInvFor.unit === m.unit}
-								<div class="cl-inv-form">
-									<div class="cl-inv-title">{$t('lists.inv_title', { list: detail.name })}</div>
-									{#if invError}<div class="cl-err">{invError}</div>{/if}
-									<div class="cl-inv-fields">
-										<input
-											bind:this={invLocEl}
-											class="cl-input"
-											type="text"
-											bind:value={invLoc}
-											list="cl-inv-locs"
-											placeholder={$t('inventory.location')}
-											aria-label={$t('inventory.location')}
-											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
-										/>
-										<datalist id="cl-inv-locs">
-											{#each invLocs as loc}<option value={loc}></option>{/each}
-										</datalist>
-										<input
-											class="cl-input cl-inv-q"
-											type="text"
-											inputmode="numeric"
-											bind:value={invQ}
-											placeholder={$t('inventory.quality')}
-											aria-label={$t('inventory.quality')}
-											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
-										/>
-										<input
-											class="cl-input cl-inv-q"
-											type="text"
-											inputmode="decimal"
-											bind:value={invQty}
-											placeholder={$t('lists.done_partial_ph')}
-											aria-label={$t('lists.inv_qty')}
-											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
-										/>
-										<button type="button" class="cl-btn" onclick={() => void submitAddInv()}>
-											{$t('lists.inv_add')}
-										</button>
-										<button type="button" class="cl-mini" onclick={() => (addInvFor = null)}>
-											{$t('common.cancel')}
-										</button>
-									</div>
-								</div>
-							{/if}
+										</div>
+										{/if}
 						</div>
 					</div>
 				{/each}
@@ -1122,9 +1072,18 @@
 		align-items: center;
 		flex-wrap: wrap;
 	}
-	.cl-partial {
-		width: 74px;
-		padding: 3px 8px;
+	/* M9-P (P8): kombiniertes Material-Panel. */
+	.cl-manage-auto {
+		display: flex;
+		gap: 6px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.cl-manage-sec {
+		font-size: 11px;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		opacity: 0.6;
 	}
 	/* M9-E: Inventar-Anbindung — Hinzufügen mit Ort+Qualität. */
 	.cl-inv-note {
