@@ -442,6 +442,10 @@ impl fmt::Display for MarketplaceConfirm {
 struct RawConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blueprint_owned: Option<Vec<String>>,
+    /// M9-Q2 (Sebo): Installations-Pfad des SC-`LIVE`-Ordners (Game.log +
+    /// logbackups/) für Blueprint-Erhalt aus Spiel-Logs. Empty = Default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    game_log_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     uex: Option<UexSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -922,6 +926,9 @@ pub struct Settings {
     /// (trim + dedupe + sort) beim Laden UND beim Setzen — ein Hand-Edit
     /// in der config.toml kann die Liste nicht corrupten.
     blueprint_owned: Vec<String>,
+    /// M9-Q2 (Sebo): SC-`LIVE`-Ordner (Game.log + logbackups/) für den
+    /// Blueprint-Erhalt aus Spiel-Logs. `None` = Default-Pfad.
+    game_log_path: Option<String>,
     uex_api_key: Option<String>,
     /// M2a-Fix (t_2f197d1c): persönlicher UEX-Secret-Key (user-scoped Reads).
     uex_secret_key: Option<String>,
@@ -983,6 +990,7 @@ impl Default for Settings {
         Settings {
             path: PathBuf::from(CONFIG_FILE),
             blueprint_owned: Vec::new(),
+            game_log_path: None,
             uex_api_key: None,
             uex_secret_key: None,
             uex_username: None,
@@ -1039,6 +1047,12 @@ impl Settings {
             // M9-A (t_60af9ec1): Blueprint-Besitz — normalisiert laden (Hand-
             // Edit kann die Liste nicht corrupten; identisch zum Set-Pfad).
             blueprint_owned: norm_blueprint_owned(raw.blueprint_owned.as_deref().unwrap_or(&[])),
+            game_log_path: raw
+                .game_log_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned),
             uex_api_key: raw.uex.as_ref().and_then(|u| u.api_key.clone()),
             uex_secret_key: raw.uex.as_ref().and_then(|u| u.secret_key.clone()),
             uex_username: raw.uex.as_ref().and_then(|u| u.username.clone()),
@@ -1200,6 +1214,7 @@ impl Settings {
         Settings {
             path,
             blueprint_owned: Vec::new(),
+            game_log_path: None,
             uex_api_key: None,
             uex_secret_key: None,
             uex_username: None,
@@ -1308,6 +1323,21 @@ impl Settings {
 
     pub fn blueprint_owned_contains(&self, id: &str) -> bool {
         self.blueprint_owned.iter().any(|v| v == id.trim())
+    }
+
+    // ---- M9-Q2 (Sebo): SC-Game-Log-Pfad (Blueprint-Erhalt) -------------------
+
+    /// Installations-Pfad des SC-`LIVE`-Ordners (enthält `Game.log` +
+    /// `logbackups/`). `None` = Default-Pfad des blueprint_log-Moduls.
+    pub fn game_log_dir(&self) -> Option<&str> {
+        self.game_log_path.as_deref()
+    }
+
+    /// Pfad setzen (trim; leer/Whitespace = zurück auf Default).
+    pub fn set_game_log_dir(&mut self, dir: Option<String>) {
+        self.game_log_path = dir
+            .map(|v| v.trim().to_owned())
+            .filter(|v| !v.is_empty());
     }
 
     /// Keystore-Eintrag-Bezeichner für den `celd_`-Key — KEIN Secret selbst
@@ -1679,6 +1709,7 @@ impl Settings {
             }),
             blueprint_owned: (!self.blueprint_owned.is_empty())
                 .then(|| self.blueprint_owned.clone()),
+            game_log_path: self.game_log_path.clone(),
             pins: self.pins.clone(),
             strata: Some(StrataSection {
                 enabled: Some(self.strata_enabled),

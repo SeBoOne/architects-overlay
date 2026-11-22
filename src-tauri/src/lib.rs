@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 #[cfg(desktop)]
 mod app_settings;
+mod blueprint_log;
 #[cfg(desktop)]
 mod connector;
 /// SCLM v2 Karte A (Spec 5.2): Session-Keystore pro Connector (tauri-freier,
@@ -173,6 +174,8 @@ pub fn run() {
             app_settings::settings_set_strata_enabled,
             app_settings::blueprint_owned_get,
             app_settings::blueprint_owned_toggle,
+            app_settings::settings_set_game_log_dir,
+            blueprint_log::blueprint_owned_sync_logs,
             app_settings::settings_get,
             app_settings::settings_set_pins_default_opacity,
             app_settings::settings_set_pins_presets,
@@ -306,6 +309,10 @@ pub fn run() {
                 updater::start_background_check(app.handle().clone());
 
                 setup_trade(app)?;
+
+                // M9-Q2 (Sebo): Blueprint-Erhalt aus SC-Spiel-Logs — Live-Tail
+                // für Game.log (Backfill separat per Command aus der UI).
+                blueprint_log::start_blueprint_log_tail(app.handle().clone());
 
                 // Create the spotlight window, register its global shortcuts and start
                 // the game-detection poller. Also creates our shared overlay state.

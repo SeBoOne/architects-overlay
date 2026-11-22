@@ -32,6 +32,7 @@
 	// https://strata.celd.space/api-keys. Attribution-Footer IMMER sichtbar.
 	import { t, tr, trError, currentLang } from './i18n';
 	import { invoke } from '@tauri-apps/api/core';
+	import { listen } from '@tauri-apps/api/event';
 	// M8-K6 (t_f7a29367): echter Qualitäts-Stat-Rechner
 	import QualityStats from './QualityStats.svelte';
 	// M8-R1-B: Custom-Dropdowns (DOM-Popover, kein natives <select> —
@@ -352,6 +353,10 @@
 			console.warn('blueprint_owned_toggle failed', e);
 		}
 	}
+	// M9-Q2 (Sebo): Live-Erhalte aus Game.log — der Backend-Tail emittiert
+	// bei jedem frisch erkannten Blueprint das Event; UI lädt die Besitz-
+	// Liste neu (neue Haken erscheinen ohne Neustart).
+	void listen('blueprint-owned-changed', () => void loadOwned());
 	// Verfügbarkeits-Filter neben den Kategorie-Filtern (Spec M9): drei
 	// Zustände im Kreis — alle → verfügbar (im Besitz) → nicht verfügbar.
 	let ownFilter = $state<'all' | 'owned' | 'not_owned'>('all');

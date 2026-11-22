@@ -172,6 +172,9 @@ pub struct SettingsSnapshot {
     /// `celd_`-Key selbst lebt im Keystore (`strata-key.json`) — sein
     /// Vorhandensein meldet `strata_status` (bool-only, kein Secret).
     pub strata_enabled: bool,
+    /// M9-Q2 (Sebo): SC-`LIVE`-Ordner (Game.log + logbackups/) für den
+    /// Blueprint-Erhalt aus Spiel-Logs. Leer = Default-Pfad.
+    pub game_log_dir: String,
 }
 
 impl SettingsSnapshot {
@@ -201,6 +204,10 @@ impl SettingsSnapshot {
             pins_default_opacity: s.pins_default_opacity(),
             pins_presets: s.pins_presets(),
             strata_enabled: s.strata_enabled(),
+            game_log_dir: s
+                .game_log_dir()
+                .unwrap_or_default()
+                .to_owned(),
         }
     }
 }
@@ -510,6 +517,25 @@ pub fn settings_set_uex_secret_key(
 ) -> SettingsSnapshot {
     let mut s = state.inner.lock().expect("settings lock");
     s.set_uex_secret_key(key.filter(|k| !k.trim().is_empty()));
+    state.persist(&s);
+    SettingsSnapshot::from_settings(
+        &s,
+        crate::overlay::global_shortcuts_active(&app),
+        &sync.take(),
+    )
+}
+
+/// M9-Q2 (Sebo): SC-`LIVE`-Ordner (Game.log + logbackups/) für den
+/// Blueprint-Erhalt aus Spiel-Logs. None/leer = Default-Pfad zurück.
+#[tauri::command]
+pub fn settings_set_game_log_dir(
+    state: tauri::State<SettingsState>,
+    app: tauri::AppHandle,
+    sync: tauri::State<SyncNote>,
+    dir: Option<String>,
+) -> SettingsSnapshot {
+    let mut s = state.inner.lock().expect("settings lock");
+    s.set_game_log_dir(dir);
     state.persist(&s);
     SettingsSnapshot::from_settings(
         &s,

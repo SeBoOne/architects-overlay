@@ -348,6 +348,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		detail_variant: string;
 		uex_api_key_set: boolean;
 		strata_enabled: boolean;
+		game_log_dir: string;
 		// M2a-Fix (t_2f197d1c): bool-only (roher Key geht nie ans Frontend)
 		// + UEX-Benutzername für den marketplace_listings?username=-Pull.
 		uex_secret_key_set: boolean;
@@ -1401,6 +1402,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 		try {
 			cfg = await invoke<SettingsSnapshot>('settings_get');
 			applySettings(cfg);
+			gameLogDirInput = cfg?.game_log_dir ?? '';
 			// M2a-Fix (t_2f197d1c): Settings-Username ist die kanonische Quelle
 			// für den „Mein Shop"-Pull — localStorage nur als SSR-Fallback.
 			// PW-1: Username-Feld entfallen — auto-ermittelt, gecacht. Ohne
@@ -1751,6 +1753,10 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 
 	// ---- M7-K2 (t_bb3303d0): Strata (Mining) — Key im Keystore, Toggle ------
 	let strataKeyInput = $state('');
+	// M9-Q2 (Sebo): Blueprints aus Spiel-Logs — LIVE-Ordner-Pfad + Sync-Report.
+	let gameLogDirInput = $state('');
+	let bpSyncBusy = $state(false);
+	let bpSyncNote = $state('');
 	let strataNote = $state('');
 	let strataStat = $state<{ enabled: boolean; key_set: boolean; tier_default: number } | null>(
 		null
@@ -1812,6 +1818,49 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 			void refreshStrataStatus();
 		} catch (e) {
 			strataNote = errText(e);
+		}
+	}
+
+	// M9-Q2 (Sebo): Blueprints aus Spiel-Logs — LIVE-Ordner-Pfad speichern +
+	// Backfill-Sync (alle Log-Dateien parsen, Besitz-Haken setzen).
+	async function saveGameLogDir() {
+		if (!cfg) return;
+		try {
+			cfg = await invoke<SettingsSnapshot>('settings_set_game_log_dir', {
+				dir: gameLogDirInput
+			});
+			applySettings(cfg);
+			bpSyncNote = $t('settings.blueprints_path_saved');
+		} catch (e) {
+			bpSyncNote = errText(e);
+		}
+	}
+	async function syncBlueprints() {
+		if (bpSyncBusy) return;
+		bpSyncBusy = true;
+		bpSyncNote = '';
+		try {
+			const r = await invoke<{
+				files: number;
+				names: number;
+				matched: number;
+				added: number;
+				unmatched: string[];
+			}>('blueprint_owned_sync_logs');
+			bpSyncNote = $t('settings.blueprints_report', {
+				files: r.files,
+				names: r.names,
+				matched: r.matched,
+				added: r.added
+			});
+			if (r.unmatched.length) {
+				bpSyncNote +=
+					' — ' + $t('settings.blueprints_unmatched', { names: r.unmatched.join(', ') });
+			}
+		} catch (e) {
+			bpSyncNote = errText(e);
+		} finally {
+			bpSyncBusy = false;
 		}
 	}
 
@@ -6740,8 +6789,35 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 						{#if strataNote}
 							<div class="cfg-note">{strataNote}</div>
 						{/if}
-					</section>
-<section class="cfg-sect">
+						</section>
+						<section class="cfg-sect">
+						<!-- M9-Q2 (Sebo): Blueprints aus Spiel-Logs — Game.log +
+						logbackups/ parsen, Erhalte automatisch als „im Besitz"
+						markieren. Pfad anpassbar (Windows/Linux-Defaults). -->
+						<div class="h">{$t('settings.blueprints_title')}</div>
+						<div class="sm" style="margin-bottom: 8px; color: var(--fgdim)">
+						{$t('settings.blueprints_note')}
+						</div>
+						<div class="cfg-key-row">
+						<input
+							type="text"
+							autocomplete="off"
+							placeholder={cfg?.game_log_dir || $t('settings.blueprints_path_ph')}
+							bind:value={gameLogDirInput}
+							onkeydown={(e) => e.stopPropagation()}
+						/>
+						<button type="button" class="btn" onclick={saveGameLogDir}>{$t('settings.set')}</button>
+						</div>
+						<div class="cfg-key-row">
+						<button type="button" class="btn" onclick={() => void syncBlueprints()} disabled={bpSyncBusy}>
+							{bpSyncBusy ? $t('settings.blueprints_syncing') : $t('settings.blueprints_sync')}
+						</button>
+						</div>
+						{#if bpSyncNote}
+						<div class="cfg-note">{bpSyncNote}</div>
+						{/if}
+						</section>
+						<section class="cfg-sect">
 						<div class="h">{$t('settings.uex_api_key')}</div>
 						<div class="cfg-key-status">{$t('settings.status')}<b class:ok={cfg?.uex_api_key_set} class:off={!cfg?.uex_api_key_set}>
 								{cfg?.uex_api_key_set ? $t('settings.state_set') : $t('settings.state_unset')}

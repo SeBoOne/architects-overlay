@@ -66,13 +66,13 @@ fn status(state: &tauri::State<StrataState>, s: &settings::Settings) -> StrataSt
     }
 }
 
-fn strata_error(e: &provider::ProviderError) -> String {
+pub(crate) fn strata_error(e: &provider::ProviderError) -> String {
     strata_client::error_key(e)
 }
 
 /// Client pro Call gebaut (Key-Wechsel greift sofort); der Cache ist
 /// geteilt — gecachte Responses überleben den Client-Bau kostenlos.
-fn client(
+pub(crate) fn client_for(
     state: &StrataState,
     s: &settings::Settings,
 ) -> Result<strata_client::StrataClient, String> {
@@ -84,7 +84,7 @@ fn client(
 
 /// Settings-Lock-Helfer: alle Reads gehen über den geteilten SettingsState
 /// (keine zweite Load-Instanz — Settings-State-Divergenz-Gefahr).
-fn snapshot_of(settings: &tauri::State<SettingsState>) -> settings::Settings {
+pub(crate) fn snapshot_of(settings: &tauri::State<SettingsState>) -> settings::Settings {
     settings.inner.lock().expect("settings lock").clone()
 }
 
@@ -138,7 +138,7 @@ pub async fn strata_ores(
     state: tauri::State<'_, StrataState>,
     settings: tauri::State<'_, SettingsState>,
 ) -> Result<strata_client::OresResponse, String> {
-    let c = client(&state, &snapshot_of(&settings))?;
+    let c = client_for(&state, &snapshot_of(&settings))?;
     c.ores().await.map_err(|e| strata_error(&e))
 }
 
@@ -148,7 +148,7 @@ pub async fn strata_locations(
     state: tauri::State<'_, StrataState>,
     settings: tauri::State<'_, SettingsState>,
 ) -> Result<strata_client::LocationsResponse, String> {
-    let c = client(&state, &snapshot_of(&settings))?;
+    let c = client_for(&state, &snapshot_of(&settings))?;
     c.locations().await.map_err(|e| strata_error(&e))
 }
 
@@ -166,7 +166,7 @@ pub async fn strata_ore_locations(
         "concentration" => strata_client::OreSort::Concentration,
         _ => strata_client::OreSort::Rank,
     };
-    let c = client(&state, &snapshot_of(&settings))?;
+    let c = client_for(&state, &snapshot_of(&settings))?;
     c.ore_locations(ore.trim(), sort)
         .await
         .map_err(|e| strata_error(&e))
@@ -180,7 +180,7 @@ pub async fn strata_location_ores(
     settings: tauri::State<'_, SettingsState>,
     location: String,
 ) -> Result<strata_client::LocationOresResponse, String> {
-    let c = client(&state, &snapshot_of(&settings))?;
+    let c = client_for(&state, &snapshot_of(&settings))?;
     c.location_ores(location.trim())
         .await
         .map_err(|e| strata_error(&e))
@@ -193,7 +193,7 @@ pub async fn strata_items(
     state: tauri::State<'_, StrataState>,
     settings: tauri::State<'_, SettingsState>,
 ) -> Result<strata_client::ItemsResponse, String> {
-    let c = client(&state, &snapshot_of(&settings))?;
+    let c = client_for(&state, &snapshot_of(&settings))?;
     c.items().await.map_err(|e| strata_error(&e))
 }
 
@@ -206,7 +206,7 @@ pub async fn strata_craft_cost(
     settings: tauri::State<'_, SettingsState>,
     item: String,
 ) -> Result<strata_client::CraftCostResponse, String> {
-    let c = client(&state, &snapshot_of(&settings))?;
+    let c = client_for(&state, &snapshot_of(&settings))?;
     c.craft_cost(item.trim())
         .await
         .map_err(|e| strata_error(&e))
