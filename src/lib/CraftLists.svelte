@@ -142,6 +142,81 @@
 			invLocs = [];
 		}
 	}
+
+	// M9-Q1 (Sebo): Location-Direktautocomplete wie Inventar-Modus/Mining-Liste —
+	// gespeicherte Depot-Orte (Freitext) + SC-Location-Entities statt
+	// natives datalist (blauer GTK-Popup). Logik 1:1 aus MiningLists portiert.
+	type SearchHit = { id: string; name: string; kind: string; subtitle: string; code: string | null };
+	let locEntities = $state<SearchHit[]>([]);
+	let locIdx = $state(0);
+	let locTimer: ReturnType<typeof setTimeout> | null = null;
+	let invLocId = $state<string | null>(null);
+	const locMatches = $derived.by(() => {
+		const q = invLoc.trim().toLowerCase();
+		if (!q) return [];
+		return invLocs
+			.filter((l) => l.toLowerCase().includes(q) && l.toLowerCase() !== q)
+			.slice(0, 6);
+	});
+	const locCount = $derived(locMatches.length + locEntities.length);
+	function onLocInput() {
+		invLocId = null; // Freitext, bis ein Entity-Vorschlag gewählt wird
+		locIdx = 0;
+		const q = invLoc.trim();
+		if (!q) {
+			locEntities = [];
+			return;
+		}
+		if (locTimer) clearTimeout(locTimer);
+		locTimer = setTimeout(() => void runLocSearch(q), 180);
+	}
+	async function runLocSearch(q: string) {
+		try {
+			const resp = await invoke<{ groups: { kind: string; hits: SearchHit[] }[] }>('search', {
+				query: q,
+				filters: ['location']
+			});
+			locEntities = resp.groups.flatMap((g) => g.hits).filter((h) => h.kind === 'location');
+		} catch {
+			locEntities = [];
+		}
+	}
+	function chooseSavedLoc(loc: string) {
+		invLoc = loc;
+		invLocId = null;
+		locEntities = [];
+		locIdx = 0;
+	}
+	function chooseLocation(h: SearchHit) {
+		invLoc = h.name;
+		invLocId = h.id;
+		locEntities = [];
+		locIdx = 0;
+	}
+	function onLocKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown') {
+			locIdx = Math.min(locIdx + 1, Math.max(locCount - 1, 0));
+			e.preventDefault();
+			return;
+		}
+		if (e.key === 'ArrowUp') {
+			locIdx = Math.max(locIdx - 1, 0);
+			e.preventDefault();
+			return;
+		}
+		if (e.key === 'Enter') {
+			if (locCount > 0) {
+				if (locIdx < locMatches.length) chooseSavedLoc(locMatches[locIdx]);
+				else if (locEntities[locIdx - locMatches.length]) {
+					chooseLocation(locEntities[locIdx - locMatches.length]);
+				}
+				e.preventDefault();
+				return;
+			}
+			void submitAddInv();
+			e.preventDefault();
+		}
+	}
 	async function submitAddInv() {
 		if (manageFor === null || activeId === null) return;
 		const m = manageFor;
@@ -688,14 +763,39 @@
 											class="cl-input"
 											type="text"
 											bind:value={invLoc}
-											list="cl-inv-locs"
 											placeholder={$t('inventory.location')}
 											aria-label={$t('inventory.location')}
-											onkeydown={(e) => e.key === 'Enter' && void submitAddInv()}
+											oninput={onLocInput}
+											onkeydown={onLocKeydown}
 										/>
-										<datalist id="cl-inv-locs">
-											{#each invLocs as loc}<option value={loc}></option>{/each}
-										</datalist>
+										<!-- M9-Q1: EINE Vorschlagsliste im Overlay-Stil — gespeicherte
+										     Depot-Orte (Freitext) + SC-Location-Entities, wie Inventar. -->
+										{#if locMatches.length || locEntities.length}
+											<div class="cl-suggest" role="listbox" aria-label={$t('inventory.location')}>
+												{#each locMatches as loc, i (loc)}
+													<button
+														type="button"
+														class="cl-suggest-row"
+														class:is-on={locIdx === i}
+														onclick={() => chooseSavedLoc(loc)}
+													>
+														<span class="cl-suggest-name">{loc}</span>
+														<span class="cl-suggest-sub">{$t('inventory.saved_loc')}</span>
+													</button>
+												{/each}
+												{#each locEntities.slice(0, 6) as h, j (h.id)}
+													<button
+														type="button"
+														class="cl-suggest-row"
+														class:is-on={invLocId !== null && h.id === invLocId || locIdx === locMatches.length + j}
+														onclick={() => chooseLocation(h)}
+													>
+														<span class="cl-suggest-name">{h.name}</span>
+														{#if h.subtitle}<span class="cl-suggest-sub">{h.subtitle}</span>{/if}
+													</button>
+												{/each}
+											</div>
+										{/if}
 										<input
 											class="cl-input cl-inv-q"
 											type="text"
@@ -1038,6 +1138,42 @@
 		gap: 6px;
 		align-items: center;
 		flex-wrap: wrap;
+	}
+	/* M9-Q1: Vorschlagsliste im Overlay-Stil — 1:1 die Inventar-Modus-Stile
+	   (if-picks/if-pick), kein natives datalist (blauer GTK-Popup). */
+	.cl-suggest {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-top: 6px;
+		max-height: 160px;
+		overflow-y: auto;
+		flex-basis: 100%;
+	}
+	.cl-suggest-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		text-align: left;
+		border: none;
+		background: transparent;
+		color: var(--fg);
+		font: inherit;
+		font-size: 12px;
+		padding: 5px 6px;
+		border-radius: 0;
+		cursor: pointer;
+	}
+	.cl-suggest-row:hover {
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
+	}
+	.cl-suggest-row.is-on {
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		color: var(--accent);
+	}
+	.cl-suggest-sub {
+		opacity: 0.5;
+		font-size: 11px;
 	}
 	.cl-inv-q {
 		width: 74px;

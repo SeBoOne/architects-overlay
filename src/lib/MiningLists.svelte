@@ -1162,32 +1162,32 @@ import ListPicker from './ListPicker.svelte';
 	.ml-suggest {
 		display: flex;
 		flex-direction: column;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 0;
-		background: rgba(12, 16, 22, 0.97);
-		overflow: hidden;
+		gap: 2px;
+		margin-top: 6px;
+		max-height: 160px;
+		overflow-y: auto;
 		flex-basis: 100%;
 	}
 	.ml-suggest-row {
 		display: flex;
+		align-items: center;
 		gap: 8px;
-		align-items: baseline;
-		background: none;
+		text-align: left;
 		border: none;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-		color: inherit;
-		padding: 6px 10px;
+		background: transparent;
+		color: var(--fg);
 		font: inherit;
 		font-size: 12px;
+		padding: 5px 6px;
+		border-radius: 0;
 		cursor: pointer;
-		text-align: left;
 	}
-	.ml-suggest-row:last-child {
-		border-bottom: none;
+	.ml-suggest-row:hover {
+		background: color-mix(in srgb, var(--accent) 10%, transparent);
 	}
-	.ml-suggest-row:hover,
 	.ml-suggest-row.is-on {
-		background: rgba(255, 255, 255, 0.06);
+		background: color-mix(in srgb, var(--accent) 16%, transparent);
+		color: var(--accent);
 	}
 	.ml-suggest-sub {
 		opacity: 0.5;
