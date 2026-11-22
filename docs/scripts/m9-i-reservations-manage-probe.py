@@ -291,9 +291,16 @@ WRAP = r"""
   // (ersetzt die alten .cl-chip-Klicks).
   window.pickList = (idx) => {
     q('.clists .lp-btn')?.click();
-    const rows = qa('.clists .lp-row');
-    rows[idx]?.click();
-    return !!rows[idx];
+    // Listenwechsel rendert asynchron — 2× RAF, bevor die Zeile geklickt
+    // wird (Gate-6a-Fix: sonst geht der Klick auf die alte Zeile ins Leere
+    // und list_set_copies/list_detail laufen gegen den alten Stand).
+    return new Promise((res) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const rows = qa('.clists .lp-row');
+        rows[idx]?.click();
+        res(!!rows[idx]);
+      }));
+    });
   };
   window.callsOf = (cmd) => window.__CALLS.filter((c) => c.cmd === cmd);
 })();

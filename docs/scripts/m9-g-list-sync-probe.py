@@ -113,8 +113,12 @@ WRAP = r"""
         const rs = DB.res.filter((r) => fam.includes(r.list_id)
           && r.material.toLowerCase() === a.material.toLowerCase());
         const rq = rs.reduce((s, r) => s + r.qty, 0);
-        return { ...a, done_qty: dm.get(a.material + ':' + a.unit) || 0,
-                 reserved_qty: rq, reserved_avg_quality: rq > 0 ? 500 : null };
+        // M9-M: Fortschritt = (done + reserved) / Bedarf, zentral in list_detail.
+        const dq = dm.get(a.material + ':' + a.unit) || 0;
+        const prog = a.quantity > 0 ? Math.min(100.0, (100.0 * (dq + rq)) / a.quantity) : 0.0;
+        return { ...a, done_qty: dq,
+                 reserved_qty: rq, reserved_avg_quality: rq > 0 ? 500 : null,
+                 progress: Math.round(prog * 1e6) / 1e6, reached: dq + rq >= a.quantity && a.quantity > 0 };
       })
     };
   }
