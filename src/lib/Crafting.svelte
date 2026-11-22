@@ -1237,10 +1237,16 @@
 		flex-direction: column;
 		min-height: 0;
 		flex: 1;
-		/* M9-R3: gleicher Außenabstand wie .mining — Reiter kleben nicht mehr am Rand */
-		padding: 8px 4px 0 2px;
+		/* M9-R3: gleicher Außenabstand wie .mining — Reiter kleben nicht mehr am Rand.
+		   M9-R5 (Sebo): mehr links-Padding — Filter-Chips klebten sonst optisch an
+		   der Shell-Kante; plus Abstand Reiterzeile → Inhalt. */
+		padding: 8px 8px 0 10px;
 		color: var(--fg, #d7dde5);
-	}
+		}
+		/* M9-R5: Abstand der Segmented-Control-Reiterzeile zum darunterliegenden Inhalt. */
+		.crafting > :global(.segtabs) {
+		margin-bottom: 12px;
+		}
 	.ccols {
 		display: grid;
 		grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr);

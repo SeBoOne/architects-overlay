@@ -1013,7 +1013,13 @@
 		flex-direction: column;
 		min-height: 0;
 		height: 100%;
-		padding: 8px 4px 0 2px;
+		/* M9-R5 (Sebo): mehr links-Padding — Filter-Chips klebten optisch an
+		   der Shell-Kante; identisch mit .crafting. */
+		padding: 8px 8px 0 10px;
+	}
+	/* M9-R5: Abstand der Segmented-Control-Reiterzeile zum Inhalt (wie Crafting). */
+	.mining > :global(.segtabs) {
+		margin-bottom: 12px;
 	}
 	.mcols {
 		display: flex;
