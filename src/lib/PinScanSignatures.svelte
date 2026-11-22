@@ -102,7 +102,7 @@
 		padding: 2px 6px;
 		border: 1px solid var(--rc, var(--lineb));
 		background: color-mix(in srgb, var(--rc, var(--lineb)) 14%, transparent);
-		border-radius: 3px;
+		border-radius: 0;
 	}
 	.sigs-abbr {
 		color: var(--fg);
@@ -136,7 +136,7 @@
 		flex: 0 0 auto;
 		padding: 2px 5px;
 		border: 1px solid color-mix(in srgb, var(--rc, var(--lineb)) 45%, transparent);
-		border-radius: 3px;
+		border-radius: 0;
 		color: var(--fgdim, #9aa3b2);
 		white-space: nowrap;
 	}

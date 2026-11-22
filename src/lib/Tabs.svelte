@@ -3,6 +3,8 @@
 	// EINE Quelle für ALLE Tab-Zeilen im Overlay (Mining, Crafting, Flow,
 	// Connector, Market) — Segmented-Control-Stil: zusammenhängender Block,
 	// aktiver Reiter = gefüllte Akzent-Fläche. Kein Button-Look mehr.
+	// M9-R2: Formensprache „Mini-Bevel" — Container mit --bevel-lg-Schräge
+	// (Echo der Shellbox), Reiter pur eckig mit Button-Bevel (global).
 	type TabItem = { id: string; label: string };
 	let {
 		items,
@@ -39,10 +41,18 @@
 		flex: 0 0 auto;
 		background: color-mix(in srgb, var(--fg, #e8ecf3) 7%, transparent);
 		border: 1px solid color-mix(in srgb, var(--fg, #e8ecf3) 12%, transparent);
-		border-radius: 7px;
 		padding: 2px;
 		width: fit-content;
 		max-width: 100%;
+		/* M9-R2: Container-Bevel — dieselbe Schrägenrichtung wie die Shellbox */
+		clip-path: polygon(
+			var(--bevel-lg, 5px) 0,
+			100% 0,
+			100% calc(100% - var(--bevel-lg, 5px)),
+			calc(100% - var(--bevel-lg, 5px)) 100%,
+			0 100%,
+			0 var(--bevel-lg, 5px)
+		);
 	}
 	.segtab {
 		flex: 1;
@@ -55,20 +65,12 @@
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
 		cursor: pointer;
-		border-radius: 5px;
+		border-radius: 0;
 		white-space: nowrap;
-	}
-	.segtab:first-child {
-		border-top-left-radius: 5px;
-		border-bottom-left-radius: 5px;
-	}
-	.segtab:last-child {
-		border-top-right-radius: 5px;
-		border-bottom-right-radius: 5px;
 	}
 	.segtab.is-on {
 		background: var(--accent, #4aa3ff);
-		color: #0b0f14;
+		color: var(--on-accent, #0b0f14);
 		font-weight: 600;
 	}
 </style>

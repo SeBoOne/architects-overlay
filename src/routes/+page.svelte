@@ -7853,7 +7853,7 @@ const MARKET_STALE_SECS = 300; // P3: Market-Daten älter als 5 min → Hintergr
 																/>
 																{#each advertForm.images as img, i (img + '#' + i)}
 																	<span style="position: relative; display: inline-block; margin: 2px" title={$t('shop.image_title_n', { i: i + 1 })}>
-										<img src={img} alt={$t('shop.image_alt_n', { i: i + 1 })} style="width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid rgba(255,255,255,.2)" />
+										<img src={img} alt={$t('shop.image_alt_n', { i: i + 1 })} style="width: 56px; height: 56px; object-fit: cover; border-radius: 0; border: 1px solid rgba(255,255,255,.2)" />
 																		<button
 																			type="button"
 																			class="chip warn"

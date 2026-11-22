@@ -1043,7 +1043,7 @@
 	.mdetail::-webkit-scrollbar-thumb,
 	.mlist::-webkit-scrollbar-thumb {
 		background: color-mix(in srgb, var(--accent) 35%, transparent);
-		border-radius: 4px;
+		border-radius: 0;
 	}
 	/* Tab-Zeile = gemeinsame Tabs.svelte (M9-R1); kein eigener .mtab-Stil mehr. */
 	.mfrow {
@@ -1254,7 +1254,7 @@
 		padding: 0.8em 1em;
 		border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 		background: color-mix(in srgb, var(--panel, #11100d) 60%, transparent);
-		border-radius: 3px;
+		border-radius: 0;
 		min-width: 0;
 	}
 	.dcard-name {
@@ -1304,7 +1304,7 @@
 		gap: 10px; /* M7-F5: Abstand Kürzel↔Signatur */
 		border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
 		background: color-mix(in srgb, var(--panel2, #14161b) 70%, transparent);
-		border-radius: 3px;
+		border-radius: 0;
 	}
 	.abbr {
 		font-size: 3.8em;

@@ -226,11 +226,11 @@
 		top: 50%;
 		height: 4px;
 		transform: translateY(-50%);
-		border-radius: 2px;
+		border-radius: 0;
 		background: var(--line, #2a2f3a);
 	}
 	.cqs-track:focus-visible {
-		border-radius: 4px;
+		border-radius: 0;
 		box-shadow: 0 0 0 1px var(--acc, #e0a83e);
 	}
 	.cqs-fill {
@@ -239,7 +239,7 @@
 		top: 50%;
 		height: 4px;
 		transform: translateY(-50%);
-		border-radius: 2px;
+		border-radius: 0;
 		background: var(--acc, #e0a83e);
 		opacity: 0.45;
 		pointer-events: none;
@@ -259,7 +259,7 @@
 		top: 50%;
 		width: 12px;
 		height: 12px;
-		border-radius: 50%;
+		border-radius: 0;
 		background: var(--acc, #e0a83e);
 		transform: translate(-50%, -50%);
 		pointer-events: none;

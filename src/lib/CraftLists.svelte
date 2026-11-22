@@ -853,7 +853,7 @@
 	}
 	.clists::-webkit-scrollbar-thumb {
 		background: color-mix(in srgb, var(--accent, #4aa3ff) 35%, transparent);
-		border-radius: 4px;
+		border-radius: 0;
 	}
 	.cl-bar {
 		display: flex;
@@ -870,7 +870,7 @@
 	.cl-input {
 		background: rgba(255, 255, 255, 0.06);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		padding: 5px 8px;
 		font: inherit;
@@ -883,7 +883,7 @@
 	.cl-btn {
 		background: var(--accent, #4aa3ff);
 		border: none;
-		border-radius: 6px;
+		border-radius: 0;
 		color: #0b0f14;
 		padding: 5px 12px;
 		font: inherit;
@@ -894,7 +894,7 @@
 	.cl-mini {
 		background: rgba(255, 255, 255, 0.07);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		padding: 3px 9px;
 		font: inherit;
@@ -938,7 +938,7 @@
 		align-items: center;
 		background: rgba(255, 255, 255, 0.04);
 		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 8px;
+		border-radius: 0;
 		padding: 6px 10px;
 	}
 	.cl-item-name {
@@ -963,7 +963,7 @@
 	.cl-step {
 		background: rgba(255, 255, 255, 0.07);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 5px;
+		border-radius: 0;
 		color: inherit;
 		width: 22px;
 		height: 22px;
@@ -992,7 +992,7 @@
 	.cl-agg-row {
 		background: rgba(255, 255, 255, 0.04);
 		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 8px;
+		border-radius: 0;
 		padding: 8px 10px;
 		display: flex;
 		flex-direction: column;
@@ -1039,14 +1039,14 @@
 	}
 	.cl-bar-track {
 		height: 4px;
-		border-radius: 2px;
+		border-radius: 0;
 		background: rgba(255, 255, 255, 0.08);
 		overflow: hidden;
 	}
 	.cl-bar-fill {
 		height: 100%;
 		background: var(--accent, #4aa3ff);
-		border-radius: 2px;
+		border-radius: 0;
 	}
 	.cl-bar-fill.is-done {
 		background: #6fdc8c;
@@ -1074,7 +1074,7 @@
 	.cl-inv-note {
 		font-size: 12px;
 		padding: 6px 10px;
-		border-radius: 6px;
+		border-radius: 0;
 		background: rgba(111, 220, 140, 0.12);
 		border: 1px solid rgba(111, 220, 140, 0.3);
 		color: #6fdc8c;
@@ -1085,7 +1085,7 @@
 		gap: 6px;
 		background: rgba(255, 255, 255, 0.03);
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 6px;
+		border-radius: 0;
 		padding: 8px;
 	}
 	.cl-inv-title {
@@ -1123,7 +1123,7 @@
 	.cl-res-pick {
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		background: rgba(255, 255, 255, 0.05);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		font: inherit;
 		font-size: 11px;
@@ -1145,7 +1145,7 @@
 	.cl-res-del {
 		border: 1px solid rgba(255, 255, 255, 0.14);
 		background: rgba(255, 255, 255, 0.05);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		font: inherit;
 		font-size: 11px;

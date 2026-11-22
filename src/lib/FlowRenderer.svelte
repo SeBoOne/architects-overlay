@@ -2566,7 +2566,7 @@
 	.fmarkinfo { font-size: 11px; color: var(--fgdim); }
 	.frefresh {
 		background: transparent; color: var(--fgdim); border: 1px solid var(--lineb);
-		border-radius: 3px; padding: 3px 8px; font: 700 11px/1 var(--font-mono);
+		border-radius: 0; padding: 3px 8px; font: 700 11px/1 var(--font-mono);
 		cursor: pointer;
 	}
 	.frefresh:hover { border-color: var(--fgdim); color: var(--fg); }
@@ -2599,7 +2599,7 @@
 	.fwaitwrap { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 28px 10px 20px; }
 	@keyframes flow-spin { to { transform: rotate(360deg); } }
 	.fspinner {
-		width: 34px; height: 34px; border-radius: 50%;
+		width: 34px; height: 34px; border-radius: 0;
 		border: 3px solid var(--lineb); border-top-color: var(--accent);
 		animation: flow-spin 0.9s linear infinite;
 	}
@@ -2614,7 +2614,7 @@
 	.flabel { font-size: 11px; color: var(--fgdim); }
 	.finput {
 		background: transparent; color: inherit; border: 1px solid var(--lineb);
-		border-radius: 3px; padding: 6px 9px; font: inherit; font-size: 12.5px;
+		border-radius: 0; padding: 6px 9px; font: inherit; font-size: 12.5px;
 	}
 	.finput:focus { outline: none; border-color: var(--accent); }
 	.fauto { font-size: 10px; color: var(--fgfaint); }
@@ -2622,7 +2622,7 @@
 	.facs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 	.fac {
 		background: var(--panel2); color: var(--fg); border: 1px solid var(--lineb);
-		border-radius: 3px; padding: 5px 8px; font-size: 12px; text-align: left;
+		border-radius: 0; padding: 5px 8px; font-size: 12px; text-align: left;
 		cursor: pointer; width: 100%;
 	}
 	.fac:hover { border-color: var(--accent); }
@@ -2697,12 +2697,12 @@
 		max-height: 100%;
 		overflow: auto; display: flex; flex-direction: column; gap: 10px;
 		padding: 14px 16px 12px; border: 1px solid var(--lineb);
-		border-radius: 10px; background: var(--panel2);
+		border-radius: 0; background: var(--panel2);
 	}
 	.fmodal-title { margin: 0; font-weight: 700; font-size: 13.5px; color: var(--fg); }
 	.fmodal-warn {
 		margin: 0; font-size: 11.5px; color: var(--alert);
-		border: 1px solid var(--lineb); border-radius: 7px; padding: 6px 9px;
+		border: 1px solid var(--lineb); border-radius: 0; padding: 6px 9px;
 		background: color-mix(in srgb, var(--alert) 12%, transparent);
 	}
 	/* Liste im Modal: interner Scroll-Bereich (flex-Regel statt vh-Cap) —
@@ -2716,7 +2716,7 @@
 	.foptgroup { display: flex; flex-direction: column; gap: 6px; max-width: 460px; }
 	.fopt {
 		cursor: pointer; width: 100%; text-align: left; padding: 7px 10px;
-		border: 1px solid var(--lineb); border-radius: 7px;
+		border: 1px solid var(--lineb); border-radius: 0;
 		background: transparent; color: var(--fg); font-size: 12px;
 	}
 	.fopt:hover { border-color: var(--accent); }
@@ -2728,14 +2728,14 @@
 	.fbtnrow { padding: 4px 9px; font-size: 11.5px; }
 	.fstepbtn {
 		width: 26px; height: 22px; flex: none; cursor: pointer;
-		border: 1px solid var(--lineb); border-radius: 6px;
+		border: 1px solid var(--lineb); border-radius: 0;
 		background: transparent; color: var(--fg);
 		font: 600 13px/1 var(--font-mono);
 	}
 	.fstepbtn[disabled] { opacity: 0.45; cursor: default; }
 	.fcheckbtn {
 		flex: none; width: 26px; height: 26px; cursor: pointer;
-		border: 1px solid var(--lineb); border-radius: 6px;
+		border: 1px solid var(--lineb); border-radius: 0;
 		background: transparent; color: var(--fg); font-size: 13px;
 	}
 	.frow-mark:disabled, .frow-mark.is-off { opacity: 0.45; cursor: not-allowed; }
@@ -2746,13 +2746,13 @@
 	}
 	.fcode-line {
 		display: flex; align-items: center; gap: 10px;
-		border: 1px solid var(--lineb); border-radius: 8px; padding: 8px 10px;
+		border: 1px solid var(--lineb); border-radius: 0; padding: 8px 10px;
 	}
 	.fcode-line .fk { flex: none; }
 	.fcode-value { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); color: var(--fg); }
 	.fcopy {
 		flex: none; cursor: pointer; padding: 3px 8px; font-size: 11px;
-		border: 1px solid var(--lineb); border-radius: 6px;
+		border: 1px solid var(--lineb); border-radius: 0;
 		background: transparent; color: var(--fgdim);
 	}
 	.fstatcards {
@@ -2761,7 +2761,7 @@
 	}
 	.fstatcard {
 		display: flex; flex-direction: column; gap: 2px;
-		border: 1px solid var(--lineb); border-radius: 8px; padding: 10px 12px;
+		border: 1px solid var(--lineb); border-radius: 0; padding: 10px 12px;
 	}
 	.fstatval { font: 700 18px/1.1 var(--font-mono); color: var(--fg); }
 	.fstatlabel { font-size: 11px; color: var(--fgdim); }

@@ -902,13 +902,13 @@ import ListPicker from './ListPicker.svelte';
 	}
 	.mlists::-webkit-scrollbar-thumb {
 		background: color-mix(in srgb, var(--accent, #4aa3ff) 35%, transparent);
-		border-radius: 4px;
+		border-radius: 0;
 	}
 	/* M9-H Punkt 5: Inventar-Maske (Port aus CraftLists .cl-inv-*). */
 	.ml-inv-note {
 		font-size: 12px;
 		padding: 6px 10px;
-		border-radius: 6px;
+		border-radius: 0;
 		background: rgba(111, 220, 140, 0.12);
 		border: 1px solid rgba(111, 220, 140, 0.3);
 		color: #6fdc8c;
@@ -919,7 +919,7 @@ import ListPicker from './ListPicker.svelte';
 		gap: 6px;
 		background: rgba(255, 255, 255, 0.03);
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 6px;
+		border-radius: 0;
 		padding: 8px;
 	}
 	.ml-inv-title {
@@ -960,7 +960,7 @@ import ListPicker from './ListPicker.svelte';
 	.ml-input {
 		background: rgba(255, 255, 255, 0.06);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		padding: 5px 8px;
 		font: inherit;
@@ -986,7 +986,7 @@ import ListPicker from './ListPicker.svelte';
 	.ml-btn {
 		background: var(--accent, #4aa3ff);
 		border: none;
-		border-radius: 6px;
+		border-radius: 0;
 		color: #0b0f14;
 		padding: 5px 12px;
 		font: inherit;
@@ -1002,7 +1002,7 @@ import ListPicker from './ListPicker.svelte';
 	.ml-mini {
 		background: rgba(255, 255, 255, 0.07);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		padding: 3px 9px;
 		font: inherit;
@@ -1054,7 +1054,7 @@ import ListPicker from './ListPicker.svelte';
 		display: flex;
 		flex-direction: column;
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 8px;
+		border-radius: 0;
 		background: rgba(12, 16, 22, 0.97);
 		overflow: hidden;
 		flex-basis: 100%;
@@ -1094,7 +1094,7 @@ import ListPicker from './ListPicker.svelte';
 		align-items: center;
 		background: rgba(255, 255, 255, 0.04);
 		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 8px;
+		border-radius: 0;
 		padding: 6px 10px;
 	}
 	.ml-item-name {
@@ -1114,7 +1114,7 @@ import ListPicker from './ListPicker.svelte';
 	.ml-step {
 		background: rgba(255, 255, 255, 0.07);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 5px;
+		border-radius: 0;
 		color: inherit;
 		width: 22px;
 		height: 22px;
@@ -1143,7 +1143,7 @@ import ListPicker from './ListPicker.svelte';
 	.ml-agg-row {
 		background: rgba(255, 255, 255, 0.04);
 		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 8px;
+		border-radius: 0;
 		padding: 8px 10px;
 		display: flex;
 		flex-direction: column;
@@ -1183,14 +1183,14 @@ import ListPicker from './ListPicker.svelte';
 	}
 	.ml-bar-track {
 		height: 4px;
-		border-radius: 2px;
+		border-radius: 0;
 		background: rgba(255, 255, 255, 0.08);
 		overflow: hidden;
 	}
 	.ml-bar-fill {
 		height: 100%;
 		background: var(--accent, #4aa3ff);
-		border-radius: 2px;
+		border-radius: 0;
 	}
 	.ml-bar-fill.is-done {
 		background: #6fdc8c;
@@ -1205,7 +1205,7 @@ import ListPicker from './ListPicker.svelte';
 	.ml-place {
 		background: rgba(255, 255, 255, 0.04);
 		border: 1px solid rgba(255, 255, 255, 0.08);
-		border-radius: 8px;
+		border-radius: 0;
 		padding: 8px 10px;
 		display: flex;
 		flex-direction: column;
@@ -1219,7 +1219,7 @@ import ListPicker from './ListPicker.svelte';
 	.ml-place-n {
 		width: 18px;
 		height: 18px;
-		border-radius: 50%;
+		border-radius: 0;
 		background: var(--accent, #4aa3ff);
 		color: #0b0f14;
 		font-size: 11px;
@@ -1254,7 +1254,7 @@ import ListPicker from './ListPicker.svelte';
 		align-items: baseline;
 		background: rgba(255, 255, 255, 0.06);
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 6px;
+		border-radius: 0;
 		padding: 2px 8px;
 		font-size: 12px;
 	}

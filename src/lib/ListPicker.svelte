@@ -126,7 +126,7 @@
 		gap: 8px;
 		background: rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 8px;
+		border-radius: 0;
 		color: inherit;
 		padding: 5px 10px;
 		font: inherit;
@@ -147,7 +147,7 @@
 	.lp-count {
 		font-size: 10px;
 		padding: 1px 6px;
-		border-radius: 999px;
+		border-radius: 0;
 		background: rgba(255, 255, 255, 0.08);
 		border: 1px solid rgba(255, 255, 255, 0.12);
 	}
@@ -173,7 +173,7 @@
 		overflow-y: auto;
 		background: #131922;
 		border: 1px solid rgba(255, 255, 255, 0.16);
-		border-radius: 8px;
+		border-radius: 0;
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
 		padding: 4px;
 	}
@@ -183,7 +183,7 @@
 		gap: 8px;
 		background: transparent;
 		border: 0;
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		font: inherit;
 		font-size: 12px;

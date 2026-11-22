@@ -99,6 +99,11 @@ html[data-palette="bloom"] {
   --fs-input: max(2.5vh, 1.5rem); /* Suchfeld-Schrift (Arkanis) */
   --pad-x: max(1.6vh, 18px); /* Innenpolster skaliert mit Fensterhöhe */
   --radius: 0; /* Variante C nutzt clip-path statt Radius */
+  /* M9-R2 (Sebo): Formensprache „Mini-Bevel" — dieselbe Schräge wie die
+     Shellbox (16px oben-links + unten-rechts), in Miniatur für alle
+     interaktiven Elemente. Ecken pur eckig; Dots/Knöpfe ebenfalls eckig. */
+  --bevel: 3px; /* Mini-Bevel: Buttons, Chips, Reiter */
+  --bevel-lg: 5px; /* Bevel: Element-Container (Segmented Control) */
   --shadow-shell: 0 20px 52px rgba(0, 0, 0, 0.78);
   --app-bg: #04060a; /* opaker Grund — nur im Hauptfenster gesetzt */
   --font-ui: "Inter", "Liberation Sans", system-ui, sans-serif;
@@ -195,6 +200,21 @@ html[data-window="app-window"] .shell {
 
 ::selection {
   background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* M9-R2 (Sebo): Mini-Bevel — GLOBALE Formensprache für alle interaktiven
+   Elemente. Dieselbe Schrägenrichtung wie die Shellbox (16px oben-links +
+   unten-rechts), in Miniatur (--bevel 3px). Ecken pur eckig (--radius: 0,
+   M9-R2 Sweep); Daten-Badges und Zeilen bleiben exakt eckig ohne Bevel. */
+button {
+  clip-path: polygon(
+    var(--bevel) 0,
+    100% 0,
+    100% calc(100% - var(--bevel)),
+    calc(100% - var(--bevel)) 100%,
+    0 100%,
+    0 var(--bevel)
+  );
 }
 
 /* --------------------------- Palette-Rahmen ------------------------------ */
@@ -409,7 +429,7 @@ html[data-window="spotlight"] .shell {
   color: var(--fgfaint);
   border: 1px solid var(--lineb);
   padding: 0.45vh 0.6em;
-  border-radius: 3px;
+  border-radius: 0;
 }
 
 /* Helper-Zeile direkt unter dem Suchfeld (Arkanis: Typo overline / secondary):
@@ -491,7 +511,7 @@ html[data-window="spotlight"] .shell {
 .chip .dot {
   width: 5px;
   height: 5px;
-  border-radius: 50%;
+  border-radius: 0;
   background: currentColor;
   opacity: 0.8;
 }
@@ -547,7 +567,7 @@ html[data-window="spotlight"] .shell {
 
 .list::-webkit-scrollbar-thumb {
   background: var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .list::-webkit-scrollbar-track {
@@ -567,7 +587,7 @@ html.platform-windows ::-webkit-scrollbar {
 
 html.platform-windows ::-webkit-scrollbar-thumb {
   background: var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 html.platform-windows ::-webkit-scrollbar-track,
@@ -1012,7 +1032,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 
 .pane-detail::-webkit-scrollbar-thumb {
   background: var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
 }
 
 .pane-detail::-webkit-scrollbar-track {
@@ -1192,7 +1212,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .lock-hint .dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--accent);
 }
 
@@ -1227,7 +1247,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   color: var(--fgdim);
   border: 1px solid var(--lineb);
   padding: 3px 6px;
-  border-radius: 3px;
+  border-radius: 0;
 }
 
 .kpis {
@@ -1362,7 +1382,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .recent .r {
   padding: 5px 9px;
   border: 1px solid var(--lineb);
-  border-radius: 3px;
+  border-radius: 0;
   font: 500 12px/1.4 var(--font-ui);
   color: var(--fgdim);
 }
@@ -1560,14 +1580,14 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .r-chip-vol {
   color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 2px 6px;
   white-space: nowrap;
 }
 .r-chip-stock {
   color: var(--fgdim);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 2px 5px;
   white-space: nowrap;
 }
@@ -1577,7 +1597,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .r-chip-age {
   color: var(--fgdim);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 2px 5px;
   white-space: nowrap;
 }
@@ -1606,7 +1626,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .r-chip-menge {
   color: var(--buy);
   border: 1px solid color-mix(in srgb, var(--buy) 40%, transparent);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 2px 6px;
   white-space: nowrap;
 }
@@ -1875,7 +1895,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   text-align: left;
   background: var(--panel2);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 7px 10px;
   cursor: pointer;
   color: var(--fg);
@@ -1982,7 +2002,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   color: var(--fgdim);
   border: 1px solid var(--lineb);
   padding: 3px 6px;
-  border-radius: 3px;
+  border-radius: 0;
   display: inline-block;
   margin-top: 6px;
 }
@@ -2055,7 +2075,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  border-radius: 3px;
+  border-radius: 0;
   font: 700 11px/1 var(--font-mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2076,7 +2096,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   border: 1px solid var(--accent);
   background: var(--accent);
   color: var(--on-accent);
-  border-radius: 3px;
+  border-radius: 0;
   font: 700 11px/1 var(--font-mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2099,7 +2119,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 7px 13px;
   border: 1px solid var(--lineb);
   color: var(--fgdim);
-  border-radius: 3px;
+  border-radius: 0;
   font: 700 11px/1 var(--font-mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2144,7 +2164,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   overflow-y: auto;
   background: var(--panel2);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 16px 18px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   scrollbar-width: thin;
@@ -2210,7 +2230,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   overflow-y: auto;
   background: var(--panel2);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 12px 18px 16px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   scrollbar-width: thin;
@@ -2330,7 +2350,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   align-items: center;
   gap: 12px;
   border: 1px solid var(--lineb);
-  border-radius: 3px;
+  border-radius: 0;
   padding: 6px 10px;
   cursor: pointer;
   background: transparent;
@@ -2343,7 +2363,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .info-badge img {
   height: 34px;
   width: auto;
-  border-radius: 3px;
+  border-radius: 0;
   user-select: none;
 }
 
@@ -2351,7 +2371,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   font: 700 10px/1.4 var(--font-mono);
   color: var(--on-accent);
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: 0;
   padding: 4px 8px;
   letter-spacing: 0.08em;
   white-space: nowrap;
@@ -2398,7 +2418,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   flex-direction: column;
   background: var(--panel2);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
@@ -2470,7 +2490,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   flex-direction: column;
   background: var(--panel2);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
@@ -2561,7 +2581,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 0;
   border: 1px solid var(--lineb);
   background: var(--panel);
-  border-radius: 4px;
+  border-radius: 0;
   cursor: zoom-in;
   line-height: 0;
   overflow: hidden;
@@ -2606,7 +2626,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   max-width: 100%;
   max-height: calc(100vh - 70px);
   object-fit: contain;
-  border-radius: 4px;
+  border-radius: 0;
   border: 1px solid var(--lineb);
   display: block;
 }
@@ -2644,7 +2664,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 7px 13px;
   border: 1px solid var(--accent);
   color: var(--accent);
-  border-radius: 3px;
+  border-radius: 0;
   font: 700 11px/1 var(--font-mono);
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -2656,7 +2676,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   height: 16px;
   border: 2px solid var(--lineb);
   border-top-color: var(--accent);
-  border-radius: 50%;
+  border-radius: 0;
   animation: sp 0.8s linear infinite;
   display: inline-block;
 }
@@ -2670,7 +2690,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .sk {
   height: 11px;
   background: var(--panel2);
-  border-radius: 2px;
+  border-radius: 0;
 }
 
 .offlineband {
@@ -2689,7 +2709,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .offlineband .dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--warn);
 }
 
@@ -2734,7 +2754,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .sync .dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--ok);
 }
 
@@ -2760,7 +2780,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .spot-status .dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--alert);
   box-shadow: 0 0 6px var(--alert);
 }
@@ -2789,7 +2809,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .foot button {
   color: var(--on-accent);
   background: var(--accent);
-  border-radius: 3px;
+  border-radius: 0;
   padding: 3px 9px;
   font-size: 10px;
   letter-spacing: 0.06em;
@@ -3016,7 +3036,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 0;
   background: transparent;
   color: var(--accent);
   font-size: 14px;
@@ -3049,7 +3069,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   gap: 8px;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 4px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--panel) 60%, transparent);
 }
 .cfg-sect .h {
@@ -3107,7 +3127,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   min-width: 160px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 3px;
+  border-radius: 0;
   color: var(--fg);
   font-size: 12px;
   padding: 6px 8px;
@@ -3143,7 +3163,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   color: var(--fg);
   padding: 6px 8px;
   border: 1px dashed var(--line);
-  border-radius: 3px;
+  border-radius: 0;
   background: color-mix(in srgb, var(--panel) 40%, transparent);
 }
 .cfg-src-active b {
@@ -3199,7 +3219,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   font-size: 10px;
   color: var(--dim);
   border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 2px 8px;
 }
 .cfg-sc-active {
@@ -3339,7 +3359,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 1px 5px;
   border: 1px solid var(--lineb);
   background: var(--panel2);
-  border-radius: 3px;
+  border-radius: 0;
   font: 700 10px/1.4 var(--font-mono);
   color: var(--fgdim);
 }
@@ -3367,7 +3387,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 2px 8px;
   cursor: pointer;
   font: inherit;
@@ -3389,7 +3409,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fgdim);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 2px 10px;
   font: 700 10px/1.4 var(--font-mono);
   cursor: pointer;
@@ -3417,7 +3437,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 4px;
+  border-radius: 0;
   padding: 3px 10px;
   font: 600 11px/1.4 var(--font-sans);
   cursor: pointer;
@@ -3451,7 +3471,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 8px 12px;
   background: var(--panel2);
   border: 1px solid var(--accent-d);
-  border-radius: 4px;
+  border-radius: 0;
   box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55);
   font: 11.5px/1.45 var(--font-sans);
   color: var(--accent-h);
@@ -3484,7 +3504,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .hsug {
   padding: 2px 6px;
   border: 1px dashed var(--accent-d);
-  border-radius: 3px;
+  border-radius: 0;
   font: 11px/1.3 var(--font-sans);
   color: var(--fgdim);
   background: none;
@@ -3512,7 +3532,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 0;
   padding: 6px 8px;
   color: var(--fg);
   cursor: pointer;
@@ -3556,7 +3576,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   flex-direction: column;
   background: var(--panel2);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
@@ -3610,7 +3630,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   gap: 2px;
   padding: 6px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--panel2);
 }
 .hd-grid dt {
@@ -3634,7 +3654,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   gap: 8px;
   padding: 4px 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   margin-bottom: 3px;
   font: 12px/1.3 var(--font-sans);
 }
@@ -3649,7 +3669,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   margin: 6px 12px;
   padding: 8px 10px;
   border: 1px solid var(--accent-d);
-  border-radius: 6px;
+  border-radius: 0;
   background: var(--panel2);
 }
 .hf-title {
@@ -3676,7 +3696,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .hf-grid select {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 0;
   color: var(--fg);
   padding: 4px 6px;
   font: 12px/1.3 var(--font-sans);
@@ -3711,7 +3731,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
 .chat-msg {
   background: var(--panel2);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 0;
   padding: 6px 10px;
   max-width: 88%;
   align-self: flex-start;
@@ -3752,7 +3772,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   font-size: 10px;
   color: var(--fgdim);
   border: 1px dashed var(--line);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 2px 10px;
 }
 
@@ -3761,7 +3781,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   display: inline-block;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--accent);
   margin-left: 6px;
   vertical-align: middle;
@@ -3791,7 +3811,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   flex-direction: column;
   background: var(--panel2);
   border: 1px solid var(--lineb);
-  border-radius: 4px;
+  border-radius: 0;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   overflow: hidden;
 }
@@ -3889,7 +3909,7 @@ html.platform-windows.window-blurred ::-webkit-scrollbar-thumb {
   padding: 8px 12px;
   background: var(--panel2);
   border: 1px solid var(--alert);
-  border-radius: 4px;
+  border-radius: 0;
   font: 11.5px/1.45 var(--font-sans);
   color: var(--alert);
 }

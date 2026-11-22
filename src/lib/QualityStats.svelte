@@ -187,7 +187,7 @@
 	.qs {
 		margin-top: 10px;
 		border: 1px solid var(--line, #2a2f3a);
-		border-radius: 10px;
+		border-radius: 0;
 		padding: 10px 12px;
 	}
 	.qs-head {

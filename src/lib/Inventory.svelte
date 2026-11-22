@@ -1161,7 +1161,7 @@ function keyActivate(e: KeyboardEvent) {
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
 		padding: 4px 9px;
-		border-radius: 3px;
+		border-radius: 0;
 		cursor: pointer;
 	}
 	.chip:hover {
@@ -1195,7 +1195,7 @@ function keyActivate(e: KeyboardEvent) {
 		display: flex;
 		flex-direction: column;
 		border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-		border-radius: 4px;
+		border-radius: 0;
 		padding: 2px 10px 8px;
 	}
 	.inv-card .ic-head {
@@ -1273,7 +1273,7 @@ function keyActivate(e: KeyboardEvent) {
 	.inv-card .q {
 		font: 700 11px/1 var(--mono, monospace);
 		padding: 3px 6px;
-		border-radius: 3px;
+		border-radius: 0;
 		min-width: 34px;
 		text-align: center;
 		background: color-mix(in srgb, var(--fgdim) 15%, transparent);
@@ -1364,7 +1364,7 @@ function keyActivate(e: KeyboardEvent) {
 		gap: 6px;
 		background: color-mix(in srgb, var(--bg, #101010) 92%, transparent);
 		border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-		border-radius: 6px;
+		border-radius: 0;
 		padding: 10px 12px;
 		z-index: 3;
 		max-width: calc(100% - 32px);
@@ -1388,7 +1388,7 @@ function keyActivate(e: KeyboardEvent) {
 	.res-input {
 		background: color-mix(in srgb, var(--fg) 6%, transparent);
 		border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-		border-radius: 4px;
+		border-radius: 0;
 		color: var(--fg);
 		font: inherit;
 		font-size: 12px;
@@ -1411,7 +1411,7 @@ function keyActivate(e: KeyboardEvent) {
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
 		padding: 5px 10px;
-		border-radius: 3px;
+		border-radius: 0;
 		cursor: pointer;
 		white-space: nowrap;
 	}
@@ -1431,7 +1431,7 @@ function keyActivate(e: KeyboardEvent) {
 		cursor: pointer;
 		font-size: 12px;
 		padding: 2px 6px;
-		border-radius: 3px;
+		border-radius: 0;
 	}
 	.inv-edit:hover {
 		color: var(--accent);
@@ -1458,7 +1458,7 @@ function keyActivate(e: KeyboardEvent) {
 		font-size: 14px;
 		cursor: pointer;
 		padding: 2px 8px;
-		border-radius: 3px;
+		border-radius: 0;
 	}
 	.inv-back:hover {
 		color: var(--accent);
@@ -1509,7 +1509,7 @@ function keyActivate(e: KeyboardEvent) {
 		width: 100%;
 		background: color-mix(in srgb, var(--fg) 6%, transparent);
 		border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-		border-radius: 4px;
+		border-radius: 0;
 		color: var(--fg);
 		font: inherit;
 		font-size: 12.5px;
@@ -1544,7 +1544,7 @@ function keyActivate(e: KeyboardEvent) {
 		font: inherit;
 		font-size: 12px;
 		padding: 5px 6px;
-		border-radius: 3px;
+		border-radius: 0;
 		cursor: pointer;
 	}
 	.if-pick:hover {
@@ -1606,7 +1606,7 @@ function keyActivate(e: KeyboardEvent) {
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		padding: 7px 14px;
-		border-radius: 3px;
+		border-radius: 0;
 		cursor: pointer;
 	}
 	.btn:disabled {
@@ -1620,7 +1620,7 @@ function keyActivate(e: KeyboardEvent) {
 		font: inherit;
 		font-size: 11px;
 		padding: 7px 10px;
-		border-radius: 3px;
+		border-radius: 0;
 		cursor: pointer;
 	}
 	.btn-ghost:hover {
@@ -1639,7 +1639,7 @@ function keyActivate(e: KeyboardEvent) {
 		border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
 		font-size: 11px;
 		padding: 6px 12px;
-		border-radius: 4px;
+		border-radius: 0;
 		white-space: nowrap;
 	}
 	kbd {

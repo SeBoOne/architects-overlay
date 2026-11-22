@@ -1144,7 +1144,7 @@
 	.cl-add {
 		background: rgba(255, 255, 255, 0.07);
 		border: 1px solid rgba(255, 255, 255, 0.18);
-		border-radius: 999px;
+		border-radius: 0;
 		color: inherit;
 		padding: 3px 12px;
 		font: inherit;
@@ -1162,7 +1162,7 @@
 		overflow: auto;
 		background: #141a21;
 		border: 1px solid rgba(255, 255, 255, 0.18);
-		border-radius: 10px;
+		border-radius: 0;
 		padding: 8px;
 		display: flex;
 		flex-direction: column;
@@ -1175,7 +1175,7 @@
 		align-items: center;
 		background: rgba(255, 255, 255, 0.05);
 		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		padding: 5px 9px;
 		font: inherit;
@@ -1210,7 +1210,7 @@
 		min-width: 0;
 		background: rgba(255, 255, 255, 0.06);
 		border: 1px solid rgba(255, 255, 255, 0.14);
-		border-radius: 6px;
+		border-radius: 0;
 		color: inherit;
 		padding: 4px 8px;
 		font: inherit;
@@ -1219,7 +1219,7 @@
 	.cl-pick-go {
 		background: var(--accent, #4aa3ff);
 		border: none;
-		border-radius: 6px;
+		border-radius: 0;
 		color: #0b0f14;
 		padding: 4px 10px;
 		font: inherit;
@@ -1283,7 +1283,7 @@
 	/* Key-Missing / Disabled-Card (Muster Mining .mcard) */
 	.ccard {
 		border: 1px solid var(--line, #2a2f3a);
-		border-radius: 10px;
+		border-radius: 0;
 		padding: 14px 16px;
 		background: var(--card, rgba(255, 255, 255, 0.03));
 		max-width: 460px;
@@ -1334,7 +1334,7 @@
 		border: 1px solid var(--line, #2a2f3a);
 		background: transparent;
 		color: inherit;
-		border-radius: 999px;
+		border-radius: 0;
 		padding: 3px 10px;
 		font-size: 11.5px;
 		cursor: pointer;
@@ -1387,7 +1387,7 @@
 		flex: none;
 		font-size: 10px;
 		padding: 1px 7px;
-		border-radius: 999px;
+		border-radius: 0;
 		border: 1px solid var(--line, #2a2f3a);
 		opacity: 0.8;
 		white-space: nowrap;
@@ -1397,7 +1397,7 @@
 		border: 1px solid var(--line, #2a2f3a);
 		background: transparent;
 		color: inherit;
-		border-radius: 8px;
+		border-radius: 0;
 		padding: 6px 12px;
 		font-size: 12px;
 		cursor: pointer;
@@ -1421,7 +1421,7 @@
 		background: transparent;
 		border: 1px solid var(--line, #2a2f3a);
 		color: inherit;
-		border-radius: 8px;
+		border-radius: 0;
 		width: 26px;
 		height: 26px;
 		cursor: pointer;
@@ -1446,7 +1446,7 @@
 		background: transparent;
 		border: 1px solid var(--line, #2a2f3a);
 		color: inherit;
-		border-radius: 8px;
+		border-radius: 0;
 		width: 26px;
 		height: 26px;
 		cursor: pointer;
@@ -1498,7 +1498,7 @@
 		display: flex;
 		flex-direction: column;
 		border: 1px solid var(--line, #2a2f3a);
-		border-radius: 10px;
+		border-radius: 0;
 		overflow: hidden;
 		/* t_8c0e6abc: overflow:hidden setzt die Flex-Min-Größe auf 0 — ohne
 		   flex-shrink:0 kollabiert .cmats als Flex-Item der .cdetail-Column
@@ -1581,7 +1581,7 @@
 		flex: none;
 		font-size: 10px;
 		padding: 1px 7px;
-		border-radius: 8px;
+		border-radius: 0;
 		border: 1px solid var(--line, #2a2f3a);
 		background: none;
 		color: inherit;
@@ -1629,7 +1629,7 @@
 	.cplanner {
 		margin-top: 12px;
 		border: 1px solid var(--line, #2a2f3a);
-		border-radius: 10px;
+		border-radius: 0;
 		padding: 10px 12px;
 	}
 	.cp-row {
@@ -1674,7 +1674,7 @@
 	.cscwiki-retry {
 		background: none;
 		border: 1px solid var(--border, #333a45);
-		border-radius: 4px;
+		border-radius: 0;
 		color: inherit;
 		font-size: 11px;
 		padding: 2px 8px;
@@ -1702,7 +1702,7 @@
 		font-size: 11px;
 		padding: 2px 8px;
 		border: 1px solid var(--line, #2a2f3a);
-		border-radius: 6px;
+		border-radius: 0;
 		opacity: 0.85;
 	}
 	.cprop-l {
@@ -1767,7 +1767,7 @@
 	.cmissions {
 		margin-top: 12px;
 		border: 1px solid var(--line, #2a2f3a);
-		border-radius: 10px;
+		border-radius: 0;
 		padding: 10px 12px;
 	}
 	.cmg {

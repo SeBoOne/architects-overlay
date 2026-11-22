@@ -1042,7 +1042,7 @@
 	}
 	.ccard {
 		border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-		border-radius: 8px;
+		border-radius: 0;
 		padding: 8px 10px;
 		display: flex;
 		flex-direction: column;
@@ -1106,7 +1106,7 @@
 		background: transparent;
 		border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
 		color: inherit;
-		border-radius: 6px;
+		border-radius: 0;
 		padding: 5px 8px;
 		font: inherit;
 	}
@@ -1141,7 +1141,7 @@
 		background: transparent;
 		border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
 		color: inherit;
-		border-radius: 6px;
+		border-radius: 0;
 		padding: 5px 8px;
 		font: inherit;
 	}
@@ -1200,7 +1200,7 @@
 		display: flex; flex-direction: column; gap: 10px;
 		padding: 14px 16px 12px;
 		border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
-		border-radius: 10px;
+		border-radius: 0;
 		background: var(--panel2);
 	}
 	.cmodal-title { margin: 0; font-weight: 700; font-size: 13.5px; }
@@ -1208,7 +1208,7 @@
 	.cmodal-warn {
 		margin: 0; font-size: 11.5px; color: #ff7a7a;
 		border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-		border-radius: 7px; padding: 6px 9px;
+		border-radius: 0; padding: 6px 9px;
 	}
 	.cmodal-actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

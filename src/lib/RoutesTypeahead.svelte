@@ -233,7 +233,7 @@
 		margin-left: 6px;
 		padding: 1px 5px;
 		border: 1px solid var(--lineb);
-		border-radius: 8px;
+		border-radius: 0;
 		font: 500 9px/1.4 var(--font-mono);
 		letter-spacing: 0.04em;
 		opacity: 0.75;

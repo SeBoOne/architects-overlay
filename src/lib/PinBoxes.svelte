@@ -762,7 +762,7 @@ onMount(() => {
 		padding: 2px 6px;
 		border: 1px solid var(--rc, var(--lineb));
 		background: color-mix(in srgb, var(--rc, var(--lineb)) 14%, transparent);
-		border-radius: 3px;
+		border-radius: 0;
 		font: 600 12px/1.3 var(--font-mono, monospace);
 	}
 	.se-abbr {
