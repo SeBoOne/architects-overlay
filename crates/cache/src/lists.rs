@@ -115,6 +115,16 @@ pub struct AggMat {
     /// Mengengewichtete Ø-Qualität der reservierten Quelle — `None` ohne
     /// Reservierung.
     pub reserved_avg_quality: Option<u32>,
+    /// M9-M (t_74833eb0): Fortschritt in % = min(100, (done + reserved) /
+    /// quantity · 100), 0 ohne Bedarf. EINE Quelle der Wahrheit — das
+    /// Frontend rendert nur noch dieses Feld (vorher zählten Reservierungen
+    /// nicht mit).
+    pub progress: f64,
+    /// M9-M (P3): „Ziel erreicht“ nur, wenn der Bedarf gedeckt ist UND das
+    /// Material im Inventar existiert (Reservierungen sind inventar-first,
+    /// M9-F). Ein rein manuell gesetzter `done_qty` ohne Inventar-Bezug
+    /// zählt als Fortschritt, bringt das Ziel aber nie auf 100 %.
+    pub reached: bool,
 }
 
 /// Vollständige Liste: Kopf + Einträge + Aggregation.
@@ -765,7 +775,7 @@ impl Cache {
         };
 
         // Einträge + Material-Snapshots + done-Stand in einer Sperre lesen.
-        let (items, mut done_map, reserved_map) = self.with(|conn| {
+        let (items, mut done_map, reserved_map, inv_map) = self.with(|conn| {
             let mut items: Vec<ListItem> = Vec::new();
             {
                 let mut stmt = conn.prepare(
@@ -843,7 +853,25 @@ impl Cache {
                     reserved_map.insert(m, (sum, Some(avg.round() as u32)));
                 }
             }
-            Ok((items, done_map, reserved_map))
+            // M9-M (P3, t_74833eb0): verfügbares Inventar je Material
+            // (Name-Match wie reserved_map — groß/klein egal) — Grundlage der
+            // „Ziel erreicht“-Regel: done_qty ohne Inventar-Bezug zählt als
+            // Fortschritt, aber nie als erreicht.
+            let mut inv_map: std::collections::HashMap<String, f64> =
+                std::collections::HashMap::new();
+            {
+                let mut stmt = conn.prepare(
+                    "SELECT LOWER(name), SUM(quantity) FROM inventory \
+                     WHERE quantity > 0 GROUP BY LOWER(name)",
+                )?;
+                let mut rows = stmt.query([])?;
+                while let Some(r) = rows.next()? {
+                    let m: String = r.get(0)?;
+                    let q: f64 = r.get(1)?;
+                    inv_map.insert(m, q);
+                }
+            }
+            Ok((items, done_map, reserved_map, inv_map))
         })?;
 
         // Aggregation: (material, unit) → (Summe, MAX-Qualität). done
@@ -866,10 +894,34 @@ impl Cache {
                     .get(&material.to_lowercase())
                     .copied()
                     .unwrap_or((0.0, None));
+                let done = done_map
+                    .remove(&(material.clone(), unit.clone()))
+                    .unwrap_or(0.0);
+                // M9-M (t_74833eb0): Fortschritt = (done + reserved) / Bedarf,
+                // auf 100 % geklemmt, 2 Dezimalen (300/800 → 37.5). EINE
+                // Quelle der Wahrheit für beide Listen + den Mining-Spiegel.
+                let progress = if quantity > 0.0 {
+                    (100.0 * (done + rq) / quantity).min(100.0)
+                } else {
+                    0.0
+                };
+                let progress = (progress * 100.0).round() / 100.0;
+                // M9-M (P3): „Ziel erreicht“ nur mit Inventar-Bezug —
+                // Reservierungen sind inventar-first (M9-F), daher gilt eine
+                // Reservierung ≥ Bedarf automatisch; ein rein manuell
+                // gesetzter done_qty ohne Inventar-Material zählt als
+                // Fortschritt, erreicht aber nie 100 %.
+                let inv_qty = inv_map
+                    .get(&material.to_lowercase())
+                    .copied()
+                    .unwrap_or(0.0);
+                let reached = quantity > 0.0
+                    && done + rq + 1e-9 >= quantity
+                    && (rq + 1e-9 >= quantity || inv_qty > 0.0);
                 AggMat {
-                    done_qty: done_map
-                        .remove(&(material.clone(), unit.clone()))
-                        .unwrap_or(0.0),
+                    progress,
+                    reached,
+                    done_qty: done,
                     min_quality: q,
                     quantity,
                     reserved_qty: rq,
@@ -1728,5 +1780,120 @@ mod tests {
         assert_eq!(d.items[0].mats[0].quality, 700);
         assert_eq!(d.aggregated[0].done_qty, 150.0);
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    // M9-M (t_74833eb0): Fortschritt zählt Reservierungen — done + reserved
+    // gegen den Bedarf; „Ziel erreicht“ (reached) nur mit Inventar-Bezug.
+    fn m9m_inv(qty: f64, name: &str) -> NewInventoryEntry {
+        NewInventoryEntry {
+            entity_kind: None,
+            entity_id: None,
+            name: name.into(),
+            quality: 500,
+            location_id: None,
+            location_name: "Levski".into(),
+            quantity: qty,
+            price: None,
+        }
+    }
+
+    fn agg_of<'a>(d: &'a ListDetail, material: &str) -> &'a AggMat {
+        d.aggregated
+            .iter()
+            .find(|m| m.material == material)
+            .unwrap()
+    }
+
+    #[test]
+    fn m9m_progress_counts_reserved_partial() {
+        // 300 von 800 Gems reserviert → Fortschritt 37.5 %, NICHT erreicht.
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("mining", "Mine", None).unwrap();
+        c.list_add_item(
+            id,
+            bp("a", "A", 1.0, vec![("Hadanite", "gems", 800.0, 500)]),
+        )
+        .unwrap();
+        c.inventory_add_for_list(m9m_inv(300.0, "Hadanite"), id, "Hadanite", "gems")
+            .unwrap();
+        let d = c.list_detail(id).unwrap();
+        let m = agg_of(&d, "Hadanite");
+        assert_eq!(m.reserved_qty, 300.0);
+        assert_eq!(m.done_qty, 0.0);
+        assert_eq!(m.progress, 37.5);
+        assert!(!m.reached);
+    }
+
+    #[test]
+    fn m9m_progress_full_reservation_reaches() {
+        // 800/800 reserviert → 100 % UND „Ziel erreicht“ (Reservierungen sind
+        // inventar-first, M9-F — die Abdeckung kommt aus dem Inventar).
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("mining", "Mine", None).unwrap();
+        c.list_add_item(
+            id,
+            bp("a", "A", 1.0, vec![("Hadanite", "gems", 800.0, 500)]),
+        )
+        .unwrap();
+        c.inventory_add_for_list(m9m_inv(900.0, "Hadanite"), id, "Hadanite", "gems")
+            .unwrap();
+        let d = c.list_detail(id).unwrap();
+        let m = agg_of(&d, "Hadanite");
+        // M9-I-Cap: Reservierung ist auf den Bedarf (800) geklemmt.
+        assert_eq!(m.reserved_qty, 800.0);
+        assert_eq!(m.progress, 100.0);
+        assert!(m.reached);
+    }
+
+    #[test]
+    fn m9m_done_without_inventory_never_reaches() {
+        // done_qty 800 manuell gesetzt, OHNE Inventar-Material → Fortschritt
+        // zählt, aber „Ziel erreicht“ gilt NICHT (P3).
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("craft", "Craft", None).unwrap();
+        c.list_add_item(id, bp("a", "A", 1.0, vec![("Taranite", "SCU", 800.0, 500)]))
+            .unwrap();
+        c.list_set_done(id, "Taranite", "SCU", Some(800.0)).unwrap();
+        let d = c.list_detail(id).unwrap();
+        let m = agg_of(&d, "Taranite");
+        assert_eq!(m.done_qty, 800.0);
+        assert_eq!(m.reserved_qty, 0.0);
+        assert_eq!(m.progress, 100.0, "Fortschritt zählt done_qty mit");
+        assert!(!m.reached, "ohne Inventar-Bezug kein „Ziel erreicht“");
+    }
+
+    #[test]
+    fn m9m_done_with_inventory_reaches() {
+        // done_qty = Bedarf UND Material im Inventar (unreserviert) → erreicht.
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("craft", "Craft", None).unwrap();
+        c.list_add_item(id, bp("a", "A", 1.0, vec![("Taranite", "SCU", 800.0, 500)]))
+            .unwrap();
+        c.inventory_add(m9m_inv(400.0, "Taranite")).unwrap();
+        c.list_set_done(id, "Taranite", "SCU", Some(800.0)).unwrap();
+        let d = c.list_detail(id).unwrap();
+        let m = agg_of(&d, "Taranite");
+        assert_eq!(m.progress, 100.0);
+        assert!(m.reached);
+    }
+
+    #[test]
+    fn m9m_progress_counts_done_plus_reserved_capped() {
+        // Teilfortschritt summiert: done 100 + reserviert 300 von 800 = 50 %.
+        let c = Cache::open_in_memory().unwrap();
+        let id = c.list_create("mining", "Mine", None).unwrap();
+        c.list_add_item(
+            id,
+            bp("a", "A", 1.0, vec![("Hadanite", "gems", 800.0, 500)]),
+        )
+        .unwrap();
+        c.inventory_add_for_list(m9m_inv(300.0, "Hadanite"), id, "Hadanite", "gems")
+            .unwrap();
+        c.list_set_done(id, "Hadanite", "gems", Some(100.0))
+            .unwrap();
+        let d = c.list_detail(id).unwrap();
+        let m = agg_of(&d, "Hadanite");
+        assert_eq!(m.progress, 50.0, "done 100 + reserved 300 von 800");
+        assert!(!m.reached);
     }
 }
