@@ -870,7 +870,7 @@
 								<div
 									class="ltile"
 									style={`border-color:${rarityColor(rarityOfOreId(or.oreId)) ?? 'var(--lineb)'}`}
-								>{oreAbbrev(or.name)}<span class="ltile-sig">{or.scanSignature ?? '—'}</span></div
+								><span class="ltile-abbr">{oreAbbrev(or.name)}</span><span class="ltile-sig">{or.scanSignature ?? '—'}</span></div
 								>
 								<div class="dnums">
 									<div class="dnum">
@@ -1383,19 +1383,19 @@
 		gap: 10px; /* M7-F5: Abstand Kürzel↔Signatur */
 		border: 1px solid var(--lineb); /* Rarity-Farbe via inline border-color */
 		background: color-mix(in srgb, var(--rc, var(--lineb)) 10%, transparent);
-		/* M9-R6: Kürzel in em statt fixer 34px — die Kachel skaliert mit
-		   cardScale (Breite/24), der fixe Font blieb zurück → verzogen.
-		   34px @ 240px-Karte (1em = 10px) → 3.4em. */
+		/* M9-R6c: KEINE font-size auf der Kachel selbst — ihre em-Maße
+		   (11em × 13.8em) lösen sonst gegen die eigene Schriftgröße auf
+		   (3.4em → 11em = 374px in einer 242px-Karte = Verzerrung).
+		   Kürzel + Signatur sitzen in eigenen Spans und skalieren gegen
+		   die Karten-Basis (cardScale: Breite/24). */
+	}
+	.ltile-abbr {
 		font: 700 3.4em/1 var(--font-mono, monospace);
 		letter-spacing: 0.06em;
 		color: var(--fg, #e8ecf3);
 	}
 	.ltile-sig {
-		/* M9-R6b: Signatur skaliert AUF DER KARTEN-BASIS (1.6em), NICHT auf
-		   der Kachel-Fontgröße — der Container trägt 3.4em (Kürzel), 1.6em
-		   davon wäre 5.4em der Basis = 54px Signatur → sprengte die Kachel.
-		   1.6 / 3.4 ≈ 0.47em (relativ zum Container) = 1.6em der Basis. */
-		font: 600 0.47em/1 var(--font-mono, monospace);
+		font: 600 1.6em/1 var(--font-mono, monospace);
 		color: var(--fgdim, #9aa3b2);
 	}
 	/* Legende */
