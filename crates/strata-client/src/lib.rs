@@ -192,14 +192,35 @@ impl StrataClient {
     where
         T: serde::de::DeserializeOwned + serde::Serialize,
     {
-        if let Ok(Some((fetched_at, payload))) = self.cache.strata_meta_get(key)
-            && now_unix().saturating_sub(fetched_at) < ttl.as_secs()
+        // M9-Q: Cache-Hit ohne Altersgrenze — bei Live-Fetch-Fehler (API down,
+        // 530/Timeout) dient der ABGELAUFENE Cache-Wert als Stale-Fallback.
+        // SCMDB-Daten ändern sich nur pro Game-Patch, stale ist da besser als
+        // ein harter Fehler. Freshest-First: frischer Cache wird bevorzugt.
+        let cached: Option<(u64, String)> = self
+            .cache
+            .strata_meta_get(key)
+            .map_err(|e| log::warn!("strata: cache read {key}: {e}"))
+            .ok()
+            .flatten();
+        if let Some((fetched_at, payload)) = &cached
+            && now_unix().saturating_sub(*fetched_at) < ttl.as_secs()
         {
-            return serde_json::from_str(&payload)
+            return serde_json::from_str(payload)
                 .map_err(|e| ProviderError::Json(format!("cache {key}: {e}")));
         }
 
-        let value: T = self.http.get(path, params).await?;
+        let value: T = match self.http.get(path, params).await {
+            Ok(v) => v,
+            Err(e) => {
+                // Stale-Fallback: abgelaufener Cache schlägt API-Fehler.
+                if let Some((_, payload)) = &cached {
+                    log::warn!("strata: live fetch {key} failed ({e}) — serving stale cache");
+                    return serde_json::from_str(payload)
+                        .map_err(|e| ProviderError::Json(format!("stale cache {key}: {e}")));
+                }
+                return Err(e);
+            }
+        };
         match serde_json::to_string(&value) {
             Ok(payload) => {
                 if let Err(e) = self.cache.strata_meta_set(key, now_unix(), &payload) {
@@ -256,5 +277,57 @@ pub fn error_key(e: &ProviderError) -> String {
         }
         // non_exhaustive: künftige Varianten auf den Catch-all-Key.
         _ => err_key("error.strata.other"),
+    }
+}
+
+#[cfg(test)]
+mod stale_fallback_tests {
+    //! M9-Q: Stale-While-Error — abgelaufener Cache schlägt Live-Fetch-Fehler.
+    use super::*;
+    use std::sync::Arc;
+
+    fn client_on_dead_port() -> StrataClient {
+        StrataClient {
+            http: StrataHttpClient::new("http://127.0.0.1:1", "celd_test").unwrap(),
+            cache: Arc::new(Cache::open_in_memory().unwrap()),
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_cache_served_when_live_fetch_fails() {
+        let client = client_on_dead_port();
+        // Abgelaufener Cache-Eintrag (fetched_at weit in der Vergangenheit).
+        let payload = r#"{"ore":{"id":"x","name":"TestOre"},"sort":"rank",
+            "results":{"surface":[]},"attribution":"test"}"#;
+        let old = now_unix() - 10_000_000;
+        client
+            .cache
+            .strata_meta_set("ore-locations:TEST:rank", old, payload)
+            .unwrap();
+        // Live-Fetch auf Port 1 schlägt fehl → stale Cache servieren.
+        let res = client.ore_locations("TEST", OreSort::Rank).await.unwrap();
+        assert_eq!(res.ore.name, "TestOre");
+    }
+
+    #[tokio::test]
+    async fn error_propagates_without_cache() {
+        let client = client_on_dead_port();
+        // Kein Cache-Eintrag → Live-Fetch-Fehler propagiert (kein Fake-Daten).
+        let res = client.ore_locations("TEST", OreSort::Rank).await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn fresh_cache_beats_live_fetch() {
+        let client = client_on_dead_port();
+        // Frischer Cache-Eintrag → kein Live-Fetch nötig (Port 1 wäre tot).
+        let payload = r#"{"ore":{"id":"x","name":"FreshOre"},"sort":"rank",
+            "results":{},"attribution":"test"}"#;
+        client
+            .cache
+            .strata_meta_set("ore-locations:FRESH:rank", now_unix(), payload)
+            .unwrap();
+        let res = client.ore_locations("FRESH", OreSort::Rank).await.unwrap();
+        assert_eq!(res.ore.name, "FreshOre");
     }
 }
