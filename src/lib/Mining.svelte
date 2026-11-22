@@ -1281,18 +1281,10 @@
 		min-width: 0;
 		font-size: 1.05em;
 	}
-	.dcard-name {
-		flex: 1;
-		min-width: 0;
-		font-weight: 600;
-		font-size: 13px;
-		color: var(--fg, #e8ecf3);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
+	/* M9-R6: fixe 13px → 1.3em — cardScale skaliert Karteninhalt, fixe px
+	   blieben zurück (Kurz-Zeilen verzogen). Duplikat mit 1.2em aufgelöst. */
 	.dcard-sub {
-		font-size: 11px;
+		font-size: 1.1em;
 		color: var(--fgdim, #9aa3b2);
 	}
 	/* M7-F3: Körper = links Kürzel-Block (1.25:1 Höhe×Breite — breiter als
@@ -1391,7 +1383,10 @@
 		gap: 10px; /* M7-F5: Abstand Kürzel↔Signatur */
 		border: 1px solid var(--lineb); /* Rarity-Farbe via inline border-color */
 		background: color-mix(in srgb, var(--rc, var(--lineb)) 10%, transparent);
-		font: 700 34px/1 var(--font-mono, monospace);
+		/* M9-R6: Kürzel in em statt fixer 34px — die Kachel skaliert mit
+		   cardScale (Breite/24), der fixe Font blieb zurück → verzogen.
+		   34px @ 240px-Karte (1em = 10px) → 3.4em. */
+		font: 700 3.4em/1 var(--font-mono, monospace);
 		letter-spacing: 0.06em;
 		color: var(--fg, #e8ecf3);
 	}
