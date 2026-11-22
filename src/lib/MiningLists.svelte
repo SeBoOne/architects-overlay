@@ -85,6 +85,9 @@ import ListPicker from './ListPicker.svelte';
 		location: string;
 		system: string | null;
 		tier: number;
+		// M9-O R2: Rank-Daten der API (camelCase) für die PRIMARY-Bestimmung.
+		rank?: number;
+		rankPct?: number;
 	};
 
 	let {
@@ -516,7 +519,11 @@ import ListPicker from './ListPicker.svelte';
 							system: r.system,
 							group: g,
 							tier: r.tier,
-							concentration: 0
+							concentration: 0,
+							// M9-O R2: rank/rankPct je Ort-Zeile — PRIMARY-Bestimmung
+							// (Sebos Regel) in mining-places.ts.
+							rank: r.rank ?? 0,
+							rankPct: r.rankPct ?? 0
 						}))
 				);
 			}

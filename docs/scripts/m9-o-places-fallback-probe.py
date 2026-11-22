@@ -10,8 +10,9 @@ Gates (Feedback P5, Diagnose Omar 2026-11-21):
      a) strata_ores wird für den ore_id-Fallback gerufen.
      b) Glacosite via Namens-Match „Glacosite (Raw)" aufgelöst → Ort
         „Glacier Shelf" gerendert, NICHT uncovered.
-     c) Riccite: kein Ort erfüllt Q965 (Bänder nur 671/870 erreichbar) →
-        Fallback-Ort „Ric Highlands" (T4, max. 870) MIT Warn-Hinweis
+     c) Riccite: kein Ort erfüllt Q965 (beide Orte SEKUNDÄR → max. 743 =
+        bands[3], Sebos Regel M9-O R2) → Fallback-Ort „Ric Highlands" (T4)
+        MIT Warn-Hinweis
         place_below_quality, Material zählt als covered, NICHT uncovered.
   3. Deutsch: Warn-Text live auf Deutsch (i18n-Parität).
 
@@ -59,7 +60,9 @@ WRAP = r"""
   ], count: 3, attribution: 'Data from celd.space / Strata Mining Tools' };
 
   // Glacosite: T5 → Band 959 ≥ Q500 ✓ (qualifiziert normal).
-  // Riccite: NUR T2 (maxQ 671) und T4 (maxQ 870) — beide < Q965 → Fallback.
+  // Riccite: beide Orte SEKUNDÄR (rank 2, rankPct < 100) → max.
+  // bands[3]=743 < Q965 → Fallback. (M9-O R2: rank 1 = PRIMARY würde
+  // 501–1000 liefern und ohne Warnung qualifizieren.)
   const ORE_LOCS = {
     'ore-glacosite': { ore: { id: 'ore-glacosite', name: 'Glacosite (Raw)' }, sort: 'rank',
       results: { space: [], exploration: [], cave: [],
@@ -71,7 +74,7 @@ WRAP = r"""
         surface: [ { locationId: 'loc-r2', location: 'Ric Lowlands', system: 'Stanton',
                      rankPct: 40, rank: 2, n: 10, concentration: 0.1, tier: 2, tierName: 'Minor' },
                    { locationId: 'loc-r4', location: 'Ric Highlands', system: 'Stanton',
-                     rankPct: 60, rank: 1, n: 10, concentration: 0.2, tier: 4, tierName: 'Abundant' } ] },
+                     rankPct: 60, rank: 2, n: 10, concentration: 0.2, tier: 4, tierName: 'Abundant' } ] },
       attribution: 'Data from celd.space / Strata Mining Tools' }
   };
   // Riccite-Bänder = SCMDB-Muster (t_a39041f8-Spec).
@@ -359,12 +362,12 @@ async def main():
         names = sorted(p["name"] for p in places or [])
         check("2b Glacosite via Namens-Match 'Glacosite (Raw)' aufgelöst → 'Glacier Shelf'",
               "Glacier Shelf" in names, str(places))
-        check("2c Riccite-Fallback-Ort 'Ric Highlands' gerendert (T4, max. 870)",
+        check("2c Riccite-Fallback-Ort 'Ric Highlands' gerendert (T4, max. 743)",
               "Ric Highlands" in names, str(places))
         ric = next((p for p in places or [] if p["name"] == "Ric Highlands"), None)
         ric_text = " ".join(ric["mats"]) if ric else ""
         check("2d Qualitäts-Fallback: Warn-Hinweis place_below_quality am Riccite-Chip",
-              ric is not None and "may not reach the required quality (max. 870)" in ric_text, ric_text)
+              ric is not None and "may not reach the required quality (max. 743)" in ric_text, ric_text)
         glacier = next((p for p in places or [] if p["name"] == "Glacier Shelf"), None)
         glacier_text = " ".join(glacier["mats"]) if glacier else ""
         check("2e Normal qualifizierender Ort (Glacosite) OHNE Warnung",
@@ -386,8 +389,8 @@ async def main():
         places_de = await js("placeRows()")
         ric_de = next((p for p in places_de or [] if p["name"] == "Ric Highlands"), None)
         ric_de_text = " ".join(ric_de["mats"]) if ric_de else ""
-        check("3b DE: 'Ort erreicht ggf. nicht die geforderte Qualität (max. 870)'",
-              "geforderte Qualität (max. 870)" in ric_de_text, ric_de_text)
+        check("3b DE: 'Ort erreicht ggf. nicht die geforderte Qualität (max. 743)'",
+              "geforderte Qualität (max. 743)" in ric_de_text, ric_de_text)
         await shot("m9o-de.png")
 
     for p in (proc, server):
