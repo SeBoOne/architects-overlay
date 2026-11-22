@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+	isExcludedLocation,
 	locationQualifies,
 	maxQualityForTier,
 	planBestPlaces,
@@ -198,4 +199,56 @@ test('concentration: erledigte Materialien und ortlose bleiben ausgenommen', () 
 	const plan = planBestPlaces(mats, rowsByOre, {}, 1, (m) => m.material === 'A', 'concentration');
 	assert.equal(plan.places.length, 0);
 	assert.deepEqual(plan.uncovered.map((u) => u.material).sort(), ['B', 'X']);
+});
+
+// ---------- M9-L (t_4de3c84f, P6): Battagliaintro-Filter ----------
+
+test('isExcludedLocation: Slug UND locationId-Suffix-Match, Dungeon-Typ bleibt unangetastet', () => {
+	// Direkt per locationId (strata_ore_locations-Zeilen, kein Slug):
+	assert.equal(isExcludedLocation('dungeon_v3slotpreset_harvestable_battagliaintro'), true);
+	// Per Slug (strata_locations-Zeilen):
+	assert.equal(isExcludedLocation('dungeon_v3slotpreset_harvestable_battagliaintro', 'battagliaintro'), true);
+	assert.equal(isExcludedLocation('egal', 'battagliaintro'), true);
+	// Andere Dungeon-Orte NICHT getroffen (nur der Slug wird gefiltert):
+	assert.equal(isExcludedLocation('dungeon_cave_aberdeen_medium'), false);
+	assert.equal(isExcludedLocation('dungeon_v3slotpreset_rockcracker', 'rockcracker'), false);
+	assert.equal(isExcludedLocation('dungeon_v3slotpreset_harvestable_rockcracker_asteroid'), false);
+	// Nichts zu tun ohne Slug-Übereinstimmung:
+	assert.equal(isExcludedLocation('station_portolis'), false);
+});
+
+test('planBestPlaces (fewest): Battagliaintro-Zeile wird aus den Kandidaten gefiltert', () => {
+	const mats = [mat('A', 'a')];
+	const rowsByOre = {
+		a: [
+			row('dungeon_v3slotpreset_harvestable_battagliaintro', 'Battagliaintro', 6),
+			row('L1', 'Regulärer Ort', 4)
+		]
+	};
+	const plan = planBestPlaces(mats, rowsByOre, {}, 1);
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].locationId, 'L1');
+	// Kein material-getriebener Rückgriff auf den gefilterten Ort:
+	assert.ok(!plan.places.some((p) => p.locationId.includes('battagliaintro')));
+});
+
+test('planBestPlaces (fewest): NUR Battagliaintro → Material bleibt uncovered, kein Crash', () => {
+	const mats = [mat('A', 'a')];
+	const rowsByOre = { a: [row('dungeon_v3slotpreset_harvestable_battagliaintro', 'Battagliaintro', 6)] };
+	const plan = planBestPlaces(mats, rowsByOre, {}, 1);
+	assert.equal(plan.places.length, 0);
+	assert.deepEqual(plan.uncovered.map((u) => u.material), ['A']);
+});
+
+test('planBestPlaces (concentration): Battagliaintro wird nie als Top-Ort gewählt', () => {
+	const mats = [mat('A', 'a')];
+	const rowsByOre = {
+		a: [
+			row('dungeon_v3slotpreset_harvestable_battagliaintro', 'Battagliaintro', 6),
+			row('L1', 'Regulärer Ort', 4)
+		]
+	};
+	const plan = planBestPlaces(mats, rowsByOre, {}, 1, undefined, 'concentration');
+	assert.equal(plan.places.length, 1);
+	assert.equal(plan.places[0].locationId, 'L1');
 });

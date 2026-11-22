@@ -43,6 +43,8 @@
 	// M9-C (t_dc01f34b): Listen-Tab im Mining-Modus (eigener Reiter,
 	// Omar-Beschluss 2026-11-21 — analog Crafting-Listen, keine F-Taste).
 	import MiningLists from './MiningLists.svelte';
+	// M9-L (t_4de3c84f, P6): Battagliaintro (einmalige Mission) aus Orten/Plan.
+	import { isExcludedLocation } from './mining-places.ts';
 
 	type Ore = {
 		id: string;
@@ -212,7 +214,12 @@
 				invoke<LocationsResponse>('strata_locations')
 			]);
 			ores = [...o.ores].sort((a, b) => a.name.localeCompare(b.name));
-			locations = [...l.locations].sort((a, b) => a.name.localeCompare(b.name));
+			// M9-L (P6): Battagliaintro (einmalige Mission) nie in der Ort-Liste
+			// zeigen — betrifft auch die Typ-/System-Filterableitung (locTypes,
+			// systems), da dort aus denselben Zeilen aggregiert wird.
+			locations = [...l.locations]
+				.filter((loc) => !isExcludedLocation(loc.id, loc.slug))
+				.sort((a, b) => a.name.localeCompare(b.name));
 			attribution = o.attribution || ATTRIBUTION_FALLBACK;
 		} catch (e) {
 			error = trError(e);
@@ -277,6 +284,19 @@
 				ore: ore.id,
 				sort: sortParam
 			});
+			// M9-L (P6): Battagliaintro auch im Orte-pro-Erz-Detail raus
+			// (Zeilen tragen keinen Slug — locationId-Suffix-Match).
+			if (detail) {
+				detail = {
+					...detail,
+					results: {
+						space: detail.results.space.filter((r) => !isExcludedLocation(r.locationId)),
+						surface: detail.results.surface.filter((r) => !isExcludedLocation(r.locationId)),
+						cave: detail.results.cave.filter((r) => !isExcludedLocation(r.locationId)),
+						exploration: detail.results.exploration.filter((r) => !isExcludedLocation(r.locationId))
+					}
+				};
+			}
 			attribution = detail.attribution || ATTRIBUTION_FALLBACK;
 		} catch (e) {
 			detailError = trError(e);

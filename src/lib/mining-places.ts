@@ -94,6 +94,23 @@ export function locationQualifies(
  */
 export type PlaceMode = 'fewest' | 'concentration';
 
+/// M9-L (t_4de3c84f, P6): Von der Planung/Orts-Ansicht ausgeschlossene
+/// Orts-Slugs. `battagliaintro` (locationId `dungeon_v3slotpreset_harvestable_-
+/// battagliaintro`, Typ `dungeon`) ist an eine EINMALIGE Mission gekoppelt und
+/// taucht daher als regulärer Mining-Ort nicht auf. Der Dungeon-Typ bleibt
+/// unangetastet (26 weitere Dungeon-Orte sind reguläre Caves/Rockcracker) —
+/// es wird NUR dieser Slug gefiltert.
+export const EXCLUDED_LOCATION_SLUGS: readonly string[] = ['battagliaintro'];
+
+/// Erkennt einen ausgeschlossenen Ort: entweder direkt per Slug (Ort-Liste,
+/// `strata_locations`) oder über das locationId-Suffix (`strata_ore_locations`-
+/// Zeilen tragen keinen Slug — `…_harvestable_battagliaintro` endet auf dem
+/// Slug mit `_`-Trenner).
+export function isExcludedLocation(locationId: string, slug?: string | null): boolean {
+	if (slug !== undefined && slug !== null && EXCLUDED_LOCATION_SLUGS.includes(slug)) return true;
+	return EXCLUDED_LOCATION_SLUGS.some((s) => locationId === s || locationId.endsWith(`_${s}`));
+}
+
 export function planBestPlaces(
 	mats: PlaceMat[],
 	rowsByOre: Record<string, PlaceLocRow[]>,
@@ -102,6 +119,13 @@ export function planBestPlaces(
 	isDone?: (m: PlaceMat) => boolean,
 	mode: PlaceMode = 'fewest'
 ): PlacesPlan {
+	// M9-L (P6): ausgeschlossene Orte (Battagliaintro) schon aus den
+	// Kandidaten-Zeilen entfernen — greift in BEIDEN Modi (fewest +
+	// concentration), weil beide aus `locRows` qualifizieren.
+	const locRows: Record<string, PlaceLocRow[]> = {};
+	for (const [oreId, rows] of Object.entries(rowsByOre)) {
+		locRows[oreId] = rows.filter((r) => !isExcludedLocation(r.locationId));
+	}
 	// Kandidaten: ortbare, nicht erledigte Materialien mit mindestens einem
 	// qualifizierenden Ort.
 	type Cand = {
@@ -119,7 +143,7 @@ export function planBestPlaces(
 			continue;
 		}
 		const bands = bandsByMaterial[materialKey(m)] ?? bandsByMaterial[m.material] ?? [];
-		const qualified = (rowsByOre[m.oreId] ?? []).filter((r) =>
+		const qualified = (locRows[m.oreId] ?? []).filter((r) =>
 			locationQualifies(r.tier, bands, m.min_quality, tierThreshold)
 		);
 		if (!qualified.length) {
